@@ -76,12 +76,20 @@ FRAME_INPUT = {
                    '(default engine.renderer.core.visibility.ACTIVE_LIGHT_RANGE)',
     'light_fade_range': 'optional float: finish the intensity fade before this '
                        'world-streaming boundary; does not change light selection',
-    'terrain': 'engine.terrain.Terrain or None; the renderer prepares whatever '
-               'GPU state it needs from it when it first sees it',
+    'terrain': 'engine.terrain_frame.TerrainFrame or None: the published terrain '
+               '(its dense TerrainTable, per-slot products, paint maps and '
+               'this frame\'s appearance). Never the Terrain object; a '
+               'renderer owns every GL resource it builds from it',
+    'decals': 'projected decals, or None: (models (n, 16), params (n, 4)) float32 '
+              'from the logic thread\'s DecalTable -- each a box (the unit cube\'s '
+              'model matrix, column-major) and (texture variant, opacity, 0, 0); '
+              'drawn onto whatever lies inside the box',
     # Selection (same object as render_scene's primary_selection argument)
     'primary_selection': 'SelectionOverlay or None',
     # View settings
     'play_mode': 'bool: running game rather than editing',
+    'splitscreen_active': 'bool: two player views share the viewport; '
+                          'single-view GPU occlusion history must not run',
     'render_mode': 'one of engine.constants.RENDER_MODE_* (lit, unlit, wireframe, vertex)',
     'brush_display_mode': "the editor's Display box: 'Textured' (everything as "
                           "normal), 'Solid Lit' (brushes shaded, no textures), "
@@ -98,8 +106,10 @@ FRAME_INPUT = {
     'time': 'seconds since the view started, for editor-time animation',
     # Player presentation
     'show_glasses': 'bool: draw player glasses (portals mirror them)',
+    'spectator_glasses_active': 'bool: spectator appearances remain visible independently of normal player glasses',
     'player_glasses_positions': 'tuple of (x, y, z) per visible player',
     'player_glasses_sprites': 'tuple of sprite-texture keys, one per position',
+    'player_glasses_self_candidates': 'optional bool per pair: remote spectators cannot be mistaken for the viewer in mirrors',
 }
 
 
@@ -111,7 +121,9 @@ class RenderStats:
     """
     __slots__ = ('total_brushes', 'culled_brushes', 'visible_brushes', 'draw_calls',
                  'shadow_draw_calls', 'total_tris', 'visible_tris', 'batched_draws',
-                 'entity_candidates', 'culled_entities', 'pass_ms', 'details')
+                 'entity_candidates', 'culled_entities', 'pass_ms', 'details',
+                 'terrain_visible_chunks', 'terrain_culled_chunks',
+                 'terrain_triangles', 'terrain_drawn_slots')
     def __init__(self):
         #: CPU milliseconds spent submitting each pass this frame, measured by
         #: :func:`timed_pass`. Inclusive: a pass that draws others (portals,
@@ -129,6 +141,11 @@ class RenderStats:
         #: Sprite and model rows offered to the main view's entity passes,
         #: and how many of them its frustum rejected.
         self.entity_candidates = self.culled_entities = 0
+        #: What the terrain pass drew: chunks, chunks the frustum rejected,
+        #: triangles, and the table slots drawn, in draw order.
+        self.terrain_visible_chunks = self.terrain_culled_chunks = 0
+        self.terrain_triangles = 0
+        self.terrain_drawn_slots = ()
         self.pass_ms.clear()
 
 
@@ -247,14 +264,18 @@ class Renderer(Protocol):
     def draw_bullet_marks(self, projection, view, marks: Sequence[Mapping]) -> None:
         """Impact marks: ``{'pos': (x, y, z), 'alpha': float}`` each."""
 
-    def draw_connection_lines(self, projection, view, connections: Sequence[Mapping]) -> None:
-        """Editor I/O links: ``{'src', 'dst', 'color'}`` each."""
+    def draw_connection_lines(self, projection, view, segments, colours) -> None:
+        """Editor I/O links: ``segments`` (n, 2, 3) and ``colours`` (n, 3)
+        float32 (``engine.overlay_geometry.connection_segments``)."""
 
-    def draw_face_highlight(self, projection, view, brush: Mapping, face_name: str) -> None:
-        """Highlight one face of a brush (a brush dict in the world format)."""
+    def draw_face_highlight(self, projection, view, triangles) -> None:
+        """Highlight one face: world-space ``triangles`` (n, 3) float32
+        (``engine.overlay_geometry.face_highlight_triangles``)."""
 
     def draw_component_overlay(self, projection, view, overlay, version=None) -> None:
         """Vertex/edge/face handles from the editor's component controller."""
 
-    def draw_collision_visualization(self, projection, view, brushes: Sequence[Mapping]) -> None:
-        """Debug wireframes of collision boxes (``pos``/``size`` dicts)."""
+    def draw_collision_visualization(self, projection, view, vertices, runs) -> None:
+        """Debug wireframes of collision shapes: GL_LINES ``vertices`` (n, 3)
+        float32 and ``runs`` of ``(first, count, colour)``
+        (``engine.overlay_geometry.collision_wireframes``)."""

@@ -1,10 +1,19 @@
 import math
+import threading
+from itertools import chain
+
 import glm
 import numpy as np
 
 from .change_journal import touch
+from . import brush_placement as _placement
+from .brush_placement import shared_bulk_boxes, world_bounds, world_box
+from .mover_table import travel_range
 from .constants import is_water_brush, brush_aabb_bounds
-from .spatial import CELL_SIZE, CellIndex, authored_hidden, cells_of_points
+
+_chain = chain.from_iterable
+from .spatial import (CELL_SIZE, TIER_NEAR, CellIndex, authored_hidden,
+                      cells_of_points, tier_of)
 
 
 #: Quake 2's sv_gravity, in units per second squared, pulling down.
@@ -34,7 +43,7 @@ _EMPTY_LOS_ROWS = _LosRows(np.empty((0, 3)), np.empty((0, 3)), {}, {}, {}, {})
 
 #: Cell coordinates packed into one int64 so a batch of queries can find its
 #: cells with one ``searchsorted``. Coordinates are offset to be non-negative;
-#: 2**20 cells of 512 units either side of the origin is far beyond any map.
+#: Cells outside this range use exact coordinate lookups instead of packing.
 _CELL_OFFSET = 1 << 20
 _CELL_STRIDE = 1 << 21
 
@@ -44,67 +53,179 @@ def _cell_keys(cx, cz):
             + (np.asarray(cz, dtype=np.int64) + _CELL_OFFSET))
 
 
+def _vectors(vectors):
+    """``(n, 3)`` float64 of *n* 3-vectors: one flat pass; any vector of
+    another length falls back to reading each one's first three."""
+    count = len(vectors)
+    flat = np.fromiter(_chain(vectors), dtype=np.float64)
+    if flat.size != 3 * count:
+        flat = np.array([(v[0], v[1], v[2]) for v in vectors], dtype=np.float64)
+    return flat.reshape(count, 3)
+
+
 class _CellRows:
     """Every filed brush's box, grouped by cell, for batched point/box queries.
 
     The grid's buckets as flat arrays: ``keys`` (sorted packed cell coords),
     ``starts`` (``keys[i]``'s rows are ``rows[starts[i]:starts[i+1]]``) and
     ``lo``/``hi`` float64 boxes computed exactly as :meth:`SpatialGrid.raycast_down`
-    and :meth:`SpatialGrid.overlaps_wall` compute them, ``pos -/+ size * 0.5``.
-    Movers and doors keep their row but are re-read live on every query,
-    which is what the per-brush queries do.
+    and :meth:`SpatialGrid.overlaps_wall` compute them: each brush's derived
+    bounds (:func:`engine.brush_placement.world_bounds`).
+    Movers and doors keep their row, re-derived when a placement stamp says
+    something may have moved (:meth:`refresh_movers`).
     """
 
-    __slots__ = ('keys', 'starts', 'rows', 'lo', 'hi', 'movers', 'brushes')
+    __slots__ = ('keys', 'starts', 'rows', 'lo', 'hi', 'movers', 'brushes',
+                 '_unpacked_cells', '_mover_rows', '_seen', '_lock', '_mover_boxes',
+                 '_mover_at', '_asleep')
 
     def __init__(self, cells):
-        order = sorted(cells.items(), key=lambda kv: int(_cell_keys(kv[0][0], kv[0][1])))
+        # Packing is unique only inside the documented coordinate range.  A
+        # distant cell must not alias a nearer bucket, or overflow int64 while
+        # a grid is populated.  Such worlds keep exact Python-integer keys.
+        packable = all(-_CELL_OFFSET <= cx < _CELL_OFFSET
+                       and -_CELL_OFFSET <= cz < _CELL_OFFSET
+                       for cx, cz in cells)
+        order = (sorted(cells.items(),
+                        key=lambda kv: int(_cell_keys(kv[0][0], kv[0][1])))
+                 if packable else cells.items())
+        self._unpacked_cells = None if packable else {}
         row_of = {}
         brushes = []
         keys = []
         starts = [0]
         rows = []
         for (cx, cz), bucket in order:
-            keys.append(int(_cell_keys(cx, cz)))
+            if packable:
+                keys.append(int(_cell_keys(cx, cz)))
+            first = len(rows)
             for brush in bucket:
                 row = row_of.get(id(brush))
                 if row is None:
                     row = row_of[id(brush)] = len(brushes)
                     brushes.append(brush)
                 rows.append(row)
+            if not packable:
+                self._unpacked_cells[(cx, cz)] = tuple(rows[first:])
             starts.append(len(rows))
         self.keys = np.asarray(keys, dtype=np.int64)
         self.starts = np.asarray(starts, dtype=np.int64)
         self.rows = np.asarray(rows, dtype=np.int64)
+        # Every brush's derived bounds (world_bounds): a plain box's pos -/+
+        # size/2 read in bulk (one flat pass per column), then the few that
+        # need more -- planes, a mesh, a runtime transform -- in place.
         count = len(brushes)
-        self.lo = np.empty((count, 3), dtype=np.float64)
-        self.hi = np.empty((count, 3), dtype=np.float64)
+        centre = _vectors([b['pos'] for b in brushes])
+        half = _vectors([b['size'] for b in brushes]) * 0.5
+        self.lo = centre - half
+        self.hi = centre + half
         #: row -> the brush, for the per-brush predicates a caller still asks.
         self.brushes = brushes
         self.movers = []
         for row, brush in enumerate(brushes):
-            self._resolve(row, brush)
-            if brush.get('is_mover') or brush.get('is_door'):
-                self.movers.append((row, brush))
+            if ('geometry' in brush or '_mesh_bounds' in brush
+                    or 'is_mover' in brush or 'is_door' in brush):
+                if brush.get('is_mover') or brush.get('is_door'):
+                    self.movers.append((row, brush))
+                elif 'geometry' not in brush and '_mesh_bounds' not in brush:
+                    continue            # a flag set false: a plain box
+                self._resolve(row, brush)
+        self._mover_rows = np.asarray([row for row, _brush in self.movers],
+                                      dtype=np.intp)
+        #: The placement stamps the mover rows were last derived at; the
+        #: constructor just derived them, but at no recorded stamp.
+        self._seen = None
+        #: ``(brush_placement.asleep_version, rows)``: the mover rows that
+        #: are parked (see _resolve_asleep).
+        self._asleep = None
+        self._lock = threading.Lock()
+        # The gather shared with the collision rows (the same movers).
+        self._mover_boxes, self._mover_rows, self._mover_at = shared_bulk_boxes(
+            [brush for _row, brush in self.movers], self._mover_rows)
 
     def _resolve(self, row, brush):
-        pos = brush['pos']
-        size = brush['size']
-        for axis in range(3):
-            half = size[axis] * 0.5
-            self.lo[row, axis] = pos[axis] - half
-            self.hi[row, axis] = pos[axis] + half
+        # Planes, a mesh or a runtime transform: the resolver's bounds.
+        bounds = world_bounds(brush)
+        self.lo[row] = bounds[0:3]
+        self.hi[row] = bounds[3:6]
 
     def refresh_movers(self):
-        for row, brush in self.movers:
-            self._resolve(row, brush)
+        """Re-derive the movers' and doors' rows if anything they are derived
+        from may have changed (see :meth:`CollisionRows.refresh_movers`): two
+        integer reads when nothing has. Both the logic thread and the AI
+        thread query these rows, so the work is done under a lock and the
+        stamps it was done at are published last, as one tuple."""
+        movers = self.movers
+        if not movers:
+            return
+        seen = self._seen
+        if (seen is not None and seen[0] == _placement.runtime_generation
+                and seen[1] == _placement.authored_generation):
+            return
+        with self._lock:
+            stamps = (_placement.runtime_generation, _placement.authored_generation)
+            if self._seen == stamps:
+                return
+            # Gathered from the tables that hold them (brush_placement.BulkBoxes);
+            # world_bounds' arithmetic: centre -/+ half.
+            centre, half = self._mover_boxes.boxes()
+            rows = self._mover_rows
+            if self._mover_at is not None:
+                centre, half = centre[self._mover_at], half[self._mover_at]
+            self.lo[rows] = centre - half
+            self.hi[rows] = centre + half
+            self._seen = stamps
 
     def pairs(self, cx, cz):
-        """``(query, row)`` for every brush filed in each query's cell."""
+        """``(query, row)`` for every brush filed in each query's cell, and
+        every off-range mover or door (brush_placement.off_range) for every
+        query: one may be anywhere."""
+        query, rows = self._pairs_filed(cx, cz)
+        off = _off_range_filed()
+        if off and len(cx):
+            row_of = {id(brush): row for row, brush in self.movers}
+            extra = [row_of[id(b)] for b in off if id(b) in row_of]
+            if extra:
+                count = len(cx)
+                query = np.concatenate((query, np.repeat(np.arange(count, dtype=np.int64),
+                                                         len(extra))))
+                rows = np.concatenate((rows, np.tile(np.asarray(extra, dtype=np.int64), count)))
+        if _placement.asleep and len(rows):
+            self._resolve_asleep(rows)
+        return query, rows
+
+    def _resolve_asleep(self, rows):
+        """The parked movers and doors among *rows* (brush_placement.asleep):
+        nothing ticks them, so their boxes -- as the table last stored them
+        -- are worked out again for now, for the rows a query reaches."""
+        key = _placement.asleep_version
+        held = self._asleep
+        if held is None or held[0] != key:
+            asleep = _placement.asleep
+            mine = [row for row, brush in self.movers if id(brush) in asleep]
+            held = self._asleep = (key, np.asarray(mine, dtype=np.int64))
+        if not len(held[1]):
+            return
+        hit = np.unique(rows[np.isin(rows, held[1])])
+        if not len(hit):
+            return
+        with self._lock:
+            for row in hit.tolist():
+                bounds = world_bounds(self.brushes[row])
+                self.lo[row] = bounds[0:3]
+                self.hi[row] = bounds[3:6]
+
+    def _pairs_filed(self, cx, cz):
         count = len(cx)
-        if not len(self.keys) or not count:
+        if not len(self.rows) or not count:
             empty = np.empty(0, dtype=np.int64)
             return empty, empty
+        if (self._unpacked_cells is not None
+                or not (-_CELL_OFFSET <= cx.min()
+                        and cx.max() < _CELL_OFFSET
+                        and -_CELL_OFFSET <= cz.min()
+                        and cz.max() < _CELL_OFFSET)):
+            return self._pairs_unpacked(cx, cz)
         keys = _cell_keys(cx, cz)
         at = np.searchsorted(self.keys, keys)
         clipped = np.minimum(at, len(self.keys) - 1)
@@ -117,8 +238,93 @@ class _CellRows:
             np.cumsum(counts) - counts, counts)
         return query, self.rows[np.repeat(first, counts) + within]
 
+    def _pairs_unpacked(self, cx, cz):
+        """Rare large-coordinate queries, retaining query and bucket order."""
+        query = []
+        rows = []
+        exact = self._unpacked_cells
+        for index, (x, z) in enumerate(zip(cx, cz)):
+            if ((isinstance(x, (float, np.floating)) and not math.isfinite(x))
+                    or (isinstance(z, (float, np.floating)) and not math.isfinite(z))):
+                continue
+            coord = (int(x), int(z))
+            if exact is not None:
+                bucket = exact.get(coord, ())
+            elif (-_CELL_OFFSET <= coord[0] < _CELL_OFFSET
+                  and -_CELL_OFFSET <= coord[1] < _CELL_OFFSET):
+                key = ((coord[0] + _CELL_OFFSET) * _CELL_STRIDE
+                       + coord[1] + _CELL_OFFSET)
+                at = int(np.searchsorted(self.keys, key))
+                if at == len(self.keys) or self.keys[at] != key:
+                    continue
+                bucket = self.rows[self.starts[at]:self.starts[at + 1]]
+            else:
+                continue
+            query.extend([index] * len(bucket))
+            rows.extend(bucket)
+        return (np.asarray(query, dtype=np.int64),
+                np.asarray(rows, dtype=np.int64))
+
 
 _EMPTY_CELL_ROWS = _CellRows({})
+
+
+def _off_range_filed():
+    """The movers and doors that may be outside the travel range the grid
+    filed them for (brush_placement.off_range): every query adds them, as
+    they may be anywhere. Empty in most levels."""
+    off, moved = _placement.off_range, _placement.overridden
+    if not (off or moved):
+        return ()
+    found = {id(b): b for b in off.values() if '_travel_filed' in b}
+    found.update((id(b), b) for b in moved.values() if '_travel_filed' in b)
+    return tuple(found.values())
+
+
+def _off_range_overlaps(m_xmin, m_ymin, m_zmin, m_xmax, m_ymax, m_zmax):
+    for brush in _off_range_filed():
+        bx_min, by_min, bz_min, bx_max, by_max, bz_max = world_bounds(brush)
+        if (m_xmax > bx_min and m_xmin < bx_max and m_ymax > by_min and m_ymin < by_max
+                and m_zmax > bz_min and m_zmin < bz_max):
+            return True
+    return False
+
+
+class _BoxRows:
+    """What the per-query wall and floor tests read: for each cell, its
+    static brushes' float64 boxes as plain tuples ``(id, x0, y0, z0, x1, y1,
+    z1)`` -- copied from :class:`_CellRows`, so the per-query and the batched
+    tests read the same numbers -- and its movers and doors, resolved live.
+    Built with the cell rows and again when ``authored_generation`` moves
+    (an editor edit during play), so no query classifies a brush or works
+    out a static box again."""
+
+    __slots__ = ('stamp', 'statics', 'moving')
+
+    def __init__(self, cells, cell_rows, stamp):
+        self.stamp = stamp
+        lo = cell_rows.lo.tolist()
+        hi = cell_rows.hi.tolist()
+        row_of = {id(brush): row for row, brush in enumerate(cell_rows.brushes)}
+        statics, moving = {}, {}
+        for coord, bucket in cells.items():
+            still, live = [], []
+            for brush in bucket:
+                if brush.get('is_mover') or brush.get('is_door'):
+                    live.append(brush)
+                    continue
+                row = row_of[id(brush)]
+                a, b = lo[row], hi[row]
+                still.append((id(brush), a[0], a[1], a[2], b[0], b[1], b[2]))
+            if still:
+                statics[coord] = tuple(still)
+            if live:
+                moving[coord] = tuple(live)
+        self.statics = statics
+        self.moving = moving
+
+
+_EMPTY_BOX_ROWS = _BoxRows({}, _EMPTY_CELL_ROWS, None)
 
 
 class SpatialGrid:
@@ -192,6 +398,9 @@ class SpatialGrid:
         self._los_rows = _EMPTY_LOS_ROWS
         # What the batched point/box queries read, built with it.
         self._cell_rows = _EMPTY_CELL_ROWS
+        self._cell_stamp = None
+        # What the per-query wall and floor tests read (see _BoxRows).
+        self._box_rows = _EMPTY_BOX_ROWS
 
     def clear(self):
         self.navigation_revision += 1
@@ -200,6 +409,23 @@ class SpatialGrid:
         self.water_brushes.clear()
         self._los_rows = _EMPTY_LOS_ROWS
         self._cell_rows = _EMPTY_CELL_ROWS
+        self._cell_stamp = None
+        self._box_rows = _EMPTY_BOX_ROWS
+
+    def _boxes(self):
+        """The current :class:`_BoxRows`: rebuilt, with the cell rows, after
+        an authored edit (one integer read when there has been none)."""
+        rows = self._box_rows
+        stamp = _placement.authored_generation
+        if rows.stamp != stamp:
+            cell_rows = self._cell_rows
+            if self._cell_stamp != stamp:
+                cell_rows = _CellRows(self.cells)
+                self._cell_rows = cell_rows
+                self._cell_stamp = stamp
+            rows = _BoxRows(self.cells, cell_rows, stamp)
+            self._box_rows = rows
+        return rows
 
     # ------------------------------------------------------------------
     # Line-of-sight rows
@@ -293,24 +519,42 @@ class SpatialGrid:
 
             self._all_solid.append(brush)
 
-            pos = brush['pos']
-            size = brush['size']
-
-            # FIX: For mesh collision brushes, use the actual mesh bounds
-            if brush.get('_collision_mode') == 'mesh':
-                mesh_bounds = brush.get('_mesh_bounds')
-                if mesh_bounds:
-                    min_b, max_b = mesh_bounds
-                    pos = [(min_b[i] + max_b[i]) / 2.0 for i in range(3)]
-                    size = [max_b[i] - min_b[i] for i in range(3)]
-
-            self._index.insert(brush,
-                               pos[0] - size[0] * 0.5, pos[2] - size[2] * 0.5,
-                               pos[0] + size[0] * 0.5, pos[2] + size[2] * 0.5)
+            # Filed by its derived bounds (brush_placement): an angled
+            # brush's planes -- one rule in the editor and in play. A mover
+            # or door is filed for its whole travel (mover_table.travel_range:
+            # every centre its travel can give it, widened by its box, or by
+            # its box's radius if it turns) and for where it is now, so every
+            # cell it can reach finds it; the range it was filed for is kept
+            # with it, and a row that leaves it (a path, a restored placement,
+            # an edit in play) is marked off range by the mover table.
+            # (Membership tests first: most brushes carry none of these keys,
+            # and world_bounds itself handles a flag that is set false.)
+            if is_dynamic:
+                lo, hi, turns, reach = travel_range(brush)
+                lo_x, lo_y, lo_z, hi_x, hi_y, hi_z = world_bounds(brush)
+                # Everywhere its box can be on its travel (and where it is).
+                box = (min(lo_x, lo[0] - reach[0]), min(lo_y, lo[1] - reach[1]),
+                       min(lo_z, lo[2] - reach[2]), max(hi_x, hi[0] + reach[0]),
+                       max(hi_y, hi[1] + reach[1]), max(hi_z, hi[2] + reach[2]))
+                brush['_travel_filed'] = (lo, hi, turns, box)
+                self._index.insert(brush, box[0], box[2], box[3], box[5])
+            elif ('geometry' in brush or '_mesh_bounds' in brush
+                    or 'is_mover' in brush or 'is_door' in brush):
+                lo_x, _lo_y, lo_z, hi_x, _hi_y, hi_z = world_bounds(brush)
+                self._index.insert(brush, lo_x, lo_z, hi_x, hi_z)
+            else:       # a plain box: the box rule, inline
+                pos = brush['pos']
+                size = brush['size']
+                self._index.insert(brush,
+                                   pos[0] - size[0] * 0.5, pos[2] - size[2] * 0.5,
+                                   pos[0] + size[0] * 0.5, pos[2] + size[2] * 0.5)
 
         self._los_rows = self._build_los_rows()
+        # The per-query box rows are built from these when first asked for.
         self._cell_rows = _CellRows(self.cells)
         self.navigation_revision += 1
+        self._cell_stamp = _placement.authored_generation
+        self._box_rows = _EMPTY_BOX_ROWS
 
     # ------------------------------------------------------------------
     # Player queries  (unchanged API)
@@ -371,7 +615,11 @@ class SpatialGrid:
 
     def overlaps_wall(self, mx, my, mz, margin):
         """Check if a monster-sized box at (mx, my, mz) overlaps any solid brush.
-        Uses the grid to limit the search to nearby cells only."""
+        Uses the grid to limit the search to nearby cells only.
+
+        Static brushes are tested as the plain float64 boxes resolved for
+        their cells (:class:`_BoxRows`, the same numbers the batched query
+        reads); movers and doors are resolved now."""
         m_xmin = mx - margin
         m_xmax = mx + margin
         m_ymin = my
@@ -384,47 +632,47 @@ class SpatialGrid:
         min_cz = int(math.floor(m_zmin / self.cell_size))
         max_cz = int(math.floor(m_zmax / self.cell_size))
 
-        cells = self.cells
+        rows = self._boxes()
+        statics, moving = rows.statics, rows.moving
         if min_cx == max_cx and min_cz == max_cz:
             # Single-cell fast path: no de-duplication set needed.
-            for brush in cells.get((min_cx, min_cz), ()):
-                pos = brush['pos']
-                size = brush['size']
-                bx_min = pos[0] - size[0] * 0.5
-                bx_max = pos[0] + size[0] * 0.5
-                by_min = pos[1] - size[1] * 0.5
-                by_max = pos[1] + size[1] * 0.5
-                bz_min = pos[2] - size[2] * 0.5
-                bz_max = pos[2] + size[2] * 0.5
+            cell = (min_cx, min_cz)
+            for _bid, bx_min, by_min, bz_min, bx_max, by_max, bz_max in statics.get(cell, ()):
                 if (m_xmax > bx_min and m_xmin < bx_max and
                         m_ymax > by_min and m_ymin < by_max and
                         m_zmax > bz_min and m_zmin < bz_max):
                     return True
-            return False
+            for brush in moving.get(cell, ()):
+                bx_min, by_min, bz_min, bx_max, by_max, bz_max = world_bounds(brush)
+                if (m_xmax > bx_min and m_xmin < bx_max and
+                        m_ymax > by_min and m_ymin < by_max and
+                        m_zmax > bz_min and m_zmin < bz_max):
+                    return True
+            return _off_range_overlaps(m_xmin, m_ymin, m_zmin, m_xmax, m_ymax, m_zmax)
 
         seen = set()
         for cx in range(min_cx, max_cx + 1):
             for cz in range(min_cz, max_cz + 1):
-                for brush in cells.get((cx, cz), ()):
+                cell = (cx, cz)
+                for bid, bx_min, by_min, bz_min, bx_max, by_max, bz_max in statics.get(cell, ()):
+                    if bid in seen:
+                        continue
+                    seen.add(bid)
+                    if (m_xmax > bx_min and m_xmin < bx_max and
+                            m_ymax > by_min and m_ymin < by_max and
+                            m_zmax > bz_min and m_zmin < bz_max):
+                        return True
+                for brush in moving.get(cell, ()):
                     bid = id(brush)
                     if bid in seen:
                         continue
                     seen.add(bid)
-
-                    pos = brush['pos']
-                    size = brush['size']
-                    bx_min = pos[0] - size[0] * 0.5
-                    bx_max = pos[0] + size[0] * 0.5
-                    by_min = pos[1] - size[1] * 0.5
-                    by_max = pos[1] + size[1] * 0.5
-                    bz_min = pos[2] - size[2] * 0.5
-                    bz_max = pos[2] + size[2] * 0.5
-
+                    bx_min, by_min, bz_min, bx_max, by_max, bz_max = world_bounds(brush)
                     if (m_xmax > bx_min and m_xmin < bx_max and
-                        m_ymax > by_min and m_ymin < by_max and
-                        m_zmax > bz_min and m_zmin < bz_max):
+                            m_ymax > by_min and m_ymin < by_max and
+                            m_zmax > bz_min and m_zmin < bz_max):
                         return True
-        return False
+        return _off_range_overlaps(m_xmin, m_ymin, m_zmin, m_xmax, m_ymax, m_zmax)
 
     def _cells_along_ray(self, start, ray_dir, ray_len):
         """Every cell the ray's XZ projection crosses, start cell first.
@@ -598,22 +846,19 @@ class SpatialGrid:
 
     def raycast_down(self, x, z, start_y=10000.0):
         """Return Y of the highest solid brush surface below (x, z), or None.
-        Uses the grid — only checks brushes in the cell containing (x, z)."""
-        cx = int(math.floor(x / self.cell_size))
-        cz = int(math.floor(z / self.cell_size))
-        cell = (cx, cz)
-        brushes = self.cells.get(cell, [])
-
+        Uses the grid — only checks brushes in the cell containing (x, z).
+        Static brushes are read as their cell's resolved boxes
+        (:class:`_BoxRows`); movers and doors are resolved now."""
+        cell = (int(math.floor(x / self.cell_size)), int(math.floor(z / self.cell_size)))
+        rows = self._boxes()
         best_y = None
-        for brush in brushes:
-            pos = brush['pos']
-            size = brush['size']
-            bx_min = pos[0] - size[0] * 0.5
-            bx_max = pos[0] + size[0] * 0.5
-            bz_min = pos[2] - size[2] * 0.5
-            bz_max = pos[2] + size[2] * 0.5
-            by_max = pos[1] + size[1] * 0.5
-
+        for _bid, bx_min, _by_min, bz_min, bx_max, by_max, bz_max in rows.statics.get(cell, ()):
+            if bx_min <= x <= bx_max and bz_min <= z <= bz_max:
+                if by_max <= start_y:
+                    if best_y is None or by_max > best_y:
+                        best_y = by_max
+        for brush in chain(rows.moving.get(cell, ()), _off_range_filed()):
+            bx_min, _by_min, bz_min, bx_max, by_max, bz_max = world_bounds(brush)
             if bx_min <= x <= bx_max and bz_min <= z <= bz_max:
                 if by_max <= start_y:
                     if best_y is None or by_max > best_y:
@@ -669,8 +914,10 @@ class SpatialGrid:
                 return False
         elif not dense:
             return False
-        return self._los_walk(rows.moving_by_cell, coords,
-                              start, ray_dir, ray_len)
+        if not self._los_walk(rows.moving_by_cell, coords, start, ray_dir, ray_len):
+            return False
+        off = _off_range_filed()
+        return not off or self._los_walk({0: off}, (0,), start, ray_dir, ray_len)
 
     def _los_dense(self, start, ray_dir, ray_len, rows, coords):
         """Line of sight over the static rows, when there are enough of them.
@@ -823,6 +1070,86 @@ class SpatialGrid:
                 if t_min < limit:
                     return False
         return True
+
+
+# ---------------------------------------------------------------------------
+# Body orientation
+# ---------------------------------------------------------------------------
+# A body that rolls (``rolls``) turns by the distance it travels. Its
+# orientation is a unit quaternion -- (w, x, y, z), float64 so minutes of
+# rolling keep it unit length -- because rolls in different directions compose
+# as rotations, which adding Euler angles does not. It becomes the entity's
+# ``rotation`` (Fio's Y-X-Z Euler degrees) only to be drawn.
+
+def _quat_multiply(a, b):
+    aw, ax, ay, az = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+    bw, bx, by, bz = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+    return np.stack((
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    ), axis=1)
+
+
+def _axis_quat(axis, radians):
+    q = np.zeros((radians.shape[0], 4), dtype=np.float64)
+    q[:, 0] = np.cos(radians * 0.5)
+    q[:, 1 + axis] = np.sin(radians * 0.5)
+    return q
+
+
+def quat_from_rotation(rotation):
+    """Quaternions for Fio ``rotation`` rows ``[x, y, z]`` in degrees.
+
+    Fio draws a model with ``Ry(y) * Rx(x) * Rz(z)`` (see
+    ``engine.entity_table._model_transform_columns``); this is that product.
+    """
+    r = np.radians(np.asarray(rotation, dtype=np.float64).reshape(-1, 3))
+    return _quat_multiply(_quat_multiply(_axis_quat(1, r[:, 1]),
+                                         _axis_quat(0, r[:, 0])),
+                          _axis_quat(2, r[:, 2]))
+
+
+def rotation_from_quat(q):
+    """Fio ``rotation`` rows (Y-X-Z Euler degrees) for (N, 4) quaternions."""
+    q = np.asarray(q, dtype=np.float64).reshape(-1, 4)
+    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    r12 = 2.0 * (y * z - w * x)
+    pitch = np.arcsin(np.clip(-r12, -1.0, 1.0))
+    yaw = np.arctan2(2.0 * (x * z + w * y), 1.0 - 2.0 * (x * x + y * y))
+    roll = np.arctan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z))
+    # Looking straight up or down, the Y and Z turns are one turn: all yaw.
+    locked = np.abs(r12) > 0.999999
+    if np.any(locked):
+        yaw[locked] = np.arctan2(-2.0 * (x * z - w * y)[locked],
+                                 (1.0 - 2.0 * (y * y + z * z))[locked])
+        roll[locked] = 0.0
+    return np.degrees(np.stack((pitch, yaw, roll), axis=1))
+
+
+def _rolled(q, velocity, radius, dt):
+    """Quaternions *q* turned as bodies of *radius* roll at *velocity* for *dt*.
+
+    Rolling without slipping turns a body ``|v_horizontal| * dt / r`` radians
+    about ``(vz, 0, -vx)``, the horizontal axis square to its motion -- its
+    spin is read from its speed, so there is no spin to simulate.
+    """
+    vx = velocity[:, 0].astype(np.float64)
+    vz = velocity[:, 2].astype(np.float64)
+    speed = np.hypot(vx, vz)
+    moving = speed > 1e-9
+    half = 0.5 * speed * float(dt) / np.maximum(radius.astype(np.float64), 1e-6)
+    s = np.sin(half) / np.where(moving, speed, 1.0)
+    turn = np.zeros((q.shape[0], 4), dtype=np.float64)
+    turn[:, 0] = np.cos(half)
+    turn[:, 1] = vz * s
+    turn[:, 3] = -vx * s
+    turn[~moving] = (1.0, 0.0, 0.0, 0.0)
+    # The axis is fixed in the world, so the turn is applied on the left.
+    out = _quat_multiply(turn, q)
+    out /= np.linalg.norm(out, axis=1, keepdims=True)
+    return out
 
 
 class PhysicsBody:
@@ -989,6 +1316,41 @@ class PhysicsWorld:
     MAX_STEP = np.float32(0.05)
     REST_SPEED = np.float32(1.0)
 
+    #: The share of its ``friction`` a body that ``rolls`` loses to the ground:
+    #: rolling loses far less speed than sliding.
+    ROLLING_FRICTION_SCALE = 0.05
+    #: Mass at and above which a body is heavy: it does not bounce, and the
+    #: player cannot push it -- it pushes the player instead, and crushes a
+    #: player it drives into a wall. A body of mass 1 or less bounces by its
+    #: full ``bounciness``; between the two the bounce fades linearly.
+    HEAVY_MASS = 10.0
+    #: A rebound slower than this (units per second) is not a bounce: the
+    #: body settles instead of chattering on the floor.
+    MIN_BOUNCE_SPEED = 60.0
+    #: A heavy body moving into the player faster than this (units per
+    #: second) crushes them if it pins them against a wall.
+    CRUSH_SPEED = 5.0
+    #: Damage a crushing body does: enough to kill through any armour. God
+    #: mode still stops it, as it stops all player damage.
+    CRUSH_DAMAGE = 100000
+
+    @classmethod
+    def restitution(cls, bounciness, mass):
+        """The share of impact speed a body keeps when it bounces.
+
+        *bounciness* (0..1) is what the author asked for; *mass* takes it away,
+        to nothing at :data:`HEAVY_MASS`. Scalars or arrays.
+        """
+        bounciness = np.clip(np.asarray(bounciness, dtype=np.float32), 0.0, 1.0)
+        mass = np.asarray(mass, dtype=np.float32)
+        weight = np.clip((cls.HEAVY_MASS - mass) / (cls.HEAVY_MASS - 1.0), 0.0, 1.0)
+        return (bounciness * weight).astype(np.float32)
+
+    def _bounce_speed(self, impact_speed, coefficient):
+        """Rebound speed for an impact, or 0 where it is too slow to bounce."""
+        rebound = np.asarray(impact_speed, dtype=np.float32) * coefficient
+        return np.where(rebound > self.MIN_BOUNCE_SPEED, rebound, 0.0).astype(np.float32)
+
     # Runtime physics controls. Entity-authored mass/friction/damping remain
     # intact; these values provide global tuning/debug controls for play mode.
     DEFAULT_TIME_SCALE = np.float32(1.0)
@@ -1015,6 +1377,7 @@ class PhysicsWorld:
         self._physics_enabled = np.empty(0, dtype=np.bool_)
         self._awake = np.empty(0, dtype=np.bool_)
         self._kinematic = np.empty(0, dtype=np.bool_)
+        self._clear_rolling()
         self._dirty = False
         self._static_cells = {}
         self._static_query_cache = {}
@@ -1047,36 +1410,42 @@ class PhysicsWorld:
         self._physics_enabled = np.empty(0, dtype=np.bool_)
         self._awake = np.empty(0, dtype=np.bool_)
         self._kinematic = np.empty(0, dtype=np.bool_)
+        self._clear_rolling()
         self._static_cells.clear()
         self._static_query_cache.clear()
         self._reported_cell = None
         self._dirty = False
 
+    def _clear_rolling(self):
+        #: Turns by the distance it travels (``rolls``).
+        self._rolls = np.empty(0, dtype=np.bool_)
+        #: Fraction of impact speed kept on a bounce: bounciness faded by mass.
+        self._bounce = np.empty(0, dtype=np.float32)
+        #: Rolling bodies' orientation, (w, x, y, z); identity for the rest.
+        self._orientation = np.empty((0, 4), dtype=np.float64)
+        # Set at pack time: a world with nothing rolling, bouncy or heavy --
+        # most maps -- never enters that code.
+        self._any_rolls = False
+        self._any_bounce = False
+        self._any_heavy = False
+        #: Set when a heavy body pins the player against a wall; the logic
+        #: thread applies the damage and clears it.
+        self.player_crushed = False
+        #: Set by rebuild(): the first step wakes floating NEAR bodies.
+        self._wake_floating_pending = False
+
     @staticmethod
     def _shape_from_brush(entity, brush):
-        bounds = brush.get('_mesh_bounds') if brush.get('_collision_mode') == 'mesh' else None
-        if bounds:
-            min_v, max_v = bounds
-            center = np.array(
-                [(float(min_v[i]) + float(max_v[i])) * 0.5 for i in range(3)],
-                dtype=np.float32,
-            )
-            size = np.array(
-                [float(max_v[i]) - float(min_v[i]) for i in range(3)],
-                dtype=np.float32,
-            )
-        else:
-            center = np.asarray(
-                brush.get('pos', (0.0, 0.0, 0.0)), dtype=np.float32
-            )
-            size = np.asarray(
-                brush.get('size', (64.0, 64.0, 64.0)), dtype=np.float32
-            )
-
+        # The body is the brush's derived box (brush_placement) -- an angled
+        # brush's planes, not its pos/size copy. Still a box: a true-shape
+        # body is Stage 2e.
+        box = world_box(brush)
+        center = np.asarray(box[0:3], dtype=np.float32)
+        half = np.asarray(box[3:6], dtype=np.float32)
         origin = np.asarray(
             getattr(entity, 'pos', (0.0, 0.0, 0.0)), dtype=np.float32
         )
-        return size * np.float32(0.5), center - origin
+        return half, center - origin
 
     def register_body(self, entity, brush, rest_callback=None):
         """Register one body; state is packed once before the next tick."""
@@ -1104,6 +1473,10 @@ class PhysicsWorld:
             np.asarray(props.get('drop_angular_velocity', [0.0, 0.0, 0.0]), dtype=np.float32),
             not bool(props.get('no_collision', True)),
             bool(props.get('physics_enabled', False)),
+            bool(props.get('rolls', False)),
+            float(self.restitution(_float(props.get('bounciness'), 0.0),
+                                   _float(props.get('mass'), 1.0)))
+            if props.get('bounciness') else 0.0,
         )
         self._dirty = True
         return body
@@ -1129,12 +1502,16 @@ class PhysicsWorld:
         self._physics_enabled = np.empty(n, dtype=np.bool_)
         self._awake = np.zeros(n, dtype=np.bool_)
         self._kinematic = np.zeros(n, dtype=np.bool_)
+        self._rolls = np.zeros(n, dtype=np.bool_)
+        self._bounce = np.zeros(n, dtype=np.float32)
+        self._orientation = np.zeros((n, 4), dtype=np.float64)
+        self._orientation[:, 0] = 1.0
 
         for i, entity in enumerate(self._entities):
             body = self.bodies[id(entity)]
             (
                 position, half, offset, mass, friction, damping, gravity,
-                angular_velocity, solid, physics_enabled,
+                angular_velocity, solid, physics_enabled, rolls, bounce,
             ) = body._initial
             self._indices[id(entity)] = i
             self._position[i] = position
@@ -1147,8 +1524,27 @@ class PhysicsWorld:
             self._angular_velocity[i] = angular_velocity
             self._solid[i] = solid
             self._physics_enabled[i] = physics_enabled
+            self._rolls[i] = rolls
+            self._bounce[i] = bounce
+            if rolls:
+                # A rolling body's turn comes from its rolling, not a fixed spin.
+                self._angular_velocity[i] = 0.0
+                self._orientation[i] = self._entity_orientation(entity)
 
+        self._any_rolls = bool(self._rolls.any())
+        self._any_bounce = bool(self._bounce.any())
+        self._any_heavy = bool(np.any(
+            self._physics_enabled & self._solid & (self._mass >= self.HEAVY_MASS)))
         self._dirty = False
+
+    @staticmethod
+    def _entity_orientation(entity):
+        props = getattr(entity, 'properties', None)
+        rotation = props.get('rotation') if isinstance(props, dict) else None
+        try:
+            return quat_from_rotation(rotation)[0]
+        except (TypeError, ValueError):
+            return np.array([1.0, 0.0, 0.0, 0.0])
 
     def get_body(self, entity):
         self._pack()
@@ -1170,6 +1566,9 @@ class PhysicsWorld:
         )
 
         self._kinematic[index] = value
+        if self._any_rolls and self._rolls[index]:
+            # Carrying turns a model with the player; roll on from there.
+            self._orientation[index] = self._entity_orientation(entity)
         if value:
             self._velocity[index] = 0.0
             self._awake[index] = False
@@ -1325,6 +1724,72 @@ class PhysicsWorld:
                 props['rotation'] = rotation
                 touch(entity)
 
+    def _bodies_block_player(self, player, ppos, player_half, rows):
+        """Move the player out of the bodies in *rows* they still overlap."""
+        center = self._position + self._offset
+        overlap = rows & np.all(
+            (center + self._half > ppos - player_half)
+            & (center - self._half < ppos + player_half), axis=1)
+        if np.any(overlap):
+            self._push_player_out(player, ppos, player_half, center,
+                                  np.flatnonzero(overlap), carry=False)
+
+    def _push_player_out(self, player, ppos, player_half, center, rows, carry=True):
+        """Bodies in *rows* overlapping the player shove the player out.
+
+        The player goes out along whichever horizontal axis overlaps least, and
+        a body moving into the player carries them along at its own speed. If
+        that leaves the player inside a wall, the body has pinned them there:
+        :attr:`player_crushed`. Without *carry* the player is only stopped.
+        """
+        for i in rows:
+            dx = float(ppos[0] - center[i, 0])
+            dz = float(ppos[2] - center[i, 2])
+            overlap_x = float(player_half[0] + self._half[i, 0]) - abs(dx)
+            overlap_z = float(player_half[2] + self._half[i, 2]) - abs(dz)
+            axis, delta, out = ((0, dx, overlap_x) if overlap_x <= overlap_z
+                                else (2, dz, overlap_z))
+            direction = 1.0 if delta >= 0.0 else -1.0
+            ppos[axis] += direction * (out + 0.5)
+            body_speed = float(self._velocity[i, axis])
+            if carry and body_speed * direction > 0.0:
+                if axis == 0:
+                    player.velocity.x = body_speed
+                else:
+                    player.velocity.z = body_speed
+                if (body_speed * direction > self.CRUSH_SPEED
+                        and self._player_in_wall(ppos, player_half)):
+                    self.player_crushed = True
+        player.pos = glm.vec3(float(ppos[0]), float(ppos[1]), float(ppos[2]))
+
+    def _player_in_wall(self, ppos, player_half):
+        """Whether the player's box, short of its feet and head, is in a wall."""
+        cell_size = float(self.spatial_grid.cell_size)
+        aabbs = self._candidate_aabbs(int(math.floor(float(ppos[0]) / cell_size)),
+                                      int(math.floor(float(ppos[2]) / cell_size)))
+        if aabbs is None:
+            return False
+        # Trimmed top and bottom so the floor stood on and a low ceiling are
+        # not walls.
+        lo = np.array([ppos[0] - player_half[0], ppos[1] - player_half[1] + 8.0,
+                       ppos[2] - player_half[2]], dtype=np.float32)
+        hi = np.array([ppos[0] + player_half[0], ppos[1] + player_half[1] - 8.0,
+                       ppos[2] + player_half[2]], dtype=np.float32)
+        return bool(np.any(np.all((aabbs[:, 3:] > lo) & (aabbs[:, :3] < hi), axis=1)))
+
+    def _roll(self, rows, dt):
+        """Turn rolling bodies by how far they rolled this step."""
+        radius = np.min(self._half[rows], axis=1)
+        orientation = _rolled(
+            self._orientation[rows], self._velocity[rows], radius, dt)
+        self._orientation[rows] = orientation
+        for i, rotation in zip(rows, rotation_from_quat(orientation).tolist()):
+            entity = self._entities[int(i)]
+            props = getattr(entity, 'properties', None)
+            if isinstance(props, dict):
+                props['rotation'] = rotation
+                touch(entity)
+
     def _sync_entities(self, indices=None):
         # Position only. Rotation is integrated (angular * dt) in step();
         # applying angular velocity here as well spun bodies ~61x too fast.
@@ -1345,24 +1810,7 @@ class PhysicsWorld:
             for brush in brushes:
                 if brush.get('_physics_body'):
                     continue
-                bounds = brush.get('_mesh_bounds') if brush.get('_collision_mode') == 'mesh' else None
-                if bounds:
-                    lo, hi = bounds
-                    rows.append([
-                        float(lo[0]), float(lo[1]), float(lo[2]),
-                        float(hi[0]), float(hi[1]), float(hi[2]),
-                    ])
-                else:
-                    pos = brush.get('pos', (0.0, 0.0, 0.0))
-                    size = brush.get('size', (0.0, 0.0, 0.0))
-                    rows.append([
-                        float(pos[0]) - float(size[0]) * 0.5,
-                        float(pos[1]) - float(size[1]) * 0.5,
-                        float(pos[2]) - float(size[2]) * 0.5,
-                        float(pos[0]) + float(size[0]) * 0.5,
-                        float(pos[1]) + float(size[1]) * 0.5,
-                        float(pos[2]) + float(size[2]) * 0.5,
-                    ])
+                rows.append(world_bounds(brush))
             if rows:
                 cells[key] = np.asarray(rows, dtype=np.float32)
         self._static_cells = cells
@@ -1379,6 +1827,94 @@ class PhysicsWorld:
 
         self._pack()
         self._rebuild_static_cells()
+        self._settle_sunk_bodies()
+        # Waking what floats waits for the first step: simulation tiers are
+        # stamped after the world is built (Big World's play_start).
+        self._wake_floating_pending = True
+
+    def _wake_floating_near_bodies(self):
+        """Wake every body in the NEAR simulation tier with nothing under it.
+
+        Bodies start asleep and wake when touched, so one placed in the air
+        hung there until then. Only what floats is woken -- a body already
+        resting stays asleep, rather than settling straight back and firing
+        OnRest as play starts -- and only NEAR: a body further out keeps until
+        it is touched. An unclassified world is all NEAR.
+        """
+        candidates = self._physics_enabled & self._solid & ~self._kinematic & ~self._awake
+        rows = np.flatnonzero(candidates)
+        if rows.size == 0:
+            return
+        near = np.fromiter(
+            (tier_of(self._entities[int(i)]) == TIER_NEAR
+             and not getattr(self._entities[int(i)], 'properties', {}).get('disabled', False)
+             for i in rows), dtype=np.bool_, count=rows.size)
+        rows = rows[near]
+        if rows.size == 0:
+            return
+        centre = (self._position[rows] + self._offset[rows]).astype(np.float64)
+        bottom = centre[:, 1] - self._half[rows, 1].astype(np.float64)
+        support = self._floor_tops_at(centre[:, 0], centre[:, 2], bottom + 1.0)
+        if support is None:
+            return
+        self._awake[rows[support < bottom - 1.0]] = True
+
+    def _settle_sunk_bodies(self):
+        """Lift each body that starts sunk into a floor up onto its surface.
+
+        A body finds its floor by casting down from just above its bottom, so
+        a floor it starts inside is never seen, and it drops through the
+        moment it wakes. A model whose origin is its centre -- a ball placed at
+        floor height -- starts half inside the floor. Once per rebuild, a body
+        resting on nothing whose centre stands over a floor top between its
+        bottom and its centre is raised to rest on it. A body already standing
+        on a floor is left alone, even against a low wall it overlaps: in
+        motion a floor top above the bottom is a wall, not a floor.
+        """
+        rows = np.flatnonzero(self._physics_enabled & self._solid)
+        if rows.size == 0:
+            return
+        centre = (self._position[rows] + self._offset[rows]).astype(np.float64)
+        bottom = centre[:, 1] - self._half[rows, 1].astype(np.float64)
+        # One query for every body: the floor under its centre, and whatever
+        # it already stands on.
+        xs = np.concatenate((centre[:, 0], centre[:, 0]))
+        zs = np.concatenate((centre[:, 2], centre[:, 2]))
+        ys = np.concatenate((centre[:, 1], bottom + 1.0))
+        tops = self._floor_tops_at(xs, zs, ys)
+        if tops is None:
+            return
+        floor, support = tops[:rows.size], tops[rows.size:]
+        lift = (floor > bottom) & (floor <= centre[:, 1]) & (support < bottom - 1.0)
+        if np.any(lift):
+            lifted = rows[lift]
+            self._position[lifted, 1] += (floor[lift] - bottom[lift]).astype(np.float32)
+            self._sync_entities(lifted)
+
+    def _floor_tops_at(self, xs, zs, ys):
+        """The highest floor top at or below each point, or -inf; None without
+        a grid that can answer. Grouped only where it pays: below the measured
+        crossover (FLOOR_BATCH_MIN_BODIES) a raycast per point is cheaper than
+        assembling the grouped query."""
+        if xs.size >= self.FLOOR_BATCH_MIN_BODIES and self._can_group_floor_queries():
+            return self._floor_tops(xs, zs, ys)
+        return self._floor_tops_scalar(xs, zs, ys)
+
+    def _floor_tops_scalar(self, xs, zs, ys):
+        """:meth:`_floor_tops` one ``raycast_down`` at a time: for few points,
+        or a grid that traces its own way (a test double); None without one."""
+        raycast = getattr(self.spatial_grid, 'raycast_down', None)
+        if raycast is None:
+            return None
+        tops = np.full(xs.size, -np.inf)
+        for k in range(xs.size):
+            try:
+                floor = raycast(float(xs[k]), float(zs[k]), float(ys[k]))
+            except Exception:
+                floor = None
+            if floor is not None:
+                tops[k] = float(floor)
+        return tops
 
     def _candidate_aabbs(self, cell_x, cell_z):
         key = (cell_x, cell_z)
@@ -1406,14 +1942,27 @@ class PhysicsWorld:
         self._static_query_cache[key] = result
         return result
 
-    def _batch_static_collision(self, axis, old_position):
-        """Resolve one horizontal axis with vectorised AABB tests per cell group."""
+    def _batch_static_collision(self, axis, old_position, rows=None, pushed_from=None):
+        """Resolve one axis with vectorised AABB tests per cell group.
+
+        A body that ends up in a wall goes back to *old_position* on this axis
+        and stops, or bounces off by its bounciness. *rows* limits the test to
+        some bodies: the vertical axis is tested only for bodies on their way
+        up, so nothing rises into a ceiling.
+
+        *pushed_from* is where the player's push this step started each body
+        from (NaN where it did not push it): a push into a wall is undone with
+        the rest of the move -- unless the body was already in a wall before
+        it, when it may still be pushed out.
+        """
         active = (
             self._physics_enabled
             & self._awake
             & ~self._kinematic
             & self._solid
         )
+        if rows is not None:
+            active &= rows
         indices = np.flatnonzero(active)
         if indices.size == 0:
             return
@@ -1428,6 +1977,8 @@ class PhysicsWorld:
         )
 
         collision = np.zeros(indices.size, dtype=np.bool_)
+        # Pushed bodies that were clear of every wall before the push.
+        clear_before_push = np.zeros(indices.size, dtype=np.bool_)
 
         for group_id, key in enumerate(unique_cells):
             local_indices = np.flatnonzero(inverse == group_id)
@@ -1457,10 +2008,31 @@ class PhysicsWorld:
 
             collision[local_indices] |= hit
 
+            if pushed_from is not None:
+                was_pushed = hit & ~np.isnan(pushed_from[bi, 0])
+                if np.any(was_pushed):
+                    pmin = pushed_from[bi] + self._offset[bi] - half
+                    pmax = pushed_from[bi] + self._offset[bi] + half
+                    before = (
+                        (pmax[:, None, :] > cmin[None, :, :])
+                        & (pmin[:, None, :] < cmax[None, :, :])
+                    ).all(axis=2).any(axis=1)
+                    clear_before_push[local_indices] |= was_pushed & ~before
+
         if np.any(collision):
             hit_indices = indices[collision]
-            self._position[hit_indices, axis] = old_position[hit_indices, axis]
-            self._velocity[hit_indices, axis] = 0.0
+            target = old_position[hit_indices, axis]
+            if pushed_from is not None:
+                undo = clear_before_push[collision]
+                target = np.where(undo, pushed_from[hit_indices, axis], target)
+            self._position[hit_indices, axis] = target
+            if self._any_bounce:
+                # Bounce off the wall if bouncy enough.
+                hit_velocity = self._velocity[hit_indices, axis]
+                self._velocity[hit_indices, axis] = -np.sign(hit_velocity) * self._bounce_speed(
+                    np.abs(hit_velocity), self._bounce[hit_indices])
+            else:
+                self._velocity[hit_indices, axis] = 0.0
 
     def _batch_floor(self, previous_bottom=None):
         """Find the floor beneath each active dynamic body.
@@ -1536,11 +2108,24 @@ class PhysicsWorld:
         px, pz, bottom = self._support_offsets(indices)
         ray_y = np.maximum(bottom, previous_bottom[indices].astype(np.float64)) + 1.0
 
-        samples = px.size
-        flat_x = px.ravel()
-        flat_z = pz.ravel()
-        flat_y = np.repeat(ray_y, px.shape[1])
+        best = self._floor_tops(px.ravel(), pz.ravel(), np.repeat(ray_y, px.shape[1]))
 
+        per_body = best.reshape(px.shape).max(axis=1)
+        hit = per_body > -np.inf
+        if hit.any():
+            floors[indices[hit]] = per_body[hit].astype(np.float32)
+        return floors
+
+    def _floor_tops(self, flat_x, flat_z, flat_y):
+        """The highest brush top at or below each point (x, z, y), or -inf.
+
+        What ``SpatialGrid.raycast_down`` answers for one point, for many at
+        once: the points are grouped by grid cell and each cell's brushes are
+        tested against all its points in one broadcast, so the Python work is
+        one step per distinct cell. Only for a stock grid
+        (:meth:`_can_group_floor_queries`).
+        """
+        samples = flat_x.size
         cell_size = float(self.spatial_grid.cell_size)
         cx = np.floor(flat_x / cell_size).astype(np.int64)
         cz = np.floor(flat_z / cell_size).astype(np.int64)
@@ -1579,12 +2164,7 @@ class PhysicsWorld:
             if not inside.any():
                 continue
             best[sel] = np.where(inside, top_y[None, :], -np.inf).max(axis=1)
-
-        per_body = best.reshape(px.shape).max(axis=1)
-        hit = per_body > -np.inf
-        if hit.any():
-            floors[indices[hit]] = per_body[hit].astype(np.float32)
-        return floors
+        return best
 
     @staticmethod
     def _cell_bounds(brushes):
@@ -1601,17 +2181,14 @@ class PhysicsWorld:
         kept = 0
         for brush in brushes:
             try:
-                pos = brush['pos']
-                size = brush['size']
-                x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
-                sx, sy, sz = float(size[0]), float(size[1]), float(size[2])
+                b = world_bounds(brush)
             except (KeyError, TypeError, ValueError, IndexError):
                 continue
-            lo_x[kept] = x - sx * 0.5
-            hi_x[kept] = x + sx * 0.5
-            lo_z[kept] = z - sz * 0.5
-            hi_z[kept] = z + sz * 0.5
-            top_y[kept] = y + sy * 0.5
+            lo_x[kept] = b[0]
+            hi_x[kept] = b[3]
+            lo_z[kept] = b[2]
+            hi_z[kept] = b[5]
+            top_y[kept] = b[4]
             kept += 1
         if kept == 0:
             return None
@@ -1683,6 +2260,9 @@ class PhysicsWorld:
         self._pack()
         if not self._entities:
             return
+        if self._wake_floating_pending:
+            self._wake_floating_pending = False
+            self._wake_floating_near_bodies()
 
         base_dt = float(delta) or 1.0 / 60.0
         scale = max(0.0, float(self.time_scale))
@@ -1690,6 +2270,10 @@ class PhysicsWorld:
         active = self._physics_enabled & ~self._kinematic
         active &= ~self._disabled_mask(active)
 
+        # Where the player's push started each body it pushed (NaN for the
+        # rest): a push into a wall is undone with the rest of the move.
+        pushed_from = None
+        pushed = None
         if player is not None:
             ppos = np.asarray(getattr(player, 'pos', (0.0, 0.0, 0.0)), dtype=np.float32)
             ph = getattr(player, '_half', None)
@@ -1724,6 +2308,13 @@ class PhysicsWorld:
                 (body_min[:, 2] < player_max[2])
             )
             pushable = active & self._solid & ~self._kinematic & overlap
+            if self._any_heavy:
+                # The player cannot push a heavy body: it pushes the player.
+                heavy = pushable & (self._mass >= self.HEAVY_MASS)
+                if np.any(heavy):
+                    pushable &= ~heavy
+                    self._push_player_out(player, ppos, player_half, center,
+                                          np.flatnonzero(heavy))
             speed = float(np.hypot(player_velocity[0], player_velocity[2]))
             if speed >= 0.01 and np.any(pushable):
                 dx = center[:, 0] - ppos[0]
@@ -1738,6 +2329,8 @@ class PhysicsWorld:
                 x_dir = np.where(dx >= 0.0, 1.0, -1.0).astype(np.float32)
                 z_dir = np.where(dz >= 0.0, 1.0, -1.0).astype(np.float32)
 
+                pushed_from = np.full_like(self._position, np.nan)
+                pushed_from[pushable] = self._position[pushable]
                 self._position[x_indices, 0] += x_dir[x_indices] * (overlap_x[x_indices] + 0.5)
                 self._position[z_indices, 2] += z_dir[z_indices] * (overlap_z[z_indices] + 0.5)
 
@@ -1750,6 +2343,7 @@ class PhysicsWorld:
                     target_z[z_indices], np.abs(self._velocity[z_indices, 2])
                 )
                 self._awake[pushable] = True
+                pushed = pushable
 
         moving = active & self._awake
         if np.any(moving):
@@ -1775,12 +2369,16 @@ class PhysicsWorld:
             previous_bottom = old_center[:, 1] - self._half[:, 1]
 
             self._position[moving, 0] += self._velocity[moving, 0] * dt
-            self._batch_static_collision(0, old_position)
+            self._batch_static_collision(0, old_position, pushed_from=pushed_from)
 
             self._position[moving, 2] += self._velocity[moving, 2] * dt
-            self._batch_static_collision(2, old_position)
+            self._batch_static_collision(2, old_position, pushed_from=pushed_from)
 
             self._position[moving, 1] += self._velocity[moving, 1] * dt
+            rising = moving & (self._velocity[:, 1] > 0.0)
+            if np.any(rising):
+                # Nothing rises into a ceiling.
+                self._batch_static_collision(1, old_position, rising)
             floors = self._batch_floor(previous_bottom)
             new_center = self._position + self._offset
             new_bottom = new_center[:, 1] - self._half[:, 1]
@@ -1793,15 +2391,27 @@ class PhysicsWorld:
                     - self._offset[landed, 1]
                     + self._half[landed, 1]
                 )
-                self._velocity[landed, 1] = 0.0
+                if self._any_bounce:
+                    # Bounce back up if bouncy enough.
+                    self._velocity[landed, 1] = self._bounce_speed(
+                        np.maximum(-self._velocity[landed, 1], 0.0),
+                        self._bounce[landed])
+                else:
+                    self._velocity[landed, 1] = 0.0
 
                 # Treat friction as a surface coefficient rather than a tiny
-                # per-frame damping term. Apply it only while grounded.
+                # per-frame damping term. Apply it only while grounded. A
+                # rolling body loses only a little of its speed to the ground.
                 friction_accel = (
                     self._friction[landed]
                     * np.float32(max(0.0, float(self.friction_scale)))
                     * np.float32(abs(float(self.gravity)))
                 )
+                if self._any_rolls:
+                    friction_accel = friction_accel * np.where(
+                        self._rolls[landed],
+                        np.float32(self.ROLLING_FRICTION_SCALE),
+                        np.float32(1.0))
                 ground_speed = np.hypot(
                     self._velocity[landed, 0],
                     self._velocity[landed, 2],
@@ -1818,12 +2428,22 @@ class PhysicsWorld:
             if np.any(angular):
                 self._integrate_rotation(angular, dt)
 
+            if self._any_rolls:
+                rolling_rows = np.flatnonzero(
+                    moving & self._rolls
+                    & ((self._velocity[:, 0] != 0.0) | (self._velocity[:, 2] != 0.0)))
+                if rolling_rows.size:
+                    self._roll(rolling_rows, dt)
+
             speed = np.max(np.abs(self._velocity), axis=1)
             sleeping = (
                 self.sleep_enabled
                 & moving
                 & (speed < self.REST_SPEED)
             )
+            if self._any_bounce:
+                # A bounce is momentarily still at the top of its arc.
+                sleeping &= landed
             if np.any(sleeping):
                 self._velocity[sleeping] = 0.0
                 rest_indices = np.flatnonzero(sleeping)
@@ -1836,6 +2456,17 @@ class PhysicsWorld:
 
             self._sync_entities(np.flatnonzero(moving))
 
+        if pushed is not None and player is not None:
+            # A body the player pushed but a wall held: the player stops at it.
+            self._bodies_block_player(player, ppos, player_half, pushed)
+
+
+
+def _float(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def world_gravity(world=None):

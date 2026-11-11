@@ -1,3 +1,4 @@
+from engine.asset_qt import load_icon
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, 
                              QMenu, QAction, QHeaderView, QAbstractItemView, 
                              QPushButton, QHBoxLayout, QLabel, QFrame, QGridLayout,
@@ -5,9 +6,10 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
 from PyQt5.QtGui import QIcon, QColor, QBrush, QFont, QPainter, QPixmap
 from PyQt5 import QtCore
 import re
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QEvent
 
 from engine.change_journal import touch
+from editor.selection import SelectionLookup
 
 
 try:
@@ -35,6 +37,7 @@ class SceneHierarchy(QWidget):
         self.main_window = main_window
         self.sort_mode = self.SORT_DEFAULT
         self._highlighted_item = None
+        self._highlight_backgrounds = None
         self._highlight_timer = QTimer(self)
         self._highlight_timer.setSingleShot(True)
         self._highlight_timer.timeout.connect(self._clear_highlight)
@@ -159,18 +162,22 @@ class SceneHierarchy(QWidget):
         # Configure tree widget
         self.tree.header().setVisible(False) 
         self.tree.header().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.tree.setColumnCount(2)
+        # One column: tag, hidden and lock indicators are the item's icon, so
+        # they sit left of the name and stay visible at any width; a long
+        # name is elided instead.
+        self.tree.setColumnCount(1)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-        self.tree.setColumnWidth(1, 48)
         self.tree.setIconSize(QtCore.QSize(44, 20))
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.open_menu)
-        self.lock_icon = QIcon("assets/lock.png")
-        self.hidden_icon = QIcon("assets/hidden.png")
+        self.lock_icon = load_icon("assets/lock.png")
+        self.hidden_icon = load_icon("assets/hidden.png")
         self.tree.itemSelectionChanged.connect(self.handle_selection_change)
-        self.tree.itemDoubleClicked.connect(self.handle_double_click)
+        # Double-clicks are read off the viewport, not itemDoubleClicked: the
+        # first click of a double-click changes the selection, which rebuilds
+        # the tree, so Qt never pairs the two clicks on one item.
+        self.tree.viewport().installEventFilter(self)
 
         # Enable extended selection (shift-click, ctrl-click)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -188,13 +195,13 @@ class SceneHierarchy(QWidget):
 
         # Load colour icons in rainbow order (ROYGIBV) with white last
         self.colour_icons = {
-            'red': QIcon("assets/circ_red.png"),
-            'orange': QIcon("assets/circ_orange.png"),
-            'yellow': QIcon("assets/circ_yellow.png"),
-            'green': QIcon("assets/circ_green.png"),
-            'blue': QIcon("assets/circ_blue.png"),
-            'pink': QIcon("assets/circ_pink.png"),
-            'white': QIcon("assets/circ_white.png"),
+            'red': load_icon("assets/circ_red.png"),
+            'orange': load_icon("assets/circ_orange.png"),
+            'yellow': load_icon("assets/circ_yellow.png"),
+            'green': load_icon("assets/circ_green.png"),
+            'blue': load_icon("assets/circ_blue.png"),
+            'pink': load_icon("assets/circ_pink.png"),
+            'white': load_icon("assets/circ_white.png"),
         }
         self.colour_names = {
             "circ_red.png": "red",
@@ -257,6 +264,8 @@ class SceneHierarchy(QWidget):
         state = self.main_window.state
         stream = state.editor_stream
         if stream is not None and not stream.suspended:
+            # A camera-streamed Big World map: search every cell, loading
+            # only the objects that match.
             stream.merge(state._serialize_brushes(), [t.to_dict() for t in state.things])
             for kind, records in stream.records.items():
                 for identity, record in list(records.items()):
@@ -382,10 +391,14 @@ class SceneHierarchy(QWidget):
                 except (IndexError, TypeError):
                     obj = None
                 matched = obj is not None and id(obj) in self._search_matches
+                background = (QBrush(QColor("#4a4320")) if matched
+                              else QBrush(Qt.transparent))
+                if item is self._highlighted_item:
+                    # A search can change before the temporary highlight's
+                    # timer expires. Its cleanup must keep the new styling.
+                    self._highlight_backgrounds = (background, background)
                 for column in (0, 1):
-                    item.setBackground(column,
-                                       QBrush(QColor("#4a4320")) if matched
-                                       else QBrush(Qt.transparent))
+                    item.setBackground(column, background)
 
     def _add_visgroup_menu(self, menu, objects):
         """The Visgroup submenu: put the clicked objects in a visgroup, take
@@ -535,15 +548,29 @@ class SceneHierarchy(QWidget):
             self._refresh_deferred = True
             return
         self._refresh_deferred = False
-        self.tree.blockSignals(True)
+        # A failed rebuild must not leave selection notifications disabled,
+        # and callers may already have blocked signals for a larger operation.
+        was_blocked = self.tree.blockSignals(True)
+        try:
+            self._rebuild_items()
+        finally:
+            self.tree.blockSignals(was_blocked)
+
+        # Scroll after restoring signals, as in the original refresh path.
+        first_selected = self.tree.selectedItems()
+        if first_selected:
+            self.tree.scrollToItem(first_selected[0], QAbstractItemView.EnsureVisible)
+
+    def _rebuild_items(self):
         self.tree.clear()
         
         # Clear any pending highlight since items are being rebuilt
         self._highlighted_item = None
+        self._highlight_backgrounds = None
         self._highlight_timer.stop()
         
         # Get selected objects list for multi-selection support
-        selected_objects = self.main_window.state.selected_objects
+        selected_objects = SelectionLookup(self.main_window.state.selected_objects)
         
         # Define font for headers
         header_font = QFont()
@@ -608,13 +635,13 @@ class SceneHierarchy(QWidget):
             elif brush_dict.get('lock', False):
                 status_icon = self.lock_icon
             
-            # Apply icons to column 1 (right side)
+            # Indicators go before the name (column 0's icon)
             if status_icon and colour_icon:
-                item.setIcon(1, self._create_composite_icon(status_icon, colour_icon, padlock_on_left=True))
+                item.setIcon(0, self._create_composite_icon(status_icon, colour_icon, padlock_on_left=True))
             elif status_icon:
-                item.setIcon(1, status_icon)
+                item.setIcon(0, status_icon)
             elif colour_icon:
-                item.setIcon(1, colour_icon)
+                item.setIcon(0, colour_icon)
             
             # Check if this brush is in the selected_objects list
             if brush_dict in selected_objects:
@@ -658,13 +685,13 @@ class SceneHierarchy(QWidget):
             elif thing_obj.properties.get('lock', False):
                 status_icon = self.lock_icon
             
-            # Apply icons to column 1 (right side)
+            # Indicators go before the name (column 0's icon)
             if status_icon and colour_icon:
-                item.setIcon(1, self._create_composite_icon(status_icon, colour_icon, padlock_on_left=True))
+                item.setIcon(0, self._create_composite_icon(status_icon, colour_icon, padlock_on_left=True))
             elif status_icon:
-                item.setIcon(1, status_icon)
+                item.setIcon(0, status_icon)
             elif colour_icon:
-                item.setIcon(1, colour_icon)
+                item.setIcon(0, colour_icon)
 
             if thing_obj in selected_objects:
                 item.setSelected(True)
@@ -673,13 +700,6 @@ class SceneHierarchy(QWidget):
         # to be reapplied or it vanishes the moment anything else happens.
         if self._search_matches:
             self._apply_search_styling()
-
-        self.tree.blockSignals(False)
-
-        # Scroll to the first selected item
-        first_selected = self.tree.selectedItems()
-        if first_selected:
-            self.tree.scrollToItem(first_selected[0], QAbstractItemView.EnsureVisible)
 
     def highlight_item(self, obj):
         """Highlight an object in the hierarchy without selecting it.
@@ -714,7 +734,8 @@ class SceneHierarchy(QWidget):
             # Scroll to and highlight the item
             self.tree.scrollToItem(target_item)
             self._highlighted_item = target_item
-            self._original_background = target_item.background(0)
+            self._highlight_backgrounds = (target_item.background(0),
+                                          target_item.background(1))
             
             # Set highlight background (cyan/teal color)
             highlight_brush = QBrush(QColor("#00CED1"))
@@ -731,13 +752,14 @@ class SceneHierarchy(QWidget):
                 # Check if item still exists by accessing a property
                 # This will raise RuntimeError if the C++ object was deleted
                 _ = self._highlighted_item.text(0)
-                # Reset to transparent/default
-                self._highlighted_item.setBackground(0, QBrush())
-                self._highlighted_item.setBackground(1, QBrush())
+                # Keep search styling and any distinct column backgrounds.
+                for column, background in enumerate(self._highlight_backgrounds):
+                    self._highlighted_item.setBackground(column, background)
             except RuntimeError:
                 # Item was deleted (tree was refreshed), just ignore
                 pass
             self._highlighted_item = None
+            self._highlight_backgrounds = None
 
     def scroll_to_item(self, obj):
         """Scroll to an object in the hierarchy."""
@@ -1109,11 +1131,25 @@ class SceneHierarchy(QWidget):
             for axis in range(3))
         self.main_window.focus_on_bounds(mid, max(radius, spread * 0.5))
 
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.MouseButtonDblClick
+                and event.button() == Qt.LeftButton
+                and obj is self.tree.viewport()):
+            item = self.tree.itemAt(event.pos())
+            if item is not None and self.handle_double_click(item, 0):
+                return True
+        return super().eventFilter(obj, event)
+
     def handle_double_click(self, item, column):
-        """Double-clicking the terrain item opens the terrain editor."""
+        """Double-clicking the terrain item opens the terrain editor.
+
+        Same as its context menu's Edit Terrain. Returns True when handled.
+        """
         data = item.data(0, Qt.UserRole)
         if data and data[0] == 'terrain':
             self.main_window.open_terrain_editor()
+            return True
+        return False
 
     def set_brush_colour(self, brush_dict, colour_name, checked):
         """Set brush colour (method name uses British spelling, but internal dict key remains 'color')"""

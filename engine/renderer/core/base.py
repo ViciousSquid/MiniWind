@@ -38,6 +38,10 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
     def __init__(self, texture_loader=None):
         self.texture_manager = {}
         self.loaded_models = {}
+        # id(model) -> (model, its resolved draw groups); manual texture
+        # name -> GL name. Both hold GL names: emptied with the textures.
+        self._model_draw_group_cache = {}
+        self._manual_model_textures = {}
         #: model path -> perf_counter() of its last failed load.
         self._failed_models = {}
 
@@ -66,6 +70,7 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
         #: Mesh bounding radius per interned model recipe (entity frustum cull).
         self._model_radius_recipes_seen = None
         self._model_radius_by_recipe = np.zeros(0, dtype=np.float64)
+        self._model_radius_pending = ()
         # Decoded animated Effect GIF frames, indexed by dense variant.
         # FIRE and ORB share this normal-instanced billboard path.
         self.effect_fire_frames = {}
@@ -75,6 +80,21 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
         # Reusable model/normal matrix buffers for the batched transform build.
         self._brush_mat_buf = np.empty((0, 16), dtype=np.float32)
         self._brush_nmat_buf = np.empty((0, 9), dtype=np.float32)
+        #: id(RenderTable) -> SlotTransforms: each table's matrices, kept by
+        #: change (core/slot_transforms.py).
+        self._slot_transform_caches = {}
+        #: Per pass, view and use: what it derived from the tables last
+        #: frame, kept while they and the visible rows are unchanged
+        #: (TablesMixin._pass_memo).
+        self._pass_memos = {}
+        #: Per lit stream: (kept payload, selected slot, that payload with
+        #: the selection applied) -- see _draw_lit_brushes_instanced.
+        self._selected_payloads = {}
+        #: Per view: the play-mode distance cull's inputs and result.
+        self._distance_culls = {}
+        #: Reuses and rebuilds of those (counts, for tests and tools).
+        self.pass_memo_hits = 0
+        self.pass_memo_misses = 0
 
 
         # PERF: cache of texture-name -> "textures/<name>" cache-key path.
@@ -104,6 +124,7 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
         self._portal_normal_vbo = None
         self._conn_line_vao = None
         self._conn_line_vbo = None
+        self._conn_line_capacity = 0
         self.face_highlight_vao = None
         self.face_highlight_vbo = None
         # Component-edit handle overlay (editor only).  The buffer is refilled
@@ -126,18 +147,18 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
         self._sprite_vbo = None
         self._grid_vbo = None
 
-        # Convex geometry meshes, owned by geometry signature. The signature
-        # carries the brush's geometry epoch, which every change to its shape
-        # or face mapping bumps, so it names the mesh's content exactly -- and
-        # it survives a table reconcile and is the same in both render
-        # buffers' tables. Keying by (table generation, geometry id) rebuilt
-        # every convex mesh, once per buffer, after any structural edit.
-        # Meshes are dropped after going unused for a while (_begin_geo_frame).
+        # Convex geometry meshes, owned by their record's surface key: every
+        # authored input of the mesh, exactly, and nothing else -- so it
+        # survives a table reconcile, is the same in both render buffers'
+        # tables, and survives an undo that restores a brush unchanged as a
+        # new dict. Keying by (table generation, geometry id) rebuilt every
+        # convex mesh, once per buffer, after any structural edit; keying by
+        # the epoch-carrying signature rebuilt every one after an undo.
         self._geo_mesh_cache = {}
-        #: id(GeometryRecord) -> mesh: the per-frame lookup, which does not
-        #: hash the signature. Validated against the record's signature, so a
-        #: recycled id cannot alias; cleared with each stale-mesh sweep.
-        self._geo_mesh_by_record = {}
+        #: id(RenderTable) -> GeoHandles: the per-frame index into the cache,
+        #: as arrays indexed by geometry handle. Meshes live while a recently
+        #: drawn table refers to them (_begin_geo_frame).
+        self._geo_by_table = {}
         self._geo_mesh_frame = 0
 
         self._shader_init_failed = False
@@ -202,7 +223,10 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
         for mesh in self._geo_mesh_cache.values():
             self._delete_geo_mesh(mesh)
         self._geo_mesh_cache.clear()
-        self._geo_mesh_by_record.clear()
+        self._geo_by_table.clear()
+        store = self.__dict__.get('_geo_shared_store')
+        if store is not None:
+            store.delete()
 
         if self._cube_vbo:
             gl.glDeleteBuffers(1, [self._cube_vbo])
@@ -217,6 +241,8 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
         if textures:
             gl.glDeleteTextures(textures)
         self.texture_manager.clear()
+        self._model_draw_group_cache.clear()
+        self._manual_model_textures.clear()
         self._animated_texture_table = {}
         for model in {id(m): m for m in self.loaded_models.values()}.values():
             model.cleanup()

@@ -1,15 +1,7 @@
 import contextlib
 import os
+import sys
 import numpy as np
-try:
-    import OpenGL.GL as gl
-    from OpenGL import platform as gl_platform
-    from OpenGL.GL.shaders import compileProgram, compileShader
-except ImportError:  # Headless/core tier: terrain data logic is still usable.
-    gl = None
-    compileProgram = None
-    compileShader = None
-    gl_platform = None
 import glm
 import ctypes
 from dataclasses import dataclass, field
@@ -20,12 +12,26 @@ import random
 from . import shaders
 from . import terrain_style
 from . import terrain_biomes
+import queue
+import threading
+from .terrain_frame import (                      # noqa: F401
+    TerrainFrame, TerrainProducts, grass_vertex_count, heightfield_indices,
+    new_publication_key, read_only)
 from .terrain_table import GRID_BORDER, STORED_GRID, TerrainTable
 
 
-def grass_vertex_count(segments: int) -> int:
-    """Vertices per blade instance: (segments - 1) quads plus the tip."""
-    return (max(1, int(segments)) - 1) * 6 + 3
+
+
+# Old maps keep their exact scatter/cap below the previous density ceiling.
+LEGACY_GRASS_DENSITY_MAX = 0.06
+MAX_GRASS_DENSITY = 0.24
+GRASS_MAX_DENSITY = MAX_GRASS_DENSITY
+DEFAULT_GRASS_HEIGHT = 5.0
+GRASS_HEIGHT_LIMITS = (0.1, 256.0)
+
+
+
+
 
 # ============================================================================
 # OPTIMIZED NOISE FUNCTIONS
@@ -57,13 +63,11 @@ class PerlinNoise:
         else: return -x - y
     
     def _grad(self, hash_arr, x, y):
-        h = hash_arr & 3
-        result = np.zeros_like(x)
-        result[h == 0] = (x + y)[h == 0]
-        result[h == 1] = (-x + y)[h == 1]
-        result[h == 2] = (x - y)[h == 2]
-        result[h == 3] = (-x - y)[h == 3]
-        return result
+        # The low two bits independently select each coordinate's sign.
+        # Avoid four full sums and four pairs of fancy-indexed arrays.
+        gx = np.where(hash_arr & 1, -x, x)
+        gy = np.where(hash_arr & 2, -y, y)
+        return (gx + gy).astype(x.dtype, copy=False)
     
     def noise2d_scalar(self, x: float, y: float) -> float:
         xi = int(math.floor(x)) & 255
@@ -111,10 +115,12 @@ class PerlinNoise:
         return total / max_value
     
     def noise2d_batch(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        xi = np.floor(x).astype(np.int32) & 255
-        yi = np.floor(y).astype(np.int32) & 255
-        xf = x - np.floor(x)
-        yf = y - np.floor(y)
+        floor_x = np.floor(x)
+        floor_y = np.floor(y)
+        xi = floor_x.astype(np.int32) & 255
+        yi = floor_y.astype(np.int32) & 255
+        xf = x - floor_x
+        yf = y - floor_y
         u = self._fade(xf)
         v = self._fade(yf)
         aa = self.perm[self.perm[xi] + yi]
@@ -158,6 +164,34 @@ class PerlinNoise:
 # ============================================================================
 # TERRAIN FEATURE GENERATION
 # ============================================================================
+
+_PAINT_PACKERS = None
+
+
+def _pack_paint(paint):
+    """One paint chunk as base64 text of its zlib stream."""
+    import base64, zlib
+    # Level 1: a 256 chunk in under half the time of level 6 for the same
+    # size (measured: 2.2 against 5.1 ms a chunk, 85 KB either way).
+    payload = zlib.compress(np.ascontiguousarray(paint).tobytes(), 1)
+    return base64.b64encode(payload).decode('ascii')
+
+
+def _compress_paint(paints):
+    """:func:`_pack_paint` of each of *paints*, in order; several at once
+    when there are several (the arrays are never written after they are
+    stored, so reading them from other threads is safe)."""
+    global _PAINT_PACKERS
+    if len(paints) < 2:
+        return [_pack_paint(paint) for paint in paints]
+    if _PAINT_PACKERS is None:
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+        _PAINT_PACKERS = ThreadPoolExecutor(
+            max_workers=max(1, min(4, os.cpu_count() or 1)),
+            thread_name_prefix='TerrainPaintPack')
+    return list(_PAINT_PACKERS.map(_pack_paint, paints))
+
 
 class TerrainFeatures:
     def __init__(self, noise: PerlinNoise, seed: int = 42):
@@ -334,23 +368,6 @@ DEFAULT_GRASS_ENABLED = True
 # MAIN TERRAIN CLASS
 # ============================================================================
 
-def _encode_heightmap(heightmap) -> str:
-    """The heightmap as text for a map file: a plain ``.npy``, base64."""
-    import base64, io
-    buf = io.BytesIO()
-    np.save(buf, heightmap)
-    return base64.b64encode(buf.getvalue()).decode('ascii')
-
-
-#: Highest grass density, in tufts per square world unit. A 256-unit chunk holds
-#: about 15.7k tufts at this density, inside ``GRASS_MAX_PER_CHUNK``.
-GRASS_MAX_DENSITY = 0.24
-#: Default grass blade height, in world units at blade size 1.0.
-DEFAULT_GRASS_HEIGHT = 5.0
-#: Range an authored grass blade height is clamped to.
-GRASS_HEIGHT_LIMITS = (0.5, 64.0)
-
-
 class Terrain:
     # Terrain inside this radius is a protected high-detail zone. A chunk is
     # never allowed to change LOD while any part of it lies within 4096 world
@@ -362,12 +379,15 @@ class Terrain:
     LOD_RESOLUTIONS = [48, 32, 16, 8]
     LOD_HYSTERESIS_FRAMES = 10
     MAX_UPDATES_PER_FRAME = 2
-    #: Set by the 3D view: a callable returning a context manager that makes
-    #: its GL context current. Terrain's GL objects belong to that context, so
-    #: deleting them from the GUI thread (opening a map, the terrain editor)
-    #: must happen inside it; outside it the deletes reach whatever context Qt
-    #: last made current and corrupt the driver's state. ``None`` headless.
-    gl_context = None
+    #: Build height grids on a background thread (``TerrainBuilder``) instead
+    #: of inside :meth:`advance`. ``main.py`` turns it on for the editor and
+    #: the game; off, a terrain is built where it is advanced, a bounded
+    #: number of chunks a call, which is what tests and tools step through.
+    BACKGROUND_BUILDS = False
+    #: Most grids waiting on the builder thread at once: the nearest work is
+    #: asked for first, and what is further waits for a later frame's queue,
+    #: so the camera moving on re-orders it.
+    BUILD_QUEUE_LIMIT = 8
     #: Milliseconds of chunk meshing a frame may spend before the rest waits
     #: for the next frame. One chunk is always built, so terrain keeps
     #: streaming however slow the machine; a second only fits on a fast one.
@@ -378,9 +398,19 @@ class Terrain:
     MAX_GRADIENT_STOPS = 32
     #: Fixed per-chunk albedo paint resolution. Paint is baked into the terrain
     #: material, rather than retained as a render-time stamp/decal list.
-    TERRAIN_PAINT_RESOLUTION = 128
+    #: 256 a chunk is one texel a world unit at the default chunk size (it
+    #: was 128: a texel every two units, which is what made paint muddy).
+    #: Maps saved at another resolution are converted when loaded.
+    TERRAIN_PAINT_RESOLUTION = 256
+    #: World units one pixel of a tiled paint texture covers: a 512-pixel
+    #: image repeats every 256 units, whatever the size of the stamp.
+    STAMP_TILE_UNITS_PER_PIXEL = 0.5
     #: Texture layers per paint-map page; clamped to the driver's limit.
-    PAINT_PAGE_LAYERS = 512
+    #: A layer goes to a painted chunk only (TerrainGL hands them out), so a
+    #: page is small: 32 layers is 11 MB of video memory with its mips, and
+    #: a map gets as many pages as its painted chunks need. (It was one
+    #: layer a chunk slot, painted or not: 32 MB a page at 128.)
+    PAINT_PAGE_LAYERS = 32
     #: Texture layers per height-grid page; clamped to the driver's limit.
     HEIGHT_PAGE_LAYERS = 512
     #: Every uniform the terrain programs are driven through.
@@ -390,7 +420,6 @@ class Terrain:
         'terrainPaintMap', 'uPaintLayer', 'uPaintEnabled',
         'uHeights', 'uChunkI', 'uChunkX', 'uChunkY', 'uTiling', 'uFlatMode',
         'uGradCount', 'uGradH', 'uGradC', 'uGradW', 'uGradD',
-        'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds',
     ) + terrain_style.UNIFORM_NAMES
     #: World units per repeat of the terrain textures (they are 1024 px).
     #: At 20 a tile was half a player-height across, so at any ordinary
@@ -419,11 +448,6 @@ class Terrain:
         #: Dense per-chunk state (residency, LOD, the one heightfield both
         #: rendering and collision read). See engine.terrain_table.
         self.table = TerrainTable()
-        # GL objects per table slot. The table is GL-free; these arrays are
-        # the terrain renderer's half, indexed by the same slot.
-        self._grass_vao = np.zeros(0, dtype=np.int64)
-        self._grass_vbo = np.zeros(0, dtype=np.int64)
-        self._grass_count = np.zeros(0, dtype=np.int64)
         self.min_chunk_x: int = -2
         self.max_chunk_x: int = 2
         self.min_chunk_z: int = -2
@@ -433,26 +457,51 @@ class Terrain:
         self.drawn_slots = np.zeros(0, dtype=np.intp)
         self.visible_chunks: int = 0
         self.culled_chunks: int = 0
-        self.shader_program: int = 0
-        self.uniforms: Dict[str, int] = {}
-        # Height-grid texture pages (GL_TEXTURE_2D_ARRAY, R32F), slot ->
-        # (page, layer); the table version each slot was last uploaded at;
-        # the empty VAO an attribute-less draw needs in a core profile.
-        self._height_pages: List[int] = []
-        self._page_layers = 0
-        self._gpu_version = np.zeros(0, dtype=np.int64)
         # Baked terrain material paint. Each resident chunk owns one RGBA8
         # albedo map at TERRAIN_PAINT_RESOLUTION². The source image is sampled
         # once by the editor and the resulting colour/coverage becomes part
         # of the terrain data itself.
         self.texture_paint_maps: Dict[Tuple[int, int], np.ndarray] = {}
+        # Placed texture stamps. Each record (id, texture, x, z, radius,
+        # angle, feather, opacity) is also baked into texture_paint_maps, which
+        # stays what renders and what the game loads; the records let the
+        # editor select a stamp and rebake its chunks when it moves.
+        # texture_paint_base is the paint no stamp record owns (maps painted
+        # before stamps were kept), composited under the stamps.
+        self.paint_stamps: List[dict] = []
+        self.texture_paint_base: Dict[Tuple[int, int], np.ndarray] = {}
+        # Editor-only: selected stamps draw tinted from _paint_display, which
+        # overrides texture_paint_maps for the chunks they touch.
+        self.selected_stamp_ids: set = set()
+        self._paint_display: Dict[Tuple[int, int], np.ndarray] = {}
+        self._stamp_dirty_chunks: set = set()
+        # What a drag does not move, by chunk (see _drag_layers).
+        self._drag_cache: dict = {}
+        # Chunks whose *stored* paint has a selected stamp in it; None when
+        # that is not known. Known from the start of a move of selected
+        # stamps (the stored paint is current then) until anything else
+        # changes the paint. For any other chunk the stored paint is already
+        # "the chunk without the selection", and needs no baking.
+        self._stored_with_selection = None
+        self._paint_image_cache: Dict[str, Optional[np.ndarray]] = {}
+        # Stamp lookup index (see _stamp_index); None until first needed.
+        self._stamp_rows: Optional[Dict[str, int]] = None
+        self._stamp_ranges: List[Tuple[int, int, int, int]] = []
+        self._stamp_range_arr: Optional[np.ndarray] = None
+        self._stamp_index_key = None
+        # to_dict runs for every sculpt step and stamp click; these hold the
+        # serialised form of data that has not changed since the last call.
+        # Paint chunks: {coord: (array, entry)} per paint dict, valid while
+        # the chunk's array is the same object (arrays are never written in
+        # place, see _bake_texture_rect).
+        self._paint_serial_cache: Dict[Tuple[int, int], tuple] = {}
+        self._base_serial_cache: Dict[Tuple[int, int], tuple] = {}
+        self._heightmap_blob_cache: tuple = (None, None)
         self._paint_map_versions: Dict[Tuple[int, int], int] = {}
         self._paint_version_counter = 0
-        self._paint_pages: List[int] = []
-        self._empty_paint_texture = 0
-        self._paint_page_layers = 0
-        self._paint_gpu_version = np.zeros(0, dtype=np.int64)
-        self._empty_vao = 0
+        #: Bumped when the paint dictionaries are replaced (a clear, a
+        #: load): a renderer then forgets every paint version it holds.
+        self._paint_epoch = 0
         self._gradient_warned = False
         # Grass is a separate GL 3.3 instanced pass. The CPU scatters tufts,
         # places every blade of a tuft on the terrain surface and uploads one
@@ -461,9 +510,6 @@ class Terrain:
         # New terrain grows grass; maps saved without it stay grass-free.
         self.grass_enabled: bool = DEFAULT_GRASS_ENABLED
         self.grass_density: float = 0.02
-        #: Blade height in world units at blade size 1.0 (each blade varies
-        #: around it; reeds and wheat scale with it too).
-        self.grass_height: float = DEFAULT_GRASS_HEIGHT
         self.grass_color: Tuple[float, float, float] = tuple(self.biome.color_gradient[0][1])
         self.grass_color_custom: bool = False
         #: Colour of the blade tips; None derives a sun-bleached shade of
@@ -472,16 +518,12 @@ class Terrain:
         #: (lowest, highest) heights grass grows at, as fractions of the
         #: terrain's height range; None follows the grass texture layer.
         self.grass_height_range: Optional[Tuple[float, float]] = None
-        self.grass_shader_program: int = 0
-        self.grass_uniforms: Dict[str, int] = {}
-        self.grass_time = 0.0
-        self.GRASS_MAX_PER_CHUNK = 32768         # tufts per chunk (thick meadows)
-        self.GRASS_BLADES_PER_TUFT = 7
-        #: Share of meadow tufts that grow medium-length stalks; the rest
-        #: are short grass.
-        self.GRASS_MEDIUM_SHARE = 0.35
+        # Meadow scatter (meadow_grass); wheat and tundra have their own
+        # budgets in engine.terrain_biomes.
+        self.GRASS_MAX_PER_CHUNK = 4096          # tufts per chunk
+        self.GRASS_BLADES_PER_TUFT = 5
         self.GRASS_TUFT_RADIUS = 2.5             # world units
-        self.GRASS_BLADE_HEIGHT = DEFAULT_GRASS_HEIGHT  # see grass_height
+        self.GRASS_BLADE_HEIGHT = DEFAULT_GRASS_HEIGHT  # world units at size 1.0
         self.GRASS_BLADE_WIDTH = 0.45            # half width at the root
         self.GRASS_MAX_DISTANCE = 3072.0
         # Chunks nearer than this draw detailed blades; blades morph onto the
@@ -499,11 +541,6 @@ class Terrain:
         self._height_range: Optional[Tuple[float, float]] = None
         # 'blocks' terracing draws square columns from per-chunk meshes with
         # a mesh vertex shader instead of the heightfield.
-        self.block_program: int = 0
-        self.block_uniforms: Dict[str, int] = {}
-        self._block_vao = np.zeros(0, dtype=np.int64)
-        self._block_vbo = np.zeros(0, dtype=np.int64)
-        self._block_count = np.zeros(0, dtype=np.int64)
         self.enabled: bool = True
         self.wireframe: bool = False
         self.solid: bool = True
@@ -521,11 +558,16 @@ class Terrain:
         self.heightmap_strength: float = 100.0
         self.heightmap_blend: str = 'additive'  # 'additive' or 'replace'
         # Regional biomes (desert, snow, swamp, wheat) painted over the
-        # terrain's bounds: HxWx4 uint8, or None. See engine.terrain_biomes.
+        # terrain's bounds: HxWx4 uint8 (or HxWx5 with tundra), or None. See
+        # engine.terrain_biomes. ``_biome_published`` is the read-only RGBA
+        # copy a renderer is handed (TerrainFrame.biome_map), remade when the
+        # map is replaced; ``_biome_version`` names it.
         self.biome_map: Optional[np.ndarray] = None
         self._biome_version = 0
-        self._biome_gpu_version = -1
-        self._biome_tex = 0
+        self._biome_published: Optional[np.ndarray] = None
+        # Grass parting (set_grass_pushers): what the frame publishes.
+        self._grass_trails: dict = {}
+        self._grass_pushers: tuple = ()
         # -- Chunk streaming (Big World "fill world with terrain") -----------
         # When ``streaming`` is on, only the chunks within ``stream_radius`` of
         # the camera are kept resident; chunks beyond ``stream_radius +
@@ -545,118 +587,21 @@ class Terrain:
         # saved to the map file.
         self._authored_bounds: Optional[Tuple[int, int, int, int]] = None
         self._authored_enabled: Optional[bool] = None
-        self.grass_tex = 0
-        self.rock_tex = 0
-        self.sand_tex = 0
-        self.snow_tex = 0
-        self._placeholder_cubemap = 0
-        #: Vertex shaders whose program genuinely failed to compile. A compile
-        #: error is deterministic, so it is reported once and not retried on
-        #: every frame (which cost a full compile per frame and spammed the log).
-        self._failed_programs = set()
-        if texture_manager:
-            self.load_terrain_textures(texture_manager)
-        self._init_shader()
+        # What a renderer is handed (engine/terrain_frame.py): the table
+        # above, the per-slot products, and this key naming the publication.
+        self.products = TerrainProducts()
+        self._publication_key = new_publication_key()
+        # The builder thread (BACKGROUND_BUILDS): slot -> the allocation
+        # order it was asked for, the requests and the finished grids.
+        self._building: Dict[int, int] = {}
+        self._build_requests: "queue.Queue" = queue.Queue()
+        self._build_results: "queue.Queue" = queue.Queue()
+        self._builder = None
+        self._builder_stop = False
     
-    def _compile_program(self, vertex_name):
-        """Compile the terrain fragment shader against *vertex_name*.
 
-        Returns the program, or 0 when there is no GL context yet (harmless:
-        update_and_render() recompiles on the GL thread at first draw) or the
-        compile genuinely failed (reported).
-        """
-        if gl is None or compileProgram is None or compileShader is None:
-            return 0
-        # On macOS an unbound glCreateShader may segfault instead of raising.
-        # Terrain is also constructed during map loading and headless data
-        # operations; the render thread retries once its context is current.
-        if gl_platform is None or not gl_platform.PLATFORM.GetCurrentContext():
-            return 0
-        if vertex_name in self._failed_programs:
-            return 0
-        try:
-            vertex_code = shaders.DEFAULT_SHADERS[vertex_name]
-            fragment_code = shaders.light_ubo_source(
-                shaders.DEFAULT_SHADERS['terrain.frag'])
-            vertex_shader = compileShader(vertex_code, gl.GL_VERTEX_SHADER)
-            fragment_shader = compileShader(fragment_code, gl.GL_FRAGMENT_SHADER)
-            program = compileProgram(vertex_shader, fragment_shader, validate=False)
-            if not program:
-                print("ERROR: Failed to compile terrain shader program!")
-                self._failed_programs.add(vertex_name)
-                return 0
-        except Exception as e:
-            msg = str(e)
-            # The Terrain can be constructed before the view's GL context is
-            # current (e.g. during map load), so glCreateShader isn't bound yet.
-            # Stay quiet then; only a genuine compile failure is worth reporting.
-            if ("glCreateShader" in msg or "undefined alternate function" in msg
-                    or "context" in msg.lower()):
-                return 0
-            print(f"ERROR: Exception during terrain shader compilation: {e}")
-            self._failed_programs.add(vertex_name)
-            return 0
-        block_index = gl.glGetUniformBlockIndex(program, 'FioLightBlock')
-        invalid = getattr(gl, 'GL_INVALID_INDEX', 0xFFFFFFFF)
-        if block_index != invalid:
-            gl.glUniformBlockBinding(program, block_index, shaders.LIGHT_UBO_BINDING)
-        return program
 
-    def _init_shader(self):
-        self.shader_program = self._compile_program('terrain.vert')
-        if not self.shader_program:
-            return
-        self._init_grass_shader()
-        self.uniforms = {}
 
-    def _init_grass_shader(self):
-        if gl_platform is None or not gl_platform.PLATFORM.GetCurrentContext():
-            return
-        try:
-            vertex_code = shaders.DEFAULT_SHADERS['grass.vert']
-            fragment_code = shaders.DEFAULT_SHADERS['grass.frag']
-            vertex_shader = compileShader(vertex_code, gl.GL_VERTEX_SHADER)
-            fragment_shader = compileShader(fragment_code, gl.GL_FRAGMENT_SHADER)
-            self.grass_shader_program = compileProgram(
-                vertex_shader, fragment_shader, validate=False)
-        except Exception as e:
-            msg = str(e)
-            if ("glCreateShader" in msg or "undefined alternate function" in msg
-                    or "context" in msg.lower()):
-                self.grass_shader_program = 0
-                return
-            print(f"ERROR: Exception during grass shader compilation: {e}")
-            self.grass_shader_program = 0
-            return
-
-        self.grass_uniforms = {
-            'projection': gl.glGetUniformLocation(self.grass_shader_program, 'projection'),
-            'view': gl.glGetUniformLocation(self.grass_shader_program, 'view'),
-            'time': gl.glGetUniformLocation(self.grass_shader_program, 'time'),
-            'grassColor': gl.glGetUniformLocation(self.grass_shader_program, 'grassColor'),
-            'cameraPos': gl.glGetUniformLocation(self.grass_shader_program, 'cameraPos'),
-            'windStrength': gl.glGetUniformLocation(self.grass_shader_program, 'windStrength'),
-            'uFogEnabled': gl.glGetUniformLocation(self.grass_shader_program, 'uFogEnabled'),
-            'uFogColor': gl.glGetUniformLocation(self.grass_shader_program, 'uFogColor'),
-            'uFogStart': gl.glGetUniformLocation(self.grass_shader_program, 'uFogStart'),
-            'uFogEnd': gl.glGetUniformLocation(self.grass_shader_program, 'uFogEnd'),
-            'uFogDensity': gl.glGetUniformLocation(self.grass_shader_program, 'uFogDensity'),
-            'uFogCamPos': gl.glGetUniformLocation(self.grass_shader_program, 'uFogCamPos'),
-            'uAmbient': gl.glGetUniformLocation(self.grass_shader_program, 'uAmbient'),
-        }
-        for name in ('grassTipColor', 'uMatchGround', 'uTipAuto', 'uSegments', 'uLodStart', 'uLodEnd',
-                     'uFadeStart', 'uFadeEnd', 'uBladeHeight', 'uBladeWidth',
-                     'uPushers', 'uPusherCount'):
-            self.grass_uniforms[name] = gl.glGetUniformLocation(
-                self.grass_shader_program, name)
-
-    def load_terrain_textures(self, tex_manager):
-        self.grass_tex = tex_manager.get('assets/textures/terrain/grass.jpg')
-        self.rock_tex = tex_manager.get('assets/textures/terrain/rock.jpg')
-        self.sand_tex = tex_manager.get('assets/textures/terrain/sand.jpg')
-        self.snow_tex = tex_manager.get('assets/textures/terrain/snow.jpg')
-        if any(t == -1 for t in [self.grass_tex, self.rock_tex, self.sand_tex, self.snow_tex]):
-            print("Warning: Some terrain textures failed to load!")
     
     def is_solid(self) -> bool:
         return self.enabled and self.solid
@@ -760,6 +705,16 @@ class Terrain:
                 raise ValueError("biome map must be HxWx4 (or HxWx5 with tundra)")
         self.biome_map = biome_map
         self._biome_version += 1
+        if biome_map is None:
+            self._biome_published = None
+        else:
+            # What a renderer uploads: the four RGBA biomes (tundra is
+            # CPU-only), its own copy so a later edit of the map in place
+            # cannot reach a frame already published.
+            published = np.array(
+                biome_map[..., :terrain_biomes.GPU_CHANNELS], dtype=np.uint8, order='C')
+            published.flags.writeable = False
+            self._biome_published = published
         self.table.mark_grass_dirty()
 
     def biome_weights_batch(self, world_x, world_z) -> np.ndarray:
@@ -767,45 +722,12 @@ class Terrain:
         return terrain_biomes.sample(self.biome_map, self.get_terrain_bounds(),
                                      world_x, world_z)
 
-    def _bind_biome_map(self, u, unit):
-        """Upload (when changed) and bind the biome map; tell the shader
-        whether there is one."""
-        enabled_loc = u.get('uBiomeEnabled', -1)
-        if self.biome_map is None or self.flat_mode:
-            if enabled_loc != -1:
-                gl.glUniform1i(enabled_loc, 0)
-            loc = u.get('uBiomeMap', -1)
-            if loc != -1:
-                gl.glUniform1i(loc, unit)
-            return
-        if not self._biome_tex:
-            self._biome_tex = int(gl.glGenTextures(1))
-            self._biome_gpu_version = -1
-        gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self._biome_tex)
-        if self._biome_gpu_version != self._biome_version:
-            h, w = self.biome_map.shape[:2]
-            gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
-            # The GPU texture is the four RGBA biomes; tundra is CPU-only.
-            gpu = np.ascontiguousarray(self.biome_map[..., :terrain_biomes.GPU_CHANNELS])
-            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, w, h, 0,
-                            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, gpu)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-            self._biome_gpu_version = self._biome_version
+    def _biome_bounds(self):
+        """``(min x, min z, 1 / range x, 1 / range z)``: where the biome map
+        lies, as terrain.frag's ``uBiomeBounds`` reads it."""
         (x0, x1), (z0, z1) = self.get_terrain_bounds()
-        loc = u.get('uBiomeBounds', -1)
-        if loc != -1:
-            gl.glUniform4f(loc, float(x0), float(z0),
-                           1.0 / max(float(x1 - x0), 1e-3), 1.0 / max(float(z1 - z0), 1e-3))
-        loc = u.get('uBiomeMap', -1)
-        if loc != -1:
-            gl.glUniform1i(loc, unit)
-        if enabled_loc != -1:
-            gl.glUniform1i(enabled_loc, 1)
-        gl.glActiveTexture(gl.GL_TEXTURE0)
+        return (float(x0), float(z0),
+                1.0 / max(float(x1 - x0), 1e-3), 1.0 / max(float(z1 - z0), 1e-3))
 
     def _textures_active(self) -> bool:
         return bool(getattr(self, 'use_textures', False)) and not self.flat_mode
@@ -923,21 +845,6 @@ class Terrain:
             self.appearance, self._layer_height_range(), self._layer_heights(),
             self.mesh_scale, (self.offset_x, self.offset_z))
 
-    def _upload_appearance_uniforms(self, u):
-        for name, value in self.appearance_uniforms().items():
-            loc = u.get(name, -1)
-            if loc is None or loc == -1:
-                continue
-            if name == 'uPalette':
-                gl.glUniform3fv(loc, len(value), np.ascontiguousarray(value, dtype=np.float32))
-            elif isinstance(value, int):
-                gl.glUniform1i(loc, value)
-            elif isinstance(value, float):
-                gl.glUniform1f(loc, value)
-            elif len(value) == 2:
-                gl.glUniform2f(loc, *value)
-            else:
-                gl.glUniform3f(loc, *value)
 
     def set_biome(self, biome_name: str):
         if biome_name in BIOMES:
@@ -948,6 +855,17 @@ class Terrain:
             self.appearance.layer_heights = None
             self.invalidate_height_range()
             self.table.mark_all_dirty()
+
+    @property
+    def grass_height(self) -> float:
+        """Authored blade height, sharing the existing shader-height setting."""
+        return self.GRASS_BLADE_HEIGHT
+
+    @grass_height.setter
+    def grass_height(self, height: float) -> None:
+        value = float(height)
+        self.GRASS_BLADE_HEIGHT = (float(np.clip(value, *GRASS_HEIGHT_LIMITS))
+                                   if math.isfinite(value) else DEFAULT_GRASS_HEIGHT)
 
     def set_grass(self, enabled: bool, density: Optional[float] = None,
                   color: Optional[Tuple[float, float, float]] = None,
@@ -962,8 +880,8 @@ class Terrain:
         sun-bleached shade of the blade colour. Colours alone need no rebuild.
         ``height_range`` is ``(lowest, highest)`` as fractions of the
         terrain's height range; ``'auto'`` follows the grass texture layer.
-        ``height`` is the blade height in world units; it is a shader uniform,
-        so it needs no rebuild either.
+        ``height`` is blade height in world units (default 5); it changes
+        only a shader uniform, so existing instance records need no rebuild.
         """
         rebuild = (bool(enabled) != self.grass_enabled or density is not None
                    or height_range is not None)
@@ -974,9 +892,9 @@ class Terrain:
             self.grass_height_range = (min(lo, hi), max(lo, hi))
         self.grass_enabled = bool(enabled)
         if density is not None:
-            self.grass_density = float(np.clip(density, 0.0, GRASS_MAX_DENSITY))
+            self.grass_density = float(np.clip(density, 0.0, MAX_GRASS_DENSITY))
         if height is not None:
-            self.grass_height = float(np.clip(height, *GRASS_HEIGHT_LIMITS))
+            self.grass_height = height
         if isinstance(color, str) and color == 'ground':
             # Blades take the colour of the ground they grow on (the default).
             # Their ground colours are baked at build time and may be stale
@@ -1075,7 +993,7 @@ class Terrain:
             camera_pos.x, camera_pos.z, self.chunk_size, self.stream_radius,
             self.stream_evict_padding, self._chunk_bounds(),
             self.offset_x, self.offset_z)
-        self._free_gl(freed)
+        self._released(freed)
         self.streamed_chunks = self.table.count
 
     # -- Editor "fill world with terrain" preview -------------------------
@@ -1127,60 +1045,11 @@ class Terrain:
         self.table.mark_all_dirty()
 
     def _remove_out_of_bounds_chunks(self):
-        self._free_gl(self.table.prune_out_of_bounds(self._chunk_bounds()))
+        self._released(self.table.prune_out_of_bounds(self._chunk_bounds()))
 
-    def _sync_gl_columns(self):
-        """Grow the per-slot GL arrays to the table's capacity."""
-        cap = self.table.capacity
-        if len(getattr(self, '_grass_count', ())) >= cap:
-            return
-        for name in ('_grass_vao', '_grass_vbo', '_grass_count', '_gpu_version',
-                     '_paint_gpu_version', '_block_vao', '_block_vbo', '_block_count'):
-            old = getattr(self, name, np.zeros(0, dtype=np.int64))
-            new = np.zeros(cap, dtype=np.int64)
-            new[:len(old)] = old
-            setattr(self, name, new)
 
-    def _gl_scope(self):
-        """Context manager making the terrain's GL context current, if known."""
-        provider = type(self).gl_context
-        return provider() if provider is not None else contextlib.nullcontext()
 
-    def _free_gl(self, slots):
-        """Delete the GL objects of freed table slots (a GL-thread call)."""
-        if not len(slots):
-            return
-        with self._gl_scope():
-            self._free_gl_slots(slots)
 
-    def _release_grass(self, slots):
-        """Free the grass of chunks far out of view; it regrows on return."""
-        self._sync_gl_columns()
-        for slot in slots:
-            if self._grass_vao[slot]:
-                gl.glDeleteVertexArrays(1, [int(self._grass_vao[slot])])
-            if self._grass_vbo[slot]:
-                gl.glDeleteBuffers(1, [int(self._grass_vbo[slot])])
-            self._grass_vao[slot] = self._grass_vbo[slot] = 0
-            self._grass_count[slot] = 0
-            self.table.grass_dirty[slot] = True
-
-    def _free_gl_slots(self, slots):
-        self._sync_gl_columns()
-        for slot in slots:
-            if self._grass_vao[slot]:
-                gl.glDeleteVertexArrays(1, [int(self._grass_vao[slot])])
-            if self._grass_vbo[slot]:
-                gl.glDeleteBuffers(1, [int(self._grass_vbo[slot])])
-            self._grass_vao[slot] = self._grass_vbo[slot] = 0
-            self._grass_count[slot] = 0
-            if self._block_vao[slot]:
-                gl.glDeleteVertexArrays(1, [int(self._block_vao[slot])])
-            if self._block_vbo[slot]:
-                gl.glDeleteBuffers(1, [int(self._block_vbo[slot])])
-            self._block_vao[slot] = self._block_vbo[slot] = 0
-            self._block_count[slot] = 0
-            self._paint_gpu_version[slot] = 0
 
     def _get_heights_batch(self, world_x: np.ndarray, world_z: np.ndarray) -> np.ndarray:
         """Surface heights including any terracing."""
@@ -1248,18 +1117,17 @@ class Terrain:
             return np.full((len(heights), 3), 0.5, dtype=np.float32)
         h = np.clip(normalized_heights, 0.0, 1.0)
         result = np.zeros((len(h), 3), dtype=np.float32)
-        # FIX: allocate t once outside the loop; reset in-place each iteration
-        t = np.zeros(len(h), dtype=np.float32)
         for i in range(len(colors) - 1):
             h0, c0 = colors[i]
             h1, c1 = colors[i + 1]
             mask = (h >= h0) & (h <= h1)
             if not np.any(mask): continue
-            t[:] = 0.0
             if h1 > h0:
-                t[mask] = (h[mask] - h0) / (h1 - h0)
+                t = np.asarray((h[mask] - h0) / (h1 - h0), dtype=np.float32)
+            else:
+                t = np.zeros(np.count_nonzero(mask), dtype=np.float32)
             for j in range(3):
-                result[mask, j] = c0[j] + t[mask] * (c1[j] - c0[j])
+                result[mask, j] = c0[j] + t * (c1[j] - c0[j])
         last_h, last_c = colors[-1]
         above_mask = h > last_h
         if np.any(above_mask):
@@ -1276,9 +1144,16 @@ class Terrain:
         at the same spacing, run beyond each edge for the smooth normals.
         """
         table = self.table
-        step = float(table.size[slot]) / resolution
-        base_x = float(table.world[slot, 0])
-        base_z = float(table.world[slot, 1])
+        return self._grid_heights(float(table.world[slot, 0]),
+                                  float(table.world[slot, 1]),
+                                  float(table.size[slot]), resolution)
+
+    def _grid_heights(self, base_x: float, base_z: float, size: float,
+                      resolution: int) -> np.ndarray:
+        """The bordered grid of a chunk with origin (*base_x*, *base_z*) and
+        edge *size*: :meth:`_chunk_heights` without the table, so the builder
+        thread can run it from numbers taken when the build was asked for."""
+        step = size / resolution
         b = GRID_BORDER
         m = resolution + 1 + 2 * b
 
@@ -1296,19 +1171,6 @@ class Terrain:
         heights_flat = self._get_heights_batch(wx_flat, wz_flat)
         return heights_flat.reshape((m, m))
 
-    def _upload_chunk(self, slot: int, resolution: int):
-        """Build one chunk at *resolution*: its heights, then its GPU copy.
-
-        The height grid is the whole of a chunk: the vertex shader rebuilds
-        position, normals, colour and UVs from it (see terrain.vert).
-        """
-        heights = self._chunk_heights(slot, resolution)
-        lod_index = (self.LOD_RESOLUTIONS.index(resolution)
-                     if resolution in self.LOD_RESOLUTIONS else 0)
-        self.table.store(slot, resolution, lod_index, heights)
-        self._upload_heightfield(slot)
-        if self.appearance.terrace_mode == 'blocks':
-            self._upload_block_mesh(slot)
 
     # -- Blocks ---------------------------------------------------------------
 
@@ -1334,87 +1196,12 @@ class Terrain:
             (min_x, max_x, min_z, max_z), floor_height, self.TILING_SCALE)
         return vertices
 
-    def _upload_block_mesh(self, slot: int):
-        self._sync_gl_columns()
-        data = np.ascontiguousarray(self._block_mesh(slot), dtype=np.float32)
-        if not self._block_vao[slot]:
-            self._block_vao[slot] = int(gl.glGenVertexArrays(1))
-            self._block_vbo[slot] = int(gl.glGenBuffers(1))
-        gl.glBindVertexArray(int(self._block_vao[slot]))
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, int(self._block_vbo[slot]))
-        gl.glBufferData(gl.GL_ARRAY_BUFFER, max(data.nbytes, 4),
-                        data if data.nbytes else None, gl.GL_STATIC_DRAW)
-        stride = 14 * 4
-        for loc, size, offset in ((0, 3, 0), (1, 3, 12), (2, 3, 24), (3, 2, 36), (4, 3, 44)):
-            gl.glVertexAttribPointer(loc, size, gl.GL_FLOAT, gl.GL_FALSE, stride,
-                                     ctypes.c_void_p(offset))
-            gl.glEnableVertexAttribArray(loc)
-        gl.glBindVertexArray(0)
-        self._block_count[slot] = len(data)
 
-    def _ensure_block_program(self) -> int:
-        if not self.block_program:
-            self.block_program = self._compile_program('terrain_mesh.vert')
-            self.block_uniforms = {}
-        return self.block_program
 
-    def draw_block_slots(self, slots) -> int:
-        """Draw built *slots* from their block meshes (the program is current)."""
-        triangles = 0
-        for slot in slots:
-            slot = int(slot)
-            if not self._block_vao[slot] or self._block_count[slot] <= 0:
-                continue
-            gl.glBindVertexArray(int(self._block_vao[slot]))
-            gl.glDrawArrays(gl.GL_TRIANGLES, 0, int(self._block_count[slot]))
-            triangles += int(self._block_count[slot]) // 3
-        gl.glBindVertexArray(0)
-        return triangles
 
     # -- GPU heightfield --------------------------------------------------
 
-    def _ensure_height_page(self, page: int) -> int:
-        """The texture array holding height-grid page *page*, created on demand.
 
-        One layer per table slot (slot = page * layers + layer), R32F, every
-        layer the bordered LOD-0 grid size; a lower LOD uses the top-left
-        corner.
-        """
-        if not self._page_layers:
-            limit = int(gl.glGetIntegerv(gl.GL_MAX_ARRAY_TEXTURE_LAYERS))
-            self._page_layers = max(1, min(self.HEIGHT_PAGE_LAYERS, limit))
-        while len(self._height_pages) <= page:
-            tex = int(gl.glGenTextures(1))
-            gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, tex)
-            gl.glTexImage3D(gl.GL_TEXTURE_2D_ARRAY, 0, gl.GL_R32F,
-                            STORED_GRID, STORED_GRID, self._page_layers, 0,
-                            gl.GL_RED, gl.GL_FLOAT, None)
-            for pname, value in ((gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST),
-                                 (gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST),
-                                 (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
-                                 (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
-                gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, pname, value)
-            self._height_pages.append(tex)
-        return self._height_pages[page]
-
-    def _upload_heightfield(self, slot: int):
-        """Copy a slot's height grid into its texture layer."""
-        table = self.table
-        self._sync_gl_columns()
-        if not self._page_layers:
-            self._ensure_height_page(0)
-        page, layer = divmod(int(slot), self._page_layers)
-        tex = self._ensure_height_page(page)
-        n = int(table.grid_res[slot]) + 1 + 2 * GRID_BORDER
-        # Stored row i is texel row y = i, column k is x = k; the drawn grid
-        # starts GRID_BORDER texels in (terrain.vert offsets by the same).
-        data = np.ascontiguousarray(table.heights[slot, :n, :n], dtype=np.float32)
-        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, tex)
-        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 4)
-        gl.glPixelStorei(gl.GL_UNPACK_ROW_LENGTH, 0)
-        gl.glTexSubImage3D(gl.GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, n, n, 1,
-                           gl.GL_RED, gl.GL_FLOAT, data)
-        self._gpu_version[slot] = table.version[slot]
 
     def gradient_uniforms(self):
         """``(count, H, C, W, D)``: the biome gradient as the shader reads it.
@@ -1445,126 +1232,134 @@ class Terrain:
             D[i] = [c1[j] - c0[j] for j in range(3)]
         return len(stops), H, C, W, D
 
-    def chunk_uniforms(self, slots):
-        """``(uChunkI, uChunkX, uChunkY)`` for each of *slots*, in order.
 
-        Python ints and floats, the floats rounded to the float32 the shader
-        receives. One set of column operations for a whole draw, rather than
-        a dozen NumPy scalar reads per chunk.
-        """
-        table = self.table
-        slots = np.asarray(slots, dtype=np.intp)
-        res = table.grid_res[slots].astype(np.int64)
-        layer = (slots % self._page_layers if self._page_layers
-                 else np.zeros(len(slots), dtype=np.intp))
-        lo = table.min_y[slots]
-        hi = table.max_y[slots]
-        cx = np.empty((len(slots), 3), dtype=np.float32)
-        cx[:, :2] = table.world[slots]
-        cx[:, 2] = table.size[slots] / res
-        cy = np.empty((len(slots), 2), dtype=np.float32)
-        cy[:, 0] = lo
-        cy[:, 1] = np.where(hi > lo, hi - lo, 1.0)
-        return list(zip(zip(res.tolist(), layer.tolist()),
-                        cx.tolist(), cy.tolist()))
 
-    def set_heightfield_frame_uniforms(self, u, unit):
-        """Per-frame heightfield uniforms: sampler unit, tiling, gradient."""
-        count, H, C, W, D = self.gradient_uniforms()
-        limit = self.MAX_GRADIENT_STOPS
-        gl.glUniform1i(u['uHeights'], unit)
-        gl.glUniform1f(u['uTiling'], float(np.float32(self.TILING_SCALE)))
-        gl.glUniform1i(u['uFlatMode'], 1 if self.flat_mode else 0)
-        gl.glUniform1i(u['uGradCount'], count)
-        gl.glUniform1fv(u['uGradH'], limit, H)
-        gl.glUniform3fv(u['uGradC'], limit, C)
-        gl.glUniform1fv(u['uGradW'], limit, W)
-        gl.glUniform3fv(u['uGradD'], limit, D)
 
-    def draw_heightfield_slots(self, u, slots, unit, lod_level_loc=-1,
-                               paint_unit=None):
-        """Draw built terrain chunks with their baked material paint."""
-        table = self.table
-        stale = slots[self._gpu_version[slots] != table.version[slots]]
-        for slot in stale:
-            self._upload_heightfield(int(slot))
-        order = slots.tolist()
-        # Each slot's paint version, 0 where it has none; None when the map
-        # has no paint, which is most maps. Uploads happen here, before the
-        # loop binds any height page: an upload binds the paint page on the
-        # active unit.
-        paint = None
-        versions = self._paint_map_versions
-        if paint_unit is not None and versions:
-            paint = [versions.get(tuple(coord), 0)
-                     for coord in table.coord[slots].tolist()]
-            gpu_version = self._paint_gpu_version
-            for slot, version in zip(order, paint):
-                if version and gpu_version[slot] != version:
-                    self._upload_paint_chunk(slot)
-        if not self._empty_vao:
-            self._empty_vao = int(gl.glGenVertexArrays(1))
-        gl.glBindVertexArray(self._empty_vao)
-        if paint_unit is not None:
-            self._bind_empty_paint(paint_unit)
-        gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
-        lods = table.lod[slots].tolist() if lod_level_loc != -1 else None
-        loc_chunk_i, loc_chunk_x, loc_chunk_y = (
-            u['uChunkI'], u['uChunkX'], u['uChunkY'])
-        page_layers = self._page_layers
-        bound_page = -1
-        bound_paint_page = -1
-        # The program keeps a uniform's value between draws, so uPaintEnabled
-        # is sent when it changes, starting with the first chunk.
-        paint_enabled = None
-        triangles = 0
-        for i, ((res, layer), cx, cy) in enumerate(self.chunk_uniforms(slots)):
-            slot = order[i]
-            page = slot // page_layers
-            if page != bound_page:
-                gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._height_pages[page])
-                bound_page = page
-            if paint_unit is not None:
-                if paint is not None and paint[i]:
-                    paint_page = slot // self._paint_page_layers
-                    if paint_page != bound_paint_page:
-                        gl.glActiveTexture(gl.GL_TEXTURE0 + paint_unit)
-                        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY,
-                                         self._paint_pages[paint_page])
-                        bound_paint_page = paint_page
-                        gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
-                    if paint_enabled != 1:
-                        gl.glUniform1i(u['uPaintEnabled'], 1)
-                        paint_enabled = 1
-                    gl.glUniform1i(u['uPaintLayer'],
-                                   slot % self._paint_page_layers)
-                elif paint_enabled != 0:
-                    gl.glUniform1i(u['uPaintEnabled'], 0)
-                    paint_enabled = 0
-            if lods is not None:
-                gl.glUniform1i(lod_level_loc, lods[i])
-            gl.glUniform2i(loc_chunk_i, res, layer)
-            gl.glUniform3f(loc_chunk_x, *cx)
-            gl.glUniform2f(loc_chunk_y, *cy)
-            gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6 * res * res)
-            triangles += 2 * res * res
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        gl.glBindVertexArray(0)
-        return triangles
+
+    #: Whether ordinary ground grows meadow grass (Fio's scatter,
+    #: :meth:`_generate_meadow_blades`). MiniWind keeps ordinary terrain
+    #: clear: grass is the biome map's wheat fields and tundra heath only.
+    meadow_grass = False
 
     def _generate_grass_blades(self, slot: int) -> np.ndarray:
-        """Blade instances for wheat fields and tundra heath only.
+        """Per-blade instance records ``(x, y, z, size, yaw, tint, r, g, b)``.
 
-        Ordinary terrain stays clear of meadow grass and swamp reeds. The
-        two authored biomes keep their own density, colour and growth.
+        Wheat fields and tundra heath, wherever the biome map paints them,
+        each with its own density, colour and growth; and, where
+        :attr:`meadow_grass` is on, the meadow scattered over ordinary
+        ground. Ordinary terrain otherwise stays clear of meadow grass and
+        swamp reeds.
         """
-        if self.biome_map is None:
-            return np.empty((0, 9), dtype=np.float32)
-        parts = [p for p in (self._generate_wheat_blades(slot),
-                             self._generate_tundra_blades(slot)) if len(p)]
+        parts = []
+        if self.meadow_grass:
+            parts.append(self._generate_meadow_blades(slot))
+        if self.biome_map is not None:
+            parts.append(self._generate_wheat_blades(slot))
+            parts.append(self._generate_tundra_blades(slot))
+        parts = [p for p in parts if len(p)]
         if not parts:
             return np.empty((0, 9), dtype=np.float32)
         return np.concatenate(parts) if len(parts) > 1 else parts[0]
+
+    def _generate_meadow_blades(self, slot: int) -> np.ndarray:
+        """Deterministic per-blade instance records ``(x, y, z, size, yaw, tint)``.
+
+        Tufts are scattered over the chunk and each spreads a handful of
+        blades around its centre, so a field reads as clumps rather than an
+        even carpet. Every blade root is sampled on the (possibly terraced)
+        surface. Tufts are dropped on steep ground, outside the grass height
+        layer (high rock and snow, low sand) and in broad noise clearings.
+        """
+        table = self.table
+        size = float(table.size[slot])
+        limit = self.GRASS_MAX_PER_CHUNK
+        if self.grass_density > LEGACY_GRASS_DENSITY_MAX:
+            limit = int(limit * (self.grass_density / LEGACY_GRASS_DENSITY_MAX))
+        tufts = min(
+            limit,
+            int(max(0.0, self.grass_density) * size * size)
+        )
+        if tufts <= 0:
+            return np.empty((0, 9), dtype=np.float32)
+
+        seed = (
+            (int(self.seed) * 73856093)
+            ^ (int(table.coord[slot, 0]) * 19349663)
+            ^ (int(table.coord[slot, 1]) * 83492791)
+        ) & 0xFFFFFFFF
+        rng = np.random.default_rng(seed)
+        tx = float(table.world[slot, 0]) + rng.random(tufts) * size
+        tz = float(table.world[slot, 1]) + rng.random(tufts) * size
+        edge_roll = rng.random(tufts)
+
+        # Slope from the unterraced surface: terrace risers are a styling of
+        # the ground, not cliffs, and should not strip the grass off a hill.
+        eps = 1.0
+        h0 = self._get_raw_heights_batch(tx, tz)
+        gx = (self._get_raw_heights_batch(tx + eps, tz) - h0) / eps
+        gz = (self._get_raw_heights_batch(tx, tz + eps) - h0) / eps
+        normal_y = 1.0 / np.sqrt(1.0 + gx * gx + gz * gz)
+        keep = normal_y >= self.GRASS_MIN_NORMAL_Y
+        # Grass grows only between its lowest and highest height - by
+        # default the grass texture layer, so never on the high rock and
+        # snow nor down on the sand - thinning out across each edge.
+        low, high = self.grass_height_bounds()
+        weight = terrain_style.grass_layer_weight(
+            self._normalized_layer_height(h0), (low, high, 1.0),
+            self.appearance.layer_blend * 2.0)
+        # Broad clearings so a meadow is never an even carpet.
+        clearing = self.noise.noise2d_batch(
+            (tx - self.offset_x) * 0.0035 + 91.7, (tz - self.offset_z) * 0.0035 - 13.3)
+        weight = weight * np.clip((clearing + 0.3) / 0.45, 0.0, 1.0)
+        keep &= edge_roll < weight
+        tx = tx[keep]
+        tz = tz[keep]
+        tuft_raw = h0[keep]
+        tuft_slope = 1.0 - normal_y[keep]
+        if len(tx) == 0:
+            return np.empty((0, 9), dtype=np.float32)
+
+        per_tuft = self.GRASS_BLADES_PER_TUFT
+        count = len(tx) * per_tuft
+        angle = rng.uniform(0.0, 6.2831853, count)
+        radius = np.sqrt(rng.random(count)) * self.GRASS_TUFT_RADIUS
+        bx = np.repeat(tx, per_tuft) + np.cos(angle) * radius
+        bz = np.repeat(tz, per_tuft) + np.sin(angle) * radius
+
+        size_roll = rng.uniform(0.65, 1.25, count)
+        yaw_roll = rng.uniform(0.0, 6.2831853, count)
+        tint_roll = rng.uniform(0.82, 1.12, count)
+        # No grass on painted ground: a stamp or a painted path is a
+        # clearing. Blade by blade, so the edge of the paint is the edge of
+        # the grass, thinning out across a feathered one. (Drawn after the
+        # rolls above, so painting changes no other blade.)
+        if self.texture_paint_maps:
+            covered = self._paint_cover_at(bx, bz)
+            if covered is not None:
+                grows = rng.random(count) >= covered
+                if not np.all(grows):
+                    bx, bz = bx[grows], bz[grows]
+                    size_roll, yaw_roll, tint_roll = (
+                        size_roll[grows], yaw_roll[grows], tint_roll[grows])
+                    tuft_of = np.repeat(np.arange(len(tx)), per_tuft)[grows]
+                    tuft_raw, tuft_slope = tuft_raw[tuft_of], tuft_slope[tuft_of]
+                    per_tuft, count = 1, len(bx)
+                    if count == 0:
+                        return np.empty((0, 9), dtype=np.float32)
+
+        data = np.empty((count, 9), dtype=np.float32)
+        data[:, 0] = bx
+        data[:, 1] = self._get_heights_batch(bx, bz)
+        data[:, 2] = bz
+        data[:, 3] = size_roll
+        data[:, 4] = yaw_roll
+        data[:, 5] = tint_roll
+        # The colour of the ground each blade stands on, for grass that
+        # matches the terrain (the default until a blade colour is chosen).
+        data[:, 6:9] = self._ground_colors(
+            slot, data[:, 1], np.repeat(tuft_raw, per_tuft),
+            np.repeat(tuft_slope, per_tuft))
+        return data
 
     def _generate_wheat_blades(self, slot: int) -> np.ndarray:
         """Wheat: dense clumps of tall golden stalks wherever the biome map
@@ -1658,6 +1453,10 @@ class Terrain:
     grass_quality = 'high'
     #: (tuft budget multiplier, blade half-width) per quality.
     GRASS_QUALITIES = {'high': (1.0, 0.45), 'low': (0.5, 0.35)}
+    #: settings.ini [Renderer] grass: False (set by the host from the
+    #: renderer's setting, before :meth:`advance`) grows and publishes no
+    #: grass anywhere, whatever the map asks for.
+    grass_allowed = True
 
     def set_grass_quality(self, quality) -> bool:
         """Switch grass quality; grass regrows only when it changes."""
@@ -1761,8 +1560,7 @@ class Terrain:
         moves on it leaves a short trail behind, which springs back up over
         :data:`GRASS_RECOVER_SECONDS`, so a path through tall grass is seen
         parting and closing behind the walker. Safe to call from the game
-        thread: the shader reads a list replaced whole."""
-        import time
+        thread: each published frame reads a tuple replaced whole."""
         now = time.perf_counter()
         trails = dict(getattr(self, '_grass_trails', {}))
         live = []
@@ -1780,7 +1578,7 @@ class Terrain:
                 del trails[key]
         self._grass_trails = trails
         fading = sorted((p for trail in trails.values() for p in trail), key=lambda p: -p[3])
-        self._grass_pushers = (live + fading)[:self.MAX_GRASS_PUSHERS]
+        self._grass_pushers = tuple((live + fading)[:self.MAX_GRASS_PUSHERS])
 
     def _grass_pusher_array(self, now) -> Tuple[np.ndarray, int]:
         """``(x, z, radius, strength)`` rows for the shader."""
@@ -1799,6 +1597,52 @@ class Terrain:
         if rows:
             out[:len(rows)] = rows[:self.MAX_GRASS_PUSHERS]
         return out, min(len(rows), self.MAX_GRASS_PUSHERS)
+
+    def _paint_cover_at(self, x, z):
+        """How covered by paint the ground is at world points, 0..1 (the
+        stored paint's alpha); None when none of their chunks is painted."""
+        res = self.TERRAIN_PAINT_RESOLUTION
+        cs = float(self.chunk_size)
+        fx = (np.asarray(x, dtype=np.float64) - self.offset_x) / cs
+        fz = (np.asarray(z, dtype=np.float64) - self.offset_z) / cs
+        cx = np.floor(fx).astype(np.int64)
+        cz = np.floor(fz).astype(np.int64)
+        out = None
+        maps = self.texture_paint_maps
+        for key in {(int(a), int(b)) for a, b in zip(cx.tolist(), cz.tolist())}:
+            paint = maps.get(key)
+            if paint is None:
+                continue
+            here = (cx == key[0]) & (cz == key[1])
+            ix = np.clip(((fx[here] - key[0]) * res).astype(np.int64), 0, res - 1)
+            iz = np.clip(((fz[here] - key[1]) * res).astype(np.int64), 0, res - 1)
+            if out is None:
+                out = np.zeros(len(fx), dtype=np.float32)
+            out[here] = paint[ix, iz, 3] * np.float32(1.0 / 255.0)
+        return out
+
+    #: Grass does not grow where stamped/painted texture covers the ground
+    #: more than this (roads, floors, plazas).
+    GRASS_PAINT_CLEAR = 0.25
+
+    def _paint_alpha_batch(self, world_x, world_z) -> np.ndarray:
+        """Coverage (0..1) of baked texture paint at world points."""
+        xs = np.asarray(world_x, np.float32).ravel()
+        zs = np.asarray(world_z, np.float32).ravel()
+        cover = self._paint_cover_at(xs, zs) if len(xs) else None
+        return cover if cover is not None else np.zeros(len(xs), np.float32)
+
+    def _paint_changed_grass(self, keys):
+        """The stored paint of chunks *keys* changed: their grass is due."""
+        if not self.grass_enabled or not keys:
+            return
+        table = self.table
+        cap = table._capacity
+        coords = table.coord[:cap]
+        live = table.live[:cap]
+        dirty = table.grass_dirty[:cap]
+        for cx, cz in keys:
+            dirty[live & (coords[:, 0] == cx) & (coords[:, 1] == cz)] = True
 
     def _ground_colors(self, slot: int, y: np.ndarray, raw: np.ndarray,
                        slope: np.ndarray) -> np.ndarray:
@@ -1840,132 +1684,7 @@ class Terrain:
         weights = self.biome_weights_batch(x, z)
         return terrain_biomes.blend_colors(out, weights, slope).astype(np.float32)
 
-    def _upload_grass_chunk(self, slot: int):
-        """Generate deterministic grass instances for one chunk and upload them."""
-        table = self.table
-        self._sync_gl_columns()
-        if not self.grass_enabled:
-            self._grass_count[slot] = 0
-            table.grass_dirty[slot] = False
-            return
-        if not self.grass_shader_program:
-            self._init_grass_shader()
-            if not self.grass_shader_program:
-                return
 
-        data = self._generate_grass_blades(slot)
-        count = len(data)
-        if count <= 0:
-            self._grass_count[slot] = 0
-            table.grass_dirty[slot] = False
-            return
-
-        if not self._grass_vao[slot]:
-            self._grass_vao[slot] = int(gl.glGenVertexArrays(1))
-            self._grass_vbo[slot] = int(gl.glGenBuffers(1))
-        gl.glBindVertexArray(int(self._grass_vao[slot]))
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, int(self._grass_vbo[slot]))
-        gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data, gl.GL_STATIC_DRAW)
-        stride = 9 * 4
-        gl.glVertexAttribPointer(6, 3, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(24))
-        gl.glEnableVertexAttribArray(6)
-        gl.glVertexAttribDivisor(6, 1)
-        gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(0))
-        gl.glEnableVertexAttribArray(2)
-        gl.glVertexAttribDivisor(2, 1)
-        gl.glVertexAttribPointer(3, 1, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(12))
-        gl.glEnableVertexAttribArray(3)
-        gl.glVertexAttribDivisor(3, 1)
-        gl.glVertexAttribPointer(4, 1, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(16))
-        gl.glEnableVertexAttribArray(4)
-        gl.glVertexAttribDivisor(4, 1)
-        gl.glVertexAttribPointer(5, 1, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(20))
-        gl.glEnableVertexAttribArray(5)
-        gl.glVertexAttribDivisor(5, 1)
-        gl.glBindVertexArray(0)
-        self._grass_count[slot] = count
-        table.grass_dirty[slot] = False
-
-    def _draw_grass(self, visible_slots, projection, view, camera_pos, env_uniforms):
-        if not self.grass_enabled or not self.grass_shader_program:
-            return
-        # A monotonic frame clock keeps wind speed independent of actual FPS.
-        import time
-        now = time.perf_counter()
-        last = getattr(self, '_grass_last_time', now)
-        self.grass_time = (self.grass_time + max(0.0, min(now - last, 0.1))) % 100000.0
-        self._grass_last_time = now
-        gl.glUseProgram(self.grass_shader_program)
-        u = self.grass_uniforms
-        gl.glUniformMatrix4fv(u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
-        gl.glUniformMatrix4fv(u['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
-        gl.glUniform1f(u['time'], self.grass_time)
-        gl.glUniform3f(u['grassColor'], *self.grass_color)
-        gl.glUniform3f(u['cameraPos'], float(camera_pos.x), float(camera_pos.y), float(camera_pos.z))
-        gl.glUniform1f(u['windStrength'], 0.65)
-        gl.glUniform3f(u['grassTipColor'], *self.grass_tip_colour())
-        gl.glUniform1i(u['uMatchGround'], 0 if self.grass_color_custom else 1)
-        gl.glUniform1i(u['uTipAuto'], 1 if self.grass_tip_color is None else 0)
-        gl.glUniform1f(u['uLodStart'], self.GRASS_LOD_START)
-        gl.glUniform1f(u['uLodEnd'], self.GRASS_LOD_DISTANCE)
-        gl.glUniform1f(u['uFadeStart'], min(self.GRASS_FADE_START, self.GRASS_MAX_DISTANCE))
-        gl.glUniform1f(u['uFadeEnd'], self.GRASS_MAX_DISTANCE)
-        gl.glUniform1f(u['uBladeHeight'], self.grass_height)
-        gl.glUniform1f(u['uBladeWidth'], self.GRASS_BLADE_WIDTH)
-        pushers, n_pushers = self._grass_pusher_array(now)
-        if u.get('uPusherCount', -1) != -1:
-            gl.glUniform1i(u['uPusherCount'], n_pushers)
-            if n_pushers and u.get('uPushers', -1) != -1:
-                gl.glUniform4fv(u['uPushers'], n_pushers, pushers)
-
-        if env_uniforms:
-            for name, value in env_uniforms.items():
-                loc = u.get(name, -1)
-                if loc == -1:
-                    continue
-                if isinstance(value, int):
-                    gl.glUniform1i(loc, value)
-                elif isinstance(value, float):
-                    gl.glUniform1f(loc, value)
-                else:
-                    gl.glUniform3f(loc, *value)
-
-        # Opaque tapered blades. Explicitly restore the depth state here:
-        # grass must test against the already-rendered terrain, not inherit
-        # depth state from a preceding renderer pass.
-        gl.glDisable(gl.GL_BLEND)
-        gl.glEnable(gl.GL_DEPTH_TEST)
-        gl.glDepthFunc(gl.GL_LEQUAL)
-        gl.glDepthMask(gl.GL_TRUE)
-        cull_was = bool(gl.glIsEnabled(gl.GL_CULL_FACE))
-        gl.glDisable(gl.GL_CULL_FACE)
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-        dist_sq = self.table.nearest_dist_sq(
-            visible_slots, float(camera_pos.x), float(camera_pos.z))
-        max_sq = self.GRASS_MAX_DISTANCE * self.GRASS_MAX_DISTANCE
-        for slot, d in zip(visible_slots, dist_sq):
-            if self._grass_count[slot] <= 0 or not self._grass_vao[slot]:
-                continue
-            if d > max_sq:
-                continue
-            # Whole chunks swap between detailed and single-triangle blades.
-            # The shader has already morphed every blade past
-            # GRASS_LOD_DISTANCE onto the far shape, and a chunk's nearest
-            # point is never further than any of its blades, so the swap
-            # cannot be seen.
-            lod_sq = self.GRASS_LOD_DISTANCE * self.GRASS_LOD_DISTANCE
-            segments = self.GRASS_SEGMENTS if d < lod_sq else 1
-            gl.glUniform1i(u['uSegments'], segments)
-            gl.glBindVertexArray(int(self._grass_vao[slot]))
-            gl.glDrawArraysInstanced(
-                gl.GL_TRIANGLES, 0, grass_vertex_count(segments),
-                int(self._grass_count[slot]))
-        gl.glBindVertexArray(0)
-        # Grass blades are double-sided. Put culling back the way it was
-        # found -- the terrain pass runs with it off. Forcing it on leaked
-        # into Qt's overlay painter, which then culled the SysMon panel.
-        if cull_was:
-            gl.glEnable(gl.GL_CULL_FACE)
 
     def _get_lod_resolution(self, dist_sq: float) -> int:
         for i, threshold in enumerate(self.LOD_DISTANCES_SQ):
@@ -1985,240 +1704,267 @@ class Terrain:
             return min(self.NEAR_DETAIL_RADIUS, float(self.stream_radius))
         return self.NEAR_DETAIL_RADIUS
 
-    def _ensure_placeholder_cubemap(self) -> int:
-        """Lazily create a 1x1 complete cube-map used for shadow sampler units
-        that have no real depth cube-map (shadows off, or fewer cube-maps than
-        sampler slots).  A complete texture on every unit guarantees no
-        samplerCube is left referencing texture unit 0 or an incomplete texture,
-        either of which can make glDrawArrays raise GL_INVALID_OPERATION."""
-        if self._placeholder_cubemap:
-            return self._placeholder_cubemap
-        tex = int(gl.glGenTextures(1))
-        gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, tex)
-        black = (ctypes.c_ubyte * 4)(0, 0, 0, 255)
-        for face in range(6):
-            gl.glTexImage2D(gl.GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, gl.GL_RGBA,
-                            1, 1, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, black)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_R, gl.GL_CLAMP_TO_EDGE)
-        gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, 0)
-        self._placeholder_cubemap = tex
-        return self._placeholder_cubemap
 
-    def update_and_render(self, projection: glm.mat4, view: glm.mat4, camera_pos: glm.vec3, frustum_planes=None, lights=None, active_lights_count=0,
-                          shadow_cubemaps=None, shadow_index_map=None, shadow_unit_base=4,
-                          env_uniforms=None):
-        if not self.enabled: return
-        if not self.shader_program:
-            self._init_shader()
-        prog = self.shader_program
-        if not prog:
+    # -- publication (engine/terrain_frame.py) -----------------------------
+
+    def publish(self) -> TerrainFrame:
+        """This frame's terrain, as a renderer may see it: the dense table,
+        the per-slot products and paint maps, and the appearance as numbers.
+        Immutable; nothing in it leads back to this object."""
+        return TerrainFrame(
+            key=self._publication_key, enabled=bool(self.enabled),
+            table=self.table, products=self.products,
+            flat_mode=bool(self.flat_mode), wireframe=bool(self.wireframe),
+            use_textures=bool(getattr(self, 'use_textures', True)),
+            blocks=self.appearance.terrace_mode == 'blocks',
+            appearance=read_only(self.appearance_uniforms()),
+            gradient=self.gradient_uniforms(),
+            tiling=self.TILING_SCALE,
+            grass_enabled=bool(self.grass_enabled and self.grass_allowed),
+            grass_color=tuple(self.grass_color),
+            grass_tip_colour=tuple(self.grass_tip_colour()),
+            grass_match_ground=not self.grass_color_custom,
+            grass_tip_auto=self.grass_tip_color is None,
+            grass_height=float(self.grass_height),
+            grass_lod_start=self.GRASS_LOD_START,
+            grass_lod_distance=self.GRASS_LOD_DISTANCE,
+            grass_fade_start=self.GRASS_FADE_START,
+            grass_max_distance=self.GRASS_MAX_DISTANCE,
+            grass_segments=self.GRASS_SEGMENTS,
+            grass_blade_width=self.GRASS_BLADE_WIDTH,
+            paint_display=read_only(self._paint_display),
+            paint_maps=read_only(self.texture_paint_maps),
+            paint_versions=read_only(self._paint_map_versions),
+            paint_epoch=self._paint_epoch,
+            paint_resolution=self.TERRAIN_PAINT_RESOLUTION,
+            paint_page_layers=self.PAINT_PAGE_LAYERS,
+            height_page_layers=self.HEIGHT_PAGE_LAYERS,
+            max_gradient_stops=self.MAX_GRADIENT_STOPS,
+            triangle_count=self.table.triangle_count(),
+            biome_map=self._biome_published,
+            biome_version=self._biome_version,
+            biome_bounds=self._biome_bounds() if self._biome_published is not None else None,
+            grass_pushers=self._published_pushers())
+
+    def _published_pushers(self):
+        """This frame's grass pushers, ``(n, 4)`` float32 rows of
+        ``(x, z, radius, strength)``, read-only; None when nothing pushes."""
+        if not self._grass_pushers:
+            return None
+        rows, count = self._grass_pusher_array(time.perf_counter())
+        if not count:
+            return None
+        rows = rows[:count]
+        rows.flags.writeable = False
+        return rows
+
+    def _released(self, slots):
+        """Table slots were freed: their published products go with them. (A
+        renderer frees what it built for a slot when it next sees the table.)"""
+        if len(slots):
+            self.products.drop(slots)
+            for slot in slots:
+                self._building.pop(int(slot), None)
+
+    def cleanup(self):
+        """Drop every chunk. No GL here: a renderer's side goes with the
+        publication key, which a cleaned-up terrain no longer offers."""
+        self.stop_builder()
+        self._released(self.table.clear())
+        self.products.clear_store(self.products.grass)
+        self.products.clear_store(self.products.blocks)
+
+    # -- upkeep: what exists, at what detail, built (no GL) -------------------
+
+    def advance(self, camera_pos, frustum_planes=None):
+        """Bring the published terrain up to date for a camera, before the
+        frame is drawn: stream chunks in and out, advance the LOD hysteresis,
+        and build what is due -- height grids (inline within the frame's
+        budget, or on the builder thread when :attr:`BACKGROUND_BUILDS`), then
+        block meshes and grass. Everything it writes is what
+        :meth:`publish` hands a renderer; it makes no GL call."""
+        if not self.enabled:
             return
-        u = self.uniforms
-        # Blocks are drawn from per-chunk meshes by their own vertex shader;
-        # everything else from the heightfield.
-        blocks = (self.appearance.terrace_mode == 'blocks'
-                  and bool(self._ensure_block_program()))
-        if blocks:
-            prog = self.block_program
-            u = self.block_uniforms
-
-        # Terrain can be constructed before the GL context exists. In that
-        # case _init_shader() cannot create the grass program either, and the
-        # renderer may later inject an externally compiled terrain program
-        # without calling _init_shader() again. Retry grass independently once
-        # a real GL context is current.
-        if self.grass_enabled and not self.grass_shader_program:
-            self._init_grass_shader()
-
-        # Re-resolve late-bound uniforms against the *current* program.  The
-        # renderer can swap in an externally-compiled program whose uniform
-        # table only covers a subset of locations (see
-        # ForwardRenderer.setup_terrain_shader), so any sampler we rely on must be
-        # looked up here or it stays unbound.  An unassigned ``samplerCube``
-        # defaults to texture unit 0, collides with the ``sampler2D`` terrain
-        # textures bound there, and makes glDrawArrays raise
-        # GL_INVALID_OPERATION.
-        names = self._UNIFORM_NAMES + tuple(env_uniforms or ())
-        names += tuple(f'shadowMaps[{i}]' for i in range(shaders.MAX_SHADOW_LIGHTS))
-        for name in names:
-            if name not in u:
-                u[name] = gl.glGetUniformLocation(prog, name)
-
-        self.visible_chunks = 0
-        self.culled_chunks = 0
-        self.total_triangles = 0
-
-        # Apply any bounds change that deferred its prune to the GL thread.
         if self._pending_prune:
             self._remove_out_of_bounds_chunks()
             self._pending_prune = False
         # Rows made before the chunk size or offset changed (from_dict on a
-        # terrain that already drew a frame -- the loading overlay's repaint
-        # can draw the fresh default terrain mid-load -- or an offset edit)
-        # would hold their chunk indices at the old geometry for good.
-        self._free_gl(self.table.prune_stale_geometry(
+        # terrain that already drew a frame, or an offset edit) would hold
+        # their chunk indices at the old geometry for good.
+        self._released(self.table.prune_stale_geometry(
             self.chunk_size, self.offset_x, self.offset_z))
-
         if self.streaming:
             # The stream radius is the caller's to set (Big World derives it
-            # from its activation radius) and is not inflated here. It used to
-            # be raised to the 4096-unit protected zone plus a chunk every
-            # frame, which on a Big World map meant ~1000 resident full-detail
-            # chunks whatever the map asked for. The protected zone shrinks to
-            # the stream radius instead -- see _near_detail_radius().
+            # from its activation radius) and is not inflated here; the
+            # protected zone shrinks to it instead (_near_detail_radius()).
             self._stream_chunks(camera_pos)
         else:
             self.table.ensure_bounds(self._chunk_bounds(), self.chunk_size,
                                      self.offset_x, self.offset_z)
-        
-        gl.glUseProgram(prog)
-        gl.glUniformMatrix4fv(u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
-        gl.glUniformMatrix4fv(u['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
-        gl.glActiveTexture(gl.GL_TEXTURE0); gl.glBindTexture(gl.GL_TEXTURE_2D, self.grass_tex); gl.glUniform1i(u['texGrass'], 0)
-        gl.glActiveTexture(gl.GL_TEXTURE1); gl.glBindTexture(gl.GL_TEXTURE_2D, self.rock_tex);  gl.glUniform1i(u['texRock'],  1)
-        gl.glActiveTexture(gl.GL_TEXTURE2); gl.glBindTexture(gl.GL_TEXTURE_2D, self.sand_tex);  gl.glUniform1i(u['texSand'],  2)
-        gl.glActiveTexture(gl.GL_TEXTURE3); gl.glBindTexture(gl.GL_TEXTURE_2D, self.snow_tex);  gl.glUniform1i(u['texSnow'],  3)
-        height_texture_unit = shadow_unit_base + shaders.MAX_SHADOW_LIGHTS
-        paint_texture_unit = height_texture_unit + 1
-        self._upload_appearance_uniforms(u)
-        self._bind_biome_map(u, paint_texture_unit + 1)
-        loc = u.get('terrainPaintMap', -1)
-        if loc != -1:
-            gl.glUniform1i(loc, paint_texture_unit)
-        
-        # Force textures off if flat_mode is enabled or textures aren't loaded
-        textures_loaded = (self.grass_tex != 0 and self.rock_tex != 0
-                           and self.sand_tex != 0 and self.snow_tex != 0)
-        use_tex = 0 if self.flat_mode or not textures_loaded else (1 if getattr(self, 'use_textures', True) else 0)
-        gl.glUniform1i(u['use_textures'], use_tex)
-
-        # Distance fog + global ambient (engine.shaders.FOG_GLSL). The terrain
-        # owns its program and its own uniform table, so the renderer hands the
-        # already-resolved values across rather than writing them itself --
-        # otherwise a terrain running its own fallback program would be the one
-        # surface in the level that ignored the fog and stayed sharp right up
-        # to the far plane.
-        if env_uniforms:
-            for name, value in env_uniforms.items():
-                loc = u.get(name, -1)
-                if loc is None or loc == -1:
-                    continue
-                if isinstance(value, int):
-                    gl.glUniform1i(loc, value)
-                elif isinstance(value, float):
-                    gl.glUniform1f(loc, value)
-                else:
-                    gl.glUniform3f(loc, *value)
-        
-        # The renderer has already selected the terrain light subset and
-        # packed it into the shared std140 light UBO.
-        gl.glUniform1i(u['active_lights'], active_lights_count)
-
-        # Bind depth cube-maps so terrain receives point-light shadows.
-        #
-        # Every ``samplerCube shadowMaps[i]`` uniform must be pointed at its own
-        # reserved texture unit *unconditionally*.  GLSL samplers default to
-        # texture unit 0, which already holds a ``sampler2D`` (texGrass).  The
-        # spec forbids two different sampler types referencing the same texture
-        # image unit, so leaving the cube samplers on unit 0 makes the driver
-        # raise GL_INVALID_OPERATION on the very next draw call.  We therefore
-        # always assign the units and bind a *complete* cube-map to each — the
-        # real depth cube-map when available, otherwise a 1x1 placeholder — even
-        # when shadows are disabled or fewer cube-maps than sampler slots are
-        # supplied.  Binding the incomplete default texture (name 0) would leave
-        # an active samplerCube pointing at an incomplete texture, which some
-        # drivers also reject at draw time.
-        shadow_cubemaps = shadow_cubemaps or []
-        placeholder = self._ensure_placeholder_cubemap()
-        for i in range(shaders.MAX_SHADOW_LIGHTS):
-            loc = u.get(f'shadowMaps[{i}]', -1)
-            if loc is None or loc == -1:
-                continue
-            cm = shadow_cubemaps[i] if (i < len(shadow_cubemaps) and shadow_cubemaps[i]) else placeholder
-            gl.glActiveTexture(gl.GL_TEXTURE0 + shadow_unit_base + i)
-            gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, cm)
-            gl.glUniform1i(loc, shadow_unit_base + i)
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        
-        lod_level_loc = u.get('lod_level', -1)
         table = self.table
-        self._sync_gl_columns()
+        self._collect_built()
         slots = table.live_slots()
         cam_x = float(camera_pos.x)
         cam_z = float(camera_pos.z)
-        # Frustum (far plane included, so the view distance applies) only
-        # decides what is *drawn*. Mesh upkeep still runs for every resident
-        # chunk, so turning round never exposes a chunk that was skipped while
-        # it was behind the camera. Nearest chunk-point distance, so an edge
-        # cannot drop LOD while it is still inside the protected radius; the
-        # protected zone is pre-promoted a whole chunk ring wide, so there is
-        # no visible LOD upgrade as the player crosses its boundary.
+        # The frustum only orders the work: mesh upkeep runs for every
+        # resident chunk, so turning round never exposes one that was skipped
+        # while it was behind the camera. Nearest chunk-point distance, so an
+        # edge cannot drop LOD while it is still inside the protected radius.
         visible = table.visible(slots, frustum_planes)
         dist_sq = table.nearest_dist_sq(slots, cam_x, cam_z)
         queue_slots, queue_res = table.schedule(
             slots, dist_sq, visible, self._near_detail_radius(),
             self.LOD_RESOLUTIONS, self.LOD_DISTANCES_SQ,
             self.LOD_HYSTERESIS_FRAMES)
-        self.culled_chunks = int(len(slots) - np.count_nonzero(visible))
-
-        if self.wireframe: gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
-        # The height grids live in texture units above the shadow cube-maps.
-        unit = height_texture_unit
-        drawn = slots[visible & table.built[slots]]
-        if blocks:
-            self._bind_empty_paint(paint_texture_unit)
-            gl.glUniform1i(u['uPaintEnabled'], 0)
-            gl.glActiveTexture(gl.GL_TEXTURE0)
-            self.total_triangles = self.draw_block_slots(drawn)
+        if self.BACKGROUND_BUILDS:
+            self._request_builds(queue_slots, queue_res)
         else:
-            self.set_heightfield_frame_uniforms(u, unit)
-            self.total_triangles = self.draw_heightfield_slots(
-                u, drawn, unit, lod_level_loc, paint_texture_unit)
-        self.visible_chunks = int(len(drawn))
-        #: The slots drawn this frame, in draw order (tests, Debug Tables).
-        self.drawn_slots = drawn
-        if self.wireframe: gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-        # Dirty meshes first, then what the camera can see, nearest first.
-        budget_end = time.perf_counter() + self.UPDATE_BUDGET_MS / 1000.0
-        limit = self.MAX_UPDATES_PER_FRAME
-        for i, (slot, resolution) in enumerate(zip(queue_slots[:limit], queue_res[:limit])):
-            if i and time.perf_counter() >= budget_end:
-                break
-            self._upload_chunk(int(slot), int(resolution))
+            # Dirty meshes first, then what the camera can see, nearest first.
+            budget_end = time.perf_counter() + self.UPDATE_BUDGET_MS / 1000.0
+            limit = self.MAX_UPDATES_PER_FRAME
+            for i, (slot, resolution) in enumerate(zip(queue_slots[:limit], queue_res[:limit])):
+                if i and time.perf_counter() >= budget_end:
+                    break
+                self._build_chunk(int(slot), int(resolution))
 
-        # Grass has its own dirty queue. It is rebuilt in the same bounded
-        # fashion as terrain meshes, so moving the density slider cannot spike
-        # the frame by rebuilding every resident chunk at once. settings.ini
-        # [Renderer] grass = False (grass_allowed) turns it off everywhere.
-        grass_on = self.grass_enabled and getattr(self, 'grass_allowed', True)
-        if grass_on:
+        # Grass has its own dirty queue, built in the same bounded fashion,
+        # so moving the density slider cannot spike a frame by rebuilding
+        # every resident chunk at once. settings.ini [Renderer] grass = False
+        # (grass_allowed) turns it off everywhere.
+        if self.grass_enabled and self.grass_allowed:
             # Grass exists only where the camera can see it: chunks in the
             # frustum and within grass range grow theirs (nearest first);
             # chunks well out of range give theirs back, regrowing on return.
-            cam_d = table.nearest_dist_sq(slots, float(camera_pos.x), float(camera_pos.z))
             reach_sq = self.GRASS_MAX_DISTANCE * self.GRASS_MAX_DISTANCE
-            in_view = table.visible(slots, frustum_planes) & (cam_d <= reach_sq)
-            wanted = np.nonzero(table.grass_dirty[slots] & in_view)[0]
-            for i in wanted[np.argsort(cam_d[wanted], kind='stable')][:self.MAX_UPDATES_PER_FRAME]:
-                self._upload_grass_chunk(int(slots[i]))
-            far = slots[(self._grass_count[slots] > 0) & (cam_d > reach_sq * 2.56)]
-            if len(far):
-                self._release_grass(far)
+            in_view = visible & (dist_sq <= reach_sq)
+            wanted = np.nonzero(table.grass_dirty[slots] & table.built[slots] & in_view)[0]
+            nearest = wanted[np.argsort(dist_sq[wanted], kind='stable')]
+            for i in nearest[:self.MAX_UPDATES_PER_FRAME]:
+                self._build_grass(int(slots[i]))
+            grown = self.products.grass
+            if grown:
+                far = [int(slot) for slot in slots[dist_sq > reach_sq * 2.56].tolist()
+                       if slot in grown]
+                if far:
+                    self.products.drop_grass(far)
+                    table.grass_dirty[far] = True
         else:
-            self._grass_count[slots] = 0
+            if self.products.grass:
+                self.products.clear_store(self.products.grass)
             # Regrow when grass is allowed again.
             table.grass_dirty[slots] = True
 
-        if grass_on:
-            # After this frame's builds, as the chunk bounds may have moved.
-            candidates = slots[table.built[slots] & (self._grass_count[slots] > 0)]
-            visible_grass = candidates[table.visible(candidates, frustum_planes)]
-            self._draw_grass(
-                visible_grass, projection, view, camera_pos, env_uniforms)
+    def _store_heights(self, slot: int, resolution: int, heights):
+        lod_index = (self.LOD_RESOLUTIONS.index(resolution)
+                     if resolution in self.LOD_RESOLUTIONS else 0)
+        self.table.store(slot, resolution, lod_index, heights)
+        if self.appearance.terrace_mode == 'blocks':
+            self.products.put(self.products.blocks, slot,
+                              self.table.order[slot], self._block_mesh(slot))
+
+    def _build_chunk(self, slot: int, resolution: int):
+        """Build one chunk at *resolution*, here and now: its height grid --
+        the whole of a chunk, from which the vertex shader rebuilds position,
+        normals, colour and UVs -- and, terraced as blocks, its mesh."""
+        self._store_heights(slot, resolution, self._chunk_heights(slot, resolution))
+
+    def _build_grass(self, slot: int):
+        """Publish one chunk's deterministic grass instances."""
+        self.products.put(self.products.grass, slot, self.table.order[slot],
+                          self._generate_grass_blades(slot))
+        self.table.grass_dirty[slot] = False
+
+    # -- the builder thread ---------------------------------------------------
+
+    def _request_builds(self, queue_slots, queue_res):
+        """Hand the build queue to the builder thread, nearest work first.
+
+        Only the height grid is computed there, from the chunk's frozen
+        origin and size; the table is written back here, on the caller's
+        thread, by :meth:`_collect_built`, so every table write stays on one
+        thread. A slot waits at most once in the queue."""
+        table = self.table
+        for slot, resolution in zip(queue_slots.tolist(), queue_res.tolist()):
+            if slot in self._building or len(self._building) >= self.BUILD_QUEUE_LIMIT:
+                continue
+            order = int(table.order[slot])
+            self._building[slot] = order
+            # An edit that arrives while this is in flight must dirty the
+            # row again: clear the flag now, restore whatever it is on return.
+            table.dirty[slot] = False
+            self._build_requests.put((slot, order, int(resolution),
+                                      float(table.world[slot, 0]),
+                                      float(table.world[slot, 1]),
+                                      float(table.size[slot])))
+        if self._building and (self._builder is None or not self._builder.is_alive()):
+            self._builder_stop = False
+            self._builder = threading.Thread(
+                target=self._builder_loop, name='TerrainBuilder', daemon=True)
+            self._builder.start()
+
+    def _builder_loop(self):
+        requests, results = self._build_requests, self._build_results
+        while not self._builder_stop:
+            try:
+                job = requests.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if job is None:                     # stop_builder's wake-up
+                break
+            slot, order, resolution, world_x, world_z, size = job
+            try:
+                heights = self._grid_heights(world_x, world_z, size, resolution)
+            except Exception:
+                # The editor changed what the heights are read from mid-build
+                # (a sculpt array resized): the row stays unbuilt or is
+                # dirtied again by that edit, and is asked for next frame.
+                heights = None
+            results.put((slot, order, resolution, heights))
+
+    def _collect_built(self):
+        """Store the grids the builder thread has finished (this thread)."""
+        table = self.table
+        while True:
+            try:
+                slot, order, resolution, heights = self._build_results.get_nowait()
+            except queue.Empty:
+                return
+            if self._building.get(slot) == order:
+                del self._building[slot]
+            if (heights is None or slot >= table.capacity or not table.live[slot]
+                    or int(table.order[slot]) != order):
+                if (heights is None and slot < table.capacity and table.live[slot]
+                        and int(table.order[slot]) == order):
+                    table.dirty[slot] = True
+                continue
+            edited = bool(table.dirty[slot])
+            self._store_heights(slot, resolution, heights)
+            table.dirty[slot] = edited
+
+    def stop_builder(self):
+        """Stop the builder thread and forget what it was asked for."""
+        self._builder_stop = True
+        builder, self._builder = self._builder, None
+        if builder is not None and builder.is_alive() \
+                and builder is not threading.current_thread():
+            self._build_requests.put(None)
+            builder.join(2.0)
+        for q in (self._build_requests, self._build_results):
+            while True:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
+        table = self.table
+        for slot, order in self._building.items():
+            if slot < table.capacity and table.live[slot] and int(table.order[slot]) == order:
+                table.dirty[slot] = True
+        self._building.clear()
+
+    def builds_pending(self) -> int:
+        """Grids asked of the builder thread and not yet stored."""
+        return len(self._building)
+
 
     def get_2d_contours(self, axis1: str, axis2: str, view_bounds: Tuple[float, float, float, float], resolution: int = 32) -> List[Tuple[List[float], List[float], float]]:
         if not self.enabled: return []
@@ -2340,12 +2086,21 @@ class Terrain:
         """Invalidate the dense sculpt grid; call after any sculpt change."""
         self._sculpt_version = getattr(self, '_sculpt_version', 0) + 1
 
+    def _forget_sculpt_list(self) -> None:
+        """The offsets were replaced wholesale (a load, a clear): the kept
+        serialised list no longer describes them. (A new dictionary may be
+        given the old one's ``id``, so the cache key alone cannot tell.)"""
+        self._sculpt_list_cache = None
+        self._sculpt_changed = None
+
     def _note_sculpt_keys(self, keys) -> None:
         """Record which offsets a brush stroke changed, so the serialised
         list can be patched instead of rebuilt (see :meth:`_sculpt_list`)."""
         changed = getattr(self, '_sculpt_changed', None)
         if changed is not None:
-            changed.update(keys)
+            # An ordered set: new cells are appended to the list in the order
+            # they were first written, which is their order in the dictionary.
+            changed.update(dict.fromkeys(keys))
 
     def _dense_sculpt(self):
         """``(min_gx, min_gz, grid)`` for the sculpt offsets, or None.
@@ -2517,6 +2272,7 @@ class Terrain:
         """Remove all sculpt deformations."""
         self.sculpt_offsets.clear()
         self._touch_sculpt()
+        self._forget_sculpt_list()
         self.mark_all_dirty()
 
     def _mark_sculpt_region_dirty(self, world_x: float, world_z: float, radius: float):
@@ -2610,19 +2366,24 @@ class Terrain:
         except ImportError:
             # Fallback to Qt
             from PyQt5.QtGui import QImage
-            img = QImage(image_path)
+            from engine.asset_qt import load_image
+            img = load_image(image_path)
             if img.isNull():
                 raise ValueError(f"Could not load image: {image_path}")
             img = img.convertToFormat(QImage.Format_Grayscale8)
             w, h = img.width(), img.height()
+            stride = img.bytesPerLine()
             ptr = img.bits()
-            ptr.setsize(w * h)
-            arr = np.frombuffer(ptr, dtype=np.uint8).reshape((h, w))
-            self.heightmap_data = arr.astype(np.float32) / 255.0
-            self.mark_all_dirty()
-            return
-        img = Image.open(image_path).convert('L')
-        arr = np.array(img, dtype=np.float32) / 255.0
+            ptr.setsize(stride * h)
+            # Qt pads grayscale rows to four bytes; padding is not a pixel.
+            arr = np.frombuffer(ptr, dtype=np.uint8).reshape((h, stride))[:, :w]
+            arr = arr.astype(np.float32)
+        else:
+            from engine.asset_archives import asset_source
+            with Image.open(asset_source(image_path) or image_path) as source:
+                arr = np.array(source.convert('L'), dtype=np.float32)
+        # This array is owned here. Normalize without a second full float copy.
+        arr /= 255.0
         self.heightmap_data = arr
         self.mark_all_dirty()
 
@@ -2722,43 +2483,9 @@ class Terrain:
         return top * (1 - fy) + bot * fy
 
     def _touch_texture_paint(self, coord):
-        """Bump the version for one baked terrain paint chunk. Its grass
-        regrows, so a road stamped over a meadow clears the grass on it."""
+        """Bump the version for one baked terrain paint chunk."""
         self._paint_version_counter += 1
         self._paint_map_versions[tuple(coord)] = self._paint_version_counter
-        table = self.table
-        slots = table.live_slots()
-        if len(slots):
-            hit = ((table.coord[slots, 0] == int(coord[0]))
-                   & (table.coord[slots, 1] == int(coord[1])))
-            table.grass_dirty[slots[hit]] = True
-
-    #: Grass does not grow where stamped/painted texture covers the ground
-    #: more than this (roads, floors, plazas).
-    GRASS_PAINT_CLEAR = 0.25
-
-    def _paint_alpha_batch(self, world_x, world_z) -> np.ndarray:
-        """Coverage (0..1) of baked texture paint at world points."""
-        xs = np.asarray(world_x, np.float32).ravel()
-        zs = np.asarray(world_z, np.float32).ravel()
-        out = np.zeros(len(xs), np.float32)
-        if not self.texture_paint_maps or len(xs) == 0:
-            return out
-        res = self.TERRAIN_PAINT_RESOLUTION
-        size = float(self.chunk_size)
-        fx = (xs - self.offset_x) / size
-        fz = (zs - self.offset_z) / size
-        cx = np.floor(fx).astype(np.int64)
-        cz = np.floor(fz).astype(np.int64)
-        ix = np.clip(((fx - cx) * res).astype(np.int64), 0, res - 1)
-        iz = np.clip(((fz - cz) * res).astype(np.int64), 0, res - 1)
-        for key in set(zip(cx.tolist(), cz.tolist())):
-            paint = self.texture_paint_maps.get(key)
-            if paint is None:
-                continue
-            m = (cx == key[0]) & (cz == key[1])
-            out[m] = paint[ix[m], iz[m], 3].astype(np.float32) / 255.0
-        return out
 
     #: Paint sources already loaded, by path: a game stamping the same few
     #: images over and over (blood, footprints) reads each from disk once.
@@ -2783,7 +2510,8 @@ class Terrain:
     def _read_texture_rgba(path):
         try:
             from PyQt5.QtGui import QImage
-            image = QImage(path)
+            from engine.asset_qt import load_image
+            image = load_image(path)
             if image.isNull():
                 return None
             image = image.convertToFormat(QImage.Format_RGBA8888)
@@ -2817,18 +2545,141 @@ class Terrain:
         bottom = c01 * (1.0 - fx) + c11 * fx
         return (top * (1.0 - fy) + bottom * fy) / 255.0
 
+    def _paint_image(self, texture):
+        """The RGBA image for *texture*, loaded once per terrain."""
+        if texture not in self._paint_image_cache:
+            if len(self._paint_image_cache) >= 64:
+                self._paint_image_cache.clear()
+            self._paint_image_cache[texture] = self._load_texture_rgba(texture)
+        return self._paint_image_cache[texture]
+
+    def _tile_image(self, texture):
+        """*texture* for tiling: (image, pixels a world unit), or None.
+
+        The image is reduced (whole-number box filter) until it has no more
+        pixels a unit than the paint map has texels, so tiling it does not
+        alias; the reduced image is kept with the terrain.
+        """
+        key = ('tile', texture, self.TERRAIN_PAINT_RESOLUTION, self.chunk_size)
+        hit = self._paint_image_cache.get(key)
+        if hit is None:
+            image = self._paint_image(texture)
+            if image is None:
+                return None
+            per_unit = 1.0 / self.STAMP_TILE_UNITS_PER_PIXEL
+            texels = self.TERRAIN_PAINT_RESOLUTION / float(self.chunk_size)
+            factor = max(1, int(round(per_unit / max(texels, 1e-6))))
+            factor = min(factor, image.shape[0], image.shape[1])
+            if factor > 1:
+                h = image.shape[0] // factor * factor
+                w = image.shape[1] // factor * factor
+                image = image[:h, :w].reshape(
+                    h // factor, factor, w // factor, factor, 4
+                ).astype(np.float32).mean(axis=(1, 3))
+                image = np.clip(image + 0.5, 0, 255).astype(np.uint8)
+            hit = (image, per_unit / factor)
+            self._paint_image_cache[key] = hit
+        return hit
+
+    def _tinted_tile(self, texture, image, tint):
+        """*image* (a :meth:`_tile_image` of *texture*) with *tint* mixed in."""
+        rgb, mix = tint
+        key = ('tint', texture, image.shape, tuple(float(c) for c in rgb), float(mix))
+        hit = self._paint_image_cache.get(key)
+        if hit is None or hit[0] is not image:
+            mixed = image.astype(np.float32)
+            mixed[..., :3] *= np.float32(1.0 - mix)
+            mixed[..., :3] += np.asarray(rgb, np.float32) * np.float32(255.0 * mix)
+            mixed += np.float32(0.5)
+            hit = (image, np.clip(mixed, 0, 255, out=mixed).astype(np.uint8))
+            self._paint_image_cache[key] = hit
+        return hit[1]
+
+    @staticmethod
+    def _sample_tiled_image(image, px, py):
+        """Bilinear RGBA sample at pixel coordinates, the image repeating."""
+        h, w = image.shape[:2]
+        px = px - 0.5
+        py = py - 0.5
+        fx0 = np.floor(px)
+        fy0 = np.floor(py)
+        fx = (px - fx0)[..., None]
+        fy = (py - fy0)[..., None]
+        x0 = np.mod(fx0.astype(np.int64), w)
+        y0 = np.mod(fy0.astype(np.int64), h)
+        x1 = np.mod(x0 + 1, w)
+        y1 = np.mod(y0 + 1, h)
+        c00 = image[y0, x0].astype(np.float32)
+        c10 = image[y0, x1].astype(np.float32)
+        c01 = image[y1, x0].astype(np.float32)
+        c11 = image[y1, x1].astype(np.float32)
+        top = c00 * (1.0 - fx) + c10 * fx
+        bottom = c01 * (1.0 - fx) + c11 * fx
+        return (top * (1.0 - fy) + bottom * fy) / 255.0
+
+    @staticmethod
+    def _sample_tiled_grid(image, px, py):
+        """As :meth:`_sample_tiled_image` over the grid of 1-D *px* x *py*.
+
+        An unturned stamp samples the image on a grid of its own rows and
+        columns, so each tap is a row-and-column pick rather than a pick a
+        texel -- and where the paint's texels sit on the image's pixels (the
+        usual case: the image is reduced to exactly that) one pick is all,
+        and it is returned as the image's own bytes. Returns (len(px),
+        len(py), 4) in 0..255: uint8 for the one pick, float32 otherwise.
+        """
+        h, w = image.shape[:2]
+        px = px.astype(np.float64) - 0.5
+        py = py.astype(np.float64) - 0.5
+        fx0 = np.floor(px + 1e-4)
+        fy0 = np.floor(py + 1e-4)
+        fx = (px - fx0).astype(np.float32)
+        fy = (py - fy0).astype(np.float32)
+        x0 = np.mod(fx0.astype(np.int64), w)
+        y0 = np.mod(fy0.astype(np.int64), h)
+        if np.all(np.abs(fx) < 1e-3) and np.all(np.abs(fy) < 1e-3):
+            return image[np.ix_(y0, x0)].transpose(1, 0, 2)
+        else:
+            x1 = np.mod(x0 + 1, w)
+            y1 = np.mod(y0 + 1, h)
+            wx = fx[None, :, None]
+            wy = fy[:, None, None]
+            top = (image[np.ix_(y0, x0)].astype(np.float32) * (1.0 - wx)
+                   + image[np.ix_(y0, x1)].astype(np.float32) * wx)
+            bottom = (image[np.ix_(y1, x0)].astype(np.float32) * (1.0 - wx)
+                      + image[np.ix_(y1, x1)].astype(np.float32) * wx)
+            picked = top * (1.0 - wy) + bottom * wy
+        return picked.transpose(1, 0, 2)
+
     def _bake_texture_rect(self, bounds, texture, angle=0.0,
-                           feather=0.0, opacity=1.0):
-        """Bake one source image directly into terrain's per-chunk albedo."""
+                           feather=0.0, opacity=1.0, target=None,
+                           only=None, tint=None, tiled=False, clip=None):
+        """Bake one source image directly into terrain's per-chunk albedo.
+
+        *target* is the chunk dict written (default: texture_paint_maps,
+        whose arrays are replaced rather than written in place, since
+        texture_paint_base may share them). *only* limits the bake to a set of
+        chunk keys; *tint* is ``(rgb, amount)`` mixed into the source colour.
+        *clip* limits it further to texels (ix0, ix1, iz0, iz1), inclusive,
+        of each chunk written: a texel's result does not depend on its
+        neighbours, so a clipped bake is the whole bake inside the clip.
+        """
         try:
             min_x, min_z, max_x, max_z = [float(v) for v in bounds]
         except (TypeError, ValueError):
             return False
         if max_x <= min_x or max_z <= min_z:
             return False
-        image = self._load_texture_rgba(texture)
+        image = self._paint_image(texture)
         if image is None:
             return False
+        tile = self._tile_image(texture) if tiled else None
+        # The stored paint dicts may share arrays (texture_paint_base starts
+        # as a copy of the map's paint) and their serialisation is cached by
+        # array, so their arrays are replaced, never written in place.
+        copy_on_write = target is None or target is self.texture_paint_base
+        if target is None:
+            target = self.texture_paint_maps
 
         min_cx = int(math.floor((min_x - self.offset_x) / self.chunk_size))
         max_cx = int(math.floor((max_x - self.offset_x) / self.chunk_size))
@@ -2856,62 +2707,138 @@ class Terrain:
             if ix1 < ix0:
                 continue
             for cz in range(min_cz, max_cz + 1):
+                if only is not None and (cx, cz) not in only:
+                    continue
                 chunk_min_z = self.offset_z + cz * self.chunk_size
                 iz0 = max(0, int(math.floor((min_z - chunk_min_z) / cell)) - 1)
                 iz1 = min(res - 1, int(math.floor((max_z - chunk_min_z) / cell)) + 1)
                 if iz1 < iz0:
                     continue
+                kx0, kx1 = ix0, ix1
+                if clip is not None:
+                    kx0, kx1 = max(ix0, clip[0]), min(ix1, clip[1])
+                    iz0, iz1 = max(iz0, clip[2]), min(iz1, clip[3])
+                    if kx1 < kx0 or iz1 < iz0:
+                        continue
 
-                xs = chunk_min_x + (np.arange(ix0, ix1 + 1, dtype=np.float32) + 0.5) * cell
+                xs = chunk_min_x + (np.arange(kx0, kx1 + 1, dtype=np.float32) + 0.5) * cell
                 zs = chunk_min_z + (np.arange(iz0, iz1 + 1, dtype=np.float32) + 0.5) * cell
-                wx, wz = np.meshgrid(xs, zs, indexing='ij')
-                dx = (wx - stamp_cx) / half_x
-                dz = (wz - stamp_cz) / half_z
-                if abs(angle) > 1e-6:
+                turned = abs(angle) > 1e-6
+                if turned:
+                    wx, wz = np.meshgrid(xs, zs, indexing='ij')
+                    dx = (wx - stamp_cx) / half_x
+                    dz = (wz - stamp_cz) / half_z
                     qx = dx * ca + dz * sa
                     qz = -dx * sa + dz * ca
+                    radial_sq = qx * qx + qz * qz
                 else:
-                    qx, qz = dx, dz
-                radial = np.sqrt(qx * qx + qz * qz)
-                inside = radial <= 1.0
+                    # Unturned (the usual stamp): the footprint's two axes
+                    # are the grid's, so the distance is an outer sum of two
+                    # short rows rather than arithmetic on whole grids.
+                    qx_row = ((xs - np.float32(stamp_cx)) / np.float32(half_x))
+                    qz_row = ((zs - np.float32(stamp_cz)) / np.float32(half_z))
+                    radial_sq = np.add.outer(qx_row * qx_row, qz_row * qz_row)
+                inside = radial_sq <= 1.0
                 if not np.any(inside):
                     continue
 
-                edge = np.ones_like(radial, dtype=np.float32)
                 if feather_world > 0.0:
-                    edge = 1.0 - np.clip(
-                        (radial - edge_inner) / max(1.0 - edge_inner, 1e-6),
-                        0.0, 1.0)
-                    edge = edge * edge * (3.0 - 2.0 * edge)
-                amount = edge * opacity * inside.astype(np.float32)
+                    radial = np.sqrt(radial_sq, out=radial_sq)
+                    radial -= np.float32(edge_inner)
+                    radial *= np.float32(1.0 / max(1.0 - edge_inner, 1e-6))
+                    edge = np.clip(radial, 0.0, 1.0, out=radial)
+                    np.subtract(1.0, edge, out=edge)
+                    amount = edge * edge * (3.0 - 2.0 * edge)
+                    amount *= inside
+                    if opacity != 1.0:
+                        amount *= np.float32(opacity)
+                else:
+                    amount = inside.astype(np.float32)
+                    if opacity != 1.0:
+                        amount *= np.float32(opacity)
                 if not np.any(amount > 1e-6):
                     continue
 
-                uv_x = 0.5 + qx * 0.5
-                uv_z = 0.5 + qz * 0.5
-                sampled = self._sample_paint_image(image, uv_x, uv_z)
-                src_a = sampled[..., 3] * amount
-                if not np.any(src_a > 1e-6):
+                # *source*: the texture over the box, 0..255 -- the image's
+                # own bytes where the paint's texels sit on its pixels.
+                if tile is not None:
+                    # The texture lies on the world, turned by the stamp's
+                    # angle about the world's origin: stamps of one texture
+                    # and angle continue each other.
+                    tile_image, per_unit = tile
+                    if turned:
+                        tx = wx * ca + wz * sa
+                        tz = -wx * sa + wz * ca
+                        source = self._sample_tiled_image(
+                            tile_image, tx * per_unit, -tz * per_unit)
+                        source *= np.float32(255.0)
+                    else:
+                        if tint is not None:
+                            # The selection's tint, mixed into the image once
+                            # rather than into every texel of every step.
+                            tile_image = self._tinted_tile(texture, tile_image, tint)
+                        source = self._sample_tiled_grid(
+                            tile_image, xs * per_unit, -zs * per_unit)
+                else:
+                    if not turned:
+                        qx, qz = np.meshgrid(qx_row, qz_row, indexing='ij')
+                    uv_x = 0.5 + qx * 0.5
+                    uv_z = 0.5 + qz * 0.5
+                    source = self._sample_paint_image(image, uv_x, uv_z)
+                    source *= np.float32(255.0)
+                if tint is not None and not (tile is not None and not turned):
+                    rgb, mix = tint
+                    source = source.astype(np.float32)
+                    source[..., :3] *= np.float32(1.0 - mix)
+                    source[..., :3] += np.asarray(rgb, np.float32) * np.float32(255.0 * mix)
+                src_a = source[..., 3] * amount
+                src_a *= np.float32(1.0 / 255.0)
+                covered = src_a > 1e-6
+                if not np.any(covered):
                     continue
 
                 key = (int(cx), int(cz))
-                paint = self.texture_paint_maps.get(key)
+                paint = target.get(key)
                 if paint is None:
                     paint = np.zeros((res, res, 4), dtype=np.uint8)
-                    self.texture_paint_maps[key] = paint
-                dst = paint[ix0:ix1 + 1, iz0:iz1 + 1].astype(np.float32) / 255.0
-                dst_a = dst[..., 3]
-                out_a = src_a + dst_a * (1.0 - src_a)
-                out_rgb = np.zeros_like(dst[..., :3])
-                valid = out_a > 1e-6
-                out_rgb[valid] = (
-                    sampled[..., :3][valid] * src_a[valid, None]
-                    + dst[..., :3][valid] * dst_a[valid, None] * (1.0 - src_a[valid, None])
-                ) / out_a[valid, None]
-                dst[..., :3] = out_rgb
-                dst[..., 3] = out_a
-                paint[ix0:ix1 + 1, iz0:iz1 + 1] = np.clip(
-                    dst * 255.0 + 0.5, 0, 255).astype(np.uint8)
+                elif copy_on_write:
+                    paint = paint.copy()
+                target[key] = paint
+                region = paint[kx0:kx1 + 1, iz0:iz1 + 1]
+                # Most of a stamp is solid -- inside the feather, the texture
+                # opaque -- and there the result is the texture: bytes moved,
+                # no arithmetic. Only the feathered ring (and a translucent
+                # texture) is blended, source over destination.
+                solid = src_a >= 0.9999
+                if np.any(solid):
+                    if source.dtype == np.uint8:
+                        np.copyto(region, source, where=solid[..., None])
+                    else:
+                        rows = source[solid]
+                        rows += np.float32(0.5)
+                        np.clip(rows, 0, 255, out=rows)
+                        rows[:, 3] = 255.0
+                        region[solid] = rows.astype(np.uint8)
+                    covered &= ~solid
+                if np.any(covered):
+                    src = source[covered].astype(np.float32)
+                    alpha = src_a[covered]
+                    dst = region[covered].astype(np.float32)
+                    under = dst[:, 3] * np.float32(1.0 / 255.0) * (1.0 - alpha)
+                    out_a = alpha + under
+                    dst[:, :3] *= under[:, None]
+                    dst[:, :3] += src[:, :3] * alpha[:, None]
+                    dst[:, :3] /= np.maximum(out_a, np.float32(1e-6))[:, None]
+                    dst[:, 3] = out_a * np.float32(255.0)
+                    dst += np.float32(0.5)
+                    out = np.clip(dst, 0, 255, out=dst).astype(np.uint8)
+                    # A texel whose alpha rounds to 0 carries no colour: chunks
+                    # with no alpha are not saved, so colour there would not
+                    # survive a reload and a rebake after it would differ.
+                    out[out[:, 3] == 0, :3] = 0
+                    region[covered] = out
+                if target is self.texture_paint_maps:
+                    self._paint_changed_grass((key,))
                 self._touch_texture_paint(key)
                 changed = True
         return changed
@@ -2923,12 +2850,495 @@ class Terrain:
         if radius <= 0.0 or not str(texture).strip():
             return False
         radius = abs(radius)
-        return self._bake_texture_rect(
-            (float(world_x) - radius, float(world_z) - radius,
-             float(world_x) + radius, float(world_z) + radius),
-            str(texture), angle=float(angle),
+        bounds = (float(world_x) - radius, float(world_z) - radius,
+                  float(world_x) + radius, float(world_z) + radius)
+        if not self.paint_stamps:
+            changed = self._bake_texture_rect(
+                bounds, str(texture), angle=float(angle),
+                feather=radius * float(np.clip(feather, 0.0, 1.0)),
+                opacity=opacity, tiled=True)
+            if changed:
+                self.texture_paint_base = dict(self.texture_paint_maps)
+            return changed
+        # Free paint lives in the base layer, under the placed stamps.
+        changed = self._bake_texture_rect(
+            bounds, str(texture), angle=float(angle),
             feather=radius * float(np.clip(feather, 0.0, 1.0)),
-            opacity=opacity)
+            opacity=opacity, target=self.texture_paint_base, tiled=True)
+        if changed:
+            self._drop_drag_cache()
+            self._recompose_paint(self._chunks_in_bounds(bounds))
+        return changed
+
+    # -- Placed stamps -------------------------------------------------------
+
+    #: Colour mixed into selected stamps, and how strongly.
+    STAMP_SELECT_TINT = ((1.0, 0.5, 0.0), 0.45)
+
+    @staticmethod
+    def make_paint_stamp(world_x, world_z, radius, texture, feather=0.25,
+                         opacity=1.0, angle=0.0, stamp_id=None, tiled=True):
+        """A stamp record, or None if it cannot be placed.
+
+        *tiled* (the default, and what a record saved without the key
+        becomes): the texture repeats at its own scale in the world
+        (STAMP_TILE_UNITS_PER_PIXEL) and the stamp is the window onto it, so
+        a big stamp shows more of the texture rather than a bigger copy, and
+        stamps of one texture join. False stretches one copy of the image
+        over the stamp, for a picture rather than a material.
+        """
+        import uuid
+        try:
+            record = {
+                'id': str(stamp_id) if stamp_id else uuid.uuid4().hex,
+                'texture': str(texture).replace('\\', '/').strip(),
+                'x': float(world_x),
+                'z': float(world_z),
+                'radius': abs(float(radius)),
+                'angle': float(angle),
+                'feather': float(np.clip(float(feather), 0.0, 1.0)),
+                'opacity': float(np.clip(float(opacity), 0.0, 1.0)),
+                'tiled': bool(tiled),
+            }
+        except (TypeError, ValueError):
+            return None
+        numbers = (record['x'], record['z'], record['radius'], record['angle'])
+        if (not record['texture'] or record['radius'] <= 0.0
+                or not all(math.isfinite(v) for v in numbers)):
+            return None
+        return record
+
+    @staticmethod
+    def _stamp_bounds(stamp):
+        r = stamp['radius']
+        return (stamp['x'] - r, stamp['z'] - r, stamp['x'] + r, stamp['z'] + r)
+
+    def _chunks_in_bounds(self, bounds):
+        min_x, min_z, max_x, max_z = bounds
+        cs = self.chunk_size
+        return {(cx, cz)
+                for cx in range(int(math.floor((min_x - self.offset_x) / cs)),
+                                int(math.floor((max_x - self.offset_x) / cs)) + 1)
+                for cz in range(int(math.floor((min_z - self.offset_z) / cs)),
+                                int(math.floor((max_z - self.offset_z) / cs)) + 1)}
+
+    def _stamp_chunks(self, stamp):
+        return self._chunks_in_bounds(self._stamp_bounds(stamp))
+
+    #: From this many stamps a NumPy mask beats a Python scan for finding the
+    #: stamps over a chunk (measured crossover ~150; ~7 us fixed NumPy cost).
+    STAMP_VECTOR_MIN = 128
+
+    def _stamp_range(self, stamp):
+        """Inclusive chunk range (cx0, cx1, cz0, cz1) a stamp covers."""
+        r, cs = stamp['radius'], self.chunk_size
+        return (int(math.floor((stamp['x'] - r - self.offset_x) / cs)),
+                int(math.floor((stamp['x'] + r - self.offset_x) / cs)),
+                int(math.floor((stamp['z'] - r - self.offset_z) / cs)),
+                int(math.floor((stamp['z'] + r - self.offset_z) / cs)))
+
+    def _stamp_index(self):
+        """Id -> row map, kept with each stamp's chunk range.
+
+        Rebuilt after stamps are added, replaced or reloaded, or the chunk
+        grid changes; moves update their rows in place.
+        """
+        key = (self.chunk_size, self.offset_x, self.offset_z)
+        if self._stamp_rows is None or self._stamp_index_key != key:
+            stamps = self.paint_stamps
+            self._stamp_rows = {s['id']: i for i, s in enumerate(stamps)}
+            self._stamp_ranges = [self._stamp_range(s) for s in stamps]
+            self._stamp_range_arr = (
+                np.array(self._stamp_ranges, dtype=np.int64)
+                if len(stamps) >= self.STAMP_VECTOR_MIN else None)
+            self._stamp_index_key = key
+        return self._stamp_rows
+
+    def _invalidate_stamp_index(self):
+        self._stamp_rows = None
+        self._drop_drag_cache()
+
+    def _stamps_over(self, key):
+        """Rows of the stamps over chunk *key*, in placement order."""
+        self._stamp_index()
+        cx, cz = key
+        arr = self._stamp_range_arr
+        if arr is not None:
+            return np.flatnonzero((arr[:, 0] <= cx) & (arr[:, 1] >= cx)
+                                  & (arr[:, 2] <= cz) & (arr[:, 3] >= cz)).tolist()
+        return [i for i, (x0, x1, z0, z1) in enumerate(self._stamp_ranges)
+                if x0 <= cx <= x1 and z0 <= cz <= z1]
+
+    @staticmethod
+    def _range_keys(rng):
+        x0, x1, z0, z1 = rng
+        return {(cx, cz) for cx in range(x0, x1 + 1) for cz in range(z0, z1 + 1)}
+
+    def _selected_stamp_keys(self, ids):
+        rows = self._stamp_index()
+        keys = set()
+        for stamp_id in ids:
+            row = rows.get(stamp_id)
+            if row is not None:
+                keys |= self._range_keys(self._stamp_ranges[row])
+        return keys
+
+    def _bake_stamp(self, stamp, target, only, tint=None, clip=None):
+        return self._bake_texture_rect(
+            self._stamp_bounds(stamp), stamp['texture'],
+            angle=stamp['angle'], feather=stamp['radius'] * stamp['feather'],
+            opacity=stamp['opacity'], target=target, only=only, tint=tint,
+            tiled=stamp.get('tiled', True), clip=clip)
+
+    #: Chunks the drag cache holds (two paint maps each) before it is emptied.
+    DRAG_CACHE_CHUNKS = 96
+
+    def _drop_drag_cache(self):
+        self._drag_cache = {}
+        self._stored_with_selection = None
+
+    def _drag_layers(self, key):
+        """What does not move while the selected stamps do, for chunk *key*.
+
+        ``(under, above, above_rows, rest)``: the base paint with every
+        unselected stamp below the selection baked on it; the unselected
+        stamps above the selection composed into one layer (None if there
+        are none); those stamps' rows; and the chunk without the selection
+        at all, composed exactly (*under* itself when nothing is above). Kept while the selection, the stamp list and the
+        chunk's base paint stay as they are, so a drag step bakes only the
+        stamps being dragged. None when the selection is interleaved with
+        unselected stamps over this chunk -- then the chunk is composed whole.
+        """
+        selected = self.selected_stamp_ids
+        if not selected:
+            return None
+        rows_of = self._stamp_index()
+        chosen = [rows_of[i] for i in selected if i in rows_of]
+        if not chosen:
+            return None
+        low, high = min(chosen), max(chosen)
+        base = self.texture_paint_base.get(key)
+        hit = self._drag_cache.get(key)
+        if hit is not None and hit[0] is base and hit[1] == (low, high):
+            return hit[2]
+        stamps = self.paint_stamps
+        below, above_rows = [], []
+        for row in self._stamps_over(key):
+            if stamps[row]['id'] in selected:
+                continue
+            if row < low:
+                below.append(row)
+            elif row > high:
+                above_rows.append(row)
+            else:
+                return None
+        res = self.TERRAIN_PAINT_RESOLUTION
+        only = {key}
+        # A chunk the selection was not on when the stored paint was last
+        # written -- one a drag has just entered -- is stored as exactly
+        # what it is without the selection.
+        held = self._stored_with_selection
+        rest = None
+        if held is not None and key not in held:
+            rest = self.texture_paint_maps.get(key)
+            if rest is None:
+                rest = np.zeros((res, res, 4), dtype=np.uint8)
+        if rest is not None and not above_rows:
+            under = rest
+        else:
+            out = {key: (base.copy() if base is not None
+                         else np.zeros((res, res, 4), dtype=np.uint8))}
+            for row in below:
+                self._bake_stamp(stamps[row], out, only)
+            under = out[key]
+        above = None
+        if above_rows:
+            layer = {key: np.zeros((res, res, 4), dtype=np.uint8)}
+            for row in above_rows:
+                self._bake_stamp(stamps[row], layer, only)
+            above = layer[key]
+        if rest is None:
+            rest = under
+            if above_rows:
+                exact = {key: rest.copy()}
+                for row in above_rows:
+                    self._bake_stamp(stamps[row], exact, only)
+                rest = exact[key]
+        layers = (under, above, above_rows, rest)
+        if len(self._drag_cache) >= self.DRAG_CACHE_CHUNKS:
+            self._drag_cache = {}
+        self._drag_cache[key] = (base, (low, high), layers)
+        return layers
+
+    @staticmethod
+    def _paint_over(region, layer):
+        """*layer* composited over *region* (both RGBA8, straight alpha), in
+        place. Where the layer is opaque it is copied; only its translucent
+        texels are blended."""
+        alpha = layer[..., 3]
+        solid = alpha == 255
+        if np.any(solid):
+            np.copyto(region, layer, where=solid[..., None])
+        partial = alpha != 0
+        partial &= ~solid
+        if not np.any(partial):
+            return
+        src = layer[partial].astype(np.float32)
+        dst = region[partial].astype(np.float32)
+        src_a = src[:, 3] * np.float32(1.0 / 255.0)
+        under = dst[:, 3] * (1.0 - src_a)
+        out_a = src[:, 3] + under
+        dst[:, :3] *= under[:, None]
+        dst[:, :3] += src[:, :3] * src[:, 3:4]
+        dst[:, :3] /= np.maximum(out_a, np.float32(1e-4))[:, None]
+        dst[:, 3] = out_a
+        dst += np.float32(0.5)
+        out = np.clip(dst, 0, 255, out=dst).astype(np.uint8)
+        out[out[:, 3] == 0, :3] = 0
+        region[partial] = out
+
+    def _compose_paint_chunk(self, key, tint_ids=(), preview=False):
+        """Base paint plus every stamp over chunk *key*, in placement order.
+
+        While stamps are selected the chunk is taken from the drag cache as
+        it is without them, and only the box of texels they cover is
+        composed: what lies under them (kept), the selected stamps, and what
+        lies over them. For the stored paint those are the stamps above,
+        baked in order inside the box -- the exact composition. With
+        *preview* (the editor's display during a drag) they are one kept
+        layer, which can differ from the exact result by a rounding step.
+        """
+        res = self.TERRAIN_PAINT_RESOLUTION
+        only = {key}
+        stamps = self.paint_stamps
+        layers = self._drag_layers(key)
+        if layers is None:
+            base = self.texture_paint_base.get(key)
+            out = {key: (base.copy() if base is not None
+                         else np.zeros((res, res, 4), dtype=np.uint8))}
+            for row in self._stamps_over(key):
+                stamp = stamps[row]
+                tint = self.STAMP_SELECT_TINT if stamp['id'] in tint_ids else None
+                self._bake_stamp(stamp, out, only, tint)
+            paint = out[key]
+            return paint if np.any(paint[..., 3]) else None
+
+        under, above, above_rows, rest = layers
+        selected = self.selected_stamp_ids
+        box = None          # (ix0, ix1, iz0, iz1) round every selected stamp here
+        rows = []
+        for row in self._stamps_over(key):
+            if stamps[row]['id'] not in selected:
+                continue
+            reach = self._stamp_texel_box(stamps[row], key)
+            if reach is None:
+                continue
+            rows.append(row)
+            box = reach if box is None else (
+                min(box[0], reach[0]), max(box[1], reach[1]),
+                min(box[2], reach[2]), max(box[3], reach[3]))
+        paint = rest.copy()
+        if box is not None:
+            work = {key: under.copy()}
+            for row in rows:
+                stamp = stamps[row]
+                tint = self.STAMP_SELECT_TINT if stamp['id'] in tint_ids else None
+                self._bake_stamp(stamp, work, only, tint)
+            cut = (slice(box[0], box[1] + 1), slice(box[2], box[3] + 1))
+            if preview:
+                if above is not None:
+                    self._paint_over(work[key][cut], above[cut])
+            else:
+                for row in above_rows:
+                    reach = self._stamp_texel_box(stamps[row], key)
+                    if (reach is None or reach[0] > box[1] or reach[1] < box[0]
+                            or reach[2] > box[3] or reach[3] < box[2]):
+                        continue
+                    self._bake_stamp(stamps[row], work, only, clip=box)
+            paint[cut] = work[key][cut]
+        return paint if np.any(paint[..., 3]) else None
+
+    def _stamp_texel_box(self, stamp, key):
+        """The texels of chunk *key* whose centres lie in the stamp's
+        bounding square, as inclusive (ix0, ix1, iz0, iz1); None if none."""
+        res = self.TERRAIN_PAINT_RESOLUTION
+        cell = self.chunk_size / float(res)
+        min_x, min_z, max_x, max_z = self._stamp_bounds(stamp)
+        x0 = self.offset_x + key[0] * self.chunk_size
+        z0 = self.offset_z + key[1] * self.chunk_size
+        ix0 = max(0, int(math.ceil((min_x - x0) / cell - 0.5)))
+        ix1 = min(res - 1, int(math.floor((max_x - x0) / cell - 0.5)))
+        iz0 = max(0, int(math.ceil((min_z - z0) / cell - 0.5)))
+        iz1 = min(res - 1, int(math.floor((max_z - z0) / cell - 0.5)))
+        if ix1 < ix0 or iz1 < iz0:
+            return None
+        return (ix0, ix1, iz0, iz1)
+
+    def _refresh_paint_display(self, keys):
+        """Rebuild the tinted overrides for *keys* and mark them for upload."""
+        selected = self.selected_stamp_ids
+        tinted = self._selected_stamp_keys(selected) if selected else set()
+        res = self.TERRAIN_PAINT_RESOLUTION
+        for key in keys:
+            if key in tinted or key in self._stamp_dirty_chunks:
+                paint = self._compose_paint_chunk(key, selected, preview=True)
+                if paint is None:
+                    paint = np.zeros((res, res, 4), dtype=np.uint8)
+                self._paint_display[key] = paint
+            else:
+                self._paint_display.pop(key, None)
+            if key in self._paint_display or key in self.texture_paint_maps:
+                self._touch_texture_paint(key)
+            else:
+                # No paint left: version 0 turns paint off for the chunk.
+                self._paint_map_versions.pop(key, None)
+
+    def _recompose_paint(self, keys, defer=False):
+        """Rebake chunks *keys* from the base paint and the placed stamps.
+
+        With *defer* only the editor display is updated (for live drags);
+        :meth:`finish_stamp_edit` then rebakes the stored paint once.
+        """
+        keys = set(keys)
+        if defer:
+            self._stamp_dirty_chunks |= keys
+        else:
+            for key in keys:
+                paint = self._compose_paint_chunk(key)
+                if paint is None:
+                    self.texture_paint_maps.pop(key, None)
+                else:
+                    self.texture_paint_maps[key] = paint
+                self._stamp_dirty_chunks.discard(key)
+            self._paint_changed_grass(keys)
+            held = self._stored_with_selection
+            if held is not None:
+                # These chunks' stored paint is current again.
+                now = self._selected_stamp_keys(self.selected_stamp_ids)
+                held -= keys
+                held |= keys & now
+        self._refresh_paint_display(keys)
+
+    def finish_stamp_edit(self):
+        """Rebake the stored paint for chunks changed by deferred edits."""
+        if self._stamp_dirty_chunks:
+            self._recompose_paint(set(self._stamp_dirty_chunks))
+
+    def add_paint_stamp(self, world_x, world_z, radius, texture,
+                        feather=0.25, opacity=1.0, angle=0.0):
+        """Place a stamp and bake it; returns the record or None."""
+        stamp = self.make_paint_stamp(world_x, world_z, radius, texture,
+                                      feather, opacity, angle)
+        if stamp is None or self._paint_image(stamp['texture']) is None:
+            return None
+        self.finish_stamp_edit()
+        self._drop_drag_cache()
+        self.paint_stamps.append(stamp)
+        rows = self._stamp_rows
+        if rows is not None and self._stamp_index_key == (
+                self.chunk_size, self.offset_x, self.offset_z):
+            # Extend the index instead of rebuilding it.
+            rng = self._stamp_range(stamp)
+            rows[stamp['id']] = len(self.paint_stamps) - 1
+            self._stamp_ranges.append(rng)
+            arr = self._stamp_range_arr
+            if arr is not None:
+                self._stamp_range_arr = np.vstack(
+                    (arr, np.array(rng, dtype=np.int64)))
+            elif len(self.paint_stamps) >= self.STAMP_VECTOR_MIN:
+                self._invalidate_stamp_index()
+        else:
+            self._invalidate_stamp_index()
+        # A new stamp goes on top of everything already baked, so it is baked
+        # straight onto the current paint rather than recomposing its chunks.
+        self._bake_stamp(stamp, None, None)
+        display = self._stamp_chunks(stamp) & self._paint_display.keys()
+        if display:
+            self._bake_stamp(stamp, self._paint_display, display)
+        return stamp
+
+    def paint_stamp_at(self, world_x, world_z):
+        """Id of the topmost stamp covering (world_x, world_z), or None."""
+        for stamp in reversed(self.paint_stamps):
+            if math.hypot(world_x - stamp['x'], world_z - stamp['z']) <= stamp['radius']:
+                return stamp['id']
+        return None
+
+    def set_selected_stamps(self, ids):
+        """Select stamps by id; selected stamps draw tinted in the editor."""
+        rows = self._stamp_index()
+        ids = {i for i in ids if i in rows}
+        if ids == self.selected_stamp_ids:
+            return
+        changed = ids ^ self.selected_stamp_ids
+        self.selected_stamp_ids = ids
+        self._drop_drag_cache()
+        self._refresh_paint_display(self._selected_stamp_keys(changed))
+
+    def move_paint_stamps(self, ids, dx, dz, defer=False):
+        """Move stamps by (dx, dz) and rebake the chunks they leave and enter."""
+        rows = self._stamp_index()
+        ranges, arr = self._stamp_ranges, self._stamp_range_arr
+        keys = set()
+        if not set(ids) <= self.selected_stamp_ids:
+            # The cache holds the stamps that are not selected, as they lie.
+            self._drop_drag_cache()
+        elif self._stored_with_selection is None and not self._stamp_dirty_chunks:
+            self._stored_with_selection = self._selected_stamp_keys(
+                self.selected_stamp_ids)
+        for stamp_id in ids:
+            row = rows.get(stamp_id)
+            if row is None:
+                continue
+            stamp = self.paint_stamps[row]
+            stamp['x'] += float(dx)
+            stamp['z'] += float(dz)
+            new_range = self._stamp_range(stamp)
+            if new_range != ranges[row]:
+                keys |= self._range_keys(ranges[row])
+                ranges[row] = new_range
+                if arr is not None:
+                    arr[row] = new_range
+            keys |= self._range_keys(new_range)
+        if keys:
+            self._recompose_paint(keys, defer=defer)
+        return bool(keys)
+
+    def merge_paint_stamps(self, records):
+        """Add or update stamps by id; returns how many changed.
+
+        Idempotent: a record identical to the stamp already placed under its
+        id changes nothing, so merging the same records twice never
+        duplicates a stamp.
+        """
+        by_id = {s['id']: i for i, s in enumerate(self.paint_stamps)}
+        keys = set()
+        changed = 0
+        for raw in records or []:
+            if not isinstance(raw, dict):
+                continue
+            stamp = self.make_paint_stamp(
+                raw.get('x'), raw.get('z'), raw.get('radius'),
+                raw.get('texture', ''), raw.get('feather', 0.25),
+                raw.get('opacity', 1.0), raw.get('angle', 0.0),
+                stamp_id=raw.get('id'), tiled=raw.get('tiled', True))
+            if stamp is None:
+                continue
+            index = by_id.get(stamp['id'])
+            if index is None:
+                by_id[stamp['id']] = len(self.paint_stamps)
+                self.paint_stamps.append(stamp)
+            elif self.paint_stamps[index] == stamp:
+                continue
+            else:
+                keys |= self._stamp_chunks(self.paint_stamps[index])
+                self.paint_stamps[index] = stamp
+            keys |= self._stamp_chunks(stamp)
+            changed += 1
+        if keys:
+            self._invalidate_stamp_index()
+            self._recompose_paint(keys)
+        return changed
 
     def stamp_texture_at(self, world_x, world_z, radius, texture,
                          feather=0.25, opacity=1.0, angle=0.0):
@@ -2938,106 +3348,121 @@ class Terrain:
             feather=feather, opacity=opacity, angle=angle)
 
     def clear_texture_paint(self):
-        """Erase all baked terrain texture paint."""
+        """Erase all baked terrain texture paint and placed stamps."""
+        if self.texture_paint_maps:
+            self.table.mark_grass_dirty()
         self.texture_paint_maps = {}
+        self._paint_epoch += 1
+        self.texture_paint_base = {}
+        self.paint_stamps = []
+        self.selected_stamp_ids = set()
+        self._paint_display = {}
+        self._paint_epoch += 1
+        self._stamp_dirty_chunks = set()
+        self._invalidate_stamp_index()
         self._paint_map_versions = {}
         self._paint_version_counter += 1
-        self._paint_gpu_version[:] = 0
-        self.table.mark_grass_dirty()
+        self._paint_epoch += 1
 
     def clear_texture_stamps(self):
         """Compatibility alias for the old stamp tool name."""
         self.clear_texture_paint()
 
-    def _bind_empty_paint(self, unit: int):
-        """Keep the paint sampler complete even when no chunk has paint.
 
-        Drivers validate active samplers even behind uPaintEnabled == 0.
-        Texture zero is incomplete and can trigger macOS GLD unloadable-array
-        warnings (or a failed draw). A single transparent texel is sufficient.
+
+    def _serialize_texture_paint(self, maps=None):
+        """Paint chunks as compressed entries, reusing unchanged chunks.
+
+        A chunk is compressed once and its entry reused until its array is
+        replaced, so a stamp click re-compresses only the chunks it touched.
         """
-        gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
-        if not self._empty_paint_texture:
-            self._empty_paint_texture = int(gl.glGenTextures(1))
-            gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._empty_paint_texture)
-            gl.glTexImage3D(gl.GL_TEXTURE_2D_ARRAY, 0, gl.GL_RGBA8, 1, 1, 1, 0,
-                            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, bytes(4))
-            for pname, value in (
-                    (gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
-                    (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR),
-                    (gl.GL_TEXTURE_MAX_LEVEL, 0),
-                    (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
-                    (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
-                gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, pname, value)
-        else:
-            gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._empty_paint_texture)
-
-    def _ensure_paint_page(self, page: int) -> int:
-        if not self._paint_page_layers:
-            limit = int(gl.glGetIntegerv(gl.GL_MAX_ARRAY_TEXTURE_LAYERS))
-            self._paint_page_layers = max(1, min(self.PAINT_PAGE_LAYERS, limit))
-        while len(self._paint_pages) <= page:
-            tex = int(gl.glGenTextures(1))
-            gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, tex)
-            gl.glTexImage3D(
-                gl.GL_TEXTURE_2D_ARRAY, 0, gl.GL_RGBA8,
-                self.TERRAIN_PAINT_RESOLUTION, self.TERRAIN_PAINT_RESOLUTION,
-                self._paint_page_layers, 0,
-                gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
-            for pname, value in (
-                (gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
-                (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR),
-                (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
-                (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
-                gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, pname, value)
-            self._paint_pages.append(tex)
-        return self._paint_pages[page]
-
-    def _upload_paint_chunk(self, slot: int):
-        table = self.table
-        self._sync_gl_columns()
-        coord = (int(table.coord[slot, 0]), int(table.coord[slot, 1]))
-        paint = self.texture_paint_maps.get(coord)
-        if paint is None:
-            self._paint_gpu_version[slot] = 0
-            return
-        if not self._paint_page_layers:
-            self._ensure_paint_page(0)
-        page, layer = divmod(int(slot), self._paint_page_layers)
-        tex = self._ensure_paint_page(page)
-        data = np.ascontiguousarray(paint, dtype=np.uint8)
-        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, tex)
-        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 4)
-        gl.glPixelStorei(gl.GL_UNPACK_ROW_LENGTH, 0)
-        gl.glTexSubImage3D(
-            gl.GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer,
-            self.TERRAIN_PAINT_RESOLUTION, self.TERRAIN_PAINT_RESOLUTION, 1,
-            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data)
-        self._paint_gpu_version[slot] = self._paint_map_versions.get(coord, 0)
-
-    def _serialize_texture_paint(self):
         import base64, zlib
+        if maps is None:
+            maps = self.texture_paint_maps
+        is_base = maps is self.texture_paint_base and maps is not self.texture_paint_maps
+        cache = self._base_serial_cache if is_base else self._paint_serial_cache
+        res = self.TERRAIN_PAINT_RESOLUTION
+        fresh = {}
         entries = []
-        for (cx, cz), paint in sorted(self.texture_paint_maps.items()):
-            if paint is None or paint.shape != (
-                    self.TERRAIN_PAINT_RESOLUTION,
-                    self.TERRAIN_PAINT_RESOLUTION, 4):
-                continue
-            if not np.any(paint[..., 3]):
-                continue
-            payload = zlib.compress(np.ascontiguousarray(paint).tobytes(), 6)
-            entries.append({
-                'coord': [int(cx), int(cz)],
-                'data': base64.b64encode(payload).decode('ascii'),
-            })
+        ordered = sorted(maps.items())
+        # The chunks whose arrays were replaced since the last call are
+        # compressed together on a few threads (zlib works without the GIL):
+        # a stamp click replaces four to nine, and their compression was
+        # most of the click.
+        stale = [paint for (cx, cz), paint in ordered
+                 if not ((cache.get((cx, cz)) or (None,))[0] is paint)
+                 and paint is not None and paint.shape == (res, res, 4)
+                 and np.any(paint[..., 3])]
+        packed = dict(zip(map(id, stale), _compress_paint(stale)))
+        for (cx, cz), paint in ordered:
+            hit = cache.get((cx, cz))
+            if hit is not None and hit[0] is paint:
+                entry = hit[1]
+            elif id(paint) not in packed:
+                entry = None
+            else:
+                entry = {
+                    'coord': [int(cx), int(cz)],
+                    'data': packed[id(paint)],
+                }
+            fresh[(cx, cz)] = (paint, entry)
+            if entry is not None:
+                entries.append({'coord': list(entry['coord']), 'data': entry['data']})
+        if is_base:
+            self._base_serial_cache = fresh
+        else:
+            self._paint_serial_cache = fresh
         return entries
 
-    def _restore_texture_paint(self, entries):
-        import base64, zlib
-        self.texture_paint_maps = {}
+    def _restore_texture_paint(self, entries, saved_res=None):
         self._paint_map_versions = {}
+        self._paint_epoch += 1
         self._paint_version_counter = 0
-        res = self.TERRAIN_PAINT_RESOLUTION
+        had_paint = bool(self.texture_paint_maps)
+        self.texture_paint_maps = self._decode_texture_paint(entries, saved_res)
+        if had_paint or self.texture_paint_maps:
+            self.table.mark_grass_dirty()
+        self._paint_epoch += 1
+        for key in self.texture_paint_maps:
+            self._touch_texture_paint(key)
+
+    #: The paint resolution of maps saved before it was written to them.
+    LEGACY_PAINT_RESOLUTION = 128
+
+    @staticmethod
+    def _resample_paint(paint, res):
+        """*paint* (n, n, 4 uint8) at *res* a side, bilinear.
+
+        Colour is weighted by alpha, so the edge of a painted area keeps
+        its colour rather than fading towards the black of unpainted texels.
+        """
+        n = paint.shape[0]
+        if n == res:
+            return paint
+        at = (np.arange(res, dtype=np.float32) + 0.5) * (n / float(res)) - 0.5
+        i0 = np.clip(np.floor(at).astype(np.int64), 0, n - 1)
+        i1 = np.clip(i0 + 1, 0, n - 1)
+        f = np.clip(at - np.floor(at), 0.0, 1.0).astype(np.float32)
+        src = paint.astype(np.float32)
+        src[..., :3] *= src[..., 3:4] / 255.0
+        rows = src[i0] * (1.0 - f)[:, None, None] + src[i1] * f[:, None, None]
+        out = rows[:, i0] * (1.0 - f)[None, :, None] + rows[:, i1] * f[None, :, None]
+        alpha = out[..., 3:4]
+        np.divide(out[..., :3] * 255.0, alpha, out=out[..., :3], where=alpha > 1e-3)
+        out = np.clip(out + 0.5, 0, 255).astype(np.uint8)
+        out[out[..., 3] == 0, :3] = 0
+        return out
+
+    def _decode_texture_paint(self, entries, saved_res=None):
+        """Paint chunks from their saved entries, at this terrain's resolution.
+
+        *saved_res* is the side they were saved at (default: the current
+        one); a chunk saved at another is resampled.
+        """
+        import base64, zlib
+        maps = {}
+        res = int(saved_res or self.TERRAIN_PAINT_RESOLUTION)
+        target = self.TERRAIN_PAINT_RESOLUTION
         expected = res * res * 4
         for entry in entries or []:
             if not isinstance(entry, dict):
@@ -3052,62 +3477,15 @@ class Terrain:
                     continue
                 paint = np.frombuffer(raw, dtype=np.uint8).copy().reshape(
                     res, res, 4)
-                key = (int(coord[0]), int(coord[1]))
-                self.texture_paint_maps[key] = paint
-                self._touch_texture_paint(key)
+                if res != target:
+                    paint = self._resample_paint(paint, target)
+                maps[(int(coord[0]), int(coord[1]))] = paint
             except (TypeError, ValueError, OSError, zlib.error):
                 continue
+        return maps
 
-    def release_renderer_resources(self):
-        """Drop every GL name the renderer gave this terrain.
 
-        The terrain program and the four ground textures belong to the
-        renderer that bound them (``setup_terrain_shader``). The host calls
-        this before that renderer is retired, so no retired name is kept; the
-        next renderer binds its own the first time it draws the terrain.
-        """
-        self.shader_program = 0
-        self.uniforms = {}
-        self.grass_tex = self.rock_tex = self.sand_tex = self.snow_tex = 0
 
-    def cleanup(self):
-        with self._gl_scope():
-            self._cleanup_gl()
-
-    def _cleanup_gl(self):
-        self._free_gl(self.table.clear())
-        if self._empty_paint_texture:
-            gl.glDeleteTextures(1, [self._empty_paint_texture])
-            self._empty_paint_texture = 0
-        if self.block_program:
-            try:
-                gl.glDeleteProgram(self.block_program)
-            except Exception:
-                pass
-            self.block_program = 0
-            self.block_uniforms = {}
-        if self._paint_pages:
-            try:
-                gl.glDeleteTextures(len(self._paint_pages), self._paint_pages)
-            except Exception:
-                pass
-            self._paint_pages = []
-            self._paint_page_layers = 0
-        if self._height_pages:
-            gl.glDeleteTextures(len(self._height_pages), self._height_pages)
-            self._height_pages = []
-        if self._empty_vao:
-            gl.glDeleteVertexArrays(1, [self._empty_vao])
-            self._empty_vao = 0
-        if self._biome_tex:
-            try:
-                gl.glDeleteTextures(1, [self._biome_tex])
-            except Exception:
-                pass
-            self._biome_tex = 0
-            self._biome_gpu_version = -1
-        self._gpu_version[:] = 0
-        self._paint_gpu_version[:] = 0
     
     def to_dict(self) -> dict:
         # While the editor is previewing a Big World fill the live bounds are
@@ -3153,22 +3531,37 @@ class Terrain:
         # The editor snapshots the terrain after every sculpt and stamp click
         # (state, undo); a sculpted world holds hundreds of thousands of
         # offsets, and rebuilding the list each time cost over half a second
-        # a click. It is rebuilt only when the offsets have changed.
+        # a click. It is rebuilt only when the offsets have changed, and
+        # after a brush stroke only the cells it touched (see _sculpt_list).
         if self.sculpt_offsets:
             data['sculpt_offsets'] = self._sculpt_list()
             data['sculpt_grid_resolution'] = self.sculpt_grid_resolution
         if self.csg_subtractions:
             data['csg_subtractions'] = [list(cut) for cut in self.csg_subtractions]
+        self.finish_stamp_edit()
         texture_paint = self._serialize_texture_paint()
         if texture_paint:
             data['texture_paint_resolution'] = self.TERRAIN_PAINT_RESOLUTION
             data['texture_paint'] = texture_paint
+        if self.paint_stamps:
+            data['paint_stamps'] = [dict(stamp) for stamp in self.paint_stamps]
+            base = self._serialize_texture_paint(self.texture_paint_base)
+            if base:
+                data['texture_paint_base'] = base
 
         # Heightmap settings (image data is NOT saved — only the path is
         # stored by the editor so the user can re-load it)
         if self.heightmap_data is not None:
-            data['heightmap_blob'] = self._array_blob('heightmap', self.heightmap_data,
-                                                      _encode_heightmap)
+            # The heightmap is replaced, never edited in place, so its blob
+            # is encoded once per array.
+            if self._heightmap_blob_cache[0] is not self.heightmap_data:
+                import base64, io
+                buf = io.BytesIO()
+                np.save(buf, self.heightmap_data)
+                self._heightmap_blob_cache = (
+                    self.heightmap_data,
+                    base64.b64encode(buf.getvalue()).decode('ascii'))
+            data['heightmap_blob'] = self._heightmap_blob_cache[1]
             data['heightmap_strength'] = self.heightmap_strength
             data['heightmap_blend'] = self.heightmap_blend
         if self.biome_map is not None:
@@ -3211,7 +3604,7 @@ class Terrain:
             rows = [[gx, gz, val] for (gx, gz), val in offsets.items()]
             index = {k: i for i, k in enumerate(offsets)}
         self._sculpt_list_cache = (key, rows, index)
-        self._sculpt_changed = set()
+        self._sculpt_changed = {}
         return rows
 
     def _array_blob(self, name, array, encode):
@@ -3276,10 +3669,8 @@ class Terrain:
         self.use_textures = data.get('use_textures', False)
         self.flat_mode = data.get('flat_mode', False)
         self.grass_enabled = data.get('grass_enabled', False)
-        self.grass_density = float(np.clip(data.get('grass_density', 0.02),
-                                           0.0, GRASS_MAX_DENSITY))
-        self.grass_height = float(np.clip(
-            data.get('grass_height', DEFAULT_GRASS_HEIGHT), *GRASS_HEIGHT_LIMITS))
+        self.grass_density = float(np.clip(data.get('grass_density', 0.02), 0.0, MAX_GRASS_DENSITY))
+        self.set_grass(self.grass_enabled, height=data.get('grass_height', DEFAULT_GRASS_HEIGHT))
         saved_grass_color = data.get('grass_color')
         if saved_grass_color is not None and len(saved_grass_color) >= 3:
             self.grass_color = tuple(float(np.clip(c, 0.0, 1.0)) for c in saved_grass_color[:3])
@@ -3303,7 +3694,14 @@ class Terrain:
             self.biome = BiomeConfig.from_dict(data['custom_biome'])
             self.biome.name = biome_display_name(self.biome.name)
         # Baked terrain texture paint.
-        self._restore_texture_paint(data.get('texture_paint', []))
+        try:
+            saved_res = int(data.get('texture_paint_resolution',
+                                     self.LEGACY_PAINT_RESOLUTION))
+        except (TypeError, ValueError):
+            saved_res = self.LEGACY_PAINT_RESOLUTION
+        if saved_res <= 0 or saved_res > 4096:
+            saved_res = self.LEGACY_PAINT_RESOLUTION
+        self._restore_texture_paint(data.get('texture_paint', []), saved_res)
         # Migrate old render-time stamps once. The source asset is sampled now
         # and then discarded; the saved terrain owns the resulting pixels.
         for stamp in data.get('texture_stamps', []):
@@ -3323,9 +3721,45 @@ class Terrain:
             except (TypeError, ValueError):
                 continue
 
+        # Placed stamps. Their baked result is already in texture_paint; the
+        # records only make them editable. A map without records keeps all
+        # of its paint as the base layer.
+        self.paint_stamps = []
+        # A map from before this resolution, or whose stamps were stretched
+        # (no 'tiled' key), is converted: its stamps are baked again from
+        # their records, sharp and tiled. Paint with no record behind it can
+        # only be resampled.
+        convert = saved_res != self.TERRAIN_PAINT_RESOLUTION
+        for raw in data.get('paint_stamps', []) or []:
+            if isinstance(raw, dict):
+                convert = convert or 'tiled' not in raw
+                stamp = self.make_paint_stamp(
+                    raw.get('x'), raw.get('z'), raw.get('radius'),
+                    raw.get('texture', ''), raw.get('feather', 0.25),
+                    raw.get('opacity', 1.0), raw.get('angle', 0.0),
+                    stamp_id=raw.get('id'), tiled=raw.get('tiled', True))
+                if stamp is not None:
+                    self.paint_stamps.append(stamp)
+        if self.paint_stamps:
+            self.texture_paint_base = self._decode_texture_paint(
+                data.get('texture_paint_base', []), saved_res)
+        else:
+            self.texture_paint_base = dict(self.texture_paint_maps)
+        self.selected_stamp_ids = set()
+        self._paint_display = {}
+        self._paint_epoch += 1
+        self._stamp_dirty_chunks = set()
+        self._invalidate_stamp_index()
+        if convert and self.paint_stamps:
+            keys = set()
+            for stamp in self.paint_stamps:
+                keys |= self._stamp_chunks(stamp)
+            self._recompose_paint(keys)
+
         # Sculpt offsets
         self.sculpt_offsets = {}
         self._touch_sculpt()
+        self._forget_sculpt_list()
         self.sculpt_grid_resolution = data.get('sculpt_grid_resolution', 4.0)
         entries = data.get('sculpt_offsets', [])
         try:

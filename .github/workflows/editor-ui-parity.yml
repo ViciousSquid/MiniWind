@@ -2,7 +2,6 @@ name: Native Windows and macOS editor UI parity
 
 on:
   push:
-    branches: [CANARY]
     paths:
       - '.github/workflows/editor-ui-parity.yml'
       - 'tools/editor_ui_audit.py'
@@ -44,8 +43,8 @@ jobs:
       PYTHONUNBUFFERED: '1'
       PYTHONHASHSEED: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
           cache: pip
@@ -72,7 +71,7 @@ jobs:
           python tools/editor_ui_audit.py
           --output artifacts/${{ matrix.platform }}-scale-${{ matrix.scale }}/font-16
           --font-size 16 --metrics-only
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: editor-ui-${{ matrix.platform }}-scale-${{ matrix.scale }}
@@ -89,11 +88,11 @@ jobs:
     needs: capture
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: editor-ui-*
           path: captures
@@ -138,7 +137,7 @@ jobs:
                   f.write('Download **editor-ui-parity-report** and open `index.html`.\n\n')
                   f.write('```json\n' + json.dumps(d, indent=2) + '\n```\n')
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: editor-ui-parity-report

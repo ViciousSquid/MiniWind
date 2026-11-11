@@ -378,12 +378,8 @@ class OverheadSpriteRenderer:
             return 0
 
         try:
-            from engine import asset_archives
-            if asset_archives.in_archive(path):
-                import io
-                image = Image.open(io.BytesIO(asset_archives.read(path))).convert("RGBA")
-            else:
-                image = Image.open(path).convert("RGBA")
+            from engine.asset_archives import asset_source
+            image = Image.open(asset_source(path) or path).convert("RGBA")
             data = np.array(image, dtype=np.uint8)
 
             texture = gl.glGenTextures(1)

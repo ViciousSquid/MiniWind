@@ -117,6 +117,70 @@ def test_the_tool_toolbar_round_trips_while_remaining_floatable(toolbar):
 
 
 # ────────────────────────────
+# Responsive toolbar: same logical geometry on Windows and macOS
+# ────────────────────────────
+
+@pytest.mark.parametrize("vertical,extent", [
+    (True, 600), (True, 720), (True, 800), (True, 900),
+    (True, 1200), (False, 700), (False, 1024), (False, 1600),
+])
+@pytest.mark.parametrize("large", [False, True])
+def test_toolbar_metrics_fit_the_available_dimension_on_both_platforms(
+        vertical, extent, large):
+    """Geometry is platform-neutral; all buttons, separators and Play fit."""
+    from editor.ui import fit_toolbar_metrics, toolbar_metrics
+
+    config = configparser.ConfigParser()
+    config["Display"] = {"big_toolbar_buttons": str(large)}
+    icon, length = fit_toolbar_metrics(
+        config, extent, buttons=15, separators=3, vertical=vertical,
+        spacing=4, margin=2, handle=8, separator_extent=8)
+    preferred_icon, preferred_length = toolbar_metrics(config)
+    assert 1 <= icon <= preferred_icon
+    assert 32 <= length <= preferred_length
+    assert length >= (80 if vertical else 90)
+
+    # Same reservation that Qt's shared EditorStyle uses, with 24px slack.
+    overhead = (15 + 3 + 1) * 4 + 2 * 2 + 8 + 3 * 8 + 24
+    occupied = 15 * (icon + (8 if vertical else 4)) + length + overhead
+    assert occupied <= extent
+
+
+def test_large_toolbar_shrinks_without_hiding_play(toolbar, qt_app):
+    """In a compact editor window, every action including Play remains on-bar."""
+    window = toolbar
+    tool = window.tool_toolbar
+    window.addToolBar(Qt.RightToolBarArea, tool)
+    if not window.config.has_section("Display"):
+        window.config.add_section("Display")
+    window.config.set("Display", "big_toolbar_buttons", "True")
+    window.resize(1280, 800)
+    window.show()
+    # The scale-2 native UI runner can have only ~339 logical px of screen
+    # height. A one-column toolbar cannot physically hold sixteen controls
+    # there; the parity audit separately exercises the editor at 900 px.
+    if window.height() < 520:
+        pytest.skip("Native test screen is too short for a one-column toolbar")
+    window.apply_toolbar_button_size()
+    for _ in range(3):
+        qt_app.processEvents()
+
+    assert tool.orientation() == Qt.Vertical
+    assert window._toolbar_icon_size < 40
+    play_actions = [action for action in tool.actions()
+                    if tool.widgetForAction(action) is window.play_button]
+    assert len(play_actions) == 1
+    for action in tool.actions():
+        geometry = tool.actionGeometry(action)
+        assert geometry.isValid(), "Toolbar action disappeared: %s" % action.text()
+        assert geometry.y() >= 0
+        assert geometry.bottom() < tool.height(), "Action overflowed: %s" % action.text()
+
+    assert window.play_button.isVisible()
+    assert window.play_button.geometry().bottom() < tool.height()
+
+
+# ────────────────────────────
 # The grid toggle
 # ────────────────────────────
 
@@ -152,6 +216,37 @@ def test_the_grid_button_matches_its_neighbour_when_on(toolbar):
 
 def test_the_grid_button_starts_on(toolbar):
     assert toolbar.grid_btn.isChecked()
+
+
+def test_grid_button_can_hide_and_restore_the_3d_grid(toolbar):
+    """Clicking the button twice must restore the rendered grid."""
+    button = toolbar.grid_btn
+    viewport = toolbar.view_3d
+    assert button.isChecked()
+    assert toolbar.grid_visible
+    assert viewport.grid_visible
+
+    button.click()
+    assert not button.isChecked()
+    assert not toolbar.grid_visible
+    assert not viewport.grid_visible
+
+    button.click()
+    assert button.isChecked()
+    assert toolbar.grid_visible
+    assert viewport.grid_visible
+
+
+def test_setting_grid_visibility_keeps_button_and_view_in_sync(toolbar):
+    """The G-key path uses toggle_grid, not a separate toolbar state setter."""
+    toolbar.toggle_grid(False)
+    assert not toolbar.grid_btn.isChecked()
+    assert not toolbar.view_3d.grid_visible
+
+    toolbar.toggle_grid(True)
+    assert toolbar.grid_btn.isChecked()
+    assert toolbar.grid_visible
+    assert toolbar.view_3d.grid_visible
 
 
 # ────────────────────────────

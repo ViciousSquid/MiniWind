@@ -434,12 +434,15 @@ in vec3 Normal;
 in highp vec2 TexCoords;
 
 uniform sampler2D texture_diffuse;
+uniform vec4 model_tint;
 struct Light { highp vec3 position; vec3 color; float intensity; highp float radius; int shadowIndex; };
 uniform Light lights[""" + str(MAX_LIGHTS) + """];
 uniform int active_lights;""" + SHADOW_GLSL + FOG_GLSL + """
 void main() {
     vec4 texColor = texture(texture_diffuse, TexCoords);
     if(texColor.a < 0.1) discard;
+    // A model's tint; all zeros (the default) leaves the texture as it is.
+    texColor.rgb *= mix(vec3(1.0), model_tint.rgb, model_tint.a);
 
     vec3 norm = normalize(Normal);
     vec3 result = (vec3(0.1) + uAmbient) * texColor.rgb;
@@ -751,6 +754,7 @@ uniform mat3 normalMatrix;
 
 uniform float waveAmp;    // total wave amplitude in world units
 uniform vec3 brushSize;   // world-space brush dimensions
+uniform float waveSpread; // "Wave Spacing": 0 tight and choppy, 1 broad
 
 // One Gerstner wave: displaces the vertex and accumulates normal derivatives.
 void addWave(vec2 dir, float wavelength, float amp, float speed, vec2 p,
@@ -788,10 +792,17 @@ void main()
     vec2 dxz = vec2(0.0);
     vec3 n = vec3(0.0, 1.0, 0.0);
     if (amp > 0.001) {
-        addWave(vec2( 0.788,  0.616), 190.0, amp * 0.42, 1.05, worldPos.xz, dy, dxz, n);
-        addWave(vec2(-0.552,  0.834), 118.0, amp * 0.28, 1.45, worldPos.xz, dy, dxz, n);
-        addWave(vec2( 0.943, -0.333),  74.0, amp * 0.19, 1.95, worldPos.xz, dy, dxz, n);
-        addWave(vec2(-0.673, -0.740),  38.0, amp * 0.11, 2.70, worldPos.xz, dy, dxz, n);
+        // Wavelengths in world units (a player is ~64 tall). At 190, 118, 74
+        // and 38 -- "Wave Spacing" fully left -- crests are a couple of
+        // strides apart: tight, choppy water. Fully right (the default)
+        // each is 2.2x longer, and slower by sqrt(2.2), as longer waves on
+        // real water are: a broad, calm swell.
+        float longer = mix(1.0, 2.2, clamp(waveSpread, 0.0, 1.0));
+        float slower = inversesqrt(longer);
+        addWave(vec2( 0.788,  0.616), 190.0 * longer, amp * 0.42, 1.05 * slower, worldPos.xz, dy, dxz, n);
+        addWave(vec2(-0.552,  0.834), 118.0 * longer, amp * 0.28, 1.45 * slower, worldPos.xz, dy, dxz, n);
+        addWave(vec2( 0.943, -0.333),  74.0 * longer, amp * 0.19, 1.95 * slower, worldPos.xz, dy, dxz, n);
+        addWave(vec2(-0.673, -0.740),  38.0 * longer, amp * 0.11, 2.70 * slower, worldPos.xz, dy, dxz, n);
         worldPos.y  += dy;
         worldPos.xz += dxz * 0.75 * edgeFade;
     }
@@ -839,6 +850,7 @@ uniform sampler2D normalMap;
 uniform sampler2D sceneColor;
 uniform highp float time;
 
+uniform highp float waveSpread;   // "Wave Spacing": 0 tight and choppy, 1 broad
 uniform float waterOpacity;
 uniform float waterReflectivity;
 uniform float distortionStrength;
@@ -856,7 +868,14 @@ uniform vec3 waterTint;
 uniform highp sampler2D sceneDepth;
 uniform int hasSceneDepth;
 uniform int ssrEnabled;
-uniform highp mat4 invProjection;""" + FOG_GLSL + """
+uniform highp mat4 invProjection;
+// Effects (ORB, FIRE, custom GIFs) reflected directly: the nearest few drawn
+// this frame, as the camera-facing quads they are. xyz centre (world), w
+// half width; the half heights beside them.
+#define MAX_REFLECTED_EFFECTS 4
+uniform int effectCount;
+uniform highp vec4 effectQuads[MAX_REFLECTED_EFFECTS];
+uniform float effectHalfHeights[MAX_REFLECTED_EFFECTS];""" + FOG_GLSL + """
 
 const vec3 SUN_DIR   = vec3(0.4767, 0.6555, 0.5859);  // pre-normalized
 const vec3 SUN_COLOR = vec3(1.00, 0.95, 0.82);
@@ -887,12 +906,12 @@ highp vec2 viewToUV(highp vec3 p) {
 
 // Screen-space reflection: march the reflected ray through the copied depth
 // buffer and return the scene colour it hits (rgb) and a confidence (a).
-// 20 linear steps with a growing stride, then a short binary refinement.
+// 10 linear steps with a growing stride, then a short binary refinement.
 vec4 traceReflection(highp vec3 originView, highp vec3 dirView) {
     highp float stride = max(2.0, -originView.z * 0.02);
     highp vec3 p = originView;
     highp vec3 prev = p;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 10; i++) {
         prev = p;
         p += dirView * stride;
         stride *= 1.22;
@@ -923,9 +942,67 @@ vec4 traceReflection(highp vec3 originView, highp vec3 dirView) {
             if (hz - hi.z > thickness) return vec4(0.0);
             vec2 edge = smoothstep(vec2(0.0), vec2(0.08), huv)
                       * smoothstep(vec2(0.0), vec2(0.08), vec2(1.0) - huv);
-            float fade = edge.x * edge.y * (1.0 - smoothstep(14.0, 20.0, float(i)));
+            float fade = edge.x * edge.y * (1.0 - smoothstep(7.0, 10.0, float(i)));
             return vec4(textureLod(sceneColor, huv, 0.0).rgb, fade);
         }
+    }
+    return vec4(0.0);
+}
+
+// An effect is a flat, camera-facing quad: the ray march above steps through
+// or past it. It is reflected directly instead. Where the reflected ray
+// passes the effect's centre, its offset from the centre says which texel of
+// the quad it meets; that texel is on screen, in the scene copy. The depth
+// copy says whether the effect's solid part is really what is drawn there
+// (the effect pass writes it for texels at least half opaque), so neither
+// the transparent corners of the quad nor something standing in front of it
+// is reflected. Returns the colour (rgb) and a confidence (a).
+vec4 reflectEffects(highp vec3 P, vec3 R) {
+    vec3 camRight = vec3(view[0][0], view[1][0], view[2][0]);
+    vec3 camUp = vec3(view[0][1], view[1][1], view[2][1]);
+    // "Up" and "right" across the ray.
+    vec3 upAcross = vec3(0.0, 1.0, 0.0) - R * R.y;
+    float upLength = length(upAcross);
+    if (upLength < 0.001) return vec4(0.0);
+    upAcross /= upLength;
+    vec3 rightAcross = cross(upAcross, R);
+    if (dot(rightAcross, camRight) < 0.0) rightAcross = -rightAcross;
+    for (int i = 0; i < effectCount && i < MAX_REFLECTED_EFFECTS; i++) {
+        highp vec3 centre = effectQuads[i].xyz;
+        float halfWidth = effectQuads[i].w;
+        float halfHeight = effectHalfHeights[i];
+        highp float along = dot(centre - P, R);
+        if (along <= 0.0) continue;
+        highp vec3 offset = P + R * along - centre;
+        float ox = dot(offset, rightAcross);
+        float oy = dot(offset, upAcross);
+        if (abs(ox) >= halfWidth || abs(oy) >= halfHeight) continue;
+        highp vec3 texel = centre + camRight * ox + camUp * oy;
+        highp vec4 clip = projection * view * vec4(texel, 1.0);
+        if (clip.w <= 0.0) continue;
+        highp vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) continue;
+        // Is the effect's solid part drawn there? At that pixel or beside
+        // it: an animated texture has pin-holes just under half opaque,
+        // which would otherwise speckle the reflection.
+        highp float texelZ = (view * vec4(texel, 1.0)).z;
+        highp float tolerance = 2.0 + abs(texelZ) * 0.004;
+        highp vec2 px = 1.5 / vec2(textureSize(sceneDepth, 0));
+        float solid = 0.0;
+        for (int k = 0; k < 5; k++) {
+            highp vec2 at = uv + px * (k == 0 ? vec2(0.0)
+                                    : k == 1 ? vec2(1.0, 0.0) : k == 2 ? vec2(-1.0, 0.0)
+                                    : k == 3 ? vec2(0.0, 1.0) : vec2(0.0, -1.0));
+            highp float d = textureLod(sceneDepth, at, 0.0).r;
+            if (d < 0.99999 && abs(viewPosFromDepth(at, d).z - texelZ) <= tolerance) {
+                solid = 1.0;
+                break;
+            }
+        }
+        if (solid == 0.0) continue;
+        vec2 edge = smoothstep(vec2(0.0), vec2(0.04), uv)
+                  * smoothstep(vec2(0.0), vec2(0.04), vec2(1.0) - uv);
+        return vec4(textureLod(sceneColor, uv, 0.0).rgb, edge.x * edge.y);
     }
     return vec4(0.0);
 }
@@ -970,9 +1047,12 @@ void main()
     } else {
         wuv = vec2(FragPos.x, FragPos.y - time * 6.0);
     }
-    vec2 r1 = texture(normalMap, wuv * 0.0110 + time * vec2( 0.021,  0.014)).xy - 0.5;
-    vec2 r2 = texture(normalMap, wuv * 0.0047 + time * vec2(-0.011,  0.008)).xy - 0.5;
-    vec2 r3 = texture(normalMap, wuv * 0.0310 + time * vec2( 0.016, -0.029)).xy - 0.5;
+    // The ripple detail is spread with the waves ("Wave Spacing"): the same
+    // pattern, up to 1.7x broader.
+    highp vec2 ruv = wuv * mix(1.0, 0.59, clamp(waveSpread, 0.0, 1.0));
+    vec2 r1 = texture(normalMap, ruv * 0.0110 + time * vec2( 0.021,  0.014)).xy - 0.5;
+    vec2 r2 = texture(normalMap, ruv * 0.0047 + time * vec2(-0.011,  0.008)).xy - 0.5;
+    vec2 r3 = texture(normalMap, ruv * 0.0310 + time * vec2( 0.016, -0.029)).xy - 0.5;
     vec2 ripple = r1 + r2 * 0.65 + r3 * 0.35;
 
     // Broad world-space variation breaks up normal-map repetition on large water brushes.
@@ -1189,6 +1269,17 @@ void main()
         vec4 ssr = traceReflection(surfaceView, normalize(mat3(view) * R));
         sceneReflection = ssr.a * (1.0 - roughness * 0.6);
         reflection = mix(reflection, ssr.rgb, sceneReflection);
+        if (effectCount > 0) {
+            // By the wave's own normal, with only a little of the ripple
+            // detail: a small object a few hundred units off, reflected by
+            // the full detail normal, scatters into speckle.
+            vec3 calm = normalize(mix(geoN, N, 0.2));
+            vec4 effect = reflectEffects(FragPos, reflect(-viewDir, calm));
+            if (effect.a > 0.0) {
+                reflection = mix(reflection, effect.rgb, effect.a);
+                sceneReflection = max(sceneReflection, effect.a);
+            }
+        }
     }
 
     // Keep authored reflectivity visible at normal viewing angles. Physical
@@ -2343,11 +2434,14 @@ in vec3 FragPos;
 in vec3 Normal;
 in vec2 TexCoords;
 uniform sampler2D texture_diffuse;
+uniform vec4 model_tint;
 struct Light { vec3 position; vec3 color; float intensity; float radius; int shadowIndex; };
 uniform Light lights[""" + str(MAX_LIGHTS_ARM) + """];
 uniform int active_lights;""" + SHADOW_GLSL + FOG_GLSL + """void main() {
     vec4 texColor = texture(texture_diffuse, TexCoords);
     if(texColor.a < 0.1) discard;
+    // A model's tint; all zeros (the default) leaves the texture as it is.
+    texColor.rgb *= mix(vec3(1.0), model_tint.rgb, model_tint.a);
     vec3 norm = normalize(Normal);
     vec3 result = (vec3(0.12) + uAmbient) * texColor.rgb;
     for(int i = 0; i < active_lights && i < """ + str(MAX_LIGHTS_ARM) + """; i++) {
@@ -2462,6 +2556,181 @@ void main() {
 }"""
 
 
+DEFAULT_SHADERS['decal.vert'] = """#version 330 core
+precision highp float;
+// A projected decal: its box, drawn as the unit cube. One instance a decal.
+layout (location = 0) in vec3 aPos;
+layout (location = 3) in vec4 iModel0;
+layout (location = 4) in vec4 iModel1;
+layout (location = 5) in vec4 iModel2;
+layout (location = 6) in vec4 iModel3;
+layout (location = 7) in vec4 iParams;      // variant, opacity, kind, mirrored
+
+uniform mat4 projection;
+uniform mat4 view;
+
+flat out mat4 WorldToBox;
+flat out vec4 Params;
+
+void main() {
+    mat4 model = mat4(iModel0, iModel1, iModel2, iModel3);
+    WorldToBox = inverse(model);
+    Params = iParams;
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
+}"""
+
+DEFAULT_SHADERS['decal.frag'] = """#version 330 core
+precision highp float;
+// The surface under this pixel -- whatever was drawn there, read back from
+// the depth copy -- is put in the decal box's own space. Inside the box it
+// takes the decal's texture; outside, nothing. So one box paints a wall,
+// the floor below it and the corner between, without knowing either.
+out vec4 FragColor;
+
+flat in mat4 WorldToBox;
+flat in vec4 Params;
+
+uniform highp sampler2D sceneDepth;
+uniform mediump sampler2DArray decalTextures;
+uniform vec4 decalRanges;       // first layer and count: wall images, floor images
+uniform mat4 invViewProjection;
+uniform vec4 viewport;          // x, y, width, height of the depth copy
+uniform vec3 viewPos;
+
+const float DECAL_STRENGTH = 2.6;
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - viewport.xy) / viewport.zw;
+    float depth = texture(sceneDepth, uv).r;
+    if (depth >= 0.99999) discard;                      // sky: no surface
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 world = invViewProjection * clip;
+    world /= world.w;
+    vec3 local = (WorldToBox * world).xyz;              // -0.5..0.5 inside
+    if (any(greaterThan(abs(local), vec3(0.5)))) discard;
+
+    // The surface's facing, from how the world position changes across the
+    // pixel, in the box's space. The box's z is the way the decal was
+    // thrown: a surface facing that way (the far side of a thin wall) gets
+    // none.
+    vec3 normal = normalize(cross(dFdx(world.xyz), dFdy(world.xyz)));
+    if (dot(normal, viewPos - world.xyz) < 0.0) normal = -normal;
+    vec3 facing = normalize(mat3(WorldToBox) * normal);
+    if (facing.z > 0.35) discard;
+
+    // Across a surface square to the throw the texture lies on the box's
+    // x and y. On one that turns away -- the floor under a wall, a side
+    // wall -- it is unfolded about the box's middle: the distance out from
+    // the wall carries on from where the wall left off, so a run that
+    // reaches the foot of a wall goes on across the floor and nothing is
+    // smeared along the throw.
+    vec2 at = local.xy + facing.xy * local.z;
+    if (any(greaterThan(abs(at), vec2(0.5)))) discard;
+    vec2 range = Params.z > 0.5 ? decalRanges.zw : decalRanges.xy;
+    float layer = range.x + mod(Params.x, max(range.y, 1.0));
+    float across = Params.w > 0.5 ? -at.x : at.x;
+    vec4 texel = texture(decalTextures, vec3(across + 0.5, 0.5 - at.y, layer));
+    // Fade at the box's near and far ends rather than cut.
+    float ends = 1.0 - smoothstep(0.38, 0.5, abs(local.z));
+    float amount = texel.a * Params.y * ends;
+    if (amount <= 0.004) discard;
+    // Stained, not painted: the blend is dst * (src.rgb + 1 - src.a), so
+    // the surface keeps its own light and shadow -- blood in a dark room is
+    // dark -- while the colour, pushed past 1, stays red on a grey wall
+    // instead of going to black.
+    FragColor = vec4(texel.rgb * (amount * DECAL_STRENGTH), amount);
+}"""
+
+
+def _terrain_indexed_sources():
+    """The heightfield terrain program as it is drawn: ``terrain_indexed.vert``
+    and ``terrain_flat.frag``, derived from ``terrain.vert``/``terrain.frag``.
+
+    ``terrain.vert`` draws a chunk as six unshared vertices a quad, and works
+    out a triangle's flat normal and colour at each of its three vertices.
+    Here the two are ``flat`` outputs, taken from the triangle's provoking
+    vertex (its last: GL's default convention, which nothing in Fio changes),
+    and the chunk is drawn indexed (``engine.terrain.heightfield_indices``)
+    over two layers of the grid's points:
+
+    * layer 0, ``id = i * (res + 1) + k``: grid point (i, k), carrying the
+      face values of the first triangle of quad (i, k);
+    * layer 1, ``id = (res + 1)^2 + i * (res + 1) + k``: the same point,
+      carrying those of the second triangle of quad (i - 1, k - 1).
+
+    So ``2 (res + 1)^2`` vertices are shaded instead of ``6 res^2`` (4,802
+    against 13,824 at res 48). Every value that reaches a fragment comes from
+    the same expressions on the same operands as in ``terrain.vert``, which
+    stays as the reference the parity tests capture vertex by vertex;
+    ``terrain.frag`` (smooth inputs) still serves the block-terrace mesh.
+    """
+    vert = DEFAULT_SHADERS['terrain.vert']
+    head, marker, _ = vert.partition('void main() {')
+    assert marker, 'terrain.vert: main() not found'
+    for name in ('Normal', 'VertexColor'):
+        old = 'out mediump vec3 %s;' % name
+        assert old in head, name
+        head = head.replace(old, 'flat ' + old)
+    main = """void main() {
+    int res = uChunkI.x;
+    int side = res + 1;
+    int points = side * side;
+    bool second = gl_VertexID >= points;
+    int g = second ? gl_VertexID - points : gl_VertexID;
+    int i = g / side;
+    int k = g - i * side;
+    ivec2 me = ivec2(i, k);
+
+    // The triangle this vertex provokes, with terrain.vert's corners a, b, c:
+    // the first of quad (i, k), or the second of quad (i - 1, k - 1).
+    int ix = second ? i - 1 : i;
+    int iz = second ? k - 1 : k;
+    ivec2 a = second ? ivec2(ix + 1, iz)     : ivec2(ix, iz);
+    ivec2 b = second ? ivec2(ix + 1, iz + 1) : ivec2(ix + 1, iz);
+    ivec2 c = ivec2(ix, iz + 1);
+
+    vec3 pa = gridPoint(a);
+    vec3 pb = gridPoint(b);
+    vec3 pc = gridPoint(c);
+    vec3 p  = second ? pb : pa;
+
+    // Flat face normal: cross(v1 - v0, v2 - v0) / |.|, as stored.
+    vec3 n = cross(pb - pa, pc - pa);
+    float nlen = sqrt(dot(n, n));
+    Normal = nlen == 0.0 ? n : n / nlen;
+
+    if (uFlatMode != 0) {
+        VertexColor = vec3(0.7);
+    } else {
+        float meanHeight = (pa.y + pb.y + pc.y) / 3.0;
+        float norm = clamp((meanHeight - uChunkY.x) / uChunkY.y, 0.0, 1.0);
+        int seed = second ? ((ix + 1000) * 1000 + iz + 1000) % 100
+                          : (ix * 1000 + iz) % 100;
+        float variation = (float(seed) / 100.0 - 0.5) * 0.08;
+        VertexColor = clamp(gradientColour(norm) + variation, 0.0, 1.0);
+    }
+
+    float gx = gradientAlong(me.x, me.y, true);
+    float gz = gradientAlong(me.x, me.y, false);
+    SmoothNormal = vec3(-gx, 1.0, -gz) / sqrt(gx * gx + 1.0 + gz * gz);
+
+    TexCoords = p.xz / uTiling;
+    PaintCoords = vec2(float(me.x), float(me.y)) / float(max(res, 1));
+    FragPos = p;
+    gl_Position = projection * view * vec4(p, 1.0);
+}"""
+    frag = DEFAULT_SHADERS['terrain.frag']
+    for name in ('Normal', 'VertexColor'):
+        old = 'in vec3 %s;' % name
+        assert frag.count(old) == 1, name
+        frag = frag.replace(old, 'flat in vec3 %s;' % name)
+    return head + main, frag
+
+
+(DEFAULT_SHADERS['terrain_indexed.vert'],
+ DEFAULT_SHADERS['terrain_flat.frag']) = _terrain_indexed_sources()
+
+
 # Central Registry: (Shader Name) -> (Vertex Filename, Fragment Filename)
 SHADER_MAP = {
     'simple':        ('simple.vert',         'simple.frag'),
@@ -2472,5 +2741,5 @@ SHADER_MAP = {
     'fog':           ('fog.vert',            'fog.frag'),
     'water':         ('water.vert',          'water.frag'),
     'glass':         ('glass.vert',          'glass.frag'),
-    'terrain':       ('terrain.vert',        'terrain.frag'),
+    'terrain':       ('terrain_indexed.vert', 'terrain_flat.frag'),
 }

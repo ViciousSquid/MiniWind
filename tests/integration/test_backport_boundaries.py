@@ -197,9 +197,13 @@ def test_angled_brush_geometry_helpers_survive():
 
 def test_cut_face_highlight_and_texturing_survive():
     core = _read("engine/renderer/core/overlays.py")
-    assert "_geo_face_highlight_verts" in core
     assert "_draw_face_highlight_verts" in core
     assert "def draw_face_highlight(" in core
+    # The cut face's polygon is built by the host now, from the brush; the
+    # renderer is handed its triangles.
+    geometry = _read("engine/overlay_geometry.py")
+    assert "def _convex_face_triangles(" in geometry
+    assert "brush_geometry.face_key(f) == face_name" in geometry
 
     # Addressing a cut face's texture moved out of the Surface Inspector into
     # a shared, Qt-free layer, so the inspector and anything else reach a cut
@@ -210,8 +214,14 @@ def test_cut_face_highlight_and_texturing_survive():
     inspector = _read("editor/surface_inspector.py")
     assert "face_texture" in inspector
 
+    # Applying the asset browser's texture to a face -- cut faces included
+    # -- goes through the face's one material record, which resolves a cut
+    # face's '#<plane>' key to its plane (behaviour: tests/editor/
+    # test_face_material_tools.py::test_applying_a_texture_reaches_a_cut_face).
     mw = _read("editor/main_window.py")
-    assert "brush_geometry.face_plane_index(brush, face_name)" in mw
+    assert "brush_faces.set_face_material(brush, face_name, texture=" in mw
+    faces = _read("engine/brush_faces.py")
+    assert "key.startswith('#')" in faces
 
 
 def test_procedural_map_generation_survives():

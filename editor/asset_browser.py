@@ -1,3 +1,7 @@
+from engine.asset_archives import (asset_bytes, asset_exists, asset_isdir,
+                                   asset_listdir, asset_source)
+from engine.asset_qt import load_icon, load_pixmap
+import io
 import os
 import sys
 import math
@@ -6,18 +10,20 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame,
                              QMainWindow, QPushButton, QTreeView,
                              QFileSystemModel, QTabWidget,
                              QSizePolicy, QListWidget, QListWidgetItem, QMenu, QActionGroup)
-from PyQt5.QtCore import Qt, QDir, QRect, QPointF, QTimer, QFileSystemWatcher
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QPen, QPolygonF, QIcon, QImage, QImageReader
+from PyQt5.QtCore import Qt, QDir, QModelIndex, QRect, QPointF, QTimer, QFileSystemWatcher
+from PyQt5.QtGui import (QPixmap, QColor, QPainter, QFont, QPen, QPolygonF, QIcon, QImage,
+                         QImageReader, QStandardItem, QStandardItemModel)
 from engine.glb_loader import render_glb_thumbnail
 # The Surface Inspector's FACE toggle sets this colour; the INSPECTOR button
 # that opens that panel borrows it so the two read as a pair.
 from editor.surface_inspector import FACE_BUTTON_STYLE as INSPECTOR_BUTTON_STYLE
-from engine.speaker_audio import AUDIO_EXTENSIONS, SPEAKER_AUDIO_FOLDERS, speaker_sound_path
+from engine.speaker_audio import (AUDIO_EXTENSIONS, SPEAKER_AUDIO_FOLDERS,
+                                  list_speaker_audio, speaker_sound_path)
 
-#: Thumbnail edge in pixels, chosen by right-clicking blank grid space:
-#: medium, then 20% and 35% smaller.
+#: Thumbnail edge in pixels, chosen by right-clicking blank grid space.
+#: New browsers start at the most compact size; saved choices take precedence.
 THUMBNAIL_SIZES = {'medium': 90, 'small': 72, 'smallest': 58}
-DEFAULT_THUMBNAIL_SIZE = 'medium'
+DEFAULT_THUMBNAIL_SIZE = 'smallest'
 
 
 def render_obj_thumbnail(filepath, width, height):
@@ -34,7 +40,8 @@ def render_obj_thumbnail(filepath, width, height):
         max_lines = 10000 
         line_count = 0
         
-        with open(filepath, 'r') as f:
+        data = asset_bytes(filepath) or b''
+        with io.StringIO(data.decode('utf-8', 'replace')) as f:
             for line in f:
                 line_count += 1
                 if line_count > max_lines: break
@@ -140,6 +147,65 @@ def render_obj_thumbnail(filepath, width, height):
     painter.end()
     return pixmap
 
+
+class AssetFolderModel(QStandardItemModel):
+    """The asset folders under a root, on disk and inside the category
+    ``.fiopak`` archives (read in place, never extracted) -- the part of
+    ``QFileSystemModel``'s interface the browser uses: :meth:`setRootPath`,
+    :meth:`index` of a path and :meth:`filePath` of an index."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._root = None
+        self._items = {}
+        self._folders = None
+
+    def setRootPath(self, path):
+        self._root = os.path.abspath(path)
+        self._folders = None
+        self.refresh()
+
+    def _scan(self, folder, out):
+        for name in asset_listdir(folder):
+            path = os.path.join(folder, name)
+            if asset_isdir(path):
+                out.append(path)
+                self._scan(path, out)
+        return out
+
+    def refresh(self):
+        """Rebuild when the set of folders changed (a folder added or removed,
+        on disk or by a repacked archive)."""
+        if self._root is None:
+            return
+        folders = self._scan(self._root, [])
+        if folders == self._folders:
+            return
+        self._folders = folders
+        self.clear()
+        self._items = {}
+        from engine.asset_qt import load_icon as _icon
+        from editor.desktop_style import ICON_DIRECTORY
+        icon = _icon(str(ICON_DIRECTORY / 'folder.svg'))
+        for path in folders:
+            item = QStandardItem(icon, os.path.basename(path))
+            item.setEditable(False)
+            item.setData(path, Qt.UserRole)
+            parent = self._items.get(os.path.normcase(os.path.dirname(path)))
+            (parent if parent is not None else self.invisibleRootItem()).appendRow(item)
+            self._items[os.path.normcase(path)] = item
+
+    def index(self, *args):
+        if len(args) == 1 and isinstance(args[0], str):
+            item = self._items.get(os.path.normcase(os.path.abspath(args[0])))
+            return item.index() if item is not None else QModelIndex()
+        return super().index(*args)
+
+    def filePath(self, index):
+        if not index.isValid():
+            return self._root
+        return index.data(Qt.UserRole)
+
 def texture_info(path, animated=False):
     """``"PNG 512x512"``: a texture's type and pixel size, for its tooltip.
 
@@ -149,13 +215,14 @@ def texture_info(path, animated=False):
     ext = os.path.splitext(path)[1].lstrip('.').upper()
     kind = {'JPEG': 'JPG'}.get(ext, ext) or 'Image'
     width = height = 0
-    size = QImageReader(path).size()
+    from engine.asset_qt import image_size
+    size = image_size(path)
     if size.isValid():
         width, height = size.width(), size.height()
     else:
         try:
             from PIL import Image
-            with Image.open(path) as image:
+            with Image.open(asset_source(path) or path) as image:
                 width, height = image.size
         except Exception:
             pass
@@ -364,8 +431,8 @@ class AssetItem(QWidget):
             base_path = os.path.splitext(self.file_path)[0]
             thumb_path = base_path + ".png"
 
-            if os.path.exists(thumb_path):
-                pixmap.load(thumb_path)
+            if asset_exists(thumb_path):
+                pixmap = load_pixmap(thumb_path)
             else:
                 # 2. Generate wireframe from model
                 ext = os.path.splitext(self.file_path)[1].lower()
@@ -391,13 +458,13 @@ class AssetItem(QWidget):
                     painter.end()
         else:
             # Assume image
-            pixmap.load(self.file_path)
+            pixmap = load_pixmap(self.file_path)
             if pixmap.isNull():
                 # No Qt image plugin for it (a GIF without qgif): Pillow
                 # reads it, first frame only for an animation.
                 try:
                     from PIL import Image
-                    with Image.open(self.file_path) as source:
+                    with Image.open(asset_source(self.file_path) or self.file_path) as source:
                         image = source.convert("RGBA")
                     qimage = QImage(image.tobytes(), image.width, image.height,
                                     image.width * 4, QImage.Format_RGBA8888).copy()
@@ -596,7 +663,7 @@ class AssetBrowserTab(QWidget):
 
             button_layout.addStretch()
 
-            self.tint_btn = QPushButton(QIcon("assets/tint.png"), "")
+            self.tint_btn = QPushButton(load_icon("assets/tint.png"), "")
             self.tint_btn.setFixedHeight(36)
             self.tint_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             self.tint_btn.setToolTip("Tint the selected brush")
@@ -647,9 +714,8 @@ class AssetBrowserTab(QWidget):
         """)
         tree_layout.addWidget(self.home_btn)
         
-        self.dir_model = QFileSystemModel()
+        self.dir_model = AssetFolderModel(self)
         self.dir_model.setRootPath(self.root_path)
-        self.dir_model.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs)
         
         self.tree_view = QTreeView()
         self.tree_view.setModel(self.dir_model)
@@ -802,13 +868,24 @@ class AssetBrowserTab(QWidget):
         self._watched_asset_dirs.discard(path)
         self._watch_asset_directory(path)
 
+        if self.is_audio_tab and self.editor is not None:
+            assets_dir = os.path.abspath(os.path.join(self.editor.root_dir, "assets"))
+            if assets_dir == path:
+                self.load_directory(self.root_path)
+                return
+        self.dir_model.refresh()
         if os.path.abspath(self.current_asset_folder) == path:
             self.load_directory(path)
 
     def load_directory(self, path):
+        archive_path = self._active_audio_archive()
+        if archive_path:
+            path = self.root_path
         self.current_asset_folder = path
         self._watch_asset_directory(self.root_path)
         self._watch_asset_directory(path)
+        if self.is_audio_tab and self.editor is not None:
+            self._watch_asset_directory(os.path.join(self.editor.root_dir, "assets"))
         # Clear existing items
         for i in reversed(range(self.grid_layout.count())): 
             self.grid_layout.itemAt(i).widget().setParent(None)
@@ -816,12 +893,41 @@ class AssetBrowserTab(QWidget):
         self.selected_item = None
         self.update_buttons_enabled()
 
-        if not os.path.exists(path): 
+        if archive_path:
+            self.tree_toggle_btn.setChecked(False)
+            self.tree_toggle_btn.setEnabled(False)
+            self.tree_toggle_btn.setToolTip(
+                "Archive audio is listed across subfolders; the folder tree is unavailable."
+            )
+            self.tree_frame.setVisible(False)
+            project_root = os.path.abspath(self.editor.root_dir)
+            prefix = f"assets/{self.audio_mode}/"
+            try:
+                members = list_speaker_audio(project_root, self.audio_mode)
+            except Exception as exc:
+                print(f"[AssetBrowser] Could not list {self.audio_mode}.fiopak: {exc}")
+                members = []
+            for member in members:
+                try:
+                    relative = member[len(prefix):]
+                    full_path = os.path.join(project_root, *member.split("/"))
+                    item = AssetItem(relative, full_path, self, is_audio=True,
+                                     thumb_size=self.thumb_size)
+                    self.items.append(item)
+                except Exception as exc:
+                    print(f"[AssetBrowser] Skipped '{member}': {exc}")
+            self.relayout_grid(force=True)
+            return
+
+        if self.is_audio_tab:
+            self.tree_toggle_btn.setEnabled(True)
+            self.tree_toggle_btn.setToolTip("Toggle Folder Panel")
+        if not asset_isdir(path):
             return
 
         try:
-            files = os.listdir(path)
-            files.sort()
+            # Loose files and the category archive's members, read in place.
+            files = asset_listdir(path)
             for f in files:
                 ext = os.path.splitext(f)[1].lower()
                 if ext in self.extensions:
@@ -856,6 +962,16 @@ class AssetBrowserTab(QWidget):
             self.assign_btn.setEnabled(self.selected_item is not None)
 
     # -- Audio tab ---------------------------------------------------------
+
+    def _active_audio_archive(self):
+        """Return the active sounds/music archive path, if one exists."""
+        if not self.is_audio_tab or self.editor is None:
+            return None
+        project_root = getattr(self.editor, "root_dir", None)
+        if not project_root:
+            return None
+        path = os.path.join(project_root, "assets", f"{self.audio_mode}.fiopak")
+        return path if os.path.isfile(path) else None
 
     def _update_audio_header(self):
         label = "Sounds" if self.audio_mode == 'sounds' else "Music"

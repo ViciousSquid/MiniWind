@@ -1,3 +1,15 @@
+# MiniWind on the Fio 3.5.0.1111 engine -- runtime dependencies for the game,
+# the desktop editor and the engine.
+#
+# Interpreter: CPython 3.13 or newer, GIL-enabled (python_runtime.py refuses
+# anything older and any free-threaded build). Releases are built with 3.14.
+#
+#   python -m pip install -r requirements.txt
+#
+# Tests additionally need pytest (and pyflakes for the static checks).
+#
+# These pins are Fio 3.5.0.1111's, except Pillow: Fio pins 11.3.0, MiniWind
+# stays on the 13.0.0 it already shipped and tested with.
 PyQt5==5.15.11; platform_machine != "ARM64"
 PyQt5-WinARM64==5.15.11.post1; sys_platform == "win32" and platform_machine == "ARM64"
 numpy==2.5.3

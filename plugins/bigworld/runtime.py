@@ -96,6 +96,8 @@ class StreamingHost:
         self.sim_near_radius = DEFAULT_NEAR_RADIUS
         #: Outer edge of live simulation; tracks the activation radius.
         self.sim_active_radius = 0.0
+        #: Where the renderer finishes fading streamed lights (None: its own
+        #: light range).
         self.light_fade_range = None
         #: Bumped whenever the set of drawable objects changes. A host that
         #: caches "every non-hidden brush" between frames — rebuilding it per
@@ -1061,10 +1063,14 @@ class BigWorldSession:
     # ------------------------------------------------------------------
 
     def _player_pos(self):
-        focus=getattr(getattr(self.logic,"game_session",None),"simulation_focus",None)
+        # A game may centre the simulation elsewhere than the engine's player
+        # (a shared-screen party's midpoint): its session says where.
+        focus = getattr(getattr(self.logic, "game_session", None),
+                        "simulation_focus", None)
         if focus is not None:
-            position=focus()
-            if position is not None:return position
+            position = focus()
+            if position is not None:
+                return position
         player = self.logic.player_runtime.player
         if player is None:
             return None

@@ -14,6 +14,7 @@ import numpy as np
 import OpenGL.GL as gl
 from OpenGL.GL.shaders import compileProgram, compileShader
 from PyQt5.QtCore import QByteArray, QBuffer, QIODevice
+from engine.asset_archives import asset_bytes, asset_exists, asset_source
 from PyQt5.QtGui import QImage, QImageReader
 
 from engine import shaders
@@ -39,10 +40,16 @@ _MODEL_RETRY_S = 5.0
 
 # ---------- Utility classes ----------
 class UniformCache:
-    __slots__ = ('program', '_cache', 'shadow_slots')
+    __slots__ = ('program', '_cache', 'shadow_slots', 'env', 'active_lights')
     def __init__(self, shader_program):
         self.program = shader_program
         self._cache = {}
+        # The last values given to this program's fog/ambient block and its
+        # active_lights (M4): uniform values are program state, so they hold
+        # until the program is deleted, and a recompiled program, a new
+        # context or another renderer comes with a new cache.
+        self.env = None
+        self.active_lights = None
         # The shadowMaps[i] slots this program samples, once their sampler
         # units are assigned (see Renderer._bind_shadow_maps); None before.
         self.shadow_slots = None
@@ -72,6 +79,10 @@ class ShaderLoader:
         self._ensure_defaults()
 
     def _ensure_defaults(self):
+        # A copy for reading and editing by hand; the renderer compiles from
+        # DEFAULT_SHADERS itself, so a read-only install simply goes without.
+        if not os.access(self.shader_dir, os.W_OK):
+            return
         for filename, source in DEFAULT_SHADERS.items():
             filepath = os.path.join(self.shader_dir, filename)
             try:
@@ -120,6 +131,23 @@ class ShaderLoader:
         except Exception as e:
             print(f"Error compiling shader from source: {e}")
             raise
+
+
+class ModelDrawGroup:
+    """One draw of a loaded model, as the model pass submits it: the vertex
+    or index range and the material's values, with its texture already a GL
+    name. Built by :meth:`ResourcesMixin._model_draw_groups`."""
+
+    __slots__ = ('start', 'count', 'indexed', 'alpha', 'colour', 'textured', 'texture')
+
+    def __init__(self, start, count, indexed, alpha, colour, textured, texture):
+        self.start = start
+        self.count = count
+        self.indexed = indexed
+        self.alpha = alpha
+        self.colour = colour
+        self.textured = textured
+        self.texture = texture
 
 
 class ResourcesMixin:
@@ -179,34 +207,20 @@ class ResourcesMixin:
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
             return tex_id
 
-        # Packed first (any assets/*.fiopak holding the path), then loose.
-        from engine import asset_archives
         texture_path = os.path.join('assets', subfolder, texture_name)
-        if asset_archives.in_archive(texture_path):
-            import io
-            data = asset_archives.read(texture_path)
-            source = io.BytesIO(data) if data is not None else None
-        elif os.path.exists(texture_path):
-            source = texture_path
-        else:
-            source = None
-        if source is None:
+        if not asset_exists(texture_path):
             return self.load_texture('default.png', 'textures')
 
         try:
             from PIL import Image
             from engine.animated_texture import cumulative, decode_gif_frames, is_animated_gif
             frames = None
-            if is_animated_gif(source):
-                if hasattr(source, "seek"):
-                    source.seek(0)
-                images, seconds = decode_gif_frames(source)
+            if is_animated_gif(texture_path):
+                images, seconds = decode_gif_frames(texture_path)
                 frames = [im.transpose(Image.FLIP_TOP_BOTTOM).tobytes() for im in images]
                 img = images[0].transpose(Image.FLIP_TOP_BOTTOM)
             else:
-                if hasattr(source, "seek"):
-                    source.seek(0)
-                img = Image.open(source).convert("RGBA")
+                img = Image.open(asset_source(texture_path)).convert("RGBA")
                 img = img.transpose(Image.FLIP_TOP_BOTTOM)
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
@@ -265,11 +279,9 @@ class ResourcesMixin:
             gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
     def _load_3d_texture(self, filepath, size=32):
-        try:
-            with open(filepath, 'rb') as f:
-                data = f.read()
-        except OSError as exc:
-            print(f"{_RENDERER_PREFIX} Could not read 3D texture '{filepath}': {exc}")
+        data = asset_bytes(filepath)
+        if data is None:
+            print(f"{_RENDERER_PREFIX} Could not read 3D texture '{filepath}'")
             return 0
 
         expected_size = size ** 3
@@ -323,10 +335,8 @@ class ResourcesMixin:
     # FIRE animation textures
     # --------------------------------------------------------------------------
     def _fire_asset_bytes(self, asset_path):
-        """Read an effect asset's bytes: from a mounted .fiopak, else the
-        project directory."""
-        from engine import asset_archives
-        return asset_archives.read(asset_path)
+        """Read an effect asset's bytes: the loose file, or the archive's."""
+        return asset_bytes(os.path.join(os.getcwd(), asset_path))
 
     def _upload_fire_frame(self, cache_key, image):
         """Upload one already-decoded FIRE frame and return its GL texture id."""
@@ -493,47 +503,49 @@ class ResourcesMixin:
 
         return [], np.empty(0, dtype=np.float32)
 
-    def _load_fire_effect_textures(self):
-        """Load the five authored FIRE variants once after the GL context exists."""
-        self.effect_fire_frames.clear()
-        self.effect_fire_cumulative.clear()
+    def _effect_frames(self, kind, variant):
+        """``(frames, cumulative)`` of the FIRE (*kind* 0) or ORB (*kind* 2)
+        animation *variant* (0-4), decoded and uploaded the first time an
+        effect needs it.
 
-        for variant in range(5):
-            asset_path = (
-                f"assets/textures/effects/fire{variant + 1:02d}.gif"
-            )
-            frames, cumulative = self._load_fire_gif(asset_path)
-
+        Nothing is loaded at start-up: the ten authored GIFs are ~150 MB of
+        RGBA textures (shared system memory on an integrated GPU) and half a
+        second of decoding, and most maps use one variant or none.
+        """
+        if kind == 0:
+            store, timings, family = (self.effect_fire_frames,
+                                      self.effect_fire_cumulative, 'fire')
+        else:
+            store, timings, family = (self.effect_orb_frames,
+                                      self.effect_orb_cumulative, 'orb')
+        frames = store.get(variant)
+        if frames is None:
+            frames, cumulative = self._load_fire_gif(
+                f"assets/textures/effects/{family}{variant + 1:02d}.gif")
             # Optional variants may not exist yet.  Keep the selector usable
-            # without inventing an asset: an absent variant falls back to FIRE 01.
+            # without inventing an asset: an absent variant falls back to 01.
             if not frames and variant != 0:
-                frames = self.effect_fire_frames.get(0, ())
-                cumulative = self.effect_fire_cumulative.get(
-                    0, np.empty(0, dtype=np.float32)
-                )
+                frames, cumulative = self._effect_frames(kind, 0)
+            store[variant] = frames = tuple(frames)
+            timings[variant] = cumulative
+        return frames, timings[variant]
 
-            self.effect_fire_frames[variant] = tuple(frames)
-            self.effect_fire_cumulative[variant] = cumulative
-
-    def _load_orb_effect_textures(self):
-        """Load the five authored ORB variants once after the GL context exists."""
-        self.effect_orb_frames.clear()
-        self.effect_orb_cumulative.clear()
-
-        for variant in range(5):
-            asset_path = (
-                f"assets/textures/effects/orb{variant + 1:02d}.gif"
-            )
-            frames, cumulative = self._load_fire_gif(asset_path)
-
-            if not frames and variant != 0:
-                frames = self.effect_orb_frames.get(0, ())
-                cumulative = self.effect_orb_cumulative.get(
-                    0, np.empty(0, dtype=np.float32)
-                )
-
-            self.effect_orb_frames[variant] = tuple(frames)
-            self.effect_orb_cumulative[variant] = cumulative
+    def ensure_effect_frames(self, table):
+        """Load the FIRE and ORB variants the effects in *table* (an
+        EntityTable) use, the first time any of them is in the map -- so an
+        effect coming into view later in play does not stall a frame decoding
+        its animation. A map without effects loads none."""
+        slots = table.effect_slots
+        if not len(slots):
+            return
+        kinds = table.effect_type[slots]
+        variants = table.effect_fire_variant[slots]
+        for kind, store in ((0, self.effect_fire_frames), (2, self.effect_orb_frames)):
+            chosen = kinds == kind
+            if chosen.any():
+                for variant in np.unique(variants[chosen]).tolist():
+                    if 0 <= variant < 5 and variant not in store:
+                        self._effect_frames(kind, variant)
 
     # --------------------------------------------------------------------------
     # Models
@@ -580,12 +592,12 @@ class ResourcesMixin:
         full_path = normalized_filename
         if not os.path.isabs(full_path):
             candidate = os.path.join('assets', 'models', full_path)
-            if os.path.exists(candidate):
+            if asset_exists(candidate):
                 full_path = candidate
-            elif os.path.exists(original_filename):
+            elif asset_exists(original_filename):
                 full_path = original_filename
 
-        if not os.path.exists(full_path):
+        if not asset_exists(full_path):
             return self._model_load_failed(filename)
 
         # Determine format by extension
@@ -642,13 +654,58 @@ class ResourcesMixin:
     # --------------------------------------------------------------------------
     # Model and sprite textures
     # --------------------------------------------------------------------------
+    def _model_draw_groups(self, obj):
+        """*obj*'s draw groups as the model pass submits them, resolved once.
+
+        A loaded model's groups and MTL/GLB materials are dictionaries; the
+        pass used to walk them every frame (sort the groups by material
+        alpha, look each material up, resolve its texture path with two
+        file probes). They are resolved here on the first draw of a model
+        -- a GL resource miss, like the model's own load -- into a tuple of
+        :class:`ModelDrawGroup`, opaque groups first, and the frame reads
+        only that. Keyed by the model object: a reloaded model is a new one.
+        """
+        entry = self._model_draw_group_cache.get(id(obj))
+        if entry is not None and entry[0] is obj:
+            return entry[1]
+        materials = obj.materials or {}
+        has_ebo = getattr(obj, 'ebo', None) is not None
+        resolved = []
+        for group in obj.groups or ():
+            material = materials.get(
+                group['material'], {'color': [0.8, 0.8, 0.8], 'texture': None})
+            texture = material.get('texture')
+            colour = material.get('color', [0.8, 0.8, 0.8])
+            resolved.append(ModelDrawGroup(
+                int(group['start']), int(group['count']),
+                bool(group.get('indexed', False)) and has_ebo,
+                float(material.get('alpha', 1.0)),
+                (float(colour[0]), float(colour[1]), float(colour[2])),
+                bool(texture),
+                int(self._model_texture_id(texture, material, manual=False))
+                if texture else 0))
+        # Ink and edge geometry must establish depth before the acrylic
+        # surfaces (a stable sort: authored order within each half).
+        resolved.sort(key=lambda g: g.alpha < 1.0)
+        groups = tuple(resolved)
+        self._model_draw_group_cache[id(obj)] = (obj, groups)
+        return groups
+
+    def _manual_model_texture_id(self, tex_name):
+        """The GL name of a model row's manual texture, resolved once a name."""
+        tex_id = self._manual_model_textures.get(tex_name)
+        if tex_id is None:
+            tex_id = int(self._model_texture_id(tex_name, manual=True))
+            self._manual_model_textures[tex_name] = tex_id
+        return tex_id
+
     def _model_texture_id(self, tex_name, material=None, manual=False):
         if not tex_name:
             return 0
         resolved_path = self._resolve_model_texture_path(
             material or {'texture': tex_name}, tex_name)
         use_direct = bool(
-            resolved_path and os.path.exists(resolved_path) and
+            resolved_path and asset_exists(resolved_path) and
             (not manual or not resolved_path.startswith('assets'))
         )
         if not use_direct:
@@ -659,12 +716,7 @@ class ResourcesMixin:
             return tex_id
         try:
             from PIL import Image
-            from engine import asset_archives
-            if asset_archives.in_archive(resolved_path):
-                import io
-                img = Image.open(io.BytesIO(asset_archives.read(resolved_path))).convert('RGBA')
-            else:
-                img = Image.open(resolved_path).convert('RGBA')
+            img = Image.open(asset_source(resolved_path)).convert('RGBA')
             img = img.transpose(Image.FLIP_TOP_BOTTOM)
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
@@ -693,8 +745,6 @@ class ResourcesMixin:
         """
         if not texture_name:
             return None
-        # Packed (.fiopak) or loose: either counts as found.
-        from engine import asset_archives
 
         # Normalise separators from MTL files authored on another platform.
         texture_name = (
@@ -714,17 +764,17 @@ class ResourcesMixin:
                 .replace('/', os.sep)
             )
             resolved = os.path.normpath(os.path.join(mtl_dir, texture_name))
-            if asset_archives.exists(resolved):
+            if asset_exists(resolved):
                 return resolved
 
         # 2. Try assets/textures/ (global fallback)
         resolved = os.path.normpath(os.path.join('assets', 'textures', texture_name))
-        if asset_archives.exists(resolved):
+        if asset_exists(resolved):
             return resolved
 
         # 3. Try assets/models/ (legacy fallback)
         resolved = os.path.normpath(os.path.join('assets', 'models', texture_name))
-        if asset_archives.exists(resolved):
+        if asset_exists(resolved):
             return resolved
 
         # 4. Return as-is and let the loader handle errors

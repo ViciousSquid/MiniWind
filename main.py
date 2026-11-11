@@ -69,12 +69,23 @@ dark_stylesheet = """
         background-color: #4b4d4d;
     }
     QMenu {
-        background-color: #3c3f41;
+        background-color: #2b2b2b;
         color: #e0e0e0;
         border: 1px solid #555;
     }
+    /* Qt 5 on macOS can leave the bottom pixel of an old hover highlight
+       behind if the unselected action is drawn transparently. Every normal
+       item must repaint its entire rectangle with an opaque background. */
+    QMenu::item {
+        background-color: #2b2b2b;
+    }
     QMenu::item:selected {
-        background-color: #4b4d4d;
+        background-color: #F08000;
+    }
+    QMenu::separator {
+        height: 1px;
+        background-color: #555;
+        margin: 6px 8px;
     }
     QDockWidget {
         titlebar-close-icon: url(assets/close.png);
@@ -170,6 +181,10 @@ if __name__ == "__main__":
     from PyQt5.QtGui import QPixmap, QSurfaceFormat, QIcon
     from PyQt5.QtCore import Qt
     from editor.main_window import MainWindow
+    # Terrain height grids are built on a background thread, not in the
+    # frame (engine/terrain.py: Terrain.advance).
+    from engine.terrain import Terrain
+    Terrain.BACKGROUND_BUILDS = True
 
     # ---------------------------------------------------------
     # PATH RESOLUTION
@@ -187,6 +202,10 @@ if __name__ == "__main__":
     log_file = error_report.configure(os.path.join(root_directory, 'logs'))
     if log_file:
         print(f"       Logging to {log_file}")
+    # Index the asset archives before Qt asks for the splash or icons.
+    from engine.asset_archives import asset_exists, prepare_asset_archives
+    from engine.asset_qt import load_icon, load_pixmap
+    prepare_asset_archives(root_directory)
     
     # Set the application ID for Windows taskbar (required for Windows 7+)
     if sys.platform == 'win32':
@@ -196,6 +215,12 @@ if __name__ == "__main__":
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass
+    # The macOS menu bar names the app after the running bundle: Python's,
+    # for a source run. A built Fio.app is named by its own Info.plist.
+    if sys.platform == 'darwin' and not (
+            getattr(sys, 'frozen', False) or "__compiled__" in globals()):
+        from macos_app import set_process_app_name
+        set_process_app_name("Fio")
     # ---------------------------------------------------------
 
     # Version print
@@ -217,11 +242,16 @@ if __name__ == "__main__":
 
     import configparser
     config = configparser.ConfigParser()
-    config.read('settings.ini')
+    from editor.user_paths import settings_path
+    config.read(settings_path(root_directory))
     vsync = config.getboolean('Display', 'vsync', fallback=True)
     fmt.setSwapInterval(1 if vsync else 0)
 
     QSurfaceFormat.setDefaultFormat(fmt)
+
+    # Qt reads the UI scale only when the QApplication is created.
+    from editor.ui_scale import apply_ui_scale
+    apply_ui_scale(config)
     # ---------------------------------------------------------
 
     # Splash class defined AFTER Qt import
@@ -230,7 +260,7 @@ if __name__ == "__main__":
             super().__init__()
             self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
-            pixmap = QPixmap(pixmap_path)
+            pixmap = load_pixmap(pixmap_path)
 
             layout = QVBoxLayout()
             layout.setContentsMargins(0, 0, 0, 0)
@@ -241,6 +271,8 @@ if __name__ == "__main__":
             layout.addWidget(self.image_label)
 
             self.progress_bar = QProgressBar()
+            # The same thin bar as the editor's loading overlay, with the
+            # stage written beneath it.
             from editor.loading_overlay import BAR_HEIGHT
             self.progress_bar.setFixedHeight(BAR_HEIGHT)
             self.progress_bar.setTextVisible(False)
@@ -273,6 +305,8 @@ if __name__ == "__main__":
     prepare_qt(config.getboolean('Display', 'high_dpi_scaling', fallback=True))
     # Create app
     app = QApplication(sys.argv)
+    # One Windows-based style, bundled fonts and icons on every platform, so
+    # the editor looks the same on Windows and macOS (editor/desktop_style.py).
     install_editor_style(app)
     # Without this PyQt5 aborts the process on any exception escaping a Qt
     # callback, losing the open map.
@@ -309,18 +343,18 @@ if __name__ == "__main__":
 
     # Set application icon
     icon_path = os.path.join(root_directory, 'assets', 'icon.ico')
-    if os.path.exists(icon_path):
-        app_icon = QIcon(icon_path)
+    if asset_exists(icon_path):
+        app_icon = load_icon(icon_path)
         app.setWindowIcon(app_icon)
     else:
         mac_icon_path = os.path.join(root_directory, 'assets', 'icon.icns')
-        if os.path.exists(mac_icon_path):
-            app_icon = QIcon(mac_icon_path)
+        if asset_exists(mac_icon_path):
+            app_icon = load_icon(mac_icon_path)
             app.setWindowIcon(app_icon)
         else:
             png_icon_path = os.path.join(root_directory, 'assets', 'icon.png')
-            if os.path.exists(png_icon_path):
-                app_icon = QIcon(png_icon_path)
+            if asset_exists(png_icon_path):
+                app_icon = load_icon(png_icon_path)
                 app.setWindowIcon(app_icon)
 
     splash = ProgressSplashScreen('assets/splash.png')
@@ -359,17 +393,6 @@ if __name__ == "__main__":
     if 'app_icon' in locals():
         window.setWindowIcon(app_icon)
     
-    # For macOS, set the dock icon explicitly
-    if sys.platform == 'darwin':
-        try:
-            from Foundation import NSBundle
-            bundle = NSBundle.mainBundle()
-            icon_file = os.path.join(root_directory, 'assets', 'icon.icns')
-            if os.path.exists(icon_file):
-                bundle.setInfoDictionary_({'CFBundleIconFile': 'icon'})
-        except Exception:
-            pass
-
     splash.set_progress(100, "Ready.")
 
     window.showMaximized()

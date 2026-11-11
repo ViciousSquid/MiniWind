@@ -25,8 +25,8 @@ def test_report_crossfire_crossover(monkeypatch):
             table = MonsterTable()
             table.gather(monsters)
             timings, answers = [], []
-            for threshold in (count, 0):
-                monkeypatch.setattr(MonsterTable, 'CROSSFIRE_SCALAR_MAX_ROWS', threshold)
+            for threshold in (count + 1, 0):
+                monkeypatch.setattr(MonsterTable, 'CROSSFIRE_NUMPY_MIN', threshold)
                 answers.append(table.crossfire(0, (0., 64., 0.), (10000., 64., 0.)))
                 samples = []
                 for _ in range(5):

@@ -44,6 +44,9 @@ if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
     # PyOpenGL defaults to GLX, but the editor Qt tier intentionally runs without X11.
     # Use EGL for context-free imports in that tier; the actual GL tier runs under Xvfb.
     os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+# Seal the render table's transform columns (engine/render_table.py): a write
+# that bypasses the change log raises. A test-time check; play does not pay it.
+os.environ.setdefault("FIO_SEAL_COLUMNS", "1")
 # Qt writes its runtime files here; without it every Qt test prints a warning.
 os.environ.setdefault("XDG_RUNTIME_DIR", os.path.join("/tmp", "fio-test-runtime"))
 try:
@@ -81,28 +84,41 @@ def pytest_collection_modifyitems(config, items):
 # Collection isolation
 # ---------------------------------------------------------------------------
 
+def _module_marked_qt_or_gl(tree):
+    """True when a module-level ``pytestmark`` applies the ``qt`` or ``gl`` tier."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in targets):
+            continue
+        for sub in ast.walk(node.value):
+            if (isinstance(sub, ast.Attribute) and sub.attr in ("qt", "gl")
+                    and isinstance(sub.value, ast.Attribute)
+                    and sub.value.attr == "mark"):
+                return True
+    return False
+
+
 def pytest_ignore_collect(collection_path, config):
     """Do not import Qt/GL test modules in the dependency-light CI tier."""
     if not os.environ.get("FIO_HEADLESS_TIER"):
-        return False
+        return None
     try:
         if not collection_path.is_file() or collection_path.suffix != ".py":
-            return False
+            return None
         tree = ast.parse(collection_path.read_text(encoding="utf-8"),
                          filename=str(collection_path))
     except (OSError, UnicodeDecodeError, SyntaxError):
-        return False
-    # A desktop test may reach Qt/OpenGL indirectly (renderer.core imports
-    # its GL base; game entities import editor.things). Honour module-level
-    # tier declarations before importing those modules at all.
-    for node in tree.body:
-        if (isinstance(node, ast.Assign)
-                and any(isinstance(t, ast.Name) and t.id == "pytestmark"
-                        for t in node.targets)):
-            if any(isinstance(mark, ast.Attribute) and mark.attr in ("qt", "gl")
-                   and isinstance(mark.value, ast.Attribute) and mark.value.attr == "mark"
-                   for mark in ast.walk(node.value)):
-                return True
+        return None
+    # A module marked ``pytestmark = pytest.mark.qt`` (or ``gl``) as a whole has
+    # no test this tier would select, but it may still reach Qt transitively at
+    # import time (``editor.things`` imports PyQt5), so do not import it at all.
+    if _module_marked_qt_or_gl(tree):
+        return True
     nodes = ast.walk(tree)
     for node in nodes:
         if isinstance(node, ast.Import):
@@ -113,7 +129,27 @@ def pytest_ignore_collect(collection_path, config):
             continue
         if "PyQt5" in roots or "OpenGL" in roots:
             return True
-    return False
+    # Let pytest's own hook apply --ignore and norecursedirs. Returning False
+    # here stops this first-result hook before pytest can check those rules.
+    return None
+
+
+# ---------------------------------------------------------------------------
+# M4's change records
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _no_missed_change_record():
+    """With the oracle recording (``FIO_RENDER_ORACLE=record``), a test that
+    leaves a missed change record behind fails: a writer it exercised did not
+    report what it wrote (engine/change_detection.py)."""
+    from engine import change_detection
+    del change_detection.MISSES[:]
+    yield
+    misses = list(change_detection.MISSES)
+    del change_detection.MISSES[:]
+    if misses:
+        pytest.fail("missed change records (%d): %s" % (len(misses), misses[:3]))
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +413,51 @@ def _install_modal_guard():
 def pytest_configure(config):
     sys.excepthook = _qt_callback_excepthook
     _install_modal_guard()
+
+
+def pytest_runtest_setup(item):
+    """Give the Qt tier the editor's style before its first widget exists.
+
+    Several modules create the QApplication themselves; installing the style
+    later, over widgets an earlier module left alive, restyles them in place.
+    The OpenGL tier sets its surface format first, so it is left alone.
+    """
+    if item.get_closest_marker("qt") is None or item.get_closest_marker("gl") is not None:
+        return
+    try:
+        from PyQt5.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    if app is not None and getattr(app, "_fio_editor_style_installed", False):
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from editor.desktop_style import install_editor_style, prepare_qt
+    prepare_qt()
+    global _STYLED_QT_APP
+    # Held for the session: an unreferenced QApplication is destroyed.
+    _STYLED_QT_APP = app or QApplication([])
+    install_editor_style(_STYLED_QT_APP)
+
+
+_STYLED_QT_APP = None
+
+
+@pytest.fixture(autouse=True)
+def _no_runtime_transform_outlives_its_test():
+    """A brush's runtime transform (unified brush model, Stage 2b) lives in a
+    process-wide runtime source -- the editor's mover preview, the tests'
+    :mod:`tests.helpers.runtime` -- not in the brush; clear them so a moved or
+    spinning brush never leaks into the next test."""
+    yield
+    from engine import brush_placement
+    brush_placement.PREVIEW.clear()
+    try:
+        from tests.helpers import runtime
+    except ImportError:
+        return
+    runtime.release()
 
 
 @pytest.fixture(autouse=True)

@@ -16,6 +16,9 @@ saved with the map. The padlock keeps the window on top of everything.
 
 import os
 
+from engine.asset_archives import asset_exists
+from engine.asset_qt import load_icon
+
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
@@ -68,8 +71,8 @@ class VisgroupsWindow(QWidget):
         header.addStretch()
         self.lock_btn = QPushButton()
         lock_icon = os.path.join(main_window.root_dir, 'assets', 'lock.png')
-        if os.path.isfile(lock_icon):
-            self.lock_btn.setIcon(QIcon(lock_icon))
+        if asset_exists(lock_icon):
+            self.lock_btn.setIcon(load_icon(lock_icon))
             self.lock_btn.setIconSize(QSize(18, 18))
         else:
             self.lock_btn.setText("\U0001F512")

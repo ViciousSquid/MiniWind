@@ -1,7 +1,11 @@
 from typing import List, Tuple, Optional
 import os
+import math
 import numpy as np
-import OpenGL.GL as gl
+
+# OBJLoader parses CPU data without a graphics runtime. Only OBJ's GPU
+# resource methods need PyOpenGL; keep the shared module cached once loaded.
+gl = None
 
 
 # Models arrive inside shared maps and .fiopak packages; an OBJ or MTL beyond
@@ -16,7 +20,14 @@ def _read_text(path: str) -> Optional[str]:
     read forever.
     """
     try:
-        if not os.path.isfile(path) or os.path.getsize(path) > MAX_OBJ_FILE_BYTES:
+        if not os.path.isfile(path):
+            # An archived asset (assets/<category>.fiopak), read in place.
+            from engine.asset_archives import asset_bytes
+            data = asset_bytes(path)
+            if data is None or len(data) > MAX_OBJ_FILE_BYTES:
+                return None
+            return data.decode('utf-8')
+        if os.path.getsize(path) > MAX_OBJ_FILE_BYTES:
             return None
         with open(path, 'r', encoding='utf-8') as f:
             text = f.read(MAX_OBJ_FILE_BYTES + 1)
@@ -221,7 +232,8 @@ class OBJLoader:
                     'color': (0.8, 0.8, 0.8),
                     'ambient': (0.2, 0.2, 0.2),
                     'specular': (0.0, 0.0, 0.0),
-                    'texture': None
+                    'texture': None,
+                    'alpha': 1.0,
                 }
                 loaded_materials += 1
             elif current_mtl:
@@ -238,6 +250,13 @@ class OBJLoader:
                         mtl['ambient'] = colour
                     else:
                         mtl['specular'] = colour
+                elif keyword in ('d', 'Tr') and len(parts) > 1:
+                    try:
+                        alpha = float(parts[1])
+                    except ValueError:
+                        continue
+                    if math.isfinite(alpha):
+                        mtl['alpha'] = max(0.0, min(1.0, 1.0 - alpha if keyword == 'Tr' else alpha))
                 elif keyword in ('map_Kd', 'map_Ka') and len(parts) > 1:
                     texture = self._parse_texture_map(parts[1:])
                     if texture:
@@ -295,24 +314,17 @@ class OBJLoader:
         stem = os.path.splitext(os.path.basename(obj_path))[0].lower()
         expected = f"{stem}_basecolor.png"
 
+        from engine.asset_archives import asset_exists, asset_isdir, asset_listdir
         candidates = []
-        try:
-            entries = os.listdir(obj_dir)
-        except OSError:
-            entries = []
-
-        for entry in entries:
+        for entry in asset_listdir(obj_dir):
             entry_path = os.path.join(obj_dir, entry)
-            if os.path.isfile(entry_path) and entry.lower() == expected:
+            if entry.lower() == expected and asset_exists(entry_path):
                 candidates.append(entry_path)
-            elif os.path.isdir(entry_path):
-                try:
-                    for child in os.listdir(entry_path):
-                        child_path = os.path.join(entry_path, child)
-                        if os.path.isfile(child_path) and child.lower() == expected:
-                            candidates.append(child_path)
-                except OSError:
-                    continue
+            elif asset_isdir(entry_path):
+                for child in asset_listdir(entry_path):
+                    child_path = os.path.join(entry_path, child)
+                    if child.lower() == expected and asset_exists(child_path):
+                        candidates.append(child_path)
 
         if not candidates:
             return
@@ -406,6 +418,9 @@ class OBJ:
 
     def _build_gl_buffers(self, loader: OBJLoader):
         """Build OpenGL VAO/VBO from parsed OBJ data."""
+        global gl
+        if gl is None:
+            import OpenGL.GL as gl
         import ctypes
         
         # Fan-triangulate every face into corner index triples, noting each
@@ -493,6 +508,9 @@ class OBJ:
     
     def cleanup(self):
         """Release OpenGL resources."""
+        global gl
+        if (self.vbo or self.vao) and gl is None:
+            import OpenGL.GL as gl
         if self.vbo:
             gl.glDeleteBuffers(1, [self.vbo])
             self.vbo = None

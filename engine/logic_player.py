@@ -40,6 +40,7 @@ class LogicPlayer:
         self.player = None
         self._pad_pitch_player = None
         self._pad_pitch_offset = 0.0
+        self.glasses_style = 'classic'
         self.player2 = None
         self._player_was_in_water = False
         self._waterwalk_timer = 0.0
@@ -63,6 +64,13 @@ class LogicPlayer:
         #: runs, so a game can say what killed the player.
         self.last_damage = None
         self.damage_lock = threading.Lock()
+        #: Where the next damage comes from, as (x, y, z), set by an attacker
+        #: just before it calls LogicTriggers._apply_player_damage and taken
+        #: there. None for damage with no direction (a hurt trigger, a crush).
+        self.damage_source = None
+        #: Recent damage with a direction, newest last: [x, y, z, time taken].
+        #: The HUD's directional indicators (LogicRender publishes them).
+        self.damage_marks = []
         self.player2_health = 100
         self.player2_max_health = 100
         self.player2_dead = False

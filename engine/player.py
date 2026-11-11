@@ -18,7 +18,7 @@ degrees.
 import math
 import glm
 from .constants import (
-    TILE_SIZE, JUMP_STRENGTH, TERMINAL_VELOCITY,
+    TILE_SIZE, PLAYER_HULL_SIZE, JUMP_STRENGTH, TERMINAL_VELOCITY,
     CL_FORWARDSPEED, CL_SIDESPEED, CL_RUN_SCALE,
     PM_STOPSPEED, PM_MAXSPEED, PM_DUCKSPEED, PM_ACCELERATE, PM_AIRACCELERATE,
     PM_FRICTION, PM_GROUND_NORMAL,
@@ -29,6 +29,12 @@ from .constants import (
     WATER_WADE_SPEED_MULT, WATER_MAX_SINK_SPEED,
     WATERJUMP_MAX_CLIMB, WATERJUMP_EDGE_ABOVE_SURFACE, WATERJUMP_MAX_BOOST,
     is_solid_world_brush, is_water_brush, brush_aabb_bounds,
+)
+from .constants import _UNPUBLISHED
+from . import brush_placement as _placement
+from .brush_placement import (
+    collision_shape, collision_shape_at, off_range, overridden, resolved_runtime,
+    world_bounds,
 )
 from .physics import world_gravity
 
@@ -149,6 +155,19 @@ def _intersect_swept_sphere_triangle(sphere_pos, sphere_vel, radius, triangle, n
 # Player Class
 # =============================================================================
 
+def _water_bounds(brush):
+    """A water volume's derived bounds (world_bounds): almost always a plain
+    box, whose bounds are its pos -/+ size/2 -- the box rule, inline, as
+    Stage 1 read it -- and the resolver's for anything else."""
+    if ('geometry' in brush or '_mesh_bounds' in brush
+            or 'is_mover' in brush or 'is_door' in brush):
+        return world_bounds(brush)
+    pos = brush['pos']
+    size = brush['size']
+    hx, hy, hz = size[0] * 0.5, size[1] * 0.5, size[2] * 0.5
+    return (pos[0] - hx, pos[1] - hy, pos[2] - hz, pos[0] + hx, pos[1] + hy, pos[2] + hz)
+
+
 def _blocks_player(brush):
     """Single source of truth for "does the player collide with this brush?".
 
@@ -175,6 +194,126 @@ def _blocks_player(brush):
     return is_solid_world_brush(brush)
 
 
+def _gather(colliders, moving):
+    """``(aabb_brushes, mesh_brushes, mesh_shapes)``: one pass over
+    everything that could collide this tick -- *colliders* in the order the
+    grid gave them, then each mover and door in *moving* (canonical order:
+    the mover list, then the door list) that the colliders did not already
+    hold, so every brush is gathered once and narrow-phased at most once a
+    pass -- dropping what the player does not collide with at all (see
+    _blocks_player) and splitting the rest by shape
+    (brush_placement.collision_shape). A solid shape -- an angled brush,
+    static or moving, a spinning box, a model's collision mesh -- is
+    resolved in its own frame; any other box keeps the AABB fast path, its
+    derived bounds being exact."""
+    mesh_brushes = []
+    mesh_shapes = []
+    aabb_brushes = []
+    held = None
+    for source in (colliders, moving):
+        if not source:
+            continue
+        for b in source:
+            if 'is_mover' in b or 'is_door' in b:
+                # Gathered once: from the grid's cells, or from the movers.
+                if held is None:
+                    held = {id(b)}
+                elif id(b) in held:
+                    continue
+                else:
+                    held.add(id(b))
+            if not _blocks_player(b):
+                continue
+            # A static box -- most of a level -- is told by three dict
+            # reads; only a brush with planes, a mesh or a runtime
+            # transform asks for its shape (once: the resolve below is
+            # handed what it answered).
+            if ('_collision_mode' not in b
+                    and (('is_mover' in b and b['is_mover'])
+                         or ('is_door' in b and b['is_door']))):
+                # A mover or door: its box and the transform it was placed
+                # by, as its mover table published them with its last
+                # change (the AABB passes then read the same box). A box
+                # is a solid shape only while it is turned; a convex brush
+                # always is.
+                runtime = b.get('_aabb_runtime', _UNPUBLISHED)
+                if runtime is _UNPUBLISHED:
+                    # No table published it: the resolver finds its
+                    # transform (its box is derived by a pass that needs it).
+                    runtime = resolved_runtime(b)
+                if 'geometry' not in b and (runtime is None or not runtime[6]):
+                    aabb_brushes.append(b)
+                    continue
+                shape = collision_shape_at(b, runtime)
+                if shape is not None:
+                    mesh_brushes.append(b)
+                    mesh_shapes.append(shape)
+                else:
+                    aabb_brushes.append(b)
+                continue
+            if ('geometry' in b or '_collision_mode' in b
+                    or 'is_mover' in b or 'is_door' in b):
+                shape = collision_shape(b)
+                if shape is not None:
+                    mesh_brushes.append(b)
+                    mesh_shapes.append(shape)
+                    continue
+            aabb_brushes.append(b)
+    return aabb_brushes, mesh_brushes, mesh_shapes
+
+
+class _Reach:
+    """What the tick's mover broad phase (Player._near_movers: the spatial
+    grid's cells within the player's reach, movers filed there for their
+    whole travel) covers: the movers and doors near the player where the
+    tick began, and how far the player may move from there before a pass
+    could test beyond them.
+
+    The broad phase keeps every mover whose box can come within the
+    player's standing hull, plus the capsule's reach and :attr:`room`, of
+    ``(x, y, z)``. A pass tests boxes centred on where the player is (a
+    step-up and an un-duck a step or a duck higher), so while the player is
+    within :attr:`room` of where it began, a mover the broad phase left out
+    touches nothing a pass tests: the passes run on the near lists alone and
+    answer what they would over every mover. :meth:`holds` is asked before
+    each pass and after each push; once it fails, the rest of the tick runs
+    on the full lists (:attr:`full`)."""
+
+    __slots__ = ('x', 'y', 'z', 'room', 'full')
+
+    def holds(self, x, y, z):
+        room = self.room
+        return (-room <= x - self.x <= room and -room <= y - self.y <= room
+                and -room <= z - self.z <= room)
+
+
+def _reach_pads(width, height, depth, step, room):
+    """``(pad, pad_turned, allowed)`` for a standing hull of *width* x
+    *height* x *depth*: how close (per axis) a mover's box must come to the
+    player's centre for any pass to test it while the player stays within
+    *room* of that centre, and how far the centre itself may then move.
+
+    * An AABB test (a pass, a step-up, an un-duck) overlaps the hull, at most
+      the standing one; the capsule's broad reject in a translated frame
+      widens it by the capsule's radius. So *pad* is the standing half-extents
+      plus that radius plus *room*.
+    * In a turned frame the capsule's broad reject is a cube of half-width
+      ``e`` (the hull's circumscribed radius plus the capsule's) about the
+      player's centre in the shape's frame; whatever the turn, that keeps the
+      centre within ``|half + e|`` of the shape's centre, which is at most
+      ``|half| + e * sqrt(3)`` -- the box's radius (the table's measure for a
+      row that can turn) plus *pad_turned*. It also covers an AABB test of
+      the turned box, whose half-extents never exceed its radius.
+    * The centre may move *room*, less a step up (a step-up tests the hull a
+      step higher than where the pass put it) and a margin for rounding
+      (float32 boxes, an un-turned frame's offsets): *allowed*."""
+    hx, hy, hz = width * 0.5, height * 0.5, depth * 0.5
+    radius = min(hx, hz)
+    pad = (hx + radius + room, hy + radius + room, hz + radius + room)
+    turned = (math.sqrt(hx * hx + hy * hy + hz * hz) + radius) * math.sqrt(3.0) + room
+    return pad, (turned, turned, turned), room - (step + 0.001) - 1.0
+
+
 class Player:
     def __init__(self, x, z, angle=math.pi, physics_enabled=True):
         # Initialize position (Y is set to 2 tiles high by default)
@@ -189,7 +328,7 @@ class Player:
         #: them (a heavy load, a snare). 1.0 is the stock speed.
         self.move_speed_scale = 1.0
         self.mouse_sensitivity = 0.0015
-        self.width, self.height, self.depth = TILE_SIZE, TILE_SIZE * 2, TILE_SIZE
+        self.width, self.height, self.depth = PLAYER_HULL_SIZE
         self.camera_height = 40.0  # Offset from pos.y
         # The standing hull and eye; ducking derives its own from these.
         self.stand_height = self.height
@@ -206,6 +345,11 @@ class Player:
         # Physics state
         self.on_ground = False
         self.ground_object = None  # Reference to the brush we are standing on
+        # The mover broad phase's caches (see _near_movers).
+        self._moving_cache = None
+        self._moving_cells = None
+        self._near_span = None
+        self._cover = None
         self.physics_enabled = physics_enabled
         self.step_height = 18.0  # Max height the player can step up automatically
 
@@ -275,6 +419,168 @@ class Player:
         self.height = height
         self._half = glm.vec3(self.width / 2.0, height / 2.0, self.depth / 2.0)
 
+    #: How far (per axis) a tick's mover broad phase reaches past the
+    #: player's hull: what the player may move in a tick from where it began
+    #: and still have its passes covered (a step-up and a rounding margin
+    #: come off it: _reach_pads) -- well past a tick of terminal fall (13
+    #: units at 60 Hz) or of a run (5). A move beyond it (a dash, a long
+    #: push) runs that pass on every mover instead.
+    MOVER_ROOM = 80.0
+
+    #: Fewer movers and doors than this are each looked at: the broad phase
+    #: costs a few microseconds a tick to ask, about what two rows cost the
+    #: passes (measured: tools/bench_player_table.py, one_mover).
+    MOVER_NEAR_FROM = 3
+
+    def release_movers(self):
+        """Play stopped: forget the level's movers and doors (the broad
+        phase's lists of them), so nothing of the finished session is kept."""
+        self._moving_cache = None
+        self._moving_cells = None
+        self._near_span = None
+        self._cover = None
+
+    def _moving(self, movers, doors):
+        """The level's movers and doors, each once, in canonical order (the
+        mover list, then the door list; a brush in both comes once, as a
+        mover), with each one's place in it -- worked out again only when
+        the lists are replaced."""
+        cached = getattr(self, '_moving_cache', None)
+        if (cached is not None and cached[0] is movers and cached[1] is doors
+                and cached[2] == ((len(movers) if movers else 0), (len(doors) if doors else 0))):
+            return cached[3]
+        rank = {}
+        for source in (movers, doors):
+            for brush in source or ():
+                rank.setdefault(id(brush), (len(rank), brush))
+        moving = tuple(brush for _place, brush in rank.values())
+        self._moving_cache = (movers, doors, ((len(movers) if movers else 0),
+                                              (len(doors) if doors else 0)),
+                              moving, {key: place for key, (place, _b) in rank.items()})
+        self._moving_cells = None
+        self._near_span = None
+        return moving
+
+    def _near_movers(self, grid, colliders, moving):
+        """``(cover, near)``: this tick's movers and doors near enough for a
+        pass to reach -- those the spatial grid filed (for their whole
+        travel) in the cells within the player's reach, and any off range
+        (brush_placement.off_range) -- in canonical order, and the
+        :class:`_Reach` that says how far the player may move before a pass
+        needs every one."""
+        if overridden:
+            place = self._moving_cache[4]
+            if any(key in place for key in overridden):
+                # Another source moves one of these brushes (the editor
+                # preview, a test): it keeps no travel the grid could file,
+                # so every mover is looked at, as before the broad phase.
+                return None, moving
+        hull = (self.width, self.stand_height, self.depth, self.step_height)
+        pads = getattr(self, '_reach_pads', None)
+        if pads is None or pads[0] != hull:
+            pad, pad_turned, allowed = _reach_pads(*hull, self.MOVER_ROOM)
+            pads = self._reach_pads = (hull, pad, pad_turned, allowed,
+                                       max(max(pad), pad_turned[0]))
+        x, y, z = self.pos.x, self.pos.y, self.pos.z
+        reach = pads[4]
+        size = grid.cell_size
+        # Floor division of floats is the floor (math.floor, without the
+        # calls).
+        span = ((x - reach) // size, (x + reach) // size,
+                (z - reach) // size, (z + reach) // size)
+        rows = grid._boxes()
+        held = self._near_span
+        off = _placement.off_range_version
+        if (held is None or held[0] is not rows or held[1] is not pads
+                or held[2] != span or held[4] != off):
+            entries = self._span_entries(grid, pads, span)
+            if entries is None:
+                return None, moving             # no cell holds it: every mover
+            held = self._near_span = (rows, pads, span, entries, off)
+        # Each mover filed in those cells, with the box it can reach over its
+        # travel padded by the player's pads (_cells_moving), and each off
+        # range, in canonical order: those whose box holds the player.
+        near = [brush for brush, bx0, by0, bz0, bx1, by1, bz1 in held[3]
+                if bx0 <= x <= bx1 and by0 <= y <= by1 and bz0 <= z <= bz1]
+        cover = self._cover
+        if cover is None:
+            cover = self._cover = _Reach()
+        cover.x = x
+        cover.y = y
+        cover.z = z
+        # Far from the origin a float32 box is coarser: keep a margin for it.
+        cover.room = pads[3] - 1e-6 * max(abs(x), abs(y), abs(z))
+        cover.full = (colliders, moving)
+        return cover, near
+
+    def _span_entries(self, grid, pads, span):
+        """The :meth:`_cells_moving` entries of every cell in *span*
+        (``(x0, x1, z0, z1)``), each mover once, in canonical order --
+        worked out when the player's cells, the grid's rows or the lists
+        change, not every tick -- or None for a span no cell can hold."""
+        try:
+            x0, x1, z0, z1 = (int(v) for v in span)
+        except (ValueError, OverflowError):
+            return None                         # a NaN or infinite position
+        cells = self._cells_moving(grid, pads)
+        if x0 == x1 and z0 == z1 and not off_range:
+            return cells.get((x0, z0), ())
+        found = {}
+        for cx in range(x0, x1 + 1):
+            for cz in range(z0, z1 + 1):
+                for entry in cells.get((cx, cz), ()):
+                    found.setdefault(id(entry[0]), entry)
+        place = self._moving_cache[4]
+        # A row off its filed travel (brush_placement.off_range) may be
+        # anywhere: kept whatever the player's position.
+        for brush in off_range.values():
+            if id(brush) in place:
+                found[id(brush)] = (brush, -math.inf, -math.inf, -math.inf,
+                                    math.inf, math.inf, math.inf)
+        return tuple(found[key] for key in sorted(found, key=place.__getitem__))
+
+    def _in_order(self, brushes):
+        """*brushes* (some listed twice) once each, in canonical order; any
+        not in the lists left out."""
+        place = self._moving_cache[4]
+        seen = {}
+        for brush in brushes:
+            key = id(brush)
+            if key in place and key not in seen:
+                seen[key] = brush
+        return tuple(seen[key] for key in sorted(seen, key=place.__getitem__))
+
+    def _cells_moving(self, grid, pads):
+        """The grid's movers and doors cell by cell, each cell's in canonical
+        order, each as ``(brush, x0, y0, z0, x1, y1, z1)``: the box it can
+        reach anywhere on the travel the grid filed it for (``_travel_filed``)
+        widened by the player's *pads* -- a turning one's by the turned pad
+        -- so the player's centre is in it if a pass can reach the brush.
+        Worked out again only when the grid's rows, the lists or the pads
+        change."""
+        rows = grid._boxes()
+        cached = self._moving_cells
+        if cached is not None and cached[0] is rows and cached[1] is pads:
+            return cached[2]
+        pad, turned = pads[1], pads[2]
+        cells = {}
+        for cell, bucket in rows.moving.items():
+            entries = []
+            for brush in self._in_order(bucket):
+                filed = brush.get('_travel_filed')
+                if filed is None:
+                    box = world_bounds(brush)
+                    p = turned if brush.get('rotate') else pad
+                else:
+                    box = filed[3]
+                    p = turned if filed[2] else pad
+                entries.append((brush, box[0] - p[0], box[1] - p[1], box[2] - p[2],
+                                box[3] + p[0], box[4] + p[1], box[5] + p[2]))
+            if entries:
+                cells[cell] = entries
+        self._moving_cells = (rows, pads, cells)
+        return cells
+
     def _check_duck(self, crouch, aabb_brushes):
         """Duck on the ground with crouch held; stand up only where there is room."""
         if crouch and self.on_ground:
@@ -336,22 +642,17 @@ class Player:
             # Fallback: all brushes (old behaviour)
             colliders = list(brushes)
 
-        # One pass over everything that could collide this frame: drop what the
-        # player does not collide with at all (see _blocks_player) and split the
-        # rest by collision mode.  Movers and doors are always included since
-        # they're dynamic and the static grid never sees them.
-        mesh_brushes = []
-        aabb_brushes = []
-        for source in (colliders, movers, doors):
-            if not source:
-                continue
-            for b in source:
-                if not _blocks_player(b):
-                    continue
-                if b.get('_collision_mode') == 'mesh':
-                    mesh_brushes.append(b)
-                else:
-                    aabb_brushes.append(b)
+        # Movers and doors are dynamic, so the static grid does not answer for
+        # them: the mover broad phase does (_near_movers), from the columns
+        # that hold where they are, and the gather sees only those near the
+        # player. A pass that would test beyond what it covers switches to
+        # every mover first (_Reach), so the passes answer what they would
+        # over every mover and door in the level.
+        cover = None
+        moving = self._moving(movers, doors)
+        if spatial_grid and len(moving) >= self.MOVER_NEAR_FROM:
+            cover, moving = self._near_movers(spatial_grid, colliders, moving)
+        aabb_brushes, mesh_brushes, mesh_shapes = _gather(colliders, moving)
 
         # --- Water immersion (before movement so swim physics can use it) ---
         if spatial_grid is not None:
@@ -403,6 +704,12 @@ class Player:
             self.pos += self.velocity * delta
             return
 
+        # The un-duck test stands the hull up a duck higher (still where the
+        # tick began: nothing has moved the player since the gather).
+        if cover is not None and self.ducked and not cover.holds(
+                self.pos.x, self.pos.y + self._duck_drop(), self.pos.z):
+            full, cover = cover.full, None
+            aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
         self._check_duck(crouch, aabb_brushes + mesh_brushes)
 
         if swimming:
@@ -442,6 +749,11 @@ class Player:
         # Works while wading AND swimming; without it, any pool whose rim is
         # taller than a normal jump becomes an inescapable trap.
         if self.in_water and jump:
+            # Probes a body's width ahead and a climb above the feet: on
+            # every mover (rare enough not to bound it).
+            if cover is not None:
+                full, cover = cover.full, None
+                aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
             self._try_water_jump(aabb_brushes, wish_dir)
 
         # --- 3. Collision Resolution ---
@@ -452,7 +764,17 @@ class Player:
         # A. Horizontal movement with AABB collision.  This integrates X/Z
         # once (it advances pos even with an empty brush list), so mesh brushes
         # must NOT integrate again — they are resolved by depenetration below.
+        # (Each pass tests where its move puts the player, and a step up
+        # from there: the broad phase must cover that first.)
+        if cover is not None and not cover.holds(
+                self.pos.x + self.velocity.x * delta, self.pos.y, self.pos.z):
+            full, cover = cover.full, None
+            aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
         self._move_with_collision(delta, aabb_brushes, axis='x')
+        if cover is not None and not cover.holds(
+                self.pos.x, self.pos.y, self.pos.z + self.velocity.z * delta):
+            full, cover = cover.full, None
+            aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
         self._move_with_collision(delta, aabb_brushes, axis='z')
 
         # B. Vertical Y Movement
@@ -463,11 +785,30 @@ class Player:
         self.ground_object = None
 
         # 1. AABB / mover collision for Y
-        self._resolve_collision(aabb_brushes, axis='y', delta=delta)
+        if cover is not None and not cover.holds(self.pos.x, self.pos.y, self.pos.z):
+            full, cover = cover.full, None
+            aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
+        if cover is None:
+            self._resolve_collision(aabb_brushes, axis='y', delta=delta)
+        else:
+            # A push can carry the player past what the broad phase covers:
+            # then the pass runs again from where it began, on every mover.
+            saved = (self.pos.y, self.velocity.y)
+            if self._resolve_collision(aabb_brushes, axis='y', delta=delta, cover=cover):
+                self.pos.y, self.velocity.y = saved
+                self.on_ground = False
+                self.ground_object = None
+                full, cover = cover.full, None
+                aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
+                self._resolve_collision(aabb_brushes, axis='y', delta=delta)
 
         # 2. Angled (mesh) brushes: capsule depenetration for X/Y/Z together —
         #    pushes the player out of ramps/wedges and lands them on slopes.
-        self._resolve_mesh_capsule(mesh_brushes)
+        #    (Likewise: a push past the broad phase runs it again in full.)
+        if self._resolve_mesh_capsule(mesh_brushes, mesh_shapes, cover):
+            full, cover = cover.full, None
+            aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
+            self._resolve_mesh_capsule(mesh_brushes, mesh_shapes)
 
         # 2. Terrain collision
         if terrain and terrain.is_solid():
@@ -565,14 +906,19 @@ class Player:
         for brush in water_brushes:
             if brush.get('hidden'):
                 continue
-            bpos = brush['pos']
-            bsize = brush['size']
-            hx, hz = bsize[0] * 0.5, bsize[2] * 0.5
-            if not (bpos[0] - hx <= px <= bpos[0] + hx and
-                    bpos[2] - hz <= pz <= bpos[2] + hz):
+            if ('geometry' in brush or '_mesh_bounds' in brush
+                    or 'is_mover' in brush or 'is_door' in brush):
+                b_lo_x, b_bot, b_lo_z, b_hi_x, b_top, b_hi_z = world_bounds(brush)
+            else:
+                # A plain water box (almost every one): the box rule, inline.
+                bpos = brush['pos']
+                bsize = brush['size']
+                hx, hy, hz = bsize[0] * 0.5, bsize[1] * 0.5, bsize[2] * 0.5
+                b_lo_x, b_hi_x = bpos[0] - hx, bpos[0] + hx
+                b_lo_z, b_hi_z = bpos[2] - hz, bpos[2] + hz
+                b_bot, b_top = bpos[1] - hy, bpos[1] + hy
+            if not (b_lo_x <= px <= b_hi_x and b_lo_z <= pz <= b_hi_z):
                 continue
-            b_top = bpos[1] + bsize[1] * 0.5
-            b_bot = bpos[1] - bsize[1] * 0.5
 
             overlap_top = min(eye_y, b_top)
             overlap_bot = max(feet_y, b_bot)
@@ -669,12 +1015,11 @@ class Player:
             # Highest climbable ledge at this probe point
             ledge_top = None
             for brush in aabb_brushes:
-                bpos, bsize = brush['pos'], brush['size']
-                if not (abs(px - bpos[0]) <= bsize[0] * 0.5 and
-                        abs(pz - bpos[2]) <= bsize[2] * 0.5):
+                b = _water_bounds(brush)
+                if not (b[0] <= px <= b[3] and b[2] <= pz <= b[5]):
                     continue
-                top = bpos[1] + bsize[1] * 0.5
-                bottom = bpos[1] - bsize[1] * 0.5
+                top = b[4]
+                bottom = b[1]
                 if bottom > feet_y + 8.0:
                     continue  # floating overhang, not a wall rising from below
                 if top <= feet_y + 4.0:
@@ -692,12 +1037,11 @@ class Player:
             # Headroom: the player must fit standing on the ledge
             blocked = False
             for brush in aabb_brushes:
-                bpos, bsize = brush['pos'], brush['size']
-                if not (abs(px - bpos[0]) <= bsize[0] * 0.5 and
-                        abs(pz - bpos[2]) <= bsize[2] * 0.5):
+                b = _water_bounds(brush)
+                if not (b[0] <= px <= b[3] and b[2] <= pz <= b[5]):
                     continue
-                top = bpos[1] + bsize[1] * 0.5
-                bottom = bpos[1] - bsize[1] * 0.5
+                top = b[4]
+                bottom = b[1]
                 if top > ledge_top + 4.0 and bottom < ledge_top + self.height:
                     blocked = True
                     break
@@ -786,7 +1130,12 @@ class Player:
         for brush in aabb_brushes:
             if self._has_headroom(brush, p_min, p_max):
                 continue
-            top = brush['pos'][1] + brush['size'][1] * 0.5
+            if ('geometry' in brush or '_mesh_bounds' in brush
+                    or 'is_mover' in brush or 'is_door' in brush):
+                top = world_bounds(brush)[4]
+            else:
+                # A plain box -- most steps: world_bounds' box rule, inline.
+                top = brush['pos'][1] + brush['size'][1] * 0.5
             rise = top - feet_y
             if rise <= 0.0 or rise > self.step_height:
                 return False
@@ -823,7 +1172,7 @@ class Player:
                    glm.vec3(0.0, span, 0.0))
         return offsets, r
 
-    def _resolve_mesh_capsule(self, mesh_brushes):
+    def _resolve_mesh_capsule(self, mesh_brushes, mesh_shapes=None, cover=None):
         """Resolve the player capsule against angled (mesh) brushes by pushing
         it out of any penetration, and set ground/ceiling state from the
         contact normals.
@@ -841,38 +1190,107 @@ class Player:
         minimum push out.  That works whether the sphere merely clips a face or
         has its centre fully inside the solid (which the earlier triangle test
         missed, letting the player tunnel through angled walls).
+
+        With *cover* (the tick's mover broad phase, :class:`_Reach`), a
+        relaxation pass that would start where the broad phase no longer
+        covers it puts the player back where this began and returns True,
+        with nothing else changed: the caller runs it again on every mover.
         """
         if not mesh_brushes:
-            return
+            return False
+        # The capsule's spheres as plain floats, worked out again only when
+        # the hull changes (a duck): _capsule_offsets' values.
+        half = self._half
+        hull = (half.x, half.y, half.z)
+        cached = getattr(self, '_capsule_cache', None)
+        if cached is None or cached[0] != hull:
+            offsets, radius = self._capsule_offsets()
+            cached = self._capsule_cache = (
+                hull, [(float(o.x), float(o.y), float(o.z)) for o in offsets], radius)
+        offsets, radius = cached[1], cached[2]
 
-        offsets, radius = self._capsule_offsets()
+        # Each shape once per resolve (*mesh_shapes*: what the tick's gather
+        # already asked collision_shape for these brushes): its planes and
+        # bounds in its own frame, the frame a world query is carried into
+        # (None: world space), and the capsule's sphere offsets as that frame
+        # sees them -- a direction is only turned, never moved -- so a pass
+        # carries the player's centre into the frame once, not every sphere.
+        if mesh_shapes is None:
+            mesh_shapes = [collision_shape(brush) for brush in mesh_brushes]
+        shapes = []
+        for brush, shape in zip(mesh_brushes, mesh_shapes):
+            if shape is None or not shape[0]:
+                continue
+            planes, _triangles, bounds, frame = shape
+            # A turned frame's offsets are worked out when a sphere first
+            # reaches its bounds (most shapes in reach never are).
+            turned = offsets if frame is None or frame.r is None else None
+            shapes.append([brush, planes, bounds, frame, turned])
+        if not shapes:
+            return False
+
         ground_normal = None      # steepest-up contact this resolve
+        ground_brush = None       # ... and the shape it came from
         wall_normal = None        # last horizontal contact, for velocity slide
         hit_ceiling = False
+        half = self._half
+        # The capsule's box turned into a shape's frame is no longer axis
+        # aligned there: bound it by its circumscribed radius instead.
+        hx, hy, hz = float(half.x), float(half.y), float(half.z)
+        reach = math.sqrt(hx * hx + hy * hy + hz * hz)
 
         # A few relaxation passes: each pushes out of the deepest overlap, then
         # re-tests, so a capsule touching several faces settles cleanly.
+        if cover is not None:
+            start = (self.pos.x, self.pos.y, self.pos.z)
         for _ in range(4):
+            if cover is not None and not cover.holds(self.pos.x, self.pos.y, self.pos.z):
+                self.pos.x, self.pos.y, self.pos.z = start
+                return True
             deepest = 1e-4
             push = None
             push_n = None
-            for brush in mesh_brushes:
-                planes = brush.get('_mesh_planes')
-                if not planes:
-                    continue
-                bounds = brush.get('_mesh_bounds')
+            push_brush = None
+            wx, wy, wz = self.pos.x, self.pos.y, self.pos.z
+            for shape in shapes:
+                brush, planes, bounds, frame, turned = shape
+                if frame is None:
+                    px, py, pz = wx, wy, wz
+                elif frame.r is None:
+                    # Only translated (a still angled brush in its local
+                    # frame, a carried one): one offset.
+                    px, py, pz = wx + frame.ox, wy + frame.oy, wz + frame.oz
+                else:
+                    px, py, pz = frame.to_shape(wx, wy, wz)
                 if bounds:
                     mn, mx = bounds
-                    pmn = self.pos - self._half
-                    pmx = self.pos + self._half
-                    if (pmx.x < mn[0] - radius or pmn.x > mx[0] + radius or
-                        pmx.y < mn[1] - radius or pmn.y > mx[1] + radius or
-                        pmx.z < mn[2] - radius or pmn.z > mx[2] + radius):
-                        continue
-                for off in offsets:
-                    cx = self.pos.x + off.x
-                    cy = self.pos.y + off.y
-                    cz = self.pos.z + off.z
+                    if frame is None:
+                        pmn = self.pos - half
+                        pmx = self.pos + half
+                        if (pmx.x < mn[0] - radius or pmn.x > mx[0] + radius or
+                            pmx.y < mn[1] - radius or pmn.y > mx[1] + radius or
+                            pmx.z < mn[2] - radius or pmn.z > mx[2] + radius):
+                            continue
+                    else:
+                        if frame.r is None:
+                            # Only translated (a still angled brush in its
+                            # local frame, a carried one): the box stays
+                            # axis aligned, so the tight test applies.
+                            ex, ey, ez = hx + radius, hy + radius, hz + radius
+                        else:
+                            ex = ey = ez = reach + radius
+                        if (px < mn[0] - ex or px > mx[0] + ex or
+                            py < mn[1] - ey or py > mx[1] + ey or
+                            pz < mn[2] - ez or pz > mx[2] + ez):
+                            continue
+                if turned is None:
+                    turned = shape[4] = [frame.dir_to_shape(ox, oy, oz)
+                                         for ox, oy, oz in offsets]
+                for ox, oy, oz in turned:
+                    # The sphere's centre in the shape's frame.
+                    cx = px + ox
+                    cy = py + oy
+                    cz = pz + oz
                     # Sphere vs convex: largest signed distance across faces.
                     best_sd = -1e30
                     best_n = None
@@ -889,9 +1307,14 @@ class Player:
                         continue
                     pen = radius - best_sd
                     if pen > deepest:
+                        if frame is not None and frame.r is not None:
+                            # The face normal, in world space (a translation
+                            # leaves a direction as it is).
+                            best_n = frame.to_world_dir(*best_n)
                         deepest = pen
                         push = (best_n[0] * pen, best_n[1] * pen, best_n[2] * pen)
                         push_n = best_n
+                        push_brush = brush
 
             if push is None:
                 break
@@ -903,6 +1326,7 @@ class Player:
             if push_n[1] >= PM_GROUND_NORMAL:
                 if ground_normal is None or push_n[1] > ground_normal[1]:
                     ground_normal = push_n
+                    ground_brush = push_brush
             elif push_n[1] < -0.3:
                 hit_ceiling = True
             else:
@@ -913,10 +1337,8 @@ class Player:
             if self.velocity.y < 0.0:
                 self.velocity.y = 0.0
             self.on_ground = True
-            for brush in mesh_brushes:
-                if brush.get('_mesh_triangles'):
-                    self.ground_object = brush
-                    break
+            # The shape the player stands on: a mover carries what it holds.
+            self.ground_object = ground_brush
         if hit_ceiling and self.velocity.y > 0.0:
             self.velocity.y = 0.0
         if wall_normal is not None:
@@ -926,10 +1348,11 @@ class Player:
             if vn < 0.0:
                 self.velocity.x -= wall_normal[0] * vn
                 self.velocity.z -= wall_normal[2] * vn
+        return False
 
     def _has_headroom(self, brush, player_min, player_max):
-        # Mesh collision: use mesh bounds for broad-phase AABB check
-        if brush.get('_collision_mode') == 'mesh':
+        # Model collision mesh (a proxy with no planes): its mesh bounds.
+        if brush.get('_collision_mode') == 'mesh' and 'geometry' not in brush:
             bounds = brush.get('_mesh_bounds')
             if bounds:
                 min_b, max_b = bounds
@@ -939,6 +1362,17 @@ class Player:
                     player_max.z > min_b[2] and player_min.z < max_b[2]):
                     return False  # Overlapping mesh bounds → collision
             return True  # No bounds or no overlap → pass through
+
+        # An angled brush, static or moving: its derived bounds
+        # (brush_placement), where it is now. (Callers pass the brushes the
+        # per-tick gather left on the AABB path, so this is for a caller
+        # that hands one in directly; a spinning box's turned bounds come
+        # from the AABB cache below, without asking for its shape again.)
+        if 'geometry' in brush and collision_shape(brush) is not None:
+            b = world_bounds(brush)
+            return not (player_max.x > b[0] and player_min.x < b[3] and
+                        player_max.y > b[1] and player_min.y < b[4] and
+                        player_max.z > b[2] and player_min.z < b[5])
 
         # Standard AABB check for solid world brushes.
         # PERF: cached float32 bounds (bit-identical to glm.vec3(pos) +/- size*0.5)
@@ -952,10 +1386,15 @@ class Player:
             
         return True
 
-    def _resolve_collision(self, brushes, axis, delta, ignore_brush=None):
+    def _resolve_collision(self, brushes, axis, delta, ignore_brush=None, cover=None):
         """Push the player out of any overlapping brush on one axis.
 
         Takes brushes the caller has already filtered with ``_blocks_player``.
+
+        With *cover* (the tick's mover broad phase, :class:`_Reach`), a push
+        that leaves the player where the broad phase no longer covers the
+        tests that follow stops the pass and returns True: the caller puts
+        the player back and runs it again on every mover.
         """
         half = self._half
 
@@ -1028,7 +1467,9 @@ class Player:
                             self.pos.y += nearest_normal.y * penetration
                             if self.velocity.y > 0:
                                 self.velocity.y = 0
-                
+                    if cover is not None and not cover.holds(self.pos.x, self.pos.y, self.pos.z):
+                        return True
+
                 continue  # Done with this mesh brush
 
             # === AABB COLLISION ===
@@ -1076,3 +1517,7 @@ class Player:
                     self.velocity.y    = 0
                     self.on_ground     = True
                     self.ground_object = brush
+
+            if cover is not None and not cover.holds(self.pos.x, self.pos.y, self.pos.z):
+                return True
+        return False

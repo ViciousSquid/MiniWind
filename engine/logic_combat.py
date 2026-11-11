@@ -12,10 +12,12 @@ import time
 import glm
 import numpy as np
 
-from .constants import is_solid_world_brush, is_water_brush
+from .brush_placement import world_bounds
+from .constants import brush_aabb_bounds, is_solid_world_brush, is_water_brush
 from .change_journal import touch
 from .items import DEFAULT_REGISTRY, ITEM_IDS
 from .projectile_table import ProjectileStore
+from .decal_table import FLOOR, WALL, DecalTable
 from .monster_constants import MONSTER_PROJECTILE_MAX_DIST
 
 try:
@@ -74,10 +76,18 @@ class LogicCombat:
         self.player_ammo = 0
         self._last_player_shot_time = float('-inf')
         self.BULLET_FADE_TIME = 20.0
+        #: Blood: projected decals thrown when an actor is shot (see
+        #: _spawn_blood and engine/decal_table.py), and how much of it --
+        #: GORE_LEVELS, from the Settings (0 is none).
+        self.blood = DecalTable()
+        self.gore_level = 1
+        self._blood_serial = 0
         self.muzzle_flash_active = False
         #: Bumped each time a slot key takes a weapon the player has in hand.
         self.weapon_switch_serial = 0
         self._gunfire_events = []
+        # Scoped to a projectile's damage callback, for actor-aware plugins.
+        self.projectile_damage_owner = None
 
     # -- the player's weapons -------------------------------------------------
 
@@ -258,11 +268,15 @@ class LogicCombat:
                                            [dist for dist, _ in walls],
                                            centres, radii)
             killed = set()
-            for (dist, point), candidates in zip(walls, pending):
+            bleeding = []       # (the actor's centre, the ray that hit it)
+            for (dist, point), candidates, direction in zip(walls, pending, directions):
                 target = None
                 for row in candidates:
                     if id(monsters[row]) not in killed:
                         target = monsters[row]
+                        if self.gore_level:
+                            bleeding.append((centres[row], direction))
+                            self._wound(weapon, target)
                         break
                 if target is not None:
                     if self._damage_monster(weapon, target):
@@ -276,7 +290,121 @@ class LogicCombat:
                         'time': time.perf_counter()
                     })
                 results.append(False)
+        if bleeding:
+            # After the monsters' lock is released: only brushes are traced.
+            self._spawn_blood(weapon, rows, bleeding)
         return results
+
+    # -- blood -------------------------------------------------------------
+
+    #: Settings > Play Modes > Gore: how much each hit throws, by level.
+    #: ``(amount multiplier, size multiplier)``; level 0 throws none.
+    GORE_LEVELS = ((0, 0.0), (1, 1.0), (2, 1.3), (5, 1.8))
+    GORE_NAMES = ("Off", "Normal", "Heavy", "Verhoeven")
+    #: Seconds a blood decal lasts, the last BLOOD_FADE_TIME of them fading.
+    BLOOD_LIFETIME = 90.0
+    BLOOD_FADE_TIME = 20.0
+    #: A light weapon (the pistol) and a heavy one (the shotgun: a shot of
+    #: several pellets, or of BLOOD_HEAVY_DAMAGE or more): decals a shot at
+    #: the Normal level, their width range in world units, how far the
+    #: blood flies before it falls, and how wide its cone is (radians).
+    #: Widths are in proportion to the actors (a monster is ~130 wide and
+    #: ~190 tall): a pistol leaves a spatter the size of a hand to a head, a
+    #: shotgun one up to the size of a torso.
+    BLOOD_LIGHT = (1, (18.0, 44.0), 200.0, 0.22)
+    BLOOD_HEAVY = (4, (44.0, 100.0), 340.0, 0.40)
+    BLOOD_HEAVY_DAMAGE = 50
+
+    def set_gore_level(self, level):
+        """0 (off) to the last of GORE_LEVELS; turning it off clears what is there."""
+        self.gore_level = max(0, min(int(level), len(self.GORE_LEVELS) - 1))
+        if not self.gore_level:
+            self.blood.clear()
+
+    #: Wounds shown on an actor's sprite: steps a hit adds (light, heavy)
+    #: at each gore level, up to WOUND_STEPS.
+    WOUND_STEPS = 15
+    WOUND_PER_HIT = ((0, 0), (2, 5), (3, 8), (5, 15))
+
+    def _wound(self, weapon, monster):
+        """Mark *monster*'s sprite with the hit: more blood on it per hit."""
+        light, heavy = self.WOUND_PER_HIT[self.gore_level]
+        is_heavy = weapon.pellets > 1 or weapon.damage >= self.BLOOD_HEAVY_DAMAGE
+        props = monster.properties
+        before = int(props.get('_wounds', 0))
+        after = min(self.WOUND_STEPS, before + (heavy if is_heavy else light))
+        if after != before:
+            props['_wounds'] = after
+            touch(monster)
+
+    def _spawn_blood(self, weapon, rows, bleeding):
+        """Throw blood from each actor hit, away from the shooter.
+
+        *bleeding* is ``(centre, direction)`` per ray that hit an actor:
+        the actor's centre and the ray's direction of travel. The blood
+        leaves the centre along that direction -- out of the far side of
+        the actor, opposite to where the shot came from -- spread over a
+        cone and falling a little, and makes a decal where it meets the
+        world: the wall behind, or the floor under where it ran out of
+        reach. Each is one brush trace; nothing is stored about the shot.
+        A light weapon throws little, a heavy one (several pellets a shot)
+        a lot, and the gore level multiplies both.
+        """
+        amount, scale = self.GORE_LEVELS[self.gore_level]
+        if not amount or not bleeding:
+            return
+        heavy = weapon.pellets > 1 or weapon.damage >= self.BLOOD_HEAVY_DAMAGE
+        base, (small, large), reach, cone = self.BLOOD_HEAVY if heavy else self.BLOOD_LIGHT
+        now = time.perf_counter()
+        blood = self.blood
+        down = glm.vec3(0.0, -1.0, 0.0)
+        # The shot's amount, shared round the rays that hit (a shotgun's
+        # pellets, or its one ray).
+        for index in range(base * amount):
+            centre, direction = bleeding[index % len(bleeding)]
+            origin = glm.vec3(float(centre[0]), float(centre[1]), float(centre[2]))
+            side = glm.cross(direction, glm.vec3(0.0, 1.0, 0.0))
+            side = glm.normalize(side) if glm.length(side) > 1e-6 else glm.vec3(1.0, 0.0, 0.0)
+            lift = glm.normalize(glm.cross(side, direction))
+            for _ in range(1):
+                # A fixed sequence (no global random state): the same shot
+                # at the same moment of a session bleeds the same way.
+                self._blood_serial += 1
+                n = self._blood_serial
+                a, b, c, e = (math.fmod(n * k, 1.0) for k in (
+                    0.61803398875, 0.75487766625, 0.56984029099, 0.81917251339))
+                # Every decal differs: its size, its proportions (0.7 to 1.4
+                # as tall as wide), its image and whether that is mirrored.
+                tall = 0.7 + 0.7 * e
+                mirrored = b > 0.5
+                angle, spread = a * 2.0 * math.pi, cone * math.sqrt(b)
+                thrown = glm.normalize(
+                    direction + side * (math.cos(angle) * spread)
+                    + lift * (math.sin(angle) * spread) + down * (0.12 + 0.2 * c))
+                width = (small + (large - small) * c) * scale
+                dist, point = self._trace_brushes(rows, origin, thrown, reach)
+                if point is not None:
+                    # Onto what it hit. Thrown level, so the decal's up is
+                    # the world's and runs go downwards; unless it met the
+                    # floor or ceiling head on.
+                    level = glm.vec3(thrown.x, 0.0, thrown.z)
+                    on_wall = glm.length(level) > 0.35
+                    forward = glm.normalize(level) if on_wall else thrown
+                    # On a wall it hangs nearly upright (runs go down); on a
+                    # floor or ceiling it lies at any turn.
+                    roll = (e - 0.5) * 0.5 if on_wall else a * 2.0 * math.pi
+                    blood.add((point.x, point.y, point.z), (forward.x, forward.y, forward.z),
+                              width, max(width * 0.6, 28.0), n, now, roll,
+                              height=width * tall, kind=WALL if on_wall else FLOOR,
+                              flip=mirrored)
+                    continue
+                # Ran out of reach in the air: it falls from there.
+                above = origin + thrown * (reach * (0.45 + 0.5 * a))
+                dist, point = self._trace_brushes(rows, above, down, 2048.0)
+                if point is not None:
+                    blood.add((point.x, point.y, point.z), (0.0, -1.0, 0.0),
+                              width, max(width * 0.6, 28.0), n, now, a * 2.0 * math.pi,
+                              height=width * tall, kind=FLOOR, flip=mirrored)
 
     @staticmethod
     def _blocks_hitscan(brush):
@@ -303,10 +431,10 @@ class LogicCombat:
         for brush in self.logic.collision_runtime._collision_brushes_cache:
             if not self._blocks_hitscan(brush):
                 continue
-            pos = glm.vec3(brush['pos'])
-            size = glm.vec3(brush['size'])
-            min_b = pos - size * 0.5
-            max_b = pos + size * 0.5
+            # The brush's derived bounds, rounded as CollisionRows.lo32 is.
+            b = brush_aabb_bounds(brush)
+            min_b = glm.vec3(b[0], b[1], b[2])
+            max_b = glm.vec3(b[3], b[4], b[5])
             hit, dist = self.intersect_ray_aabb(ray_origin, ray_dir, min_b, max_b, reach)
             if hit and dist < closest_brush_dist:
                 closest_brush_dist = dist
@@ -667,6 +795,38 @@ class LogicCombat:
             else:
                 self._update_monster_projectiles_dense(projectiles, delta)
 
+    def _projectile_damage(self, victim, damage, owner_id, at=None):
+        previous = self.projectile_damage_owner
+        self.projectile_damage_owner = int(owner_id)
+        try:
+            if victim is None:
+                # *at*: where the projectile was -- the side the hit came from.
+                self.logic.player_runtime.damage_source = at
+                self.logic.trigger_runtime._apply_player_damage(damage)
+            else:
+                self.logic.monster_ai._apply_monster_damage(victim, damage, attacker=None)
+        finally:
+            self.projectile_damage_owner = previous
+
+    def _projectile_strike(self, victim, projectiles, i, at=None):
+        """Resolve projectile *i* striking *victim* (None: the player).
+
+        The game-facing strike (its damage kind, ``on_hit`` and ``on_impact``
+        payloads) runs with :attr:`projectile_damage_owner` naming who fired
+        it, as :meth:`_projectile_damage` does for a plain missile, and a hit
+        on the player records where it came from for the damage indicator.
+        """
+        previous = self.projectile_damage_owner
+        self.projectile_damage_owner = int(projectiles.owner_id[i])
+        try:
+            if victim is None:
+                self.logic.player_runtime.damage_source = at
+                self._strike_player(self.logic, projectiles, i)
+            else:
+                self._strike_monster(self.logic, projectiles, i, victim)
+        finally:
+            self.projectile_damage_owner = previous
+
 
     def _update_monster_projectiles_scalar(self, projectiles, delta: float):
         """Advance a small projectile set row-by-row without batch allocations."""
@@ -739,7 +899,7 @@ class LogicCombat:
                         survivors.append(i)
                         continue
                     damage = float(projectiles.damage[i])
-                    self._strike_player(logic, projectiles, i)
+                    self._projectile_strike(None, projectiles, i, at=(px, py, pz))
                     if logic.monster_ai.monster_debug_active:
                         debug_log(
                             "MonsterAI",
@@ -780,7 +940,7 @@ class LogicCombat:
                 if self._deflect_projectile(projectiles, i, hit_monster):
                     survivors.append(i)
                     continue
-                self._strike_monster(logic, projectiles, i, hit_monster)
+                self._projectile_strike(hit_monster, projectiles, i)
                 continue
 
             hit_wall = False
@@ -794,12 +954,11 @@ class LogicCombat:
                 for brush in collision_brushes:
                     if not is_solid_world_brush(brush):
                         continue
-                    bp = brush['pos']
-                    bs = brush['size']
+                    b = world_bounds(brush)
                     if (
-                        bp[0] - bs[0] * 0.5 <= px <= bp[0] + bs[0] * 0.5
-                        and bp[1] - bs[1] * 0.5 <= py <= bp[1] + bs[1] * 0.5
-                        and bp[2] - bs[2] * 0.5 <= pz <= bp[2] + bs[2] * 0.5
+                        b[0] <= px <= b[3]
+                        and b[1] <= py <= b[4]
+                        and b[2] <= pz <= b[5]
                     ):
                         hit_wall = True
                         break
@@ -910,7 +1069,8 @@ class LogicCombat:
                 if self._deflect_projectile(projectiles, i, None):
                     continue
                 damage = float(projectiles.damage[i])
-                self._strike_player(logic, projectiles, i)
+                self._projectile_strike(
+                    None, projectiles, i, at=tuple(pos32[i].tolist()))
                 if logic.monster_ai.monster_debug_active:
                     debug_log(
                         "MonsterAI",
@@ -931,7 +1091,7 @@ class LogicCombat:
             if hit_monster is not None:
                 if self._deflect_projectile(projectiles, i, hit_monster):
                     continue
-                self._strike_monster(logic, projectiles, i, hit_monster)
+                self._projectile_strike(hit_monster, projectiles, i)
                 keep[i] = False
                 continue
 
@@ -946,12 +1106,11 @@ class LogicCombat:
                 for brush in all_collision_brushes:
                     if not is_solid_world_brush(brush):
                         continue
-                    bp = brush['pos']
-                    bs = brush['size']
+                    b = world_bounds(brush)
                     if (
-                        bp[0] - bs[0] * 0.5 <= x <= bp[0] + bs[0] * 0.5
-                        and bp[1] - bs[1] * 0.5 <= y <= bp[1] + bs[1] * 0.5
-                        and bp[2] - bs[2] * 0.5 <= z <= bp[2] + bs[2] * 0.5
+                        b[0] <= x <= b[3]
+                        and b[1] <= y <= b[4]
+                        and b[2] <= z <= b[5]
                     ):
                         hit_wall = True
                         break

@@ -25,3 +25,6 @@ game/data/multiplayer_build.json
 
 # Runtime logs: errors, crashes and freeze reports (engine/error_report.py)
 logs/
+# Temporary level pair the level-changer e2e test writes (and removes) while
+# it runs (tests/e2e/test_level_changer_spawns.py).
+maps/_e2e_*.json

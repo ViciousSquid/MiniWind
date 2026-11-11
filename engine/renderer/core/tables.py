@@ -5,15 +5,46 @@ size resolution, sprite recipe resolution and model bounding radii. Instance
 buffer layouts are technique-specific and live with each renderer.
 """
 
+import math
+import weakref
+
 import numpy as np
 
-from engine import render_table
+from engine import change_detection, render_table
+from engine.renderer.core.slot_transforms import SlotTransforms
 
 
 #: Recipe lists whose GL resolution a renderer keeps parked: the two render
 #: buffers' entity tables, the editor's own, and a spare for a table replaced
 #: by a new play session.
 _PARKED_RECIPE_LISTS = 4
+
+#: Render tables a pass keeps derived arrays for: the two render buffers'
+#: and one more (the editor's own, or a table replaced by a new session).
+PASS_MEMO_TABLES = 3
+
+
+def _seal_arrays(value):
+    """Make every array in *value* (a dict, tuple, list or array) read-only."""
+    if isinstance(value, np.ndarray):
+        value.flags.writeable = False
+    elif isinstance(value, dict):
+        for item in value.values():
+            _seal_arrays(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _seal_arrays(item)
+
+
+def _same_value(kept, fresh):
+    if isinstance(kept, dict):
+        return kept.keys() == fresh.keys() and all(
+            _same_value(kept[k], fresh[k]) for k in kept)
+    if isinstance(kept, (list, tuple)):
+        return len(kept) == len(fresh) and all(map(_same_value, kept, fresh))
+    if isinstance(kept, np.ndarray) or isinstance(fresh, np.ndarray):
+        return np.array_equal(kept, fresh)
+    return kept == fresh
 
 
 def _swap_recipe_cache(parked, current, recipes, fresh):
@@ -33,23 +64,124 @@ def _swap_recipe_cache(parked, current, recipes, fresh):
     return (recipes,) + tuple(fresh)
 
 
+def _forget_cache(caches, key, cache):
+    """A render table was collected: drop its SlotTransforms (unless the id
+    already names a newer table's)."""
+    if caches.get(key) is cache:
+        del caches[key]
+
+
 class TablesMixin:
     """Dense-table lookups shared by renderer implementations."""
+
+    def _slot_transforms(self, table):
+        """*table*'s :class:`SlotTransforms`: every row's matrices, kept by
+        change (one per render table; the two double-buffered tables have
+        one each)."""
+        caches = self._slot_transform_caches
+        cache = caches.get(id(table))
+        if cache is None or cache.table() is not table:
+            for key in [k for k, c in caches.items() if c.table() is None]:
+                del caches[key]
+            cache = caches[id(table)] = SlotTransforms(table)
+            # A table that goes (a finished session, a replaced projection)
+            # takes its matrices with it at once.
+            weakref.finalize(table, _forget_cache, caches, id(table), cache)
+        return cache
+
+    def _pass_memo(self, key, table, slots, state, objects, build):
+        """What *build()* derives from *table* for *slots*, kept while
+        neither changes (M3.1): the pass groups, payloads, run orders and
+        face batches every frame used to derive again from the same columns.
+
+        Kept per *key* (a pass, its view and its use in the frame) and per
+        table -- the two render buffers' tables take turns, frame by frame,
+        so one entry per key would be replaced every frame and never reused.
+        An entry is reused while its table is at the same generation,
+        :attr:`~engine.render_table.RenderTable.material_version` and
+        ``extent_version``, *state* (a tuple of plain values) is equal, every
+        one of *objects* is the same object (arrays a cache hands out, told
+        by identity), and *slots* holds the same rows.
+
+        *slots* is recognised by identity when it is a read-only array (M4):
+        the visible set's producers -- the logic thread's cull, the passes'
+        own kept arrays -- hand out the same immutable array while it stands,
+        so a still frame costs no look at a row. Any other array is compared.
+        The value's arrays are made read-only: shared, and versions in turn
+        for what consumes them (an instance stream)."""
+        tables = self._pass_memos.get(key)
+        if tables is None:
+            tables = self._pass_memos[key] = {}
+        tid = id(table)
+        entry = tables.get(tid)
+        full = (table.generation, table.material_version, table.extent_version) + state
+        if (entry is not None and entry[0]() is table and entry[1] == full
+                and len(entry[2]) == len(objects)
+                and all(a is b for a, b in zip(entry[2], objects))):
+            if entry[3] is slots and not slots.flags.writeable:
+                same = True                 # the same immutable rows
+                if change_detection.ORACLE:
+                    self._check_memo(key, entry, build)
+            else:
+                started = change_detection.now()
+                same = change_detection.same_rows(entry[3], np.asarray(slots))
+                change_detection.DETECT.add('pass_memo.rows', len(slots),
+                                            change_detection.now() - started)
+            if same:
+                self.pass_memo_hits += 1
+                return entry[4]
+        self.pass_memo_misses += 1
+        value = build()
+        if entry is None and len(tables) >= PASS_MEMO_TABLES:
+            # A table no longer drawn (a buffer replaced, a world unloaded):
+            # the dead go first, then the longest kept.
+            for dead in [t for t, e in tables.items() if e[0]() is None]:
+                del tables[dead]
+            while len(tables) >= PASS_MEMO_TABLES:
+                del tables[next(iter(tables))]
+        _seal_arrays(value)
+        # The other tables' value for this pass, when it is the same: the two
+        # render buffers' tables take turns, and a stream that is handed the
+        # same arrays from both recognises them by identity (compared only
+        # when a value is built, never on a still frame).
+        for other_tid, other in tables.items():
+            if other_tid != tid and other[0]() is not None and _same_value(other[4], value):
+                value = other[4]
+                break
+        kept = (slots if isinstance(slots, np.ndarray) and not slots.flags.writeable
+                else np.array(slots, copy=True))
+        tables[tid] = (weakref.ref(table), full, tuple(objects), kept, value)
+        return value
+
+    @staticmethod
+    def _check_memo(key, entry, build):
+        """Oracle: a kept value is what deriving it afresh gives."""
+        fresh = build()
+        if not _same_value(entry[4], fresh):
+            change_detection.missed(
+                "pass %r kept arrays differ from a fresh derivation" % (key,))
 
     def _frame_transforms(self, table, slots):
         """Model and normal matrices for *slots*, into reusable buffers.
 
-        One batched build per pass instead of one memoised glm matrix per brush
-        object.  The buffers are grown geometrically and never shrunk, so a
-        steady-state frame allocates nothing.
+        Gathered from the table's :class:`SlotTransforms`, which rebuilds only
+        the rows whose transform columns changed since it last built them
+        (M3): a still world builds no matrix. The buffers are grown
+        geometrically and never shrunk, so a steady-state frame allocates
+        nothing.
         """
         count = len(slots)
         if len(self._brush_mat_buf) < count:
             capacity = max(count, 16, len(self._brush_mat_buf) * 2)
             self._brush_mat_buf = np.empty((capacity, 16), dtype=np.float32)
             self._brush_nmat_buf = np.empty((capacity, 9), dtype=np.float32)
-        return render_table.model_matrices(
-            table, slots, self._brush_mat_buf, self._brush_nmat_buf)
+        cache = self._slot_transforms(table)
+        cache.sync(table)
+        models = np.take(cache.models, slots, axis=0,
+                         out=self._brush_mat_buf[:count])
+        normals = np.take(cache.normals, slots, axis=0,
+                          out=self._brush_nmat_buf[:count])
+        return models, normals
 
     def _gl_texture_ids(self, table):
         """Return the dense texture-id array for one RenderTable projection.
@@ -174,20 +306,26 @@ class TablesMixin:
         if recipes is not self._model_radius_recipes_seen:
             # As for sprites: park the other buffer's radii, do not re-measure
             # every mesh each time the buffers alternate.
-            (self._model_radius_recipes_seen,
-             self._model_radius_by_recipe) = _swap_recipe_cache(
+            (self._model_radius_recipes_seen, self._model_radius_by_recipe,
+             self._model_radius_pending) = _swap_recipe_cache(
                 self.__dict__.setdefault('_model_radius_parked', {}),
-                (self._model_radius_recipes_seen, self._model_radius_by_recipe),
-                recipes, (np.zeros(0, dtype=np.float64),))
+                (self._model_radius_recipes_seen, self._model_radius_by_recipe,
+                 self._model_radius_pending),
+                recipes, (np.zeros(0, dtype=np.float64), ()))
         radii = self._model_radius_by_recipe
         if len(radii) < len(recipes):
+            self._model_radius_pending += tuple(range(len(radii), len(recipes)))
             grown = np.full(len(recipes), np.inf, dtype=np.float64)
             grown[:len(radii)] = radii
             self._model_radius_by_recipe = radii = grown
-        for recipe_id in np.flatnonzero(np.isinf(radii)):
-            obj = self.load_model(recipes[int(recipe_id)][0])
+        if not self._model_radius_pending:
+            return radii
+        pending = []
+        for recipe_id in self._model_radius_pending:
+            obj = self.load_model(recipes[recipe_id][0])
             vertices = getattr(obj, 'cpu_vertices', None) if obj else None
             if obj is None or not getattr(obj, 'is_loaded', False):
+                pending.append(recipe_id)
                 continue
             if vertices is None or not len(vertices):
                 radii[recipe_id] = 0.0
@@ -195,6 +333,9 @@ class TablesMixin:
             radii[recipe_id] = float(np.sqrt(
                 (np.asarray(vertices, dtype=np.float64)[:, :3] ** 2)
                 .sum(axis=1).max()))
+            if math.isinf(radii[recipe_id]):
+                pending.append(recipe_id)
+        self._model_radius_pending = tuple(pending)
         return radii
 
     @staticmethod

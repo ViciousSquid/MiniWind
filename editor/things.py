@@ -4,6 +4,8 @@ Each Thing type has associated I/O definitions (inputs/outputs) for
 the event-driven entity communication system.
 """
 
+from engine.asset_qt import load_pixmap
+from engine.asset_archives import asset_exists
 import copy
 from engine.data_copy import data_copy
 import os
@@ -12,6 +14,7 @@ import uuid
 import importlib
 
 from engine.change_journal import TrackedAttribute, TrackedPosition, touch
+from engine.constants import PLAYER_HULL_SIZE
 from engine.portal_transform import (
     basis_from_rotation as _portal_basis_from_rotation,
     map_point as _portal_map_point,
@@ -216,8 +219,8 @@ class Thing:
         absolute_path = os.path.join(project_root, cls.pixmap_path)
 
         pixmap = None
-        if os.path.exists(absolute_path):
-            loaded_pixmap = QPixmap(absolute_path)
+        if asset_exists(absolute_path):
+            loaded_pixmap = load_pixmap(absolute_path)
             if not loaded_pixmap.isNull():
                 pixmap = loaded_pixmap
             else:
@@ -254,7 +257,7 @@ class Thing:
             return self._pixmap_cache[cache_key]
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
         absolute_path = sprite_path if os.path.isabs(sprite_path) else os.path.join(project_root, sprite_path)
-        pixmap = QPixmap(absolute_path) if os.path.exists(absolute_path) else None
+        pixmap = load_pixmap(absolute_path) if asset_exists(absolute_path) else None
         if pixmap is not None and pixmap.isNull():
             pixmap = None
         self._pixmap_cache[cache_key] = pixmap
@@ -445,7 +448,14 @@ class PlayerStart(Thing):
     :mod:`engine.player_starts`, and ``EditorState.settle_player_starts``,
     which gives a level's first-created start the flag and keeps it unique).
     """
-    pixmap_path = "assets/sprites/player.png"
+    # Private editor artwork, deliberately outside assets/models (the browser).
+    # It is presentation only: no Prop/model fields are persisted on the spawn.
+    pixmap_path = None
+    editor_model_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'assets', 'editor', 'playerstart.obj')
+    editor_model_bounds = (tuple(-size / 2 for size in PLAYER_HULL_SIZE),
+                           tuple(size / 2 for size in PLAYER_HULL_SIZE))
     EDITOR_PRIMARY_PROPERTIES = ('angle',)
     
     def __init__(self, pos=None, properties=None):
@@ -603,6 +613,7 @@ class Monster(Thing):
     EDITOR_PRIMARY_PROPERTIES = (
         'monster_type',
         'monster_id',
+        'angle',
         'health',
         'damage',
         'awake',
@@ -643,6 +654,7 @@ class Monster(Thing):
         self.properties['monster_type'] = monster_type
 
         self.properties.setdefault('monster_id', 0)
+        self.properties.setdefault('angle', 0.0)
         self.properties.setdefault('health', 100)
         self.properties.setdefault('damage', 10)
 
@@ -697,7 +709,7 @@ class Monster(Thing):
         invalidate_sprite_caches() if sprite files change on disk at runtime."""
         cached = cls._custom_path_exists_cache.get(abs_path)
         if cached is None:
-            cached = os.path.isfile(abs_path)
+            cached = asset_exists(abs_path)
             cls._custom_path_exists_cache[abs_path] = cached
         return cached
 
@@ -859,8 +871,8 @@ class Monster(Thing):
                 f"logic_{logic_type}.png"
             )
 
-            if os.path.exists(image_path):
-                pixmap = QPixmap(image_path)
+            if asset_exists(image_path):
+                pixmap = load_pixmap(image_path)
                 if not pixmap.isNull():
                     self._pixmap_cache[cache_key] = pixmap
                     return pixmap
@@ -877,8 +889,8 @@ class Monster(Thing):
             script_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
             abs_path = os.path.join(project_root, icon_path)
-            if os.path.exists(abs_path):
-                pix = QPixmap(abs_path)
+            if asset_exists(abs_path):
+                pix = load_pixmap(abs_path)
                 if not pix.isNull():
                     return pix
         except Exception:
@@ -979,8 +991,8 @@ class LogicGate(Thing):
             project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
             abs_path = os.path.join(project_root, expected_path)
             
-            if os.path.exists(abs_path):
-                pix = QPixmap(abs_path)
+            if asset_exists(abs_path):
+                pix = load_pixmap(abs_path)
                 if not pix.isNull():
                     self._pixmap_cache[expected_path] = pix
                     return pix

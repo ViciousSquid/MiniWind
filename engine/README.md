@@ -5,7 +5,10 @@
 | `__init__.py` | Package marker. |
 | `actor_pick.py` | Finds the actor under a screen ray, using the published tables. |
 | `animated_texture.py` | Decodes animated GIF textures and picks the frame for a play time. |
+| `brush_faces.py` | One material record per brush face: the precedence rule for legacy angled brushes, the reader and writer every face edit goes through, conversion between box and angled encodings. |
 | `brush_geometry.py` | Convex brush geometry from planes: faces, collision meshes, 2D outlines, bounds, component edits. |
+| `brush_placement.py` | Where a brush is and what it covers: authored and live placement, spin, and the derived bounds every consumer (rendering, culling, collision, physics grid, Big World, picking) reads. GL-free. |
+| `cell_cull.py` | Cell-group bucketing over the 512-unit grid, occlusion-probe bookkeeping, and the probe-budget governor that parks the probes when they stop paying for themselves. |
 | `camera.py` | Camera state and view/projection matrices. |
 | `change_journal.py` | Records entity changes so the dense tables refresh only changed rows. |
 | `constants.py` | Shared engine constants: sizes, render modes, physics and movement tuning. |
@@ -13,6 +16,7 @@
 | `effect_entity.py` | The Effect entity (FIRE, ORB, EXPLOSION, CUSTOM). |
 | `effect_table.py` | Dense runtime state for Effects. |
 | `entity_table.py` | Dense table of entities for rendering. |
+| `entity_models.py` | Model presentation and picking, including the private playerstart marker. |
 | `fileio.py` | Atomic file writes for maps, autosaves and saves. |
 | `floating_windows.py` | Draggable, collapsible overlay windows drawn in the 3D view (SysMon style). |
 | `glasses.py` | Player glasses styles and their sprite paths. |
@@ -58,7 +62,10 @@
 | `shaders.py` | Shader sources and light limits. |
 | `soa.py` | Growth helpers for the dense arrays. |
 | `spatial.py` | World cell maths and the cell index. |
-| `speaker_audio.py` | Rules for which files a Speaker may play (`assets/sounds`, `assets/music`). |
+| `audio_archives.py` | Safe audio discovery and reads from ZIP-based `.fiopak` archives. |
+| `asset_archives.py` | Category `.fiopak` archives in `assets/`, indexed at startup and read in place (loose files override); `asset_bytes`, `asset_source`, `asset_exists`, `asset_listdir`, `asset_files`. |
+| `asset_qt.py` | Qt images, pixmaps, icons and fonts from assets, loose or archived. |
+| `speaker_audio.py` | Rules for which files a Speaker may play (`assets/sounds`, `assets/music`), from disk or archives. |
 | `sprite_layers.py` | Entity sprites as layers of one texture array. |
 | `sysmon.py` | The system monitor overlay. |
 | `terrain.py` | Terrain generation, meshes, drawing and height queries. |
@@ -80,6 +87,7 @@
 | `core/base.py` | `RendererCore`, optional shared renderer infrastructure. |
 | `core/diagnostics.py` | Pass timing. |
 | `core/geometry.py` | Shared GPU geometry (cube, sprite quad, angled-brush meshes). |
+| `core/geo_store.py` | Shared storage for angled-brush meshes: vertex pages, buffer-texture transform slots, cached index lists. |
 | `core/overlays.py` | Editor and debug overlays. |
 | `core/resources.py` | Texture, model, effect-frame and shader loading; animates GIF textures. |
 | `core/tables.py` | Lookups into the render and entity tables. |
@@ -88,6 +96,7 @@
 | `forward/distance.py` | The Wireframe and Points display modes. |
 | `forward/instancing.py` | Instance buffers. |
 | `forward/lighting.py` | Lights and shadow maps. |
+| `forward/occlusion.py` | Chained occlusion queries over the cell groups (play mode). |
 | `forward/passes.py` | Draw passes. |
 | `forward/portals.py` | Stencil portals. |
 | `forward/renderer.py` | `ForwardRenderer`, the built-in renderer. |

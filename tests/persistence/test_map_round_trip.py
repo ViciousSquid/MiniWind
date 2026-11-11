@@ -78,8 +78,13 @@ def test_temporary_cutscene_actors_are_not_saved(scene):
 
 
 def test_a_saved_world_is_json_serialisable(scene):
+    from engine.brush_faces import CANONICAL_MAP_VERSION
     text = json.dumps(scene.get_level_data())
-    assert json.loads(text)["version"] == 3
+    # Version 4: one material record per brush face (version 3 added stable
+    # entity ids and the logic graph layout).
+    from engine.brush_placement import MAP_VERSION
+    assert CANONICAL_MAP_VERSION == 4      # the face layout (Stage 1)
+    assert json.loads(text)["version"] == MAP_VERSION == 5    # local planes (Stage 2d)
 
 
 def test_every_brush_comes_back(scene):

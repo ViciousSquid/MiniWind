@@ -1,0 +1,235 @@
+{
+ "BigWorld_streaming_test.json": {
+  "brushes": 3604,
+  "digest": "d87a76f7e0c968661dae283a121553abc0c2abe77aefc57c32e7494a7f65bfa9",
+  "encodings": {
+   "box": 3604
+  },
+  "inconsistencies": {}
+ },
+ "cave01.json": {
+  "brushes": 81,
+  "digest": "22beab5c91266ad8709fd99c884fc53aa9239a3da4498fc71404f3cef9621e95",
+  "encodings": {
+   "box": 81
+  },
+  "inconsistencies": {}
+ },
+ "cave02.json": {
+  "brushes": 55,
+  "digest": "3a6a5c4f19da0ccefe7750e5c3231ed11e6257d62b8729c1b780933138b8ac40",
+  "encodings": {
+   "box": 55
+  },
+  "inconsistencies": {}
+ },
+ "cave03.json": {
+  "brushes": 86,
+  "digest": "0e44790375fa71646d089a511f5b23ab1fdf605ac224abaf716e99b77a511884",
+  "encodings": {
+   "box": 86
+  },
+  "inconsistencies": {}
+ },
+ "cave04.json": {
+  "brushes": 76,
+  "digest": "cf799c94ea7051a23307e6de8996a6e3793ba13544e11cc422732b5806835ff6",
+  "encodings": {
+   "box": 76
+  },
+  "inconsistencies": {}
+ },
+ "cave05.json": {
+  "brushes": 92,
+  "digest": "503760a8dfeeb3cd666313e5ec486b3aae3a9f2850c45b2b0c6850e00d711e8c",
+  "encodings": {
+   "box": 92
+  },
+  "inconsistencies": {}
+ },
+ "cave06.json": {
+  "brushes": 83,
+  "digest": "f1e8ffd391b31f076b68ff04a846faf168541eed9a59fd7a875826eeb1490626",
+  "encodings": {
+   "box": 83
+  },
+  "inconsistencies": {}
+ },
+ "cave07.json": {
+  "brushes": 83,
+  "digest": "ce10e6c6e868bb19d9e0a9030f0031e7b3f8f10b66bb96d0bbdf01f735c3e643",
+  "encodings": {
+   "box": 83
+  },
+  "inconsistencies": {}
+ },
+ "cave08.json": {
+  "brushes": 75,
+  "digest": "a86ee2e5e1a3ed83540e07e112b4f4a43179f670ccabadaf45024cc07fc1bdfa",
+  "encodings": {
+   "box": 75
+  },
+  "inconsistencies": {}
+ },
+ "cave09.json": {
+  "brushes": 76,
+  "digest": "71010ae58fa43896b7269749e066bdcf5a825e0a9c31e034da0b1c9ea44a72d3",
+  "encodings": {
+   "box": 76
+  },
+  "inconsistencies": {}
+ },
+ "cave10.json": {
+  "brushes": 81,
+  "digest": "0c188c784bc7f0afbf4d4e303703207c942c17dd0ff4972b596069ed069f1edf",
+  "encodings": {
+   "box": 81
+  },
+  "inconsistencies": {}
+ },
+ "cave11.json": {
+  "brushes": 78,
+  "digest": "158019e90919fcf2d94ccf8bd8ae1742d17aae0ebc52b8c3a49d06bae73d3edb",
+  "encodings": {
+   "box": 78
+  },
+  "inconsistencies": {}
+ },
+ "cave12.json": {
+  "brushes": 77,
+  "digest": "75f9acb5e7e0317249d1f7f3a097b3ac08006f8295bcbc32b3bde22c907e15e9",
+  "encodings": {
+   "box": 77
+  },
+  "inconsistencies": {}
+ },
+ "cave13.json": {
+  "brushes": 74,
+  "digest": "718ddf7460af69e877bfc308e334d5a07775f3b64d5b7806ac87b939dbafd8dc",
+  "encodings": {
+   "box": 74
+  },
+  "inconsistencies": {}
+ },
+ "cave14.json": {
+  "brushes": 93,
+  "digest": "1e3c1f3c4024fbe2344ad62b99051ac9b3fde3512284e98f52c31a9fddf7bf8a",
+  "encodings": {
+   "box": 93
+  },
+  "inconsistencies": {}
+ },
+ "cave15.json": {
+  "brushes": 87,
+  "digest": "a247096cf006953c10f02c7a144ec1b7de62d6095ff57d9d6a860fabf83011a6",
+  "encodings": {
+   "box": 87
+  },
+  "inconsistencies": {}
+ },
+ "cave16.json": {
+  "brushes": 71,
+  "digest": "c9ca57062e39e31a974db77281298c2b877a91484086ffb3c53ccb6f9ab35615",
+  "encodings": {
+   "box": 71
+  },
+  "inconsistencies": {}
+ },
+ "cave17.json": {
+  "brushes": 66,
+  "digest": "14caa66d94215547d560b18d53862a0e2f2cbc95042578516473424c966031e7",
+  "encodings": {
+   "box": 66
+  },
+  "inconsistencies": {}
+ },
+ "cave18.json": {
+  "brushes": 81,
+  "digest": "973a76d44428de4ee5270554f9d7c77430890b653135f36fa38971d91671c8c6",
+  "encodings": {
+   "box": 81
+  },
+  "inconsistencies": {}
+ },
+ "cave19.json": {
+  "brushes": 49,
+  "digest": "af61b0282e0db04c5d1b7ae2164fc19b5ec7e8f42a1d655f83d4161943d1454f",
+  "encodings": {
+   "box": 49
+  },
+  "inconsistencies": {}
+ },
+ "cave20.json": {
+  "brushes": 51,
+  "digest": "a6857b8466d732853e2d67343565849cba98dfe39a2d8110a9662b90712e6ac4",
+  "encodings": {
+   "box": 51
+  },
+  "inconsistencies": {}
+ },
+ "miniwind_world.json": {
+  "brushes": 16159,
+  "digest": "5332f8ec43ae20795a85d1afa548a06cffd150fcc4a5ad232443eb5865391a44",
+  "encodings": {
+   "box": 16147,
+   "convex": 12
+  },
+  "inconsistencies": {
+   "0ce48c9d-d122-49ad-b3ff-2147acdbfbc7": {
+    "resolved_from_tag": [
+     "down.uv_scale",
+     "east.uv_scale",
+     "north.uv_scale",
+     "south.uv_scale",
+     "top.uv_scale",
+     "west.uv_scale"
+    ]
+   },
+   "213d70aa-31b4-4205-afab-22736d34007a": {
+    "resolved_from_tag": [
+     "top.uv_scale"
+    ]
+   },
+   "2cb2ca41-8ad0-4d45-83fd-ead8209be8f0": {
+    "resolved_from_tag": [
+     "east.uv_angle"
+    ]
+   },
+   "327f41c5-e697-43b0-90da-895d31f99deb": {
+    "discarded_tag_value": [
+     "down.texture",
+     "east.texture",
+     "north.texture",
+     "south.texture",
+     "top.texture",
+     "west.texture"
+    ]
+   },
+   "4002ca0e-f7a1-49ec-b291-8cf3dbf9bd60": {
+    "discarded_tag_value": [
+     "down.texture",
+     "east.texture",
+     "north.texture",
+     "south.texture",
+     "west.texture"
+    ],
+    "resolved_from_tag": [
+     "top.uv_angle"
+    ]
+   },
+   "d3a40da8-565b-4e00-9fed-e390dcd4d98a": {
+    "discarded_tag_value": [
+     "down.texture",
+     "east.texture",
+     "north.texture",
+     "south.texture",
+     "top.texture",
+     "west.texture"
+    ]
+   },
+   "e23ac095-195e-4d67-9770-ab3c33fb3e1b": {
+    "bound_drift": 4930.0
+   }
+  }
+ }
+}

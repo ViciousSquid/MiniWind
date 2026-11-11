@@ -232,7 +232,7 @@ def test_crossfire_skips_a_monster_killed_earlier_in_the_tick():
 @pytest.mark.parametrize("scalar", [False, True])
 def test_crossfire_keeps_row_ties_and_skips_stale_hits(stale, scalar, monkeypatch):
     from engine.monster_table import MonsterTable
-    monkeypatch.setattr(MonsterTable, 'CROSSFIRE_SCALAR_MAX_ROWS', 8 if scalar else 0)
+    monkeypatch.setattr(MonsterTable, 'CROSSFIRE_NUMPY_MIN', 9 if scalar else 0)
     ai, logic = _world(5, dense=True, teams=True, count=5)
     monsters = logic.world_runtime.monster_things
     for row, monster in enumerate(monsters):

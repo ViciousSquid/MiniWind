@@ -29,7 +29,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 TEST_ROOTS = ("tests", "plugins", "game/tests")
 
 #: Directories pytest.ini excludes via `norecursedirs`.
-SKIP_DIRS = {".git", "build", "dist", "__pycache__", "assets", "maps"}
+SKIP_DIRS = {".git", ".buildozer", "build", "dist", "__pycache__", "assets", "maps"}
 
 
 def _test_modules():

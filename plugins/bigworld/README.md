@@ -76,8 +76,6 @@ Objects are indexed by their existing **stable UUIDs**. A brush spanning several
 
 ---
 
-# Quick start
-
 ## Editor camera streaming
 
 Big World maps open with **Show whole world** checked by default. The checkbox
@@ -99,12 +97,15 @@ authored world through its existing Big World lifecycle; Stop restores the
 chosen editor residency mode. The map's **Stream around editor camera** setting can disable
 this editor behavior when a full-world authoring pass is needed.
 
-In Play, the renderer fades nearby lights smoothly over the last 256 world
-units before its player-distance limit (2048 units by default), or Big World's
-active radius when smaller, including overhead-camera fitting. The existing
-activation range, hysteresis, light budgets and Big World parking remain in
-place. The fade affects rendered intensity only; authored values, flicker and
-explicit light on/off inputs retain their behavior.
+In Play, the renderer lights only the lights near the player (within 2048
+units by default, nearest first, with the same kind of hysteresis as cells),
+and fades them smoothly over the last 256 world units before that limit, or
+Big World's active radius when smaller, including overhead-camera fitting.
+The existing activation range, hysteresis, light budgets and Big World parking
+remain in place. The fade affects rendered intensity only; authored values,
+flicker and explicit light on/off inputs retain their behavior.
+
+# Quick start
 
 ## 1. Opt a map into Big World
 
@@ -722,6 +723,7 @@ The `BigWorldSettings` entity provides:
 | Property | Default | Description |
 |---|---:|---|
 | `enabled` | `true` | Enable Big World for this map. |
+| `editor_streaming` | `true` | Stream cells around the 3D editor camera while editing (with **Show whole world** cleared). |
 | `activation_radius` | `2048` | Radius within which cells become resident/active. |
 | `deactivation_radius` | `2304` | Radius beyond which active cells may be removed. Provides hysteresis. |
 | `sim_near_radius` | `1024` | Radius used for NEAR/full simulation fidelity. |
@@ -729,6 +731,7 @@ The `BigWorldSettings` entity provides:
 | `terrain_fill` | `false` | Expand procedural terrain to cover the streamed world. |
 | `terrain_infinite` | `false` | Continue generating terrain beyond authored bounds. Requires terrain fill. |
 | `terrain_stream_radius` | `0` | Terrain residency radius. `0` derives it from activation radius. |
+| `terrain_stream` | `false` | Stream an authored terrain's chunks around the camera inside its own bounds, without re-bounding it as terrain fill does. |
 | `disk_streaming` | `false` | Experimental mode that frees unloaded cell objects and restores them from a cell source. |
 
 The properties are registered through Fio's normal typed plugin property API, so they appear as normal editor properties rather than requiring custom UI.

@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import math
 import time
+import weakref
 
 import glm
 import numpy as np
 
+from . import brush_placement, change_detection
 from .change_journal import JOURNAL, STATE
 from .entity_table import ENT_PROP
 from .logic_combat import NO_PROJECTILES as _NO_PROJECTILES
@@ -20,8 +22,19 @@ from .view_distance import ViewDistance
 from .render_camera import CameraHistory
 
 
+def _sealed(array):
+    """*array*, read-only: published as a version (M4), never written."""
+    array.flags.writeable = False
+    return array
+
+
+
+
 class LogicRender:
     """Render-facing projection and culling for LogicThread."""
+
+    #: Seconds a directional damage indicator stays, fading as it goes.
+    DAMAGE_MARK_TIME = 1.6
 
     def __init__(self, logic):
         self.logic = logic
@@ -47,7 +60,8 @@ class LogicRender:
         self._hud_cinematic_fade_started = None
 
     def extract_frustum_planes(self, proj_view: glm.mat4):
-        m = proj_view
+        # Read each GLM column once; the scalar arithmetic stays unchanged.
+        m = tuple(tuple(proj_view[col]) for col in range(4))
         planes = []
         planes.append(
             self.normalize_plane(
@@ -246,10 +260,98 @@ class LogicRender:
             peer_epoch, through_epoch=snapshot_epoch
         )[1]
 
+    def cull_brushes(self, table, frustum_planes, keep):
+        """The slots of *table*'s rows in *keep* (a mask over its live rows)
+        whose box meets the frustum, as a read-only array.
+
+        Derived bounds (brush_placement): a spinning row is tested as the
+        AABB of its turned box, so it is never culled while drawn. Until any
+        row has turned (RenderTable.turning) every row's box is its bounds,
+        and the resolver is not asked.
+
+        The visible set's version is its identity (M4): kept per table, the
+        same read-only array is handed back while the frustum, *keep* (the
+        same object: ``RenderTable.shown`` hands one out until a ``hidden``
+        value changes) and the table's rows stand. Rows written since
+        (``RenderTable.transforms_since``) are re-tested alone; a new frustum
+        is culled whole, and a result equal to the last keeps the last array.
+        Whatever consumes the visible set recognises an unchanged one by
+        identity, at no cost that grows with the world.
+        """
+        cache = getattr(self, '_cull_cache', None)
+        if cache is None:
+            cache = self._cull_cache = {}
+        count = table.count
+        entry = cache.get(id(table))
+        if entry is not None and entry[7]() is not table:
+            entry = None                    # another table at that address
+        if (entry is not None and entry[0] == table.generation
+                and entry[1] == count and entry[3] is keep
+                and entry[2] == frustum_planes):
+            if entry[4] == table.transform_version:
+                if change_detection.ORACLE:
+                    self._check_cull(table, frustum_planes, keep, entry[6])
+                return entry[6]
+            rows = table.transforms_since(entry[4])
+            if rows is not None and len(rows) * 4 < count:
+                entry[4] = table.transform_version
+                rows = rows[rows < count]
+                if len(rows):
+                    bounds = table.bounds[rows]
+                    if table.turning:
+                        bounds = brush_placement.turned_bounds(bounds, table.rot[rows])
+                    inside = keep[rows] & self.aabb_in_frustum_bounds(frustum_planes, bounds)
+                    if (inside != entry[5][rows]).any():
+                        mask = entry[5].copy()
+                        mask[rows] = inside
+                        entry[5] = mask
+                        entry[6] = self._shared_visible(np.flatnonzero(mask))
+                if change_detection.ORACLE:
+                    self._check_cull(table, frustum_planes, keep, entry[6])
+                return entry[6]
+        bounds = table.bounds[:count]
+        if table.turning:
+            bounds = brush_placement.turned_bounds(bounds, table.rot[:count])
+        mask = keep & self.aabb_in_frustum_bounds(frustum_planes, bounds)
+        slots = self._shared_visible(np.flatnonzero(mask))
+        if len(cache) > 4:                  # tables gone (a session ended)
+            for key in [k for k, e in cache.items() if e[7]() is None]:
+                del cache[key]
+        cache[id(table)] = [table.generation, count, frustum_planes, keep,
+                            table.transform_version, mask, slots,
+                            weakref.ref(table)]
+        return slots
+
+    def _shared_visible(self, slots):
+        """*slots*, sealed -- or the visible set made last (for either
+        table) when it holds the same rows: the two render buffers' tables
+        take turns every frame, and a consumer handed the same object from
+        both recognises an unchanged set by identity. One comparison, made
+        only when a set is made, never on a still frame."""
+        last = getattr(self, '_last_visible', None)
+        if last is not None and change_detection.same_rows(last, slots):
+            return last
+        self._last_visible = slots = _sealed(slots)
+        return slots
+
+    def _check_cull(self, table, frustum_planes, keep, slots):
+        """Oracle: the kept visible set is what culling afresh gives."""
+        count = table.count
+        bounds = table.bounds[:count]
+        if table.turning:
+            bounds = brush_placement.turned_bounds(bounds, table.rot[:count])
+        fresh = np.flatnonzero(keep & self.aabb_in_frustum_bounds(frustum_planes, bounds))
+        if not np.array_equal(fresh, slots):
+            change_detection.missed(
+                "kept visible set differs from a fresh cull: %s"
+                % np.setxor1d(fresh, slots)[:8].tolist())
+
     def prepare_render_state(self):
         logic = self.logic
         started = time.perf_counter()
         write_state = logic.game_state.get_write_state()
+        write_state.local_spectator = False
+        write_state.spectator_glasses = ()
         write_state.is_play_mode = logic.session_runtime.play_mode
         write_state.light_fade_range = (
             getattr(logic, 'light_fade_range', None) if write_state.is_play_mode else None)
@@ -439,6 +541,26 @@ class LogicRender:
             if current_time - m["time"] < logic.combat_runtime.BULLET_FADE_TIME
         ]
 
+        combat = logic.combat_runtime
+        write_state.decals = combat.blood.frame(
+            current_time, combat.BLOOD_LIFETIME, combat.BLOOD_FADE_TIME)
+
+        # Where recent hits on the player came from, each with what is left
+        # of it (1 at the hit, 0 when DAMAGE_MARK_TIME has passed). The HUD
+        # turns a position into a bearing with the camera it draws under.
+        marks = logic.player_runtime.damage_marks
+        if marks:
+            clock = current_time
+            life = self.DAMAGE_MARK_TIME
+            live = tuple(
+                (m[0], m[1], m[2], 1.0 - (clock - m[3]) / life)
+                for m in list(marks) if clock - m[3] < life)
+            if not live:
+                del marks[:]
+            write_state.damage_marks = live
+        else:
+            write_state.damage_marks = ()
+
         far = (
             self.view_distance.far_plane
         )
@@ -515,13 +637,7 @@ class LogicRender:
                 table.class_bits[:total_count], table)
             all_slots = np.flatnonzero(keep)
         if self.culling_enabled and total_count:
-            visible_slots = np.flatnonzero(
-                keep
-                & self.aabb_in_frustum_bounds(
-                    frustum_planes,
-                    table.bounds[:total_count],
-                )
-            )
+            visible_slots = self.cull_brushes(table, frustum_planes, keep)
         else:
             visible_slots = all_slots
 

@@ -61,6 +61,7 @@ class ConsoleCommandHandler:
             'kill_monster': self.cmd_monster_kill,
             'monster_revive':     self.cmd_monster_revive,
             'monster_revive_all': self.cmd_monster_revive_all,
+            'botdebug': self.cmd_botdebug,
 
             'ent': self.cmd_info,
             'info': self.cmd_info,
@@ -210,7 +211,19 @@ class ConsoleCommandHandler:
     #: plugin code), like a key binding.  ``vsync`` / ``r_vsync`` do nothing
     #: but flip the stored preference in settings.ini.  ``quit`` closes Fio
     #: without asking, so a map could throw away the user's unsaved work.
-    USER_ONLY_COMMANDS = frozenset({'bind', 'r_renderer', 'vsync', 'r_vsync', 'quit'})
+    USER_ONLY_COMMANDS = frozenset({'bind', 'r_renderer', 'vsync', 'r_vsync', 'quit', 'botdebug'})
+
+    def cmd_botdebug(self, args):
+        if args.strip().lower() not in ('', 'on', 'off'):
+            debug_log('Error', 'Usage: botdebug [on|off]')
+            return
+        if args.strip().lower() == 'off':
+            window = getattr(self.main_window, '_bot_debug_window', None)
+            if window is not None:
+                window.close()
+            return
+        from editor.bot_debug import show_bot_debug
+        show_bot_debug(self.main_window)
 
     def handle_command(self, cmd_string, *, from_map=False):
         """Run one console command line.
@@ -285,9 +298,17 @@ class ConsoleCommandHandler:
             debug_log("Error", "Usage: bind <key> <command>")
             return
         key_str, command = parts
-        # Store binding in main_window
-        self.main_window.set_key_binding(key_str, command)
-        debug_log("Info", f"Bound '{key_str}' to '{command}'")
+        # A key press is looked up by Qt's own name for it ("F5", "Ctrl+K"):
+        # a binding stored as typed ("f5") would never fire.
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QKeySequence
+        sequence = QKeySequence(key_str)
+        if sequence.count() != 1 or sequence[0] == Qt.Key_unknown or not sequence.toString():
+            debug_log("Error", f"bind: '{key_str}' is not a key (try F5, K or Ctrl+K)")
+            return
+        key_str = sequence.toString()
+        if self.main_window.set_key_binding(key_str, command):
+            debug_log("Info", f"Bound '{key_str}' to '{command}'")
 
     def _open_bind_dialog(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QKeySequenceEdit, QLineEdit, QDialogButtonBox
@@ -747,9 +768,10 @@ class ConsoleCommandHandler:
         """
         view_3d = self.main_window.view_3d
         
-        arg = args.strip().lower() if args else 'toggle'
-        
-        if arg == 'on':
+        arg = args.strip().lower() or 'toggle'
+        current = getattr(view_3d, '_collision_vis_mode', 'off')
+
+        if arg in ('on', 'all'):
             view_3d._collision_vis_mode = 'all'
         elif arg == 'off':
             view_3d._collision_vis_mode = 'off'
@@ -759,7 +781,7 @@ class ConsoleCommandHandler:
             view_3d._collision_vis_mode = 'aabb'
         elif arg == 'toggle':
             modes = ['off', 'all', 'mesh', 'aabb']
-            current_idx = modes.index(view_3d._collision_vis_mode) if view_3d._collision_vis_mode in modes else 0
+            current_idx = modes.index(current) if current in modes else 0
             view_3d._collision_vis_mode = modes[(current_idx + 1) % len(modes)]
         else:
             debug_log("Error", "Usage: showcollision [on|off|mesh|aabb|all|toggle]")
@@ -988,6 +1010,7 @@ class ConsoleCommandHandler:
 <b style="color:orange;">connect</b> &lt;src&gt; &lt;out&gt; &lt;tgt&gt; &lt;in&gt; [delay]<br>
 <b style="color:orange;">disconnect</b> &lt;src&gt; &lt;out&gt; &lt;tgt&gt; &lt;in&gt;<br>
 <b style="color:cyan;">=== Monsters ===</b><br>
+<b style="color:orange;">botdebug</b> [on|off] — Floating live decisions: overview and one tab per bot<br>
 <b style="color:orange;">monster_kill</b> &lt;name&gt; — Instantly kill a named monster<br>
 <b style="color:orange;">monster_revive</b> &lt;name&gt; — Restore a named monster to full health<br>
 <b style="color:orange;">monster_revive_all</b> — Restore every monster in the level<br>
@@ -1045,13 +1068,13 @@ entity to drive them from the I/O system.</i><br>
         # Append any console commands plugins registered (API 1.4.0).
         try:
             mgr = self._plugin_manager()
-            cmds = mgr.console_commands() if mgr is not None else []
+            cmds = mgr.console_commands() if mgr is not None else {}
         except Exception:
-            cmds = []
+            cmds = {}
         if cmds:
             help_text += '<b style="color:cyan;">=== Plugin Commands ===</b><br>'
-            for name, metadata in cmds.items():
-                chelp = metadata.get("help", "")
+            for name, entry in sorted(cmds.items()):
+                chelp = entry.get("help", "")
                 suffix = f" — {chelp}" if chelp else ""
                 help_text += f'<b style="color:orange;">{name}</b>{suffix}<br>'
         debug_log("Info", help_text)

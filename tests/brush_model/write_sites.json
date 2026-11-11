@@ -1,0 +1,45 @@
+{
+ "geometry": {
+  "editor/component_edit.py": 2,
+  "editor/main_window.py": 1,
+  "engine/brush_faces.py": 1,
+  "engine/brush_geometry.py": 3,
+  "engine/brush_placement.py": 1,
+  "engine/renderer/core/geo_store.py": 1
+ },
+ "pos": {
+  "editor/component_edit.py": 1,
+  "editor/main_window.py": 2,
+  "editor/things.py": 1,
+  "editor/view_2d.py": 4,
+  "engine/brush_geometry.py": 2,
+  "engine/brush_placement.py": 3,
+  "engine/change_journal.py": 4
+ },
+ "size": {
+  "editor/component_edit.py": 1,
+  "editor/view_2d.py": 4,
+  "engine/brush_geometry.py": 1,
+  "engine/brush_placement.py": 1,
+  "engine/effect_entity.py": 1
+ },
+ "texture_tiling": {
+  "editor/main_window.py": 1
+ },
+ "uv_angle": {
+  "editor/face_texture.py": 1,
+  "engine/brush_geometry.py": 2
+ },
+ "uv_natural": {
+  "editor/face_texture.py": 1,
+  "engine/brush_geometry.py": 1
+ },
+ "uv_scale": {
+  "editor/face_texture.py": 1,
+  "engine/brush_geometry.py": 3
+ },
+ "uv_shift": {
+  "editor/face_texture.py": 1,
+  "engine/brush_geometry.py": 1
+ }
+}

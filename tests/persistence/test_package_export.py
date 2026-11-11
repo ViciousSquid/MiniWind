@@ -13,9 +13,16 @@ import json
 import os
 import zipfile
 
+import numpy as np
 import pytest
 
 from editor.package_exporter import PackageExporter
+<<<<<<< MiniWind
+||||||| base
+from player.fiopak import FioPackage
+=======
+from engine.fiopak import FioPackage
+>>>>>>> Fio-3.5
 
 
 def _write_json(path, data):
@@ -170,7 +177,7 @@ def test_absolute_references_cannot_leave_the_project(project, tmp_path):
 
     assert ok
     with zipfile.ZipFile(out) as zf:
-        assert sorted(zf.namelist()) == ["maps/start.json", "metadata.json"]
+        assert sorted(zf.namelist()) == ["assets/sounds/beep.wav", "maps/start.json", "metadata.json"]
         assert b"do not ship" not in [zf.read(n) for n in zf.namelist()]
     assert sum("outside the project" in e for e in errors) == 2, errors
 
@@ -207,10 +214,20 @@ def test_map_name_collisions_get_distinct_archive_paths(project, tmp_path):
     ok, errors = _export(project, current, out)
 
     assert ok, errors
+<<<<<<< MiniWind
     with zipfile.ZipFile(out) as zf:
         assert sorted(n for n in zf.namelist() if n.startswith("maps/")) == [
             "maps/start.json", "maps/start_1.json"]
         assert json.loads(zf.read("metadata.json"))["map_path"] == "maps/start.json"
+||||||| base
+    with FioPackage.open(str(out)) as pak:
+        assert pak.list_maps() == ["maps/start.json", "maps/start_1.json"]
+        assert pak.start_map_path() == "maps/start.json"
+=======
+    with FioPackage.open(str(out)) as pak:
+        assert pak.list_maps() == ["maps/start.json", "maps/sub/start.json"]
+        assert pak.start_map_path() == "maps/start.json"
+>>>>>>> Fio-3.5
 
 
 # ---------------------------------------------------------------------------
@@ -289,3 +306,117 @@ def test_a_missing_cutscene_is_reported(project, tmp_path):
     assert ok
     assert any("Missing cutscene" in e and "gone.json" in e for e in errors), errors
 
+
+def test_archived_model_companions_and_new_asset_properties_are_self_contained(project, tmp_path):
+    """No installed project resources are needed to read the exported world."""
+    with zipfile.ZipFile(project / 'assets/models.fiopak', 'w') as assets:
+        assets.writestr('assets/models/demo/mesh.obj', 'mtllib mesh.mtl\nv 0 0 0\n')
+        assets.writestr('assets/models/demo/mesh.mtl', 'newmtl m\nmap_Kd ../../textures/model.png\n')
+    with zipfile.ZipFile(project / 'assets/textures.fiopak', 'w') as assets:
+        assets.writestr('assets/textures/model.png', b'archived texture')
+    with zipfile.ZipFile(project / 'assets/sprites.fiopak', 'w') as assets:
+        assets.writestr('assets/sprites/custom.png', b'custom sprite')
+    (project / 'assets/textures/model.png').write_bytes(b'loose override')
+    current = _write_json(project / 'maps/start.json', _level([
+        {'type': 'Prop', 'properties': {'model_path': 'assets/models/demo/mesh.obj',
+                                      'world_sprite': 'assets/sprites/custom.png'}}]))
+    out = tmp_path / 'world.fiopak'
+    ok, errors = _export(project, current, out)
+    assert ok and not errors, errors
+    # Remove the project completely: every required byte must be in the ZIP.
+    import shutil
+    shutil.rmtree(project)
+    from engine.fiopak import FioPackage as AndroidPackage
+    with AndroidPackage.open(out) as world:
+        assert world.read_asset('assets/models/demo/mesh.obj').startswith(b'mtllib')
+        assert world.read_asset('assets/models/demo/mesh.mtl').startswith(b'newmtl')
+        assert world.read_asset('assets/textures/model.png') == b'loose override'
+        assert world.read_asset('assets/sprites/custom.png') == b'custom sprite'
+
+def test_gltf_external_buffers_and_images_follow_the_model(project, tmp_path):
+    model = {'asset': {'version': '2.0'}, 'buffers': [{'uri': 'mesh.bin'}],
+             'images': [{'uri': '../../textures/floor.png'}]}
+    _write_json(project / 'assets/models/nested/mesh.gltf', model)
+    (project / 'assets/models/nested/mesh.bin').write_bytes(b'vertices')
+    current = _write_json(project / 'maps/start.json', _level([
+        {'type': 'Prop', 'properties': {'model_path': 'assets/models/nested/mesh.gltf'}}]))
+    out = tmp_path / 'world.fiopak'
+    ok, errors = _export(project, current, out)
+    assert ok and not errors, errors
+    with zipfile.ZipFile(out) as package:
+        assert package.read('assets/models/nested/mesh.bin') == b'vertices'
+        assert package.read('assets/textures/floor.png') == b'floor'
+
+def test_player_world_carries_implicit_gameplay_assets_without_a_monster(project, tmp_path):
+    with zipfile.ZipFile(project / 'assets/sprites.fiopak', 'w') as assets:
+        assets.writestr('assets/sprites/pickup.png', b'engine default')
+    current = _write_json(project / 'maps/start.json', _level([
+        {'type': 'PlayerStart', 'properties': {}}]))
+    out = tmp_path / 'world.fiopak'
+    ok, errors = _export(project, current, out)
+    assert ok and not errors, errors
+    with zipfile.ZipFile(out) as package:
+        assert package.read('assets/sprites/pickup.png') == b'engine default'
+        assert package.read('assets/sounds/beep.wav') == b'beep'
+
+
+def _saved_v5_level():
+    """A level as this editor saves it (map version 5): a box, an angled
+    brush moved after it was cut, and a rotated angled brush."""
+    # The editor state is the saver, and it needs Qt (editor.things).
+    pytest.importorskip("PyQt5", reason="saves a map through the editor state")
+    from editor.editor_state import EditorState
+    from engine import brush_geometry as bg
+    from tests.helpers.worlds import angled_brush, box_brush
+    cut = angled_brush("cut", (100, 40, -60), (128, 80, 96), clip_normal=(0.3, 1.0, 0.2))
+    bg.translate_brush(cut, (512.0, 0.0, -256.0))
+    turned = angled_brush("turned", (-300, 64, 200), (96, 128, 64))
+    bg.rotate_brush(turned, 30.0, (0.0, 1.0, 0.0))
+    state = EditorState()
+    state.brushes = [box_brush("floor", (0, -16, 0), (2048, 32, 2048)), cut, turned]
+    return state, state.get_level_data()
+
+
+def test_a_version_5_map_is_packaged_as_the_world_layout_the_player_reads(project, tmp_path):
+    """Stage 2d saves an angled brush's planes in its local frame (version
+    5); the Android player reads world-space planes and is not updated, so
+    the package carries the explicit version-4 export of the map instead --
+    every angled brush's planes where it is in the world, its size, and
+    every face record -- read back with the player's own reader."""
+    from engine import brush_geometry as bg
+    from engine.brush_placement import MAP_VERSION
+    state, level = _saved_v5_level()
+    assert level["version"] == MAP_VERSION == 5
+    current = _write_json(project / "maps" / "start.json", level)
+    out = tmp_path / "game.fiopak"
+
+    ok, errors = _export(project, current, out)
+
+    assert ok, errors
+    with FioPackage.open(str(out)) as pak:
+        packaged = pak.load_start_map()
+    assert packaged["version"] == 4
+    assert [b["id"] for b in packaged["brushes"]] == [b["id"] for b in level["brushes"]]
+    for live, record in zip(state.brushes, packaged["brushes"]):
+        if not bg.brush_has_geometry(live):
+            assert record["pos"] == live["pos"] and record["size"] == live["size"]
+            continue
+        # World-space planes: solved as they are, they are the live solid.
+        world = bg.ConvexGeometry(record["geometry"]["planes"])
+        assert np.allclose(world.verts, bg.get_convex(live).verts, atol=1e-9)
+        lo, hi = world.bounds
+        assert np.allclose(record["pos"], (lo + hi) / 2, atol=1e-9)
+        assert np.allclose(record["size"], hi - lo, atol=1e-9)
+        assert ([p.get("texture") for p in record["geometry"]["planes"]]
+                == [p.get("texture") for p in live["geometry"]["planes"]])
+    # The project's own map is untouched: still the version-5 save.
+    assert json.loads(current.read_text())["version"] == 5
+
+
+def test_an_older_map_is_packaged_byte_for_byte(project, tmp_path):
+    current = _write_json(project / "maps" / "start.json", _level())
+    out = tmp_path / "game.fiopak"
+    ok, errors = _export(project, current, out)
+    assert ok, errors
+    with zipfile.ZipFile(out) as zf:
+        assert zf.read("maps/start.json") == current.read_bytes()

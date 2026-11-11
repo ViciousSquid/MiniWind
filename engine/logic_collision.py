@@ -9,11 +9,19 @@ from __future__ import annotations
 
 import math
 import os
+from itertools import chain
 
 import numpy as np
 
 from .brush_geometry import build_collision_mesh, brush_has_geometry
-from .constants import is_water_brush
+from . import brush_placement as _placement
+from .brush_placement import shared_bulk_boxes, world_box
+from .constants import brush_still_box, is_water_brush
+
+_chain = chain.from_iterable
+
+#: (-1, +1) as a (2, 1, 1) column: half-extents to the low and high corner.
+_SIGNS = np.array([-1.0, 1.0]).reshape(2, 1, 1)
 
 try:
     from editor.debug_console import debug_log
@@ -30,6 +38,17 @@ COLLISION_KEYS = (
 )
 
 
+def _vectors(vectors):
+    """``(n, 3)`` float64 of *n* 3-vectors (lists, tuples): one flat pass,
+    Stage 1's values; any vector of another length falls back to reading
+    each one's first three."""
+    count = len(vectors)
+    flat = np.fromiter(_chain(vectors), dtype=np.float64)
+    if flat.size != 3 * count:
+        flat = np.array([(v[0], v[1], v[2]) for v in vectors], dtype=np.float64)
+    return flat.reshape(count, 3)
+
+
 class CollisionRows:
     """Every box in the collision brush cache, as rows in the cache's order.
 
@@ -38,25 +57,32 @@ class CollisionRows:
     loop over every brush. Two sets of boxes, because the two walks round
     differently:
 
-    * ``lo32``/``hi32``: the corners the hitscan walk tests, ``glm.vec3(pos)
-      -/+ glm.vec3(size) * 0.5`` -- rounded to float32 -- held as float64,
-      since the slab test itself then runs in Python floats;
-    * ``lo``/``hi``: the corners the projectile wall walk tests, ``pos -/+
-      size * 0.5`` in float64.
+    * ``lo32``/``hi32``: the corners the hitscan walk tests, the derived
+      bounds' centre -/+ half rounded to float32 (for a box, ``glm.vec3(pos)
+      -/+ glm.vec3(size) * 0.5``), held as float64, since the slab test
+      itself then runs in Python floats;
+    * ``lo``/``hi``: the corners the projectile wall walk tests, the same
+      bounds in float64.
+
+    Both are the brush's derived bounds (:mod:`engine.brush_placement`): a
+    convex brush's planes, not its ``pos``/``size`` copy, and a spinning
+    brush's turned box. Hitscan, projectiles and line of sight still test
+    every brush as this box (a true-shape narrow phase is Stage 2e).
 
     Only geometry lives here. Whether a brush blocks (``hidden``, water, fog,
     trigger) is asked of the brush itself, live, for the few rows a query
     returns: a streaming layer or an I/O input can change those at any time.
-    Movers and doors are the only brushes whose ``pos`` changes during play,
-    and their rows are re-read on every query (:meth:`refresh_movers`), which
-    is what the walks do.
+    Movers and doors are the only brushes that move during play (by their
+    runtime transform, Stage 2b), and their rows are re-derived when a
+    placement stamp says something may have moved (:meth:`refresh_movers`);
+    a query that changes nothing pays two integer reads.
 
     Rebuilt when the cache list is replaced or the editor's world epoch moves;
     see :meth:`LogicCollision.collision_rows`.
     """
 
-    __slots__ = ('source', 'epoch', 'brushes', 'lo32', 'hi32', 'lo', 'hi',
-                 'mover_rows', 'movers')
+    __slots__ = ('source', 'epoch', 'brushes', 'lo32', 'hi32', 'lo', 'hi', '_by_row',
+                 'mover_rows', 'movers', '_mover_seen', '_mover_boxes', '_mover_at')
 
     def __init__(self, brushes, epoch):
         self.source = brushes
@@ -64,33 +90,96 @@ class CollisionRows:
         self.brushes = list(brushes)
         count = len(self.brushes)
         # One contiguous row per axis: every query reads a whole axis at once.
-        self.lo32 = np.empty((3, count), dtype=np.float64)
-        self.hi32 = np.empty((3, count), dtype=np.float64)
-        self.lo = np.empty((3, count), dtype=np.float64)
-        self.hi = np.empty((3, count), dtype=np.float64)
-        self._resolve(slice(None), self.brushes)
-        movers = [row for row, b in enumerate(self.brushes)
-                  if b.get('is_mover') or b.get('is_door')]
+        # The four bounds are views of one block, so a refresh puts a row's
+        # twelve numbers in place with one store (_store).
+        block = np.empty((4, 3, count), dtype=np.float64)
+        self.lo32, self.hi32, self.lo, self.hi = block
+        #: The block indexed by row: ``(4, count, 3)``.
+        self._by_row = block.transpose(0, 2, 1)
+        movers = self._resolve(slice(None), self.brushes)
         self.mover_rows = np.asarray(movers, dtype=np.intp)
         self.movers = [self.brushes[row] for row in movers]
+        #: The placement stamps the mover rows were last derived at (None
+        #: until the first refresh): see refresh_movers.
+        self._mover_seen = None
+        #: Their world boxes, in bulk, from the tables that hold them -- the
+        #: gather shared with any other structure keeping rows for the same
+        #: brushes -- and the rows to put each one in.
+        bulk, rows, at = shared_bulk_boxes(self.movers, self.mover_rows)
+        self._mover_boxes = bulk
+        self._mover_at = (rows, at)
 
     def _resolve(self, rows, brushes):
-        count = len(brushes)
-        pos = np.array([(p[0], p[1], p[2]) for p in (b['pos'] for b in brushes)],
-                       dtype=np.float64).reshape(count, 3).T
-        size = np.array([(s[0], s[1], s[2]) for s in (b['size'] for b in brushes)],
-                        dtype=np.float64).reshape(count, 3).T
-        pos32 = pos.astype(np.float32)
-        half32 = size.astype(np.float32) * np.float32(0.5)
-        self.lo32[:, rows] = pos32 - half32
-        self.hi32[:, rows] = pos32 + half32
-        half = size * 0.5
-        self.lo[:, rows] = pos - half
-        self.hi[:, rows] = pos + half
+        # Each brush's derived bounds (brush_placement.world_box): a convex
+        # brush's planes, a mover where it is now, a spinner's turned box.
+        # A plain box's are its pos/size. One pass finds the rest
+        # (membership tests: most brushes carry none of these keys); a still
+        # angled brush's box is the one remembered with its AABB
+        # (constants.brush_still_box), a mover's is asked of the resolver,
+        # and each is put in place of the brush's pos/size before the
+        # columns are read in bulk -- its half-extent doubled, which the
+        # halving below undoes exactly. Returns the movers' and doors' rows.
+        pos = [b['pos'] for b in brushes]
+        size = [b['size'] for b in brushes]
+        special = [i for i, brush in enumerate(brushes)
+                   if 'geometry' in brush or '_mesh_bounds' in brush
+                   or 'is_mover' in brush or 'is_door' in brush]
+        movers = []
+        for i in special:
+            brush = brushes[i]
+            if brush.get('is_mover') or brush.get('is_door'):
+                movers.append(i)
+                cx, cy, cz, hx, hy, hz = world_box(brush)
+            elif 'geometry' in brush or '_mesh_bounds' in brush:
+                cx, cy, cz, hx, hy, hz = brush_still_box(brush)
+            else:
+                continue                # a flag set false: a plain box
+            pos[i] = (cx, cy, cz)
+            size[i] = (hx * 2.0, hy * 2.0, hz * 2.0)
+        self._store(rows, _vectors(pos), _vectors(size) * 0.5)
+        return movers
+
+    def _store(self, rows, pos, half):
+        # *pos* and *half* are (k, 3), one row per brush. The corners are
+        # pos + (-half, +half) -- a + (-b) is a - b exactly, and negation and
+        # halving are exact, so float32(size * 0.5) == float32(size) * 0.5:
+        # the hitscan corners round exactly as glm.vec3(size) * 0.5 did --
+        # in float32 and in float64, stacked as the block is and stored at
+        # once.
+        signed = half * _SIGNS
+        corners = np.concatenate((pos.astype(np.float32) + signed.astype(np.float32),
+                                  pos + signed))
+        self._by_row[:, rows] = corners
 
     def refresh_movers(self):
-        if self.movers:
-            self._resolve(self.mover_rows, self.movers)
+        """Re-derive the movers' and doors' rows if anything they are derived
+        from may have changed since the last call.
+
+        Every query calls this, so the common answer -- nothing moved -- is
+        two integer reads: the resolver's placement stamps
+        (``brush_placement.runtime_generation``, moved on by every runtime
+        source after every change, and ``authored_generation``, by every
+        edit the editor journals). Only when one has moved are the movers
+        looked at, once, in bulk.
+        """
+        movers = self.movers
+        if not movers:
+            return
+        runtime_stamp = _placement.runtime_generation
+        authored_stamp = _placement.authored_generation
+        seen = self._mover_seen
+        if seen is not None and seen[0] == runtime_stamp and seen[1] == authored_stamp:
+            return
+        # Gathered from the tables that hold them (the mover table's columns),
+        # not rediscovered brush by brush: brush_placement.BulkBoxes.
+        centre, half = self._mover_boxes.boxes()
+        rows, at = self._mover_at
+        if at is not None:
+            centre, half = centre[at], half[at]
+        self._store(rows, centre, half)
+        # The stamps read before the movers were: a change that lands while
+        # this ran moves a stamp past them, and the next query looks again.
+        self._mover_seen = (runtime_stamp, authored_stamp)
 
     def ray_hits(self, origin, direction, reach):
         """Rows whose box the ray meets within *reach*, nearest first.
@@ -436,10 +525,11 @@ class LogicCollision:
         if not model_path:
             return None
 
+        from engine.asset_archives import asset_exists
         full_path = os.path.join('assets', 'models', model_path)
-        if not os.path.exists(full_path):
+        if not asset_exists(full_path):
             full_path = model_path
-        if not os.path.exists(full_path):
+        if not asset_exists(full_path):
             return None
 
         ext = os.path.splitext(model_path)[1].lower()
@@ -529,10 +619,11 @@ class LogicCollision:
         if not model_path:
             return None
 
+        from engine.asset_archives import asset_exists
         full_path = os.path.join('assets', 'models', model_path)
-        if not os.path.exists(full_path):
+        if not asset_exists(full_path):
             full_path = model_path
-        if not os.path.exists(full_path):
+        if not asset_exists(full_path):
             return None
 
         ext = os.path.splitext(model_path)[1].lower()

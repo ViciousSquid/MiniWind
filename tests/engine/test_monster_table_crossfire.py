@@ -25,10 +25,10 @@ def test_scalar_crossfire_matches_dense(count, monkeypatch):
         elif trial == 1:
             end = start + [0.5, 0., 0.]
         radius = (24., 80., 300.)[trial % 3]
-        monkeypatch.setattr(MonsterTable, 'CROSSFIRE_SCALAR_MAX_ROWS', 100)
+        monkeypatch.setattr(MonsterTable, 'CROSSFIRE_NUMPY_MIN', 101)
         scalar = table.crossfire(0, start, end, radius)
         table.gather(monsters)
-        monkeypatch.setattr(MonsterTable, 'CROSSFIRE_SCALAR_MAX_ROWS', 0)
+        monkeypatch.setattr(MonsterTable, 'CROSSFIRE_NUMPY_MIN', 0)
         dense = table.crossfire(0, start, end, radius)
         assert scalar is dense, (count, trial)
 
@@ -45,6 +45,6 @@ def test_crossfire_ray_boundaries(threshold, centre, expected, monkeypatch):
                 SimpleNamespace(pos=list(centre), properties={'team': 'blue'})]
     table = MonsterTable()
     table.gather(monsters)
-    monkeypatch.setattr(MonsterTable, 'CROSSFIRE_SCALAR_MAX_ROWS', threshold)
+    monkeypatch.setattr(MonsterTable, 'CROSSFIRE_NUMPY_MIN', threshold + 1 if threshold else 0)
     got = table.crossfire(0, (0., 64., 0.), (1000., 64., 0.))
     assert got is (monsters[1] if expected else None)

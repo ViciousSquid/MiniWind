@@ -62,7 +62,8 @@ def test_what_it_shows_is_a_copy_of_the_sampled_frame(window):
     shown = instrument.render
 
     game_state.request_swap()                 # both buffers change hands
-    game_state.get_write_state().render_table.center[0] = 999.0
+    # The next frame moves the row (through the table: M4's write path).
+    game_state.get_write_state().render_table.write_transforms([0], centre=[[999.0] * 3])
 
     assert shown.count == 1
     assert shown.center[0].tolist() != [999.0, 999.0, 999.0]
@@ -832,9 +833,11 @@ def _select_in_hierarchy(host, kind, index):
     while found.value() is not None:
         item = found.value()
         if item.data(0, Qt.UserRole) == (kind, index):
-            hierarchy.tree.clearSelection()
-            item.setSelected(True)
-            return item
+            # As a click selects: the selection notification rebuilds the
+            # tree, so item.setSelected() would go on writing to an item the
+            # rebuild just deleted (see test_hierarchy_refresh).
+            hierarchy.tree.setCurrentItem(item)
+            return
         found += 1
     raise AssertionError(f"no hierarchy item for {(kind, index)}")
 
