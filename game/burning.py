@@ -226,6 +226,8 @@ class Burning:
         p["health"] = float(p.get("health", 0) or 0) - damage
         if p["health"] <= 0:
             p["dead"] = True
+            from engine.change_journal import touch
+            touch(thing)
 
     def _player_tint(self, seconds) -> None:
         fx = getattr(self.session, "magic_fx", None)

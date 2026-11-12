@@ -46,15 +46,26 @@ PICKUP_SIZE = 64.0
 assert CONTAINER_Y < ACTOR_Y
 
 
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+
+
 def _repo_root() -> str:
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+    return _ROOT
+
+
+_ART = {}
 
 
 def container_art(kind) -> str:
-    """The top-down art for a container *kind* (the chest's when unknown)."""
-    root = _repo_root()
-    path = os.path.join(root, TOPDOWN_DIR, f"{kind}.png")
-    return path if os.path.isfile(path) else os.path.join(root, TOPDOWN_DIR, "chest.png")
+    """The top-down art for a container *kind* (the chest's when unknown);
+    looked up on disk once per kind."""
+    path = _ART.get(kind)
+    if path is None:
+        path = os.path.join(_ROOT, TOPDOWN_DIR, f"{kind}.png")
+        if not os.path.isfile(path):
+            path = os.path.join(_ROOT, TOPDOWN_DIR, "chest.png")
+        _ART[kind] = path
+    return path
 
 
 def turn_of(props, square=False) -> float:
@@ -95,36 +106,122 @@ def _hidden(p) -> bool:
     return bool(p.get("dead") or p.get("hidden") or p.get("_bw_parked_hidden"))
 
 
+def _entry(logic, t, kind, item_icons):
+    """``(pos, turn, image, size, layer)`` for one container or pickup, or
+    None when it draws nothing (hidden, or a pickup with no icon)."""
+    p = t.properties
+    if _hidden(p):
+        return None
+    if kind == "container":
+        ck = str(p.get("container_kind") or "chest")
+        floor = floor_of(logic, t, CONTAINER_SIZE.get(ck, 130.0) * 0.35)
+        return ((t.pos[0], floor, t.pos[2]), turn_of(p, square=ck in ("chest", "crate")),
+                container_art(ck), CONTAINER_SIZE.get(ck, 130.0), CONTAINER_Y)
+    icon = item_icons.icon_path(p.get("item_id"), p.get("_stack"))
+    if not icon:
+        return None
+    floor = floor_of(logic, t, PICKUP_SIZE * 0.35)
+    return ((t.pos[0], floor, t.pos[2]), turn_of(p), icon, PICKUP_SIZE, PICKUP_Y)
+
+
+class FloorObjects:
+    """Every container and pickup's draw entry, kept current from the change
+    journal rather than re-derived each frame.
+
+    Built from the session's type buckets (rebuilt when they change), then
+    subscribed to :data:`engine.change_journal.JOURNAL` like Fio's tables: each
+    frame re-reads only the objects journalled since the last (a move, a
+    pickup taken, a Big World park), and an overflow rebuilds. A frame's
+    draw list is a distance test over one array.
+    """
+
+    def __init__(self):
+        self.key = None
+        self.things = []
+        self.entries = []
+        self.slot_of = {}
+        self.xz = None
+
+    def _rebuild(self, session, key, buckets):
+        import numpy as np
+        from engine.change_journal import JOURNAL
+        from .. import item_icons
+        logic = getattr(session, "logic", None)
+        self.key = key
+        self.things = [(t, kind) for kind, bucket in buckets for t in bucket]
+        self.slot_of = {id(t): i for i, (t, _kind) in enumerate(self.things)}
+        self.entries = [_entry(logic, t, kind, item_icons) for t, kind in self.things]
+        self.xz = np.array([(float(t.pos[0]), float(t.pos[2])) for t, _kind in self.things],
+                           dtype=np.float64).reshape(-1, 2)
+        JOURNAL.drain(self)          # subscribes; everything is read already
+
+    def _refresh(self, session, changes):
+        from .. import item_icons
+        logic = getattr(session, "logic", None)
+        slot_of = self.slot_of
+        for oid in changes:
+            i = slot_of.get(oid)
+            if i is None:
+                continue
+            t, kind = self.things[i]
+            self.entries[i] = _entry(logic, t, kind, item_icons)
+            self.xz[i] = (float(t.pos[0]), float(t.pos[2]))
+
+    def visible(self, session, ppos):
+        from engine.change_journal import JOURNAL, OVERFLOW
+        buckets = tuple((kind, session._things_of_type(kind))
+                        for kind in ("container", "itempickup"))
+        # The buckets themselves (held, so a rebuilt one cannot reuse an id).
+        key = tuple((bucket, len(bucket)) for _kind, bucket in buckets)
+        if (self.key is None or len(key) != len(self.key)
+                or any(a is not b or m != k for (a, m), (b, k) in zip(key, self.key))):
+            self._rebuild(session, key, buckets)
+        else:
+            changes = JOURNAL.drain(self)
+            if changes is OVERFLOW:
+                self._rebuild(session, key, buckets)
+            elif changes:
+                self._refresh(session, changes)
+        if not len(self.xz):
+            return []
+        import numpy as np
+        d = self.xz - (ppos[0], ppos[2])
+        near = np.flatnonzero(np.einsum("ij,ij->i", d, d) <= DRAW_RADIUS * DRAW_RADIUS)
+        entries = self.entries
+        # Containers first, as the buckets are ordered.
+        return [e for e in map(entries.__getitem__, near.tolist()) if e is not None]
+
+
 def visible(session):
     """``[(pos, turn, image, size, layer)]`` for every container and pickup
     near the player, containers first."""
     ppos = session._player_pos() if hasattr(session, "_player_pos") else None
     if ppos is None:
         return []
+    floor = getattr(session, "_floor_objects", None)
+    if floor is None:
+        floor = session._floor_objects = FloorObjects()
+    return floor.visible(session, ppos)
+
+
+def visible_reference(session):
+    """:func:`visible` derived from scratch, every object read: the oracle
+    the journal-kept list is checked against."""
+    ppos = session._player_pos() if hasattr(session, "_player_pos") else None
+    if ppos is None:
+        return []
+    from .. import item_icons
     logic = getattr(session, "logic", None)
     r2 = DRAW_RADIUS * DRAW_RADIUS
     out = []
-    from .. import item_icons
     for kind in ("container", "itempickup"):
         for t in session._things_of_type(kind):
-            p = t.properties
-            if _hidden(p):
-                continue
             dx, dz = float(t.pos[0]) - ppos[0], float(t.pos[2]) - ppos[2]
             if dx * dx + dz * dz > r2:
                 continue
-            if kind == "container":
-                ck = str(p.get("container_kind") or "chest")
-                floor = floor_of(logic, t, CONTAINER_SIZE.get(ck, 130.0) * 0.35)
-                out.append(((t.pos[0], floor, t.pos[2]),
-                            turn_of(p, square=ck in ("chest", "crate")),
-                            container_art(ck), CONTAINER_SIZE.get(ck, 130.0), CONTAINER_Y))
-            else:
-                floor = floor_of(logic, t, PICKUP_SIZE * 0.35)
-                icon = item_icons.icon_path(p.get("item_id"), p.get("_stack"))
-                if icon:
-                    out.append(((t.pos[0], floor, t.pos[2]), turn_of(p), icon,
-                                PICKUP_SIZE, PICKUP_Y))
+            e = _entry(logic, t, kind, item_icons)
+            if e is not None:
+                out.append(e)
     return out
 
 

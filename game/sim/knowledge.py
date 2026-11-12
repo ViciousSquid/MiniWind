@@ -109,6 +109,46 @@ def source_for(mode: str) -> str:
 # ---------------------------------------------------------------------------
 # Reading / writing an actor's facts
 # ---------------------------------------------------------------------------
+def facts_key(key: str) -> str:
+    """The store key holding actor *key*'s beliefs (for :func:`tokens`)."""
+    return _base(key)
+
+
+def tokens(store, store_keys) -> tuple:
+    """The serialized beliefs under each of *store_keys*, as one tuple: a
+    cheap change check over many actors at once (no JSON parse). Strings
+    compare by identity first, so an unchanged tuple compares fast."""
+    if store is None:
+        return ()
+    registry = getattr(store, "_registry", None)
+    if registry is not None:
+        data = registry.get(store._name)
+        if data is None:
+            return ()
+        get = data.get
+        return tuple([get(k) for k in store_keys])
+    return tuple([store.get(k, "") for k in store_keys])
+
+
+def facts_view_key(store, store_key: str) -> List[Dict]:
+    """:func:`facts_view` by the beliefs' store key (:func:`facts_key`)."""
+    raw = store.get(store_key, "") if store is not None else ""
+    if raw in (None, "", "false"):
+        return []
+    cached = _VIEWS.get(store_key)
+    if cached is not None and (cached[0] is raw or cached[0] == raw):
+        return cached[1]
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        data = None
+    parsed = [f for f in data if isinstance(f, dict)] if isinstance(data, list) else []
+    if len(_VIEWS) >= _VIEW_CAP:
+        _VIEWS.clear()
+    _VIEWS[store_key] = (raw, parsed, {})
+    return parsed
+
+
 def token(store, key: str):
     """Serialized beliefs for cheap read-only cache validation; no JSON parse."""
     if store is None or not key:

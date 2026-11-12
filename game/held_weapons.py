@@ -17,6 +17,7 @@ weapon for the fighters who should have one.
 
 from __future__ import annotations
 
+import functools
 import math
 
 from . import combat_loadout
@@ -58,6 +59,11 @@ MARKSMAN_ROLES = ("hunter", "ranger", "marksman", "sniper")
 DRAW_RADIUS = 2600.0
 #: How far an actor must move in a tick to turn to face its walk.
 TURN_MIN_STEP = 0.5
+#: How far the player may move from where :meth:`HeldWeapons.update` took its
+#: set of actors before :meth:`HeldWeapons.overhead` stops trusting it. The set
+#: reaches this much beyond DRAW_RADIUS, so it holds everyone overhead() could
+#: draw until then.
+NEAR_SLACK = 256.0
 
 
 def _style(item_id) -> str:
@@ -185,6 +191,11 @@ class HeldWeapons:
     def __init__(self, session):
         self.session = session
         self._last = {}               # id(actor) -> (x, z)
+        #: ``(actors, x, z)``: those within DRAW_RADIUS of the player at
+        #: ``(x, z)`` at the last update (logic thread), published whole for
+        #: overhead() (UI thread) to walk instead of every actor in the
+        #: scene; None until the first update.
+        self._near = None
         #: id(actor) -> its weapons' springs (game/weapon_sway.py): an NPC's
         #: blades trail and overshoot a turn just as the player's do.
         self._sway = {}
@@ -210,17 +221,23 @@ class HeldWeapons:
         cached = getattr(s, "_actors_by_id", None)
         by_id = (cached[1] if cached is not None and cached[0] is actors
                  else {id(t): t for t in actors})
+        reach2 = (DRAW_RADIUS + NEAR_SLACK) ** 2
         last = {}
+        near = []
         for t in actors:
             if t.properties.get("multiplayer_player"):
                 continue  # Player physics owns facing, including while strafing.
             x, z = float(t.pos[0]), float(t.pos[2])
             dx, dz = x - ppos[0], z - ppos[2]
-            if dx * dx + dz * dz > r2:
+            d2 = dx * dx + dz * dz
+            if d2 > r2:
+                if d2 <= reach2:
+                    near.append(t)
                 continue
             p = t.properties
             key = id(t)
             last[key] = (x, z)
+            near.append(t)
             target = None
             if not p.get("triggered", True):
                 aggro = by_id.get(p.get("_aggro_target"))
@@ -239,6 +256,7 @@ class HeldWeapons:
                 face_heading(t, fx, fz, delta)
             self._update_block(t, target, getattr(s, "_archery_clock", now))
         self._last = last
+        self._near = (tuple(near), float(ppos[0]), float(ppos[2]))
         self._blocks = {key: value for key, value in self._blocks.items() if key in last}
         # overhead() (UI thread) adds springs; drop those of actors gone out
         # of range, from a copy of the keys.
@@ -290,7 +308,13 @@ class HeldWeapons:
         import time
         from .weapon_sway import WeaponSway
         now = time.perf_counter()
-        for t in s._actors:
+        near = self._near
+        # The last update's set, unless the player has since moved further
+        # than it allows for (a teleport between ticks).
+        if near is not None and ((ppos[0] - near[1]) ** 2 + (ppos[2] - near[2]) ** 2
+                                 > NEAR_SLACK * NEAR_SLACK):
+            near = None
+        for t in (s._actors if near is None else near[0]):
             p = t.properties
             if (p.get("multiplayer_player") or p.get("dead") or p.get("hidden")
                     or p.get("_bw_parked_hidden") or p.get("away_on_journey")):
@@ -327,8 +351,11 @@ class HeldWeapons:
         return out
 
 
+@functools.lru_cache(maxsize=1024)
 def two_handed(item_id) -> bool:
-    """Whether the weapon *item_id* needs both hands (every bow)."""
+    """Whether the weapon *item_id* needs both hands (every bow). Asked per
+    actor per frame; an item's class does not change during play (the cache
+    is cleared when a session starts)."""
     if not item_id:
         return False
     from .rpg import equipment, items

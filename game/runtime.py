@@ -653,6 +653,9 @@ class MiniwindSession(SettlementLaw):
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
         self.logic = logic
         cfg = cfg or {}
+        # Per-frame item classifications are memoised for a session's life.
+        MiniwindSession.overhead_weapon_kind.cache_clear()
+        held_weapons.two_handed.cache_clear()
         mins_per_day = (float(cfg.get("minutes_per_day", DEFAULT_MINUTES_PER_DAY))
                         or DEFAULT_MINUTES_PER_DAY)
         self.clock = GameClock(
@@ -3979,12 +3982,12 @@ class MiniwindSession(SettlementLaw):
         candidates = []
         radius2 = BOUNTY_NOTICE_RADIUS * BOUNTY_NOTICE_RADIUS
         for candidate in self.npcs():
-            if not self._is_arrest_guard(candidate):
-                continue
+            # Distance first: it rules out nearly everyone for two subtractions,
+            # before the guard test reads five properties.
             dx = candidate.pos[0] - player_pos[0]
             dz = candidate.pos[2] - player_pos[2]
             d = dx * dx + dz * dz
-            if d > radius2:
+            if d > radius2 or not self._is_arrest_guard(candidate):
                 continue
             if (self._law_region(candidate.pos, candidate) != region
                     or not self._guard_knows_writ(candidate, region)
@@ -7784,9 +7787,11 @@ class MiniwindSession(SettlementLaw):
         return held
 
     @staticmethod
+    @functools.lru_cache(maxsize=1024)
     def overhead_weapon_kind(weapon_id) -> str:
         """``"melee"``, ``"bow"`` or ``"staff"``: how the viewport animates a
-        held weapon's attack, from the item database's own classification."""
+        held weapon's attack, from the item database's own classification
+        (asked per weapon per frame; cleared when a session starts)."""
         from . import combat_loadout
         style = combat_loadout._item_style(weapon_id)
         if style == combat_loadout.MAGIC:
@@ -9488,10 +9493,37 @@ class MiniwindSession(SettlementLaw):
         return _chain(self._things_of_type("container"), self.windmills.bodies())
 
     def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
-        """The nearest usable container within its own use radius."""
+        """The nearest usable container within its own use radius.
+
+        Asked nearly every tick (the use prompt), over every container in the
+        map: the stock containers are tested as one array -- positions
+        gathered in one pass, their authored use radii read once per
+        container set -- and the few mill bodies after them, as before."""
         best, best_d = None, None
         px, pz = player_pos[0], player_pos[2]
-        for c in self._container_things():
+        stock = self._things_of_type("container")
+        n = len(stock)
+        if n:
+            cached = getattr(self, "_container_radii", None)
+            # Held, not keyed by id(): a rebuilt bucket can reuse a freed id.
+            if cached is None or cached[0] is not stock or cached[2] != n:
+                cached = self._container_radii = (stock, np.array(
+                    [float(c.properties.get("use_radius", math.nan)) for c in stock],
+                    dtype=np.float64), n)
+            try:
+                xyz = np.fromiter(_chain.from_iterable([c.pos for c in stock]),
+                                  dtype=np.float64, count=3 * n).reshape(n, 3)
+            except ValueError:         # a position that is not exactly (x, y, z)
+                xyz = np.array([(c.pos[0], c.pos[1], c.pos[2]) for c in stock],
+                               dtype=np.float64).reshape(n, 3)
+            r = cached[1]
+            r = np.where(np.isnan(r), float(radius), r)
+            d = (px - xyz[:, 0]) ** 2 + (pz - xyz[:, 2]) ** 2
+            ok = np.flatnonzero((r >= 0.0) & (d <= r * r))
+            if len(ok):
+                i = int(ok[np.argmin(d[ok])])        # first of equals, as the loop
+                best, best_d = stock[i], float(d[i])
+        for c in self.windmills.bodies():
             r = float(c.properties.get("use_radius", radius))
             pos = c.pos
             dx = px - pos[0]

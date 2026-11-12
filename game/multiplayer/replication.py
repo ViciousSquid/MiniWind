@@ -363,8 +363,6 @@ def apply(coop, message):
 
 
 def interpolate(coop):
-    from engine.change_journal import touch
-
     now = time.monotonic()
     for thing, start, end, received in getattr(coop, "_render_targets", {}).values():
         if thing.properties.get("multiplayer_player") and any(
@@ -373,8 +371,9 @@ def interpolate(coop):
         ):
             continue
         alpha = min(1.0, max(0.0, (now - received) / coop.SNAPSHOT_INTERVAL))
+        # Assigning pos journals the move (MOVED, with the position): only
+        # that column is re-read. apply() says STATE when properties arrive.
         thing.pos = [a + (b - a) * alpha for a, b in zip(start, end)]
-        touch(thing)
 
 
 def make_remote(context):

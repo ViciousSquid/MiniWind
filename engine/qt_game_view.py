@@ -726,14 +726,22 @@ class QtGameView(QOpenGLWidget):
                 handed=a_handed,
                 block=float(entry[6] or 0.0) if len(entry) > 6 else 0.0)
 
+    #: weapon id -> its overhead icon path ("" for none); the files are
+    #: shipped assets, looked up once per id rather than once per frame.
+    _WEAPON_ASSET_PATHS = {}
+
     @staticmethod
     def _weapon_asset_path(weapon_id):
         """A held weapon's transparent overhead icon: assets/sprites/items/<id>.png."""
         if not weapon_id:
             return ""
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "assets", "sprites", "items", f"{weapon_id}.png")
-        return path if os.path.isfile(path) else ""
+        cached = QtGameView._WEAPON_ASSET_PATHS.get(weapon_id)
+        if cached is None:
+            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "assets", "sprites", "items", f"{weapon_id}.png")
+            cached = QtGameView._WEAPON_ASSET_PATHS[weapon_id] = (
+                path if os.path.isfile(path) else "")
+        return cached
 
     @staticmethod
     def _weapon_kind(weapon_id, session=None):

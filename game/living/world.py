@@ -218,20 +218,24 @@ class SessionHooks(jn.WorldHooks):
     def clear_site(self, place_key, fraction):
         alive = self.w.site_creatures(place_key)
         n = int(round(len(alive) * max(0.0, min(1.0, fraction))))
+        from engine.change_journal import touch
         for t in alive[:n]:
             p = t.properties
             p["dead"] = True
             p["health"] = 0
             p["triggered"] = True
+            touch(t)          # a death the tables resolve (Debug Tables found it unsaid)
         return n
 
     def raid_place(self, place_key, strength):
         stock = self.w.livestock_near(place_key)
         n = min(len(stock), 1 + int(strength // 6000))
+        from engine.change_journal import touch
         for t in stock[:n]:
             p = t.properties
             p["dead"] = True
             p["health"] = 0
+            touch(t)
         return n
 
     def player_bounty(self):
