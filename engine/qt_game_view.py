@@ -620,7 +620,8 @@ class QtGameView(QOpenGLWidget):
         # Every head, weapon and torch of the frame goes to the GPU together:
         # one instanced draw per run sharing a texture (OverheadSpriteRenderer.begin).
         renderer = self._overhead_sprite_renderer
-        batching = renderer.begin(self.projection_matrix, self.view_matrix)
+        begin = getattr(renderer, "begin", None)    # a stand-in may not batch
+        batching = bool(begin) and begin(self.projection_matrix, self.view_matrix)
         try:
             self._draw_overhead_actors(render_state, lt, coop)
         finally:
