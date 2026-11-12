@@ -482,7 +482,7 @@ class Soak:
         view._cached_level_complete_ui = ui
         if ui and ui.get("immediate") and not getattr(view, "_level_change_queued", False):
             view._level_change_queued = True
-            QTimer.singleShot(0, view._confirm_immediate_level_change)
+            QTimer.singleShot(0, view.hud._confirm_immediate_level_change)
         elif ui and not ui.get("immediate") and self.rng.random() < 0.02:
             view._confirm_level_complete()   # the player clicks Continue
         if ui:

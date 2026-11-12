@@ -188,6 +188,8 @@ def test_local_game_menu_keeps_mouse_when_controller_panel_is_behind_it(qt_app):
             )
         ),
     )
+    from engine.view_pointer import ViewPointer
+    view.pointer = ViewPointer(view)        # who owns the mouse (engine/view_pointer.py)
     event = SimpleNamespace(button=lambda: Qt.LeftButton)
     QtGameView.mousePressEvent(view, event)
     assert received == [event]

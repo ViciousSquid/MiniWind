@@ -531,12 +531,13 @@ class QtSink:
         return getattr(getattr(self.view, "logic_thread", None), "_miniwind", None)
 
     def menu_open(self) -> bool:
-        from engine import qt_game_view as qv
+        from engine.view_pause import play_menu_open
+        from engine.view_pointer import game_pointer_open, window_wants_cursor
         view = self.view
         if not getattr(view, "play_mode", False):
             return True
-        if (qv._play_menu_open(view) or getattr(view, "pause_menu", None) is not None
-                or qv._game_pointer_open(view) or qv._window_wants_cursor(view)
+        if (play_menu_open(view) or getattr(view, "pause_menu", None) is not None
+                or game_pointer_open(view) or window_wants_cursor(view)
                 or self._death_menu_open()):
             return True
         session = self._session()
@@ -547,8 +548,8 @@ class QtSink:
     def keyboard_menu(self) -> bool:
         """A menu driven by the keyboard (arrows and Enter) rather than the
         pointer: the pause menu, the death screen."""
-        from engine import qt_game_view as qv
-        return bool(qv._play_menu_open(self.view) or self._death_menu_open())
+        from engine.view_pause import play_menu_open
+        return bool(play_menu_open(self.view) or self._death_menu_open())
 
     def context(self):
         session = self._session()

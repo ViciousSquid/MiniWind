@@ -120,7 +120,7 @@ def test_world_logic_and_editor_state_do_not_import_the_renderer():
 
 
 #: The viewport's delegated responsibilities, each a class holding the view.
-HOST_PARTS = ("view_audio", "view_components", "view_debug_draw", "view_hud", "view_messages", "view_pause", "view_picking", "view_terrain_edit")
+HOST_PARTS = ("view_audio", "view_components", "view_debug_draw", "view_hud", "view_messages", "view_overhead", "view_pause", "view_picking", "view_pointer", "view_terrain_edit")
 
 
 def _host_files():

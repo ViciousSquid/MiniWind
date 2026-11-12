@@ -7,7 +7,7 @@ import pytest
 from PyQt5 import QtCore, QtGui
 
 from engine.floating_windows import WindowManager
-from engine.qt_game_view import _window_wants_cursor
+from engine.view_pointer import window_wants_cursor as _window_wants_cursor
 from game import host, keybinds
 from game.runtime import MiniwindSession
 from game.rpg import equipment as eq, items

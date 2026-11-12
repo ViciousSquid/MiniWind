@@ -34,6 +34,7 @@ _GENERIC_SOURCES = ("engine/logic_thread.py", "engine/savegame.py",
                     "engine/qt_game_view.py", "engine/view_audio.py",
                     "engine/view_components.py", "engine/view_debug_draw.py",
                     "engine/view_hud.py", "engine/view_messages.py",
+                    "engine/view_overhead.py", "engine/view_pointer.py",
                     "engine/view_pause.py", "engine/view_picking.py",
                     "engine/view_terrain_edit.py", "engine/spatial.py",
                     "engine/physics.py")

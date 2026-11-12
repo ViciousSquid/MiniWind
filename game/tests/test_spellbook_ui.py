@@ -10,7 +10,7 @@ QtGui = pytest.importorskip("PyQt5.QtGui")
 pytestmark = pytest.mark.qt
 
 from engine.floating_windows import WindowManager
-from engine.qt_game_view import _window_wants_cursor
+from engine.view_pointer import window_wants_cursor as _window_wants_cursor
 from plugins.api import TickContext
 from game import host, keybinds
 from game.rpg import magic, equipment as eq

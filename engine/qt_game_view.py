@@ -28,7 +28,6 @@ from editor.things import (
 )
 from engine.sdl_runtime import init_input as init_sdl_input
 from engine.player import Player
-from engine.sdl_runtime import init_input as init_sdl_input
 from engine.game_input import modal_input_active as _game_modal_input_active
 from engine.game_input import modal_escape_active as _game_modal_escape_active
 from engine.game_input import owns_number_keys as _game_owns_number_keys
@@ -77,6 +76,10 @@ from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIR
 from editor.debug_console import CommandInput, DebugConsole, debug_log
 from .sysmon import SysMon
 from .view_audio import ViewAudio
+from .view_overhead import ViewOverhead
+from .view_pause import play_menu_open as _play_menu_open
+from .view_pointer import (ViewPointer, game_pointer_open as _game_pointer_open,
+                           window_wants_cursor as _window_wants_cursor)
 from .view_hud import ViewHud
 from .view_messages import ViewMessages
 from .view_pause import ViewPause
@@ -103,57 +106,6 @@ GL_GPU_MEM_INFO_DEDICATED_VIDMEM_NVX = 0x9047
 GL_TEXTURE_FREE_MEMORY_ATI = 0x87FC
 GL_RENDERBUFFER_FREE_MEMORY_ATI = 0x87FD
 
-def _play_menu_open(view) -> bool:
-    """True while *view* has a game's play menu open over a play session."""
-    menu = getattr(view, 'play_menu', None)
-    return bool(getattr(view, 'play_mode', False) and menu is not None
-                and menu.active)
-
-
-def _game_pointer_open(view) -> bool:
-    """Whether the game's pointer claim holds now (``QtGameView.game_pointer``).
-
-    Never while something else owns the mouse: a pause menu, the console,
-    an actor pick.
-    """
-    pointer = getattr(view, 'game_pointer', None)
-    if (pointer is None or not getattr(view, 'play_mode', False)
-            or getattr(view, 'console_overlay_active', False)
-            or getattr(view, '_actor_pick', None) is not None
-            or getattr(view, 'pause_menu', None) is not None
-            or _play_menu_open(view)):
-        return False
-    try:
-        return bool(pointer.wants_pointer())
-    except Exception:
-        return False
-
-
-def _window_wants_cursor(view) -> bool:
-    """Whether a gameplay window needs a free mouse cursor.
-
-    The always-visible inventory strip and ordinary overlays do not release
-    the captured mouse. Statistics, the merchant trade window and Debug Tools
-    explicitly require a pointer for their interactive controls.
-    """
-    manager = getattr(view, 'floating_windows', None)
-    if (manager is None or not getattr(view, 'play_mode', False)
-            or getattr(view, 'console_overlay_active', False)
-            or getattr(view, '_actor_pick', None) is not None
-            or getattr(view, 'pause_menu', None) is not None
-            or _play_menu_open(view)):
-        return False
-    return any(
-        getattr(w, 'active', False)
-        and getattr(w, 'wants_cursor', False)
-        and getattr(w, 'key', None) in (
-            'screen:statistics', 'screen:character', 'screen:spells',
-            'screen:trade', 'debug:tools', 'debug:pathfinding'
-        )
-        for w in manager.windows
-    )
-
-
 def perspective_projection(fov, aspect, near, far):
     if aspect == 0:
         return glm.mat4(1.0)
@@ -175,6 +127,8 @@ class QtGameView(QOpenGLWidget):
         self.components = ViewComponents(self)
         self.picking = ViewPicking(self)
         self.debug_draw = ViewDebugDraw(self)
+        self.pointer = ViewPointer(self)
+        self.overhead = ViewOverhead(self)
         self._logic_tick_fault_signal.connect(self._handle_logic_tick_fault)
 
         # Preserve the launcher's swap interval (and its other surface defaults).
@@ -582,7 +536,6 @@ class QtGameView(QOpenGLWidget):
         during a cinematic, or when disabled.
         """
         _lt = self.logic_thread
-        coop = getattr(getattr(_lt, "game_session", None), "coop", None)
         _lt_overhead = bool(_lt.camera.is_overhead()) if _lt is not None else False
         if not (self.play_mode and self.overhead_sprite_enabled
                 and (self._is_overhead() or _lt_overhead)):
@@ -600,49 +553,15 @@ class QtGameView(QOpenGLWidget):
             from engine.overhead_sprite import SpriteController, OverheadSpriteRenderer
         except Exception:
             return
-        # A game can replace the player's look with one still image
-        # (``logic.player_head_sprite``, a repo-relative path): every frame maps
-        # to it, and the renderer is rebuilt whenever it changes.
-        head_rel = getattr(lt, "player_head_sprite", None) if coop is None else None
-        if head_rel and head_rel != getattr(self, "_overhead_head", None):
-            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            head_abs = os.path.join(root, head_rel)
-            frames = {k: head_abs for k in (
-                SpriteController.IDLE, SpriteController.WALK_A, SpriteController.WALK_B,
-                SpriteController.IDLE_G, SpriteController.WALK_A_G,
-                SpriteController.WALK_B_G, SpriteController.SHOOT)}
-            self._overhead_sprite_renderer = OverheadSpriteRenderer(
-                frame_files=frames, size=float(self.overhead_sprite_size),
-                facing_offset_deg=float(self.overhead_sprite_facing_offset))
-            self._overhead_head = head_rel
+        # A game draws its actors' heads and what they hold (view_overhead).
+        if self.overhead.draw(render_state):
+            return
+        if self._overhead_sprite_ctrl is None:
+            self._overhead_sprite_ctrl = SpriteController(walk_fps=float(self.overhead_walk_fps))
         if self._overhead_sprite_renderer is None:
             self._overhead_sprite_renderer = OverheadSpriteRenderer(
                 size=float(self.overhead_sprite_size),
                 facing_offset_deg=float(self.overhead_sprite_facing_offset))
-
-        # Every head, weapon and torch of the frame goes to the GPU together:
-        # one instanced draw per run sharing a texture (OverheadSpriteRenderer.begin).
-        renderer = self._overhead_sprite_renderer
-        begin = getattr(renderer, "begin", None)    # a stand-in may not batch
-        batching = bool(begin) and begin(self.projection_matrix, self.view_matrix)
-        try:
-            self._draw_overhead_actors(render_state, lt, coop)
-        finally:
-            if batching:
-                renderer.end()
-
-    def _draw_overhead_actors(self, render_state, lt, coop):
-        """The player's head and what every nearby actor holds (see
-        :meth:`_draw_overhead_sprite`)."""
-        from engine.overhead_sprite import SpriteController
-        sess = getattr(lt, "game_session", None)
-        if coop is not None:
-            # Co-op heads already use published actor sprites. Their held
-            # equipment still needs the same overlay used in solo play.
-            self._draw_overhead_actor_weapons(sess)
-            return
-        if self._overhead_sprite_ctrl is None:
-            self._overhead_sprite_ctrl = SpriteController(walk_fps=float(self.overhead_walk_fps))
 
         pos = render_state.player_pos
         if pos is None:
@@ -654,134 +573,11 @@ class QtGameView(QOpenGLWidget):
         angle = float(render_state.player_angle)
         armed = bool(render_state.active_weapon)
         shooting = bool(render_state.muzzle_flash_active)
-        # A game session (``logic.game_session``) may drive the player's pose,
-        # hurt flash and held weapon through duck-typed hooks:
-        # ``overhead_pose() -> (armed, attacking)``, ``overhead_player_flash()
-        # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` (or
-        # a list of ``(weapon_id, handed[, attacking])``, one per hand) and
-        # ``overhead_weapon_kind(weapon_id) -> "melee" | "bow" | "staff"``.
-        pose = getattr(sess, "overhead_pose", None)
-        if pose is not None:
-            try:
-                armed, shooting = pose()
-            except Exception:
-                pass
         self._overhead_sprite_ctrl.update(gpos, angle, time.perf_counter(),
                                           armed=armed, shooting=shooting)
-        flash = 0.0
-        flash_fn = getattr(sess, "overhead_player_flash", None)
-        if flash_fn is not None:
-            try:
-                flash = float(flash_fn() or 0.0)
-            except Exception:
-                flash = 0.0
-        tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else (0.0, 0.0, 0.0, 0.0)
         self._overhead_sprite_renderer.draw(
             self.projection_matrix, self.view_matrix, gpos,
-            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame(),
-            tint=tint)
-        held = getattr(sess, "overhead_player_weapon", None)
-        if held is None:
-            return
-        # ``(weapon_id, handed)`` for one hand, or a list of
-        # ``(weapon_id, handed[, attacking[, facing_offset[, block]]])`` --
-        # one per hand that holds something (a second weapon, a torch) --
-        # each animated on its own, and turned by its offset (radians) from
-        # the head's facing, so a game can let a weapon trail a turn; *block*
-        # (0..1, the game's own tween) raises a shield edge-on in front.
-        try:
-            in_hands = held()
-            if in_hands and isinstance(in_hands[0], str):
-                in_hands = [in_hands]
-        except Exception as exc:
-            debug_log("Error", f"overhead_player_weapon failed: {exc}")
-            return
-        now = time.perf_counter()
-        for entry in in_hands or ():
-            weapon_id, handed = entry[0], entry[1]
-            weapon_path = self._weapon_asset_path(weapon_id)
-            if not weapon_path:
-                continue
-            facing = self._overhead_sprite_ctrl.facing
-            if len(entry) > 3:
-                facing += float(entry[3] or 0.0)
-            self._overhead_sprite_renderer.draw_weapon(
-                self.projection_matrix, self.view_matrix, gpos,
-                facing, weapon_path,
-                now, attacking=bool(entry[2]) if len(entry) > 2 else shooting,
-                weapon_kind=self._weapon_kind(weapon_id, sess),
-                handed=handed,
-                block=float(entry[4] or 0.0) if len(entry) > 4 else 0.0)
-        self._draw_overhead_actor_weapons(sess)
-
-    def _draw_overhead_actor_weapons(self, sess):
-        """Draw nearby actors' held items, including every co-op character.
-
-        ``overhead_actor_weapons()`` supplies ``(pos, facing, item, handed,
-        attacking, size[, block])`` entries. The optional block pose lets
-        each co-op shield use its owner's normal single-player animation.
-        """
-        others = getattr(sess, "overhead_actor_weapons", None)
-        if others is None:
-            return
-        try:
-            held_list = others() or ()
-        except Exception as exc:
-            debug_log("Error", f"overhead_actor_weapons failed: {exc}")
-            return
-        now = time.perf_counter()
-        player_size = max(1.0, float(self.overhead_sprite_size))
-        for entry in held_list:
-            a_pos, a_facing, a_weapon, a_handed, a_attacking, a_size = entry[:6]
-            path = self._weapon_asset_path(a_weapon)
-            if not path:
-                continue
-            self._overhead_sprite_renderer.draw_weapon(
-                self.projection_matrix, self.view_matrix, a_pos, a_facing, path,
-                now, attacking=a_attacking,
-                weapon_kind=self._weapon_kind(a_weapon, sess),
-                size=player_size * 0.55 * (a_size / player_size),
-                handed=a_handed,
-                block=float(entry[6] or 0.0) if len(entry) > 6 else 0.0)
-
-    #: weapon id -> its overhead icon path ("" for none); the files are
-    #: shipped assets, looked up once per id rather than once per frame.
-    _WEAPON_ASSET_PATHS = {}
-
-    @staticmethod
-    def _weapon_asset_path(weapon_id):
-        """A held weapon's transparent overhead icon: assets/sprites/items/<id>.png."""
-        if not weapon_id:
-            return ""
-        cached = QtGameView._WEAPON_ASSET_PATHS.get(weapon_id)
-        if cached is None:
-            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "assets", "sprites", "items", f"{weapon_id}.png")
-            cached = QtGameView._WEAPON_ASSET_PATHS[weapon_id] = (
-                path if os.path.isfile(path) else "")
-        return cached
-
-    @staticmethod
-    def _weapon_kind(weapon_id, session=None):
-        """``"melee"``, ``"bow"`` or ``"staff"``, for the weapon's attack animation.
-
-        The game session's ``overhead_weapon_kind`` answers first; for an id it
-        does not know, or with no game, a name heuristic keeps it sensible.
-        """
-        kind_fn = getattr(session, "overhead_weapon_kind", None)
-        if kind_fn is not None:
-            try:
-                kind = kind_fn(weapon_id)
-                if kind in ("melee", "bow", "staff"):
-                    return kind
-            except Exception:
-                pass
-        wid = str(weapon_id or "").lower()
-        if "bow" in wid:
-            return "bow"
-        if "staff" in wid or "wand" in wid:
-            return "staff"
-        return "melee"
+            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame())
 
 
     def initializeGL(self):
@@ -843,58 +639,6 @@ class QtGameView(QOpenGLWidget):
             debug_log("Error", "3D view: OpenGL reported " + ", ".join(errors)
                       + " while drawing; run with FIO_GL_DEBUG=1 to find the call.")
 
-
-    #: Seconds an error notice stays on screen.
-    ERROR_NOTICE_SECONDS = 12.0
-    #: At most this many notices are drawn at once (newest kept).
-    ERROR_NOTICE_LINES = 4
-
-    def show_error_notice(self, text):
-        """Show *text* as an error banner over the view for a few seconds.
-
-        Drawn by this view itself (see :meth:`_draw_error_notices`), so it is
-        visible in the game's fullscreen kiosk mode, over menus, and whether
-        or not editor toasts are switched off.
-        """
-        notices = [n for n in getattr(self, '_error_notices', []) if n[0] != text]
-        notices.append((str(text), time.perf_counter() + self.ERROR_NOTICE_SECONDS))
-        self._error_notices = notices[-self.ERROR_NOTICE_LINES:]
-        self.update()
-
-    def _draw_error_notices(self, painter):
-        notices = getattr(self, '_error_notices', None)
-        if not notices:
-            return
-        now = time.perf_counter()
-        notices = [n for n in notices if n[1] > now]
-        self._error_notices = notices
-        if not notices:
-            return
-        painter.save()
-        try:
-            font = QFont(self.font())
-            font.setPointSizeF(max(9.0, font.pointSizeF()))
-            font.setBold(True)
-            painter.setFont(font)
-            metrics = QFontMetrics(font)
-            margin, pad = 12, 8
-            width = min(self.width() - 2 * margin, 900)
-            y = margin
-            for text, expires in notices:
-                fade = max(0.0, min(1.0, (expires - now) / 1.5))
-                line = "\u26a0  " + text
-                rect = metrics.boundingRect(0, 0, width - 2 * pad, 1000,
-                                            int(Qt.TextWordWrap), line)
-                box = QRect((self.width() - width) // 2, y, width, rect.height() + 2 * pad)
-                painter.setPen(QPen(QColor(255, 120, 110, int(255 * fade)), 2))
-                painter.setBrush(QBrush(QColor(90, 12, 12, int(225 * fade))))
-                painter.drawRoundedRect(box, 6, 6)
-                painter.setPen(QColor(255, 255, 255, int(255 * fade)))
-                painter.drawText(box.adjusted(pad, pad, -pad, -pad),
-                                 int(Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignVCenter), line)
-                y += box.height() + 6
-        finally:
-            painter.restore()
 
     def _handle_logic_tick_fault(self, message):
         """Run fatal-tick play teardown on QtGameView's GUI thread.
@@ -1037,7 +781,7 @@ class QtGameView(QOpenGLWidget):
             keys = (set() if self.console_overlay_active or self.pause_menu is not None
                     or _play_menu_open(self)
                     else self.editor.keys_pressed)
-            self._sync_game_pointer()
+            self.pointer.sync()
             self.game_state.set_keys(keys)
             self._poll_mouse_look()
             # Update Player 2 input from arrow keys (if no gamepad)
@@ -1218,13 +962,7 @@ class QtGameView(QOpenGLWidget):
             self._cached_projectiles = np.array(render_state.projectiles, dtype=np.float32).reshape(-1, 3)
             self._cached_monster_rays = list(render_state.monster_debug_rays)
             self._cached_level_complete_ui = render_state.level_complete_ui
-            ui = self._cached_level_complete_ui
-            if (ui and ui.get('immediate')
-                    and not getattr(self, '_level_change_queued', False)):
-                # No Complete/Continue box: change level on the next event
-                # loop turn (never from inside the frame being drawn).
-                self._level_change_queued = True
-                QTimer.singleShot(0, self._confirm_immediate_level_change)
+            self.hud.queue_immediate_level_change(self._cached_level_complete_ui)
             self._cached_underwater = render_state.player_underwater
             self._cached_underwater_tint = render_state.underwater_tint
             self._cached_p2_underwater = render_state.player2_underwater
@@ -1622,7 +1360,7 @@ class QtGameView(QOpenGLWidget):
 
         if not self.play_mode:
             self.floating_windows.draw_all(painter)
-        self._draw_error_notices(painter)
+        self.messages._draw_error_notices(painter)
 
         # Live terrain sculpting hint: draw this inside the 3D viewport rather
         # than using the editor toast system. This is intentionally styled as
@@ -1672,61 +1410,6 @@ class QtGameView(QOpenGLWidget):
     # PAUSE MENU (Esc in Play Mode; plugin API 1.7.0)
     # =========================================================================
 
-
-    # -- a game's own play menu ------------------------------------------------
-
-    def play_menu_active(self) -> bool:
-        """True while an installed game play menu is open over a play session."""
-        return _play_menu_open(self)
-
-    def open_play_menu(self) -> bool:
-        """Raise the game's installed play menu. False when there is none.
-
-        The menu freezes the world itself; here the view frees the cursor so
-        the menu can be pointed at, and drops anything the console was doing.
-        """
-        menu = self.play_menu
-        if not self.play_mode or menu is None:
-            return False
-        if menu.active:
-            return True
-        if self.console_overlay_active:
-            self._close_console_overlay()
-        menu.open()
-        while QApplication.overrideCursor() is not None:
-            QApplication.restoreOverrideCursor()
-        QApplication.setOverrideCursor(Qt.ArrowCursor)
-        self.update()
-        return True
-
-    def play_menu_closed(self):
-        """The game's play menu calls this as it closes: take the cursor back."""
-        if not self.play_mode:
-            return
-        if self._actor_pick is not None:
-            self.picking._show_pick_cursor()
-        elif _game_pointer_open(self):
-            self._game_pointer_shown = False
-            self._sync_game_pointer()
-        else:
-            self._capture_play_cursor()
-        self.update()
-
-    def _sync_game_pointer(self):
-        """Show the cursor while the game wants the pointer (or a floating
-        window does), recapture it after."""
-        want = _game_pointer_open(self) or _window_wants_cursor(self)
-        if want == self._game_pointer_shown:
-            return
-        self._game_pointer_shown = want
-        if want:
-            while QApplication.overrideCursor() is not None:
-                QApplication.restoreOverrideCursor()
-            QApplication.setOverrideCursor(Qt.ArrowCursor)
-        elif (self.play_mode and not self.console_overlay_active
-              and self._actor_pick is None and self.pause_menu is None
-              and not _play_menu_open(self)):
-            self._capture_play_cursor()
 
     def return_camera_to_player(self):
         """HOME in play: drop any camera focus and centre on the player now."""
@@ -1845,9 +1528,8 @@ class QtGameView(QOpenGLWidget):
             # looping speaker channels and one-shot mixer channels, and discard
             # any sound requests queued by the logic thread during teardown.
             self.audio.stop_all_sounds()
-            if self.play_menu is not None and self.play_menu.active:
-                self.play_menu.close()
-            self._game_pointer_shown = False
+            self.pause.close_play_menu()
+            self.pointer.reset()
             # Play windows (inspectors and the like) close with Play.
             self.floating_windows.clear()
             self._actor_pick = None
@@ -1889,7 +1571,7 @@ class QtGameView(QOpenGLWidget):
             self.update()
 
     def _toggle_splitscreen(self):
-        if getattr(getattr(self.logic_thread,"game_session",None),"coop",None) is not None:
+        if not self.pointer.splitscreen_allowed():
             return
         self.splitscreen_mode = not self.splitscreen_mode
         if self.play_mode:
@@ -2088,15 +1770,8 @@ class QtGameView(QOpenGLWidget):
 
 
     def mousePressEvent(self, event):
-        coop=getattr(getattr(self.logic_thread,"game_session",None),"coop",None)
-        if (self.play_mode and coop is not None and self.pause_menu is None and not _play_menu_open(self)
-                and not self.console_overlay_active
-                and coop.ui_session is not None
-                and (coop.ui_session.open_screen is not None or coop.ui_session.dialogue is not None)):
-            owner=coop.players.get(coop.ui_session.player_id)
-            if owner is not None and owner.profile["device"]!="keyboard" and event.button() in (Qt.LeftButton,Qt.RightButton):
-                self.game_pointer.party_world_press(event, coop)
-                return
+        if self.pointer.party_press(event):
+            return
         if _play_menu_open(self):
             self.play_menu.handle_mouse_press(event)
             return
@@ -2441,9 +2116,7 @@ class QtGameView(QOpenGLWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        coop = getattr(getattr(self.logic_thread, "game_session", None), "coop", None)
-        if self.play_mode and coop is not None and event.button() in (Qt.LeftButton, Qt.RightButton):
-            coop.mouse_hand("primary" if event.button()==Qt.LeftButton else "secondary", False)
+        self.pointer.party_release(event)
         if _play_menu_open(self):
             release = getattr(self.play_menu, 'handle_mouse_release', None)
             if release is not None:
@@ -2588,12 +2261,6 @@ class QtGameView(QOpenGLWidget):
             QApplication.restoreOverrideCursor()
         QApplication.setOverrideCursor(Qt.BlankCursor)
         self._recentre_look_cursor()
-
-    def _confirm_immediate_level_change(self):
-        self._level_change_queued = False
-        ui = getattr(self, '_cached_level_complete_ui', None)
-        if ui and ui.get('immediate'):
-            self.hud._confirm_level_complete()
 
     def recentre_cursor(self):
         """Put the cursor back in the middle of the view for mouse look
@@ -2896,6 +2563,21 @@ class QtGameView(QOpenGLWidget):
 
     def close_pause_menu(self, *args, **kwargs):
         return self.pause.close_pause_menu(*args, **kwargs)
+
+    def play_menu_active(self) -> bool:
+        return self.pause.play_menu_active()
+
+    def open_play_menu(self) -> bool:
+        return self.pause.open_play_menu()
+
+    def play_menu_closed(self):
+        return self.pause.play_menu_closed()
+
+    def show_error_notice(self, text):
+        return self.messages.show_error_notice(text)
+
+    def _draw_error_notices(self, painter):
+        return self.messages._draw_error_notices(painter)
 
     def actor_at(self, *args, **kwargs):
         """The actor under a view position (a game's hit testing asks)."""

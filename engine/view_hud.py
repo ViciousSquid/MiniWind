@@ -922,6 +922,20 @@ class ViewHud:
         tw = fm.horizontalAdvance(hint)
         painter.drawText((w - tw) // 2, btn_y + btn_h + 30, hint)
 
+    def queue_immediate_level_change(self, ui):
+        """A level change with no Complete/Continue box (``ui['immediate']``):
+        made on the next event-loop turn, never from inside the frame."""
+        view = self.view
+        if ui and ui.get('immediate') and not getattr(view, '_level_change_queued', False):
+            view._level_change_queued = True
+            QTimer.singleShot(0, self._confirm_immediate_level_change)
+
+    def _confirm_immediate_level_change(self):
+        self.view._level_change_queued = False
+        ui = getattr(self.view, '_cached_level_complete_ui', None)
+        if ui and ui.get('immediate'):
+            self._confirm_level_complete()
+
     def _confirm_level_complete(self):
         ui = getattr(self.view, '_cached_level_complete_ui', None)
         if not ui:

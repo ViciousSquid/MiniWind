@@ -75,6 +75,13 @@ GL_TEXTURE_FREE_MEMORY_ATI = 0x87FC
 GL_RENDERBUFFER_FREE_MEMORY_ATI = 0x87FD
 
 
+def play_menu_open(view) -> bool:
+    """True while *view* has a game's play menu open over a play session."""
+    menu = getattr(view, 'play_menu', None)
+    return bool(getattr(view, 'play_mode', False) and menu is not None
+                and menu.active)
+
+
 class ViewPause:
     #: Bundled face the menu is set in (assets/fonts), and the fallback.
     #: The pause menu's font family: Fio UI, as the rest of the HUD.
@@ -100,7 +107,7 @@ class ViewPause:
         instead.
         """
         if self.view.play_menu is not None:
-            return self.view.open_play_menu()
+            return self.open_play_menu()
         if not self.view.play_mode or self.view.pause_menu is not None:
             return False
         from engine.pause_menu import PauseMenu
@@ -127,6 +134,60 @@ class ViewPause:
         QApplication.setOverrideCursor(Qt.ArrowCursor)
         self.view.update()
         return True
+
+    # -- a game's own play menu ------------------------------------------------
+    #
+    # QtGameView.play_menu: duck-typed ``active``, ``open()``, ``close()``,
+    # ``handle_key(ev)``, ``handle_mouse_press(ev)``, ``handle_mouse_move(ev)``,
+    # ``draw(painter)``, optionally ``handle_mouse_release(ev)`` /
+    # ``handle_wheel(ev)``. Installed, it is raised instead of Fio's menu; while
+    # active it owns the keyboard and mouse and is painted over everything. It
+    # freezes the world itself.
+
+    def play_menu_active(self) -> bool:
+        """True while an installed game play menu is open over a play session."""
+        return play_menu_open(self.view)
+
+    def open_play_menu(self) -> bool:
+        """Raise the game's installed play menu. False when there is none.
+
+        The menu freezes the world itself; here the view frees the cursor so
+        the menu can be pointed at, and drops anything the console was doing.
+        """
+        view = self.view
+        menu = view.play_menu
+        if not view.play_mode or menu is None:
+            return False
+        if menu.active:
+            return True
+        if view.console_overlay_active:
+            view._close_console_overlay()
+        menu.open()
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+        QApplication.setOverrideCursor(Qt.ArrowCursor)
+        view.update()
+        return True
+
+    def play_menu_closed(self):
+        """The game's play menu calls this as it closes: take the cursor back."""
+        view = self.view
+        if not view.play_mode:
+            return
+        if view._actor_pick is not None:
+            view.picking._show_pick_cursor()
+        elif view.pointer.game_pointer_open():
+            view._game_pointer_shown = False
+            view.pointer.sync()
+        else:
+            view._capture_play_cursor()
+        view.update()
+
+    def close_play_menu(self):
+        """Leaving Play: an open game play menu closes with it."""
+        menu = self.view.play_menu
+        if menu is not None and menu.active:
+            menu.close()
 
     def close_pause_menu(self) -> bool:
         """Close the pause menu and play on."""
