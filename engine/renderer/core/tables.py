@@ -286,11 +286,10 @@ class TablesMixin:
         The first candidate whose image exists wins. ``load_texture`` answers
         a missing file with the white default texture, which is a texture
         like any other: taken at its word, the first candidate always "loaded"
-        and the rest were never tried -- so a monster with one custom image
-        and no ``_1``..``_8`` views of it (every MiniWind head) drew as a white
-        square, its directional candidate standing in front of the image it
-        has. Only when no candidate exists at all is the first one loaded as
-        before, default texture and all.
+        and the rest were never tried -- so a monster whose variant or shoot
+        frame is missing drew as a white square instead of falling back to
+        the image it has. Only when no candidate exists at all is the first
+        one loaded as before, default texture and all.
         """
         from engine.asset_archives import asset_exists
         present = [c for c in candidates if c[1] and (

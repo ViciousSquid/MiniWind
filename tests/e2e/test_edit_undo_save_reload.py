@@ -15,9 +15,11 @@ pytest.importorskip("PyQt5")
 from PyQt5.QtCore import Qt                     # noqa: E402
 from PyQt5.QtTest import QTest                  # noqa: E402
 
-from tests.helpers import scenes                # noqa: E402
 
 pytestmark = [pytest.mark.qt, pytest.mark.integration]
+
+#: A map saved by Fio 3.5 (version 5, placements in the brush's own frame).
+MAP = "tests/fixtures/maps/_SHOWCASE.json"
 
 def _chord(window, key):
     """Ctrl+*key* the way a keyboard types it: Ctrl goes down and comes up.
@@ -54,7 +56,7 @@ def _assert_published_matches_authored(session):
 
 @pytest.mark.parametrize("delete_key", [Qt.Key_Delete, Qt.Key_Backspace])
 def test_delete_undo_redo_save_and_reload_round_trip(fio_session, tmp_path, delete_key):
-    session = fio_session(scenes.write(tmp_path, "level.json", scenes.showcase()))
+    session = fio_session(MAP)
     window = session.window
     with open(session.window.file_path, encoding="utf-8") as handle:
         on_disk = json.load(handle)

@@ -1237,8 +1237,8 @@ class Terrain:
 
 
     #: Whether ordinary ground grows meadow grass (Fio's scatter,
-    #: :meth:`_generate_meadow_blades`). MiniWind keeps ordinary terrain
-    #: clear: grass is the biome map's wheat fields and tundra heath only.
+    #: :meth:`_generate_meadow_blades`). Off: ordinary terrain stays clear,
+    #: and grass is the biome map's wheat fields and tundra heath only.
     meadow_grass = False
 
     def _generate_grass_blades(self, slot: int) -> np.ndarray:

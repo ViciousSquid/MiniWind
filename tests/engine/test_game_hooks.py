@@ -40,7 +40,9 @@ def playing():
     state = EditorState()
     state.brushes = [box_brush("floor", (0, -16, 0), (4096, 32, 4096)),
                      box_brush("wall", (0, 64, 800), (512, 256, 32))]
-    target = make_thing(Monster, "target", (600, 0, 0), health=100, team="beasts")
+    # Standing on the floor: a monster's pos is the middle of its billboard,
+    # floor + sprite_height / 2 (Fio 3.5).
+    target = make_thing(Monster, "target", (600, 64, 0), health=100, team="beasts")
     state.things = [make_thing(PlayerStart, "spawn", (0, 64, 0)), target]
     logic = LogicThread(ThreadedGameState(), state)
     logic.player_runtime.player = Player(0.0, 0.0)

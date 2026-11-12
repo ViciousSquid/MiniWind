@@ -40,7 +40,7 @@ def _drive(logic, monkeypatch, *, tick_cost, publish_cost, oversleep, ticks=240)
 
     tick = LogicThread.TICK_DURATION
 
-    def step_frame(accumulator):
+    def step_frame(accumulator, **_frame):     # MiniWind passes frame_time=
         iterations[0] += 1
         while accumulator >= tick:
             starts.append(clock[0])

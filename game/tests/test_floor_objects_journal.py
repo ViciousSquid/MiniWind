@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("PyQt5")
+pytestmark = pytest.mark.qt
 
 from engine.change_journal import touch
 from editor.things import Thing

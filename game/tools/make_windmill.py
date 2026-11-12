@@ -385,7 +385,9 @@ def main():
     finish(head, 'Scale_reference_head', 'Scale_reference', smooth=True)
     render(scene, args.work / 'windmill_scale.png', 15, 1120, target=(0, 0, 410), azimuth=-18)
     mannequin.hide_render = head.hide_render = True
-    bpy.ops.wm.save_as_mainfile(filepath=str(MODEL_DIR / 'windmill.blend'))
+    # The editable source stays with this generator, not among the shipped
+    # assets (assets/ is what an install carries).
+    bpy.ops.wm.save_as_mainfile(filepath=str(ROOT / 'game/tools/data/windmill.blend'))
     print('WINDMILL_ASSET ' + json.dumps(stats), flush=True)
 
 

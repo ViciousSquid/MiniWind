@@ -518,8 +518,30 @@ def _fail_on_a_held_modifier():
 _SETTINGS_INI = os.path.join(_ROOT, "settings.ini")
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _restore_repo_settings_ini_at_exit():
+    """The same, once more when the session ends: a window deleted after its
+    test (deferred deletion, a session-scoped fixture) still saved into the
+    tracked file -- a [History] section was left behind by whole-suite runs."""
+    try:
+        with open(_SETTINGS_INI, "rb") as fh:
+            before = fh.read()
+    except OSError:
+        before = None
+    yield
+    if before is not None:
+        try:
+            with open(_SETTINGS_INI, "rb") as fh:
+                if fh.read() == before:
+                    return
+            with open(_SETTINGS_INI, "wb") as fh:
+                fh.write(before)
+        except OSError:  # pragma: no cover - read-only checkout
+            pass
+
+
 @pytest.fixture(autouse=True)
-def _restore_repo_settings_ini():
+def _restore_repo_settings_ini(_restore_repo_settings_ini_at_exit):
     """Put the tracked settings.ini back after a test that wrote to it.
 
     MainWindow resolves ``settings.ini`` against the working directory, and

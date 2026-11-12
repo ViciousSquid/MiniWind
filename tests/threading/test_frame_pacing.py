@@ -34,5 +34,8 @@ def test_deadlines_do_not_drift_with_sleep_overshoot(monkeypatch):
     monkeypatch.setattr(logic_thread.time, 'perf_counter', lambda: clock[0])
     monkeypatch.setattr(logic_thread.time, 'sleep', lambda delay: clock.__setitem__(0, clock[0] + delay + 0.001))
     logic.run()
-    assert frames[-1] - frames[0] == pytest.approx(2.001)
+    # The first frame carries one sleep overshoot (1 ms) and the stubbed
+    # frame's cost; from then on every frame starts exactly a tick after the
+    # last, so the overshoot never accumulates.
+    assert logic.TICK_DURATION < frames[1] - frames[0] < logic.TICK_DURATION + 0.0015
     assert [b - a for a, b in zip(frames[1:], frames[2:])] == pytest.approx([logic.TICK_DURATION] * 119)

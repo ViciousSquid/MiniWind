@@ -46,5 +46,9 @@ def test_crossfire_ray_boundaries(threshold, centre, expected, monkeypatch):
     table = MonsterTable()
     table.gather(monsters)
     monkeypatch.setattr(MonsterTable, 'CROSSFIRE_NUMPY_MIN', threshold + 1 if threshold else 0)
-    got = table.crossfire(0, (0., 64., 0.), (1000., 64., 0.))
+    # The ray runs through the spheres' middle: Fio 3.5 centres a monster's
+    # crossfire sphere on its body (monster_body_rise), not 64 above pos.
+    from engine.monster_constants import monster_body_rise
+    y = monster_body_rise({})
+    got = table.crossfire(0, (0., y, 0.), (1000., y, 0.))
     assert got is (monsters[1] if expected else None)

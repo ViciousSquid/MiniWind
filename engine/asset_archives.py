@@ -43,7 +43,7 @@ ASSET_CATEGORIES = ('editor', 'sprites', 'textures', 'models', 'fonts',
 _ROOT_IMAGES = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.icns',
                 '.ppm', '.pbm', '.pgm', '.pnm'}
 _DATA_SUFFIXES = _ROOT_IMAGES | {
-    '.webp', '.tga', '.tif', '.tiff', '.dds', '.ktx', '.ktx2',
+    '.webp', '.avif', '.tga', '.tif', '.tiff', '.dds', '.ktx', '.ktx2',
     '.ttf', '.otf', '.obj', '.mtl', '.glb', '.gltf', '.bin',
     '.json', '.txt', '.md', '.wav', '.ogg', '.mp3',
 }
