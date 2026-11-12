@@ -3429,12 +3429,23 @@ class Terrain:
     #: The paint resolution of maps saved before it was written to them.
     LEGACY_PAINT_RESOLUTION = 128
 
+    #: Output tile side of :meth:`_resample_paint`: a tile no painted texel
+    #: reaches is left zero without being computed.
+    PAINT_RESAMPLE_TILE = 32
+
     @staticmethod
     def _resample_paint(paint, res):
         """*paint* (n, n, 4 uint8) at *res* a side, bilinear.
 
         Colour is weighted by alpha, so the edge of a painted area keeps
         its colour rather than fading towards the black of unpainted texels.
+
+        An unpainted texel (alpha 0) contributes nothing, so an output tile
+        whose taps all land on unpainted texels is zero and is not computed:
+        most of a road-painted world is unpainted (91% of the shipped
+        overworld's texels), and its 128-texel paint is resampled to 256 on
+        every load. Every computed texel goes through the same arithmetic as
+        a whole-chunk pass, so the result is identical to it.
         """
         n = paint.shape[0]
         if n == res:
@@ -3443,14 +3454,37 @@ class Terrain:
         i0 = np.clip(np.floor(at).astype(np.int64), 0, n - 1)
         i1 = np.clip(i0 + 1, 0, n - 1)
         f = np.clip(at - np.floor(at), 0.0, 1.0).astype(np.float32)
+        out = np.zeros((res, res, 4), dtype=np.uint8)
+        alive = paint[..., 3] > 0
+        if not alive.any():
+            return out
+        tile = Terrain.PAINT_RESAMPLE_TILE
         src = paint.astype(np.float32)
         src[..., :3] *= src[..., 3:4] / 255.0
-        rows = src[i0] * (1.0 - f)[:, None, None] + src[i1] * f[:, None, None]
-        out = rows[:, i0] * (1.0 - f)[None, :, None] + rows[:, i1] * f[None, :, None]
-        alpha = out[..., 3:4]
-        np.divide(out[..., :3] * 255.0, alpha, out=out[..., :3], where=alpha > 1e-3)
-        out = np.clip(out + 0.5, 0, 255).astype(np.uint8)
-        out[out[..., 3] == 0, :3] = 0
+        for r0 in range(0, res, tile):
+            rr = slice(r0, min(res, r0 + tile))
+            ra, rb = i0[rr], i1[rr]
+            band = alive[int(ra.min()):int(rb.max()) + 1]
+            if not band.any():
+                continue
+            cols_alive = band.any(axis=0)
+            fr = f[rr]
+            rows = None
+            for c0 in range(0, res, tile):
+                cc = slice(c0, min(res, c0 + tile))
+                ca, cb = i0[cc], i1[cc]
+                if not cols_alive[int(ca.min()):int(cb.max()) + 1].any():
+                    continue
+                if rows is None:
+                    rows = src[ra] * (1.0 - fr)[:, None, None] + src[rb] * fr[:, None, None]
+                fc = f[cc]
+                part = rows[:, ca] * (1.0 - fc)[None, :, None] + rows[:, cb] * fc[None, :, None]
+                alpha = part[..., 3:4]
+                np.divide(part[..., :3] * 255.0, alpha, out=part[..., :3],
+                          where=alpha > 1e-3)
+                part = np.clip(part + 0.5, 0, 255).astype(np.uint8)
+                part[part[..., 3] == 0, :3] = 0
+                out[rr, cc] = part
         return out
 
     def _decode_texture_paint(self, entries, saved_res=None):
