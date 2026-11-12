@@ -1,7 +1,8 @@
-# MiniWind → Fio 3.5.0.1111 migration record
+# MiniWind → Fio 3.5 migration record (3.5.0.1211)
 
 MiniWind's engine moved from Fio 3.0.0.1010 (taken up to upstream commit
-`f445fac1`, plus later per-file backports) to **Fio 3.5.0.1111**. The game
+`f445fac1`, plus later per-file backports) to **Fio 3.5.0.1111**, then to
+**Fio 3.5.0.1211** (Milestone 7). The game
 layer (`game/`) needed four source changes: `multiplayer/replication.py` and
 `multiplayer/world.py` (a door's live position and state rows, below),
 `ui/launcher.py` (engine and game versions shown apart) and `tools/soak.py`
@@ -15,7 +16,8 @@ the concern.
 |---|---|---|
 | MiniWind (start) | `main` | `41eeb2c742b998ec3244356ac005a2faab450d0e` |
 | Fio (first target) | `3.5.0.1111_Latest` | `9b2dca952b88e7c1abd1f5f5979764c3783490b4` |
-| Fio (now) | `3.5.0.1111_CANARY` | `a278e956` (26 commits past `9b2dca95`) |
+| Fio (then) | `3.5.0.1111_CANARY` | `a278e956` (26 commits past `9b2dca95`) |
+| Fio (now) | `3.5.0.1211_Latest` | `77387caaeba284b5467a180b1ba39e147aace86d` (40 commits past `a278e956`) |
 | Common upstream ancestor | Fio `3.0.0.1010_Latest` | `f445fac1be58a1011da276a77de00ef9487add0a` |
 
 `backup_3.0.0.3010` is an ancestor of `41eeb2c` (22 commits behind it), so
@@ -36,9 +38,21 @@ six loose sounds were packed in) rather than Fio's loose folder, and its
 missiles are loosed at Fio's projectile body height
 (`game.fio.projectile_body_lift()`), not a game constant.
 
-Engine provenance is `editor/version.txt` (`version 3.5.0.1111`). MiniWind's
+Milestone 7 brought in Fio 3.5.0.1211 (`77387caa`): `a278e956` plus 40
+commits, merged three-way against it, every line either side added since
+that base checked present in the merged tree. It adds placed image, wet
+(screen-space reflection) and stain decals, edited like terrain stamps
+(`editor/decal_tool.py`, `engine/decal_textures.py`, the decal pass,
+`decalfade`); the Asset Browser's single tiled view with thumbnails read and
+cached off the UI thread (`editor/asset_thumbnails.py`, which supersedes
+MiniWind's own thumbnail cache; MiniWind keeps only its dormant-launch
+deferral); Edit > Colours tabs; and its Decal button icon, added to
+MiniWind's branded `editor.fiopak`. Not taken: the Android player's decals
+and workflow, `CHANGELOG.md`, the `Wet_Decal_Test` demo map.
+
+Engine provenance is `editor/version.txt` (`version 3.5.0.1211`). MiniWind's
 own version is `game.rpg.GAME_VERSION`; the launcher shows both
-("Miniwind 1.0.0 · Fio 3.5.0.1111") and the log header names the engine build.
+("Miniwind 1.0.0 · Fio 3.5.0.1211") and the log header names the engine build.
 
 ## Method
 
@@ -89,6 +103,11 @@ MiniWind map, or load one of four Fio example maps kept as test fixtures in
   eight-direction sprites themselves were later removed (Milestone 2).
 * Torch lights were moved by editing `light.pos` in place, which the change
   journal never sees; they are assigned now.
+* Every frame was counted twice (Fio's timer and MiniWind's paint), and
+  SysMon's frame times recorded twice; counted once now, where painted.
+* A forward-compatible core context refuses line widths above 1.0;
+  `glLineWidth(2.0)` left `GL_INVALID_VALUE` queued (error checking off)
+  for a later call to be blamed for. The width is clamped to 1 there.
 * Missiles were loosed 48 above an actor's pos; Fio 3.5 CANARY centres the
   hit sphere on the body, so they flew over. Launch heights now come from
   the engine (`game.fio.projectile_body_lift()`).
@@ -171,6 +190,39 @@ from-scratch comparisons of the game's new caches. They found the stale head
 spins (fixed by the single heading) and deaths that the living world, the
 burning fallback and a journey's return never journalled (fixed).
 
+## The view, split as Fio 3.5 split it
+
+Fio 3.5 broke `QtGameView` up into the classes it delegates to
+(`85140e25`, `618a5523`): the view keeps construction, the frame, input
+events, play and renderer switching, and thin delegates; each concern is a
+small class holding the view (`view.audio`, `view.hud`, `view.messages`,
+`view.pause`, `view.terrain_edit`, `view.components`, `view.picking`,
+`view.debug_draw`). MiniWind's own additions live in the class that owns
+their concern, not in `qt_game_view.py`:
+
+| MiniWind addition | Home |
+|---|---|
+| A game's play menu (raised instead of Fio's pause menu) | `view_pause.py` |
+| Who owns the mouse in Play: a game's pointer claim, windows that need the cursor, a party's pad player's clicks | `view_pointer.py` (`view.pointer`) |
+| The overhead actors a game draws: the player's head image, held weapons, actors' and a party's held items, batched | `view_overhead.py` (`view.overhead`); Fio's `_draw_overhead_sprite` calls it once |
+| Error notices over the view | `view_messages.py` |
+| A level change with no Complete box | `view_hud.py` |
+| Lazy sounds, archive members decoded in the background | `view_audio.py` |
+
+What MiniWind still adds to `qt_game_view.py` itself (2,626 lines against
+Fio's 2,369) is the frame (camera interpolation between ticks, frame pacing,
+the `render.pre_sprites` hook), input-handler branches and view state, which
+the split keeps on the view.
+
+## MiniWind's tests: a fifth tier
+
+Fio's suite has four tiers (the headless core, `qt`, `gl`, `benchmark`).
+MiniWind's own tests are a fifth, `miniwind`, applied by path: the game
+layer's (`game/tests/`) and those of its seams in Fio (`tests/miniwind/`).
+`-m "not miniwind"` runs Fio's suite as Fio ships it, the check that the
+engine still meets upstream's contract; `-m miniwind` runs the game's. CI
+runs it as its own job (`tests/README.md`).
+
 ## Map and save compatibility
 
 * **Maps.** Fio 3.5 writes map version 5 (convex planes in the brush's own
@@ -186,38 +238,43 @@ burning fallback and a journey's return never journalled (fixed).
 
 ## Performance
 
-Same host, settings, world, seeds and routes; baseline is `41eeb2c`.
-Software GL (llvmpipe under Xvfb): GPU-side numbers are host-specific, and
-nothing here was measured on M5 or Adreno hardware.
+Same host, settings, world, seeds and routes; baseline is `41eeb2c` (Fio
+3.0). Software GL (llvmpipe under Xvfb), 960x540, logic and AI threads
+free-running, 2D views hidden, the player standing at noon; one 20-second run
+per cell at the Milestone 7 tip. GPU-side numbers are host-specific; nothing
+here was measured on M5 or Adreno hardware.
 
-Painted frames, fixed viewpoint in the overworld at noon, 960×540, logic and
-AI threads free-running, 2D views hidden (as the launcher's Play):
+| Scene | fps (3.0 → now) | paint CPU p50 | Python calls per painted frame | draw calls |
+|---|---|---|---|---|
+| Overworld, running | 12.5 → 13.9 | 35.5 → 28.5 ms | 7,147 → 2,275 | 110 → 53 |
+| Overworld, paused | 13.9 → 15.5 | 34.0 → 25.5 ms | 7,699 → 2,126 | 110 → 53 |
+| Cave, running | 29.0 → 34.9 | 8.5 → 7.0 ms | 3,004 → 1,365 | 14 → 14 |
+| Cave, paused | 32.5 → 42.2 | 7.5 → 6.6 ms | 3,037 → 1,371 | 14 → 14 |
 
-| | baseline | migrated |
-|---|---|---|
-| frames per second | 13.0–13.1 | 14.7–14.8 |
-| `paintGL` CPU per frame (p50) | 35.7–36.2 ms | 28.9 ms |
-| the same with grass off | 21.9 ms | 15.1 ms |
-| draw calls | 110 | 53 |
-| triangles | 37,340 | 37,340 |
+`prepare_render_state` per tick: 0.80 → 0.27 ms (overworld). The logic tick
+p50 in the running overworld is 1.67 → 2.20 ms: the held-weapon overlay is now
+built once per tick for the viewport (60 a second) rather than walked in every
+painted frame; the UI thread is what got cheaper.
 
-Threaded four-player co-op (1 human, 3 bots), two minutes, as shipped: CPU
-45.4 s → 31.8 s. Stepped single-player logic ticks: p50 0.51–0.54 →
-0.57–0.68 ms, p99 6.2–6.5 → 7.2–7.4 ms (near parity; the frame is where
-Fio 3.5's work lands). Peak resident memory +40–50 MB.
+Where the per-frame Python went (paused overworld, main thread): PyOpenGL's
+argument conversion for brush-instance pointers, matrices and element draws
+(now native entry points, `engine/glraw.py`); the minimap's witness markers
+and the floor objects (re-derived only on change); the overhead sprites (one
+instanced draw per depth state, every image a layer of one texture array);
+function-level imports in the game (absolute, CPython's fast path); per-frame
+terrain appearance and culling (memoised, vectorised).
 
-Overworld load on returning from a cave: 2.15 s → 2.40 s (median of ten),
-after two migration fixes (tiled paint resampling, 2.7× faster and
-bit-identical; Big World re-filing only replaced brushes). Cave loads are
-level.
+Earlier measurements, kept for the record: threaded four-player co-op (1
+human, 3 bots), two minutes: CPU 45.4 s → 31.8 s; launcher Play to the game,
+dormant editor: 6.3-6.6 s → 4.4-4.7 s, 125 MB less peak memory; building a 3D
+view no longer decodes 46 sounds (1.5 s → 2 ms).
 
 Measurement notes, so later comparisons are like for like:
-`game/tools/soak.py` now limits OpenBLAS to one thread as `main.py` does
-(otherwise its workers spin between the dense tables' NumPy calls: four times
-the CPU). Fio 3.5 repaints visible 2D views at 10 Hz in play; the old engine
-repainted them on every new frame, but never in the stepped soak, so a soak
-with the editor's 2D views visible compares unlike things. Fix the view size:
-the two builds' test sessions size the 3D view differently.
+`game/tools/soak.py` limits OpenBLAS to one thread as `main.py` does
+(otherwise its workers spin between the dense tables' NumPy calls). Fio 3.5
+repaints visible 2D views at 10 Hz in play. Fix the view size: the two
+builds' test sessions size the 3D view differently. Run with
+`PYOPENGL_ERROR_CHECKING=0`, as `main.py` ships.
 
 ## Known limitations
 
