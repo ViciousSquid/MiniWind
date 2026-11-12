@@ -296,7 +296,7 @@ def _session_header():
         if os.path.isfile(vpath):
             with open(vpath, encoding="utf-8") as handle:
                 version = handle.read().strip()
-        # editor/version.txt is the engine's build ("version 3.5.0.1111"),
+        # editor/version.txt is the engine's build ("version 3.5.0.1211"),
         # not the game's: say so, so a log never reads as a game version.
         engine = version.replace("version", "", 1).strip() if version else ""
         return "MiniWind on Fio engine %s — Python %s on %s" % (

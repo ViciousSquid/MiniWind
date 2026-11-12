@@ -1084,8 +1084,10 @@ class MainWindow(QMainWindow):
             key = event.key()
             if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
                 # Selected terrain stamps take the arrows while the stamp
-                # brush is active.
+                # brush is active, selected decals while the Decal tool is.
                 if self._nudge_terrain_stamps(event):
+                    return True
+                if self._nudge_decals(event):
                     return True
                 # Only nudge if we have a selected object and not in play mode
                 selected = self.primary_selection()
@@ -1139,6 +1141,27 @@ class MainWindow(QMainWindow):
         timer.start(350)
         view_3d.update()
         return True
+
+    def _nudge_decals(self, event):
+        """Move the Decal tool's selection with the arrow keys (as stamps)."""
+        view_3d = self.view_3d
+        tool = getattr(view_3d, 'decal_tool', None)
+        if view_3d is None or view_3d.play_mode or tool is None or not tool.active:
+            return False
+        current_view = self.right_tabs.currentWidget() if hasattr(self, 'right_tabs') else None
+        grid_visible = getattr(current_view, 'grid_visible', True)
+        grid = getattr(current_view, 'grid_size', None) or getattr(view_3d, 'grid_size', 16)
+        return tool.nudge(event.key(), bool(event.modifiers() & Qt.ShiftModifier),
+                          grid=grid, grid_visible=grid_visible)
+
+    def toggle_decal_tool(self, checked=None):
+        """Tools > Decal Tool: place, select, drag and nudge decals."""
+        tool = self.view_3d.decal_tool
+        if self.view_3d.play_mode:
+            self.show_toast("Leave Play to edit decals", is_error=True)
+            tool.set_active(False)
+            return
+        tool.set_active(not tool.active if checked is None else bool(checked))
 
     def _finish_stamp_nudge(self):
         if self.terrain is not None:
@@ -4246,7 +4269,12 @@ class MainWindow(QMainWindow):
                 self.show_toast("Nothing to paste", is_error=True)
             return
 
-        # Delete / Backspace
+        # Delete / Backspace: the Decal tool's selection first (wherever the
+        # keyboard is), then the editor's.
+        if (event.key() in (Qt.Key_Delete, Qt.Key_Backspace)
+                and not self.view_3d.play_mode
+                and self.view_3d.decal_tool.delete_selected()):
+            return
         if self.primary_selection() and event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             self.save_state()
             for obj in list(self.state.selected_objects):
@@ -6062,25 +6090,23 @@ class MainWindow(QMainWindow):
 
     def apply_window_colours(self):
         """The floating windows (SysMon, the pause menu, the editor's
-        overlays) take their colours from settings.ini [WindowColours]."""
+        overlays) take their title bar colour from settings.ini
+        [WindowColours]; the rest of their colours are fixed."""
         from engine import floating_windows
-        section = 'WindowColours'
-        floating_windows.set_theme({
-            key: self.config.get(section, key, fallback=default)
-            for key, default in floating_windows.DEFAULT_THEME.items()})
+        floating_windows.set_theme({'header': self.config.get(
+            'WindowColours', 'header', fallback=floating_windows.DEFAULT_THEME['header'])})
 
 
 class ColoursDialog(QDialog):
-    """Edit > Colours: a tab for the grid, a tab for the floating windows."""
+    """Edit > Colours: a tab for the grid, a tab for the floating windows'
+    title bar. OK saves every colour of both tabs to settings.ini."""
 
     GRID_SECTION = "GridColours"
     GRID_DEFAULTS = {"major": "#5a5a5a", "minor": "#404040", "background": "#2b2b2b"}
     GRID_LABELS = (("major", "Major colour:"), ("minor", "Minor colour:"),
                    ("background", "Background:"))
     WINDOW_SECTION = "WindowColours"
-    WINDOW_LABELS = (("header", "Title bar:"), ("header_active", "Title bar (dragging):"),
-                     ("background", "Background:"), ("border", "Border:"),
-                     ("text", "Text:"))
+    WINDOW_LABELS = (("header", "Title bar:"),)
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -6094,7 +6120,8 @@ class ColoursDialog(QDialog):
         self.colours = {}
         self.buttons = {}
         self.defaults = {self.GRID_SECTION: dict(self.GRID_DEFAULTS),
-                         self.WINDOW_SECTION: dict(DEFAULT_THEME)}
+                         self.WINDOW_SECTION: {key: DEFAULT_THEME[key]
+                                               for key, _text in self.WINDOW_LABELS}}
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -6102,7 +6129,7 @@ class ColoursDialog(QDialog):
         self.tabs.addTab(self._tab(self.GRID_SECTION, self.GRID_LABELS), "Grid")
         self.tabs.addTab(self._tab(self.WINDOW_SECTION, self.WINDOW_LABELS,
                                    "SysMon, the pause menu and the other windows "
-                                   "floating in the 3D view."), "Floating Windows")
+                                   "floating in the 3D view."), "Windows")
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
@@ -6166,5 +6193,11 @@ class ColoursDialog(QDialog):
             if not self.config.has_section(section):
                 self.config.add_section(section)
             self.config.set(section, key, colour.name())
+        # Window colours the dialog no longer offers are not kept: a value
+        # left from an older version could not be seen or reset.
+        if self.config.has_section(self.WINDOW_SECTION):
+            for key in list(self.config.options(self.WINDOW_SECTION)):
+                if (self.WINDOW_SECTION, key) not in self.colours:
+                    self.config.remove_option(self.WINDOW_SECTION, key)
         self.parent_window.save_config()
         super().accept()

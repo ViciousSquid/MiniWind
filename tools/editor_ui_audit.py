@@ -137,8 +137,16 @@ class Audit:
         if name in self._seen:
             return
         self._seen.add(name)
-        # Asset thumbnails reflow after a 50ms resize debounce.
+        # Asset thumbnails are decoded off the UI thread as tiles show:
+        # every capture waits for them, so both systems show them finished.
         self.settle(80 if name.startswith(('main/', 'docks/assets')) else 20)
+        from editor.asset_browser import AssetBrowserTab
+        tabs = root.findChildren(AssetBrowserTab) if hasattr(root, 'findChildren') else []
+        if isinstance(root, AssetBrowserTab):
+            tabs.append(root)
+        for tab in tabs:
+            if tab.isVisible():
+                tab.finish_thumbnails()
         image_name = slug(name)[:140] + "-" + hashlib.sha1(name.encode()).hexdigest()[:8] + ".png"
         pixmap = root.grab() if self.screenshots else None
         dpr = root.devicePixelRatioF()
@@ -416,7 +424,7 @@ def run_audit(audit, window, sections):
         audit.modal("dialogs/open-map-picker", lambda: QtWidgets.QFileDialog.getOpenFileName(
             window, 'Open Map', 'maps', 'Maps (*.json)'), size=(36 * line, 24 * line))
         audit.modal("dialogs/project-overview", window.open_project_overview)
-        audit.modal("dialogs/grid-colours", window.open_grid_colours_dialog)
+        audit.modal("dialogs/colours", window.open_colours_dialog)
         audit.modal("dialogs/about", window.show_about)
 
     if enabled("game"):

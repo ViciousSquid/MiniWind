@@ -109,7 +109,7 @@ def read_version(root_dir: str = ".") -> str:
 
 
 def version_line(root_dir: str = ".") -> str:
-    """``MiniWind 1.0.0 · Fio 3.5.0.1111``: the game's version and the engine
+    """``MiniWind 1.0.0 · Fio 3.5.0.1211``: the game's version and the engine
     build it runs on, kept apart (the engine's file is not the game's)."""
     from ..rpg import GAME_NAME, GAME_VERSION
     engine = read_version(root_dir).replace("version", "", 1).strip()
