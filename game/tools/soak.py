@@ -54,6 +54,12 @@ if ROOT not in sys.path:
 if not os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+# As main.py starts the game: one native BLAS thread. NumPy's OpenBLAS
+# otherwise starts a worker per core that spins between calls, and the engine's
+# dense tables make many small calls -- a soak would measure a process the game
+# never runs as (four times the CPU of a threaded session here).
+for _blas_threads in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_blas_threads, "1")
 os.environ.setdefault("XDG_RUNTIME_DIR", "/tmp/fio-soak-runtime")
 os.makedirs(os.environ["XDG_RUNTIME_DIR"], mode=0o700, exist_ok=True)
 
