@@ -156,13 +156,17 @@ def test_toggling_high_dpi_writes_through_and_warns_it_needs_a_restart(ui, ini):
     assert not ui.high_dpi_note.isVisible(), "back to what is running: no warning"
 
 
-def test_it_shows_the_version_from_the_version_file(ui):
+def test_it_shows_the_game_version_and_the_engine_build_apart(ui):
+    from game.rpg import GAME_NAME, GAME_VERSION
     with open(os.path.join(ROOT, "editor", "version.txt")) as f:
-        assert ui.version_label.text() == f.read().strip()
+        engine = f.read().strip().replace("version", "", 1).strip()
+    assert ui.version_label.text() == f"{GAME_NAME} {GAME_VERSION} · Fio {engine}"
 
 
 def test_a_missing_version_file_is_not_an_error(tmp_path):
+    from game.rpg import GAME_NAME, GAME_VERSION
     assert lx.read_version(str(tmp_path)) == ""
+    assert lx.version_line(str(tmp_path)) == f"{GAME_NAME} {GAME_VERSION}"
 
 
 def test_the_version_is_plain_text_with_room_for_all_of_it(ui, app):

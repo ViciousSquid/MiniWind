@@ -108,6 +108,15 @@ def read_version(root_dir: str = ".") -> str:
         return ""
 
 
+def version_line(root_dir: str = ".") -> str:
+    """``MiniWind 1.0.0 · Fio 3.5.0.1111``: the game's version and the engine
+    build it runs on, kept apart (the engine's file is not the game's)."""
+    from ..rpg import GAME_NAME, GAME_VERSION
+    engine = read_version(root_dir).replace("version", "", 1).strip()
+    game = f"{GAME_NAME} {GAME_VERSION}"
+    return f"{game} · Fio {engine}" if engine else game
+
+
 # ---------------------------------------------------------------------------
 # settings.ini
 # ---------------------------------------------------------------------------
@@ -505,13 +514,15 @@ class Launcher(QDialog):
 
         # Plain text, no panel behind it, and wide enough for the whole build
         # string — a version that reads "version 2.2.0.24…" is worse than none.
-        self.version_label = QLabel(read_version(root_dir) or "")
+        self.version_label = QLabel(version_line(root_dir))
         self.version_label.setStyleSheet(
             "color:#5f6169; background:transparent; border:none;")
         self.version_label.setFrameStyle(QFrame.NoFrame)
         self.version_label.setAutoFillBackground(False)
         self.version_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.version_label.setToolTip("From editor/version.txt")
+        self.version_label.setToolTip(
+            "MiniWind's own version, then the Fio engine build it runs on "
+            "(editor/version.txt)")
         self.version_label.setSizePolicy(QSizePolicy.Preferred,
                                          QSizePolicy.Preferred)
         footer.addWidget(self.version_label)
