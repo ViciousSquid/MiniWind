@@ -248,9 +248,34 @@ def test_preload_reuses_archive_skips_bad_sound_and_preserves_aliases(
 
     monkeypatch.setattr(audio_archives.zipfile, 'ZipFile', track)
     monkeypatch.setattr(view.audio, '_load_sound_bytes_to_cache', load_bytes)
-    view.audio._init_sound_system()
+    view.audio.preload_sounds()
     assert loaded == {
         'assets/sounds/shot.wav': b'shot', 'shot.wav': b'shot',
         'assets/sounds/ui/click.ogg': b'click',
     }
     assert len(opened) == 1 and opened[0].fp is None
+
+
+def test_starting_the_view_decodes_only_large_sounds_and_those_in_the_background(
+        main_window, project, monkeypatch):
+    view = main_window.view_3d
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(view.audio, '_ensure_pygame_mixer', lambda: True)
+    monkeypatch.setattr(type(view.audio), 'BACKGROUND_DECODE_BYTES', 6)
+    with zipfile.ZipFile(project / 'assets/sounds.fiopak', 'w') as archive:
+        archive.writestr('assets/sounds/shot.wav', b'shot')
+        archive.writestr('assets/sounds/ambience.mp3', b'ambience')
+    started = []
+    monkeypatch.setattr('engine.view_audio.threading.Thread',
+                        lambda target, args, **kw: type('T', (), {
+                            'start': lambda self: started.append((target, args))})())
+    view.audio.sound_pool.clear()
+    view.audio._init_sound_system()
+    assert view.audio.sound_pool == {}                     # nothing decoded here
+    (target, (only,)), = started
+    assert only == {'assets/sounds/ambience.mp3'}
+    decoded = {}
+    monkeypatch.setattr(view.audio, '_load_sound_bytes_to_cache',
+                        lambda names, data: decoded.update(dict.fromkeys(names, data)) or True)
+    target(only)                                           # the background decode
+    assert decoded == {'assets/sounds/ambience.mp3': b'ambience', 'ambience.mp3': b'ambience'}

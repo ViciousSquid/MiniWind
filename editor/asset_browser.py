@@ -25,6 +25,42 @@ from engine.speaker_audio import (AUDIO_EXTENSIONS, SPEAKER_AUDIO_FOLDERS,
 THUMBNAIL_SIZES = {'medium': 90, 'small': 72, 'smallest': 58}
 DEFAULT_THUMBNAIL_SIZE = 'smallest'
 
+#: ``path -> (stat key, QImage at most the largest thumbnail size)``.
+_THUMBNAIL_IMAGES = {}
+_THUMBNAIL_IMAGE_CAP = 4096
+
+
+def _thumbnail_stat(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None             # archived or missing: not cached
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _thumbnail_image(path):
+    """The cached thumbnail-size image of *path*, if it has not changed."""
+    entry = _THUMBNAIL_IMAGES.get(path)
+    if entry is None:
+        return None
+    key = _thumbnail_stat(path)
+    return entry[1] if key is not None and key == entry[0] else None
+
+
+def _keep_thumbnail_image(path, pixmap):
+    """Shrink *pixmap* to the largest thumbnail size, remember it for *path*
+    and return the shrunk pixmap (what the tile shows from)."""
+    largest = max(THUMBNAIL_SIZES.values())
+    if pixmap.width() > largest or pixmap.height() > largest:
+        pixmap = pixmap.scaled(largest, largest, Qt.KeepAspectRatio,
+                               Qt.SmoothTransformation)
+    key = _thumbnail_stat(path)
+    if key is not None:
+        if len(_THUMBNAIL_IMAGES) >= _THUMBNAIL_IMAGE_CAP:
+            _THUMBNAIL_IMAGES.clear()
+        _THUMBNAIL_IMAGES[path] = (key, pixmap.toImage())
+    return pixmap
+
 
 def render_obj_thumbnail(filepath, width, height):
     """
@@ -457,7 +493,15 @@ class AssetItem(QWidget):
                     painter.drawText(QRect(0, 0, 90, 90), Qt.AlignCenter, label)
                     painter.end()
         else:
-            # Assume image
+            # Assume image. A texture is decoded once per process (and per
+            # change on disk) and kept only at thumbnail size: every editor
+            # window, and every tab reload, used to decode each image again
+            # and hold it at full resolution.
+            cached = _thumbnail_image(self.file_path)
+            if cached is not None:
+                self._source_pixmap = QPixmap.fromImage(cached)
+                self._show_thumbnail()
+                return
             pixmap = load_pixmap(self.file_path)
             if pixmap.isNull():
                 # No Qt image plugin for it (a GIF without qgif): Pillow
@@ -473,6 +517,8 @@ class AssetItem(QWidget):
                     pixmap = QPixmap()
 
         self._source_pixmap = None if pixmap.isNull() else pixmap
+        if self._source_pixmap is not None and not self.is_model:
+            self._source_pixmap = _keep_thumbnail_image(self.file_path, pixmap)
         self._show_thumbnail()
 
     def _show_thumbnail(self):
@@ -533,6 +579,7 @@ class AssetBrowserTab(QWidget):
         self.editor = editor
         self.parent_browser = parent_browser
         self.selected_item = None
+        self._initial_load_pending = False
         self.items = []
         self.thumb_size = THUMBNAIL_SIZES[getattr(parent_browser, 'thumbnail_size', DEFAULT_THUMBNAIL_SIZE)]
 
@@ -758,14 +805,27 @@ class AssetBrowserTab(QWidget):
         # Collapse tree panel by default
         self.tree_frame.setVisible(False)
 
-        # Load initial directory and setup resize handling for dynamic columns.
-        # A dormant editor (MainWindow.editor_dormant: launched straight into
-        # the game) fills the grid when the tab is first shown instead: its
-        # thumbnails were most of the editor's start-up for nobody to see.
-        self._initial_load_pending = bool(getattr(editor, 'editor_dormant', False))
+        # A tab in the editor fills its grid when it is first shown or its
+        # items are first asked for, not while the editor is built: decoding
+        # every thumbnail of every tab was most of the editor's start-up
+        # (and of each editor test), for tabs nobody had opened yet -- or
+        # for nobody at all in a dormant editor launched into the game.
+        self._initial_load_pending = editor is not None
         if not self._initial_load_pending:
             self.load_directory(self.current_asset_folder)
         self.scroll_area.resizeEvent = self._on_resize
+
+    @property
+    def items(self):
+        """The grid's asset tiles, loaded on first use (see above)."""
+        if self._initial_load_pending:
+            self._initial_load_pending = False
+            self.load_directory(self.current_asset_folder)
+        return self._items
+
+    @items.setter
+    def items(self, value):
+        self._items = value
 
     def showEvent(self, event):
         if self._initial_load_pending:
@@ -902,6 +962,7 @@ class AssetBrowserTab(QWidget):
         return parent if os.path.basename(parent) == 'assets' else None
 
     def load_directory(self, path):
+        self._initial_load_pending = False
         archive_path = self._active_audio_archive()
         if archive_path:
             path = self.root_path

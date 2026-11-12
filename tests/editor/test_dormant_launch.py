@@ -47,7 +47,7 @@ def test_the_dormant_editor_is_hidden_and_its_asset_browser_unfilled(dormant_win
     assert hidden and not any(d.isVisible() for d in hidden)
     assert w.view_3d_dock.isVisible()
     tabs = _tabs(w)
-    assert tabs and all(t._initial_load_pending and not t.items for t in tabs)
+    assert tabs and all(t._initial_load_pending and not t._items for t in tabs)
 
 
 def test_a_level_loaded_while_dormant_does_not_build_the_hierarchy(dormant_window):
@@ -95,9 +95,15 @@ def test_a_dormant_launch_that_never_reaches_the_game_wakes_the_editor(dormant_w
     assert w.menuBar().isVisible() and w.statusBar().isVisible()
 
 
-def test_an_ordinary_editor_start_fills_its_panels(main_window):
+def test_an_ordinary_editor_start_fills_only_the_tabs_it_shows(main_window):
     assert not main_window.editor_dormant
-    assert all(not t._initial_load_pending for t in _tabs(main_window))
+    tabs = _tabs(main_window)
+    shown = [t for t in tabs if t.isVisible()]
+    assert shown and all(not t._initial_load_pending and t._items for t in shown)
+    hidden = [t for t in tabs if not t.isVisible()]
+    assert all(t._initial_load_pending for t in hidden)
+    if hidden:
+        assert hidden[0].items and not hidden[0]._initial_load_pending   # on first use
 
 
 def test_a_dormant_editor_does_not_autosave(dormant_window, monkeypatch):

@@ -9,6 +9,7 @@ the frame loop and calls :meth:`_process_sound_queue` once a frame.
 import io
 import math
 import os
+import threading
 import time
 import zipfile
 
@@ -20,6 +21,12 @@ import pygame
 class ViewAudio:
     #: Seconds between attempts to open the audio device after one failed.
     MIXER_RETRY_SECONDS = 10.0
+    #: Archive members larger than this (bytes, uncompressed) are decoded on a
+    #: background thread as soon as the view starts -- pygame releases the GIL
+    #: while it decodes, so the UI does not wait -- because decoding one on
+    #: first use would stall that frame (the market ambience takes 0.7 s).
+    #: Everything else decodes on first use, in a few milliseconds.
+    BACKGROUND_DECODE_BYTES = 512 * 1024
 
     def __init__(self, view):
         self.view = view
@@ -30,9 +37,33 @@ class ViewAudio:
         self.music_volume = 1.0
 
     def _init_sound_system(self):
-        """Preload sounds from assets/sounds.fiopak, or the legacy loose folder."""
+        """Ready the mixer. Nothing is decoded here: a sound decodes the first
+        time it is asked for (:meth:`_get_sound_instance`), and the archive's
+        few large members on a background thread now. Decoding all of them
+        up front took 1.5 s of every view's start-up, editor and tests alike."""
         if not self._ensure_pygame_mixer():
             print("[Audio] Sound system unavailable — mixer could not be initialized")
+            return
+        sound_archive = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
+        if not os.path.isfile(sound_archive):
+            return
+        try:
+            with zipfile.ZipFile(sound_archive) as archive:
+                large = [info.filename for info in archive.infolist()
+                         if not info.is_dir()
+                         and info.file_size > self.BACKGROUND_DECODE_BYTES]
+        except (OSError, zipfile.BadZipFile) as exc:
+            print(f"[Audio] Cannot read sounds.fiopak: {exc}")
+            return
+        if large:
+            threading.Thread(target=self.preload_sounds, args=(frozenset(large),),
+                             name="sound-decode", daemon=True).start()
+
+    def preload_sounds(self, only=None):
+        """Decode sounds from assets/sounds.fiopak (or the legacy loose
+        folder) into the cache now: every one, or the members named in *only*.
+        Sounds already in the cache are left alone."""
+        if not self._ensure_pygame_mixer():
             return
 
         from engine.audio_archives import AudioArchiveReader
@@ -42,9 +73,12 @@ class ViewAudio:
             try:
                 with AudioArchiveReader(sound_archive, "assets/sounds") as reader:
                     members = reader.members()
-                    print("[Audio] Preloading sounds from sounds.fiopak...")
+                    if only is not None:
+                        members = [m for m in members if m in only]
                     count = 0
                     for member in members:
+                        if member in self.sound_pool:
+                            continue
                         try:
                             data = reader.read(member)
                         except (OSError, zipfile.BadZipFile) as exc:
@@ -62,21 +96,15 @@ class ViewAudio:
             except (OSError, zipfile.BadZipFile) as exc:
                 print(f"[Audio] Cannot read sounds.fiopak: {exc}")
                 return
-            print(f"[Audio] Preloaded {count} sound files from sounds.fiopak.")
             return
 
         sound_dir = os.path.join(os.getcwd(), "assets", "sounds")
         if not os.path.isdir(sound_dir):
             print("[Audio] Warning: assets/sounds directory and sounds.fiopak not found.")
             return
-        print("[Audio] Preloading sounds...")
-        count = 0
         for f in os.listdir(sound_dir):
-            if f.lower().endswith((".wav", ".mp3", ".ogg")):
-                full_path = os.path.join(sound_dir, f)
-                if self._load_sound_to_cache(f, full_path):
-                    count += 1
-        print(f"[Audio] Preloaded {count} sound files.")
+            if f.lower().endswith((".wav", ".mp3", ".ogg")) and (only is None or f in only):
+                self._load_sound_to_cache(f, os.path.join(sound_dir, f))
 
     def _ensure_pygame_mixer(self) -> bool:
         """Initialize pygame mixer if it isn't already active.
