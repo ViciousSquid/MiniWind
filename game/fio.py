@@ -180,6 +180,15 @@ def find_entity_by_id(logic, entity_id):
     return runtime.find_entity_by_id(entity_id) if runtime is not None else None
 
 
+def projectile_body_lift() -> float:
+    """How far above an actor's ``pos`` the engine centres the sphere a
+    projectile hits it by -- 0 on Fio 3.5, where ``pos`` is the middle of the
+    actor's billboard. MiniWind's missiles are loosed from, and aimed at,
+    that height, so a shot meets an actor of any size at its body."""
+    from engine.logic_combat import LogicCombat
+    return float(LogicCombat.PROJECTILE_MONSTER_LIFT)
+
+
 def spawn_projectile(logic, pos, vel, **kwargs):
     """Launch a player projectile (``LogicCombat.spawn_projectile``)."""
     runtime = getattr(logic, "combat_runtime", None)

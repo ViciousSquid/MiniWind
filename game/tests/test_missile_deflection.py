@@ -20,6 +20,13 @@ from game.tests.test_multiplayer_integration import coop_game  # noqa: F401
 from tests.helpers.worlds import make_thing
 from tests.monster_ai.test_projectile_batch import _logic
 
+
+
+def fio_body():
+    """The height above an actor's pos the game looses missiles at."""
+    from game import fio
+    return fio.projectile_body_lift()
+
 pytestmark = pytest.mark.qt
 
 
@@ -50,8 +57,12 @@ def test_npc_missile_ricochets_without_impact_then_can_hit_the_shooter(dense, sp
                                burning=SimpleNamespace(landed=lambda *a, **kw: burns.append(a)))
     combat.projectile_deflector = lambda store, row, target: deflect(session, store, row, target)
     metadata = ({"damage_kind": "fire", "spell": magic.get(spell)} if spell else None)
+    # Loosed at body height, as the game looses them: the engine's hit sphere
+    # is centred on an actor's pos (Fio 3.5).
+    from game import fio
+    body = fio.projectile_body_lift()
     combat.spawn_projectile(
-        (0, 64, 25), (0, 0, -100), owner_id=id(shooter), damage=10, lifetime=5,
+        (0, body, 25), (0, 0, -100), owner_id=id(shooter), damage=10, lifetime=5,
         max_dist=1000, on_impact=lambda *args: impacts.append(args), metadata=metadata,
     )
     store = combat._monster_projectiles
@@ -91,7 +102,7 @@ def test_solo_player_can_deflect_a_spell_before_damage_and_fire_effects(dense):
     combat = logic.combat_runtime
     combat.PROJECTILE_DENSE_THRESHOLD = 0 if dense else 100
     combat.projectile_deflector = lambda store, row, target: deflect(session, store, row, target)
-    combat.spawn_projectile((0, 64, 20), (0, 0, -100), owner_id=id(shooter), damage=30,
+    combat.spawn_projectile((0, player.pos.y, 20), (0, 0, -100), owner_id=id(shooter), damage=30,
                             lifetime=3, on_impact=lambda *a: impacts.append(a),
                             metadata={"damage_kind": "fire", "spell": magic.get("flare")})
     combat._update_monster_projectiles(0)
@@ -141,7 +152,7 @@ def test_companion_ricochet_uses_its_luck_and_only_the_rolling_log(coop_game):
     before = c.health
     combat = coop.logic.combat_runtime
     combat.spawn_projectile(
-        (bot.actor.pos[0], bot.actor.pos[1] + 64, bot.actor.pos[2] + 20), (0, 0, -100),
+        (bot.actor.pos[0], bot.actor.pos[1] + fio_body(), bot.actor.pos[2] + 20), (0, 0, -100),
         owner_id=id(shooter), damage=30, lifetime=3,
         metadata={"damage_kind": "fire", "spell": magic.get("flare")},
     )

@@ -319,13 +319,19 @@ def _snapshot_plugin_state():
             # "bigworld" and "savegame.restore") are process-wide too: a test
             # that starts a session without stopping it would otherwise hand
             # its stale session to every later save/restore.
-            dict(getattr(manager, "services", {})))
+            dict(getattr(manager, "services", {})),
+            # A built-in game (MiniWind's own layer) a test registered would
+            # otherwise take over Play in every later test of the process --
+            # Fio's stock weapons then never fire, since the game owns the
+            # player's shots.
+            list(getattr(manager, "_builtin_games", [])))
 
 
 def _restore_plugin_state(snapshot):
     if snapshot is None:
         return
-    manager, enabled, auto_enabled, io_registrations, services = snapshot
+    (manager, enabled, auto_enabled, io_registrations, services,
+     builtin_games) = snapshot
     for plugin, was_enabled in enabled.items():
         plugin.enabled = was_enabled
     # Written directly, so the manager's caches keyed on the enabled set (the
@@ -339,6 +345,8 @@ def _restore_plugin_state(snapshot):
     if hasattr(manager, "services"):
         manager.services.clear()
         manager.services.update(services)
+    if hasattr(manager, "_builtin_games"):
+        manager._builtin_games[:] = builtin_games
 
 
 # ---------------------------------------------------------------------------

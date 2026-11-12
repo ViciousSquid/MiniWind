@@ -47,8 +47,6 @@ NOCK_SECONDS = 0.55
 #: creature level adds to that.
 POWER_DRAW_CHANCE = 0.3
 POWER_DRAW_PER_LEVEL = 0.03
-#: Fio's hit sphere is lifted this far above an actor's origin.
-EYE_LIFT = 64.0
 
 
 def range_for(charge: float) -> float:
@@ -309,8 +307,11 @@ class NpcArchery:
             CROSSBOW_RELOAD_SECONDS if crossbow else NOCK_SECONDS)
         p["_offhand_anim" if off else "_attack_anim"] = 0.2
         charge = draw["charge"]
-        start = [float(thing.pos[0]), float(thing.pos[1]) + 48.0, float(thing.pos[2])]
-        lift = EYE_LIFT
+        # Loosed from and aimed at the middle of a body, where the engine's
+        # hit sphere is (fio.projectile_body_lift).
+        body = fio.projectile_body_lift()
+        start = [float(thing.pos[0]), float(thing.pos[1]) + body, float(thing.pos[2])]
+        lift = body
         if draw["target"] == "player":
             player = fio.player(logic)
             lift = float(getattr(player, "camera_height", 48.0) or 48.0) * 0.6

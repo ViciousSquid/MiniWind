@@ -10,6 +10,7 @@ import io
 import math
 import os
 import time
+import zipfile
 
 import glm
 import numpy as np
@@ -34,27 +35,33 @@ class ViewAudio:
             print("[Audio] Sound system unavailable — mixer could not be initialized")
             return
 
-        from engine import asset_archives
-        from engine.audio_archives import AUDIO_EXTENSIONS
+        from engine.audio_archives import AudioArchiveReader
 
-        # Every sound in every mounted archive (sounds.fiopak, sounds2.fiopak,
-        # anything.fiopak holding assets/sounds/...); later archives override.
-        members = asset_archives.members("assets/sounds", AUDIO_EXTENSIONS)
-        if members:
-            print(f"[Audio] Preloading {len(members)} sounds from .fiopak archives...")
-            count = 0
-            for member in members:
-                data = asset_archives.read(member)
-                if data is None:
-                    continue
-                relative = member[len("assets/sounds/"):]
-                keys = [member]
-                # Preserve legacy bare-filename lookup for files directly under
-                # assets/sounds; nested paths use their full project-relative key.
-                if "/" not in relative:
-                    keys.append(relative)
-                if self._load_sound_bytes_to_cache(keys, data):
-                    count += 1
+        sound_archive = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
+        if os.path.isfile(sound_archive):
+            try:
+                with AudioArchiveReader(sound_archive, "assets/sounds") as reader:
+                    members = reader.members()
+                    print("[Audio] Preloading sounds from sounds.fiopak...")
+                    count = 0
+                    for member in members:
+                        try:
+                            data = reader.read(member)
+                        except (OSError, zipfile.BadZipFile) as exc:
+                            print(f"[Audio] Cannot read {member}: {exc}")
+                            continue
+                        if data is None:
+                            continue
+                        relative = member[len("assets/sounds/"):]
+                        keys = [member]
+                        # Bare names remain aliases only for top-level sounds.
+                        if "/" not in relative:
+                            keys.append(relative)
+                        if self._load_sound_bytes_to_cache(keys, data):
+                            count += 1
+            except (OSError, zipfile.BadZipFile) as exc:
+                print(f"[Audio] Cannot read sounds.fiopak: {exc}")
+                return
             print(f"[Audio] Preloaded {count} sound files from sounds.fiopak.")
             return
 
@@ -62,7 +69,6 @@ class ViewAudio:
         if not os.path.isdir(sound_dir):
             print("[Audio] Warning: assets/sounds directory and sounds.fiopak not found.")
             return
-
         print("[Audio] Preloading sounds...")
         count = 0
         for f in os.listdir(sound_dir):
@@ -71,9 +77,6 @@ class ViewAudio:
                 if self._load_sound_to_cache(f, full_path):
                     count += 1
         print(f"[Audio] Preloaded {count} sound files.")
-
-    #: Seconds between attempts to open the audio device after one failed.
-    MIXER_RETRY_SECONDS = 10.0
 
     def _ensure_pygame_mixer(self) -> bool:
         """Initialize pygame mixer if it isn't already active.
@@ -117,90 +120,85 @@ class ViewAudio:
             return False
 
     def _load_sound_bytes_to_cache(self, names, data):
-        """Load one in-memory audio file and index it by all supplied names."""
+        """Load archive-backed audio bytes into the cache under one or more keys."""
         if not self._ensure_pygame_mixer():
             print(f"[Audio] Failed to load {names[0]}: mixer not initialized")
             return False
-
-        existing = next((self.sound_pool[name] for name in names
-                         if name in self.sound_pool), None)
-        if existing is not None:
-            for name in names:
-                self.sound_pool.setdefault(name, existing)
-            return True
-
         try:
             sound = pygame.mixer.Sound(file=io.BytesIO(data))
-            for name in names:
-                self.sound_pool[name] = sound
-            return True
-        except Exception as exc:
-            print(f"[Audio] Failed to load archived sound {names[0]}: {exc}")
+        except (pygame.error, TypeError, ValueError) as e:
+            print(f"[Audio] Failed to load {names[0]} from archive: {e}")
             return False
+        for name in names:
+            self.sound_pool[name] = sound
+        return True
 
-    def _load_sound_from_archive(self, rel):
-        """Resolve an explicit audio path from whichever mounted .fiopak holds it."""
-        from engine import asset_archives
-
-        if rel.startswith("assets/sounds/"):
-            asset_root = "assets/sounds"
-        elif rel.startswith("assets/music/"):
-            asset_root = "assets/music"
-        else:
-            return False
-        if not asset_archives.in_archive(rel):
-            return False
-        data = asset_archives.read(rel)
-        if data is None:
-            return False
-
-        keys = [rel]
-        relative = rel[len(asset_root) + 1:]
-        if asset_root == "assets/sounds" and "/" not in relative:
-            keys.append(relative)
-        return self._load_sound_bytes_to_cache(keys, data)
+    def _load_user_pack_sound(self, names, path):
+        """Load the sound at *path* from an end user's own ``.fiopak`` pack
+        in ``assets/`` (``engine.asset_archives``), when one holds it."""
+        from engine.asset_archives import asset_bytes
+        data = asset_bytes(path)
+        return data is not None and self._load_sound_bytes_to_cache(names, data)
 
     def _get_sound_instance(self, name):
-        """Get a cached sound or load it from an archive / legacy loose path.
+        """Get a pygame Sound by name, preferring the matching .fiopak if present.
 
-        Explicit assets/sounds/... and assets/music/... paths are resolved
-        against their corresponding .fiopak first; bare names still refer to
-        assets/sounds and retain the same cache keys as before.
+        Explicit assets/sounds and assets/music paths retain their archive-relative
+        names. Bare names keep the legacy assets/sounds lookup. An existing archive
+        is authoritative; loose files are used only when that archive is absent.
         """
+        from engine.audio_archives import read_archive_audio
         from engine.speaker_audio import resolve_speaker_sound, speaker_sound_path
+
         rel = speaker_sound_path(name) if '/' in str(name).replace('\\', '/') else None
         if rel is not None:
             if rel in self.sound_pool:
                 return self.sound_pool[rel]
             if not self._ensure_pygame_mixer():
                 return None
-            if self._load_sound_from_archive(rel):
-                return self.sound_pool[rel]
+            folder = rel.split('/')[1]
+            archive_path = os.path.join(os.getcwd(), "assets", f"{folder}.fiopak")
+            if os.path.isfile(archive_path):
+                try:
+                    data = read_archive_audio(archive_path, rel, f"assets/{folder}")
+                except (OSError, zipfile.BadZipFile) as exc:
+                    print(f"[Audio] Cannot read {archive_path}: {exc}")
+                    return None
+                if data is not None and self._load_sound_bytes_to_cache([rel], data):
+                    return self.sound_pool[rel]
+                print(f"[Audio] Sound not found in {folder}.fiopak: {rel}")
+                return None
             path = resolve_speaker_sound(rel, os.getcwd())
             if path and os.path.isfile(path) and self._load_sound_to_cache(rel, path):
                 return self.sound_pool[rel]
+            if path and self._load_user_pack_sound([rel], path):
+                return self.sound_pool[rel]
             print(f"[Audio] Sound not found: {rel}")
             return None
-        clean_name = os.path.basename(name)
 
-        # Already cached?
+        clean_name = os.path.basename(name)
         if clean_name in self.sound_pool:
             return self.sound_pool[clean_name]
         if not self._ensure_pygame_mixer():
             return None
-
-        # Bare names intentionally resolve only in sounds.fiopak / assets/sounds.
-        rel = f"assets/sounds/{clean_name}"
-        if self._load_sound_from_archive(rel):
-            if clean_name in self.sound_pool:
+        sound_archive = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
+        if os.path.isfile(sound_archive):
+            member = f"assets/sounds/{clean_name}"
+            try:
+                data = read_archive_audio(sound_archive, member, "assets/sounds")
+            except (OSError, zipfile.BadZipFile) as exc:
+                print(f"[Audio] Cannot read sounds.fiopak: {exc}")
+                return None
+            if data is not None and self._load_sound_bytes_to_cache([clean_name, member], data):
                 return self.sound_pool[clean_name]
-            return self.sound_pool.get(rel)
-
+            print(f"[Audio] Sound not found in sounds.fiopak: {clean_name}")
+            return None
         path = os.path.join(os.getcwd(), 'assets', 'sounds', clean_name)
-        if os.path.exists(path):
+        if os.path.isfile(path):
             if self._load_sound_to_cache(clean_name, path):
                 return self.sound_pool[clean_name]
-
+        elif self._load_user_pack_sound([clean_name, f"assets/sounds/{clean_name}"], path):
+            return self.sound_pool[clean_name]
         print(f"[Audio] Sound not found: {clean_name}")
         return None
 

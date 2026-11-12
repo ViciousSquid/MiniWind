@@ -64,6 +64,9 @@ class LogicCombat:
 
     def __init__(self, logic):
         self.logic = logic
+        #: ``hitboxes 1``: publish every shootable monster's hit sphere for
+        #: the 3D view to outline (LogicRender, view_debug_draw).
+        self.show_hitboxes = False
         self._monster_projectiles = ProjectileStore()
         #: Optional ``hook(store, row, target) -> bool`` before a missile hits.
         #: True keeps the changed projectile alive and skips its impact effects.
@@ -441,6 +444,17 @@ class LogicCombat:
                 closest_brush_hit = ray_origin + ray_dir * dist
         return closest_brush_dist, closest_brush_hit
 
+    @staticmethod
+    def hit_sphere(pos, props):
+        """``((x, y, z), radius)``: the sphere player shots and melee test
+        for a monster at *pos* (the centre of its billboard) -- centred at
+        feet + 0.45 H, wider than the sprite for a forgiving feel."""
+        sprite_width = float(props.get('sprite_width', 64.0))
+        sprite_height = float(props.get('sprite_height', 128.0))
+        feet_y = pos[1] - sprite_height * 0.5
+        return ((pos[0], feet_y + sprite_height * 0.45, pos[2]),
+                max(sprite_width * 0.75, sprite_height * 0.4, 48.0))
+
     def _hitscan_monster_snapshot(self):
         """The shootable monsters, in things order, with their hit spheres.
 
@@ -448,6 +462,14 @@ class LogicCombat:
         rounds them, ``radii`` float64. The sphere is wider than the sprite,
         for a more forgiving feel: width matters more than height when
         shooting. Taken under ``monster_lock``.
+
+        ``Monster.pos`` is the centre of the billboard (the AI grounds a
+        monster at ``floor + sprite_height / 2`` and the sprite pass draws the
+        quad centred on ``pos``), so the feet are half the sprite below it and
+        the sphere sits just under the middle of what is drawn. Measuring
+        from ``pos`` as if it were the feet put the sphere on the head: on a
+        192-tall human the whole lower half of the body, eye height included,
+        could not be hit.
         """
         monsters = []
         centres = []
@@ -458,14 +480,21 @@ class LogicCombat:
             props = thing.properties
             if props.get('dead', False) or props.get('hidden', False):
                 continue
-            sprite_width = float(props.get('sprite_width', 64.0))
-            sprite_height = float(props.get('sprite_height', 128.0))
             monsters.append(thing)
-            centres.append((thing.pos[0], thing.pos[1] + sprite_height * 0.45, thing.pos[2]))
-            radii.append(max(sprite_width * 0.75, sprite_height * 0.4, 48.0))
+            centre, radius = self.hit_sphere(thing.pos, props)
+            centres.append(centre)
+            radii.append(radius)
         return (monsters,
                 np.array(centres, dtype=np.float32).reshape(len(monsters), 3),
                 np.array(radii, dtype=np.float64))
+
+    def hitbox_snapshot(self):
+        """``(centres, radii)`` of the spheres player shots and melee test
+        (:meth:`_hitscan_monster_snapshot`), as float32 copies the UI thread
+        can draw: exactly what a bullet has to touch."""
+        with self.logic.session_runtime.monster_lock:
+            _monsters, centres, radii = self._hitscan_monster_snapshot()
+        return centres.copy(), radii.astype(np.float32)
 
     @staticmethod
     def _trace_monsters(ray_origin, directions, reach, wall_dists, centres, radii):
@@ -650,9 +679,11 @@ class LogicCombat:
             _projectile_callback(on_impact, glm.vec3(*projectiles.pos[i].tolist()), None)
 
 
-    #: Monster hit sphere for projectiles: centred 64 units above the
-    #: monster's origin, radius 64.
-    PROJECTILE_MONSTER_LIFT = 64.0
+    #: Monster hit sphere for projectiles: centred on the monster's origin
+    #: -- the middle of its billboard (see _hitscan_monster_snapshot) --
+    #: radius 64. It was 64 units above it, as if the origin were the feet,
+    #: which put it over the head of a 192-tall human.
+    PROJECTILE_MONSTER_LIFT = 0.0
     PROJECTILE_MONSTER_RADIUS = 64.0
     #: Player hit sphere for projectiles.
     PROJECTILE_PLAYER_RADIUS = 32.0

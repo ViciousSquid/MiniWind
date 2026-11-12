@@ -54,15 +54,18 @@ def install() -> None:
     here must never stop the editor from starting.
     """
     global _installed
-    if _installed:
-        return
-    _installed = True
+    # Registration is the manager's (idempotent, and undone between tests by
+    # the suite): made whenever it is missing. The editor integration below
+    # patches classes, so it is applied once.
     try:
         from plugins.manager import get_manager
         get_manager().register_builtin_game(_game_host())
     except Exception as exc:  # pragma: no cover - defensive
         print(f"[MiniWind] game host registration skipped: {exc}")
         return
+    if _installed:
+        return
+    _installed = True
     try:
         from . import integration as _integration
         _integration.apply()

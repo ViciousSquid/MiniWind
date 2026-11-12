@@ -62,10 +62,6 @@ MAGICKA_PER_LEVEL = 12.0
 MAGICKA_REGEN = 3.0
 #: A staff channels its bound spell at this share of the spell's cost.
 STAFF_COST_SCALE = 0.5
-#: Bolts leave the caster this far above its origin.
-CAST_LIFT = 48.0
-#: Fio's hit sphere is lifted this far above an actor's origin.
-EYE_LIFT = 64.0
 #: Bolts fizzle beyond this range.
 SPELL_MAX_RANGE = 2048.0
 #: Ward effects and the colour each is drawn in.
@@ -567,8 +563,11 @@ class NpcMagic:
         logic = session.logic
         p = thing.properties
         p["_attack_anim"] = 0.2
-        start = [float(thing.pos[0]), float(thing.pos[1]) + CAST_LIFT, float(thing.pos[2])]
-        lift = EYE_LIFT
+        # Cast from and at the middle of a body, where the engine's hit
+        # sphere is (fio.projectile_body_lift).
+        body = fio.projectile_body_lift()
+        start = [float(thing.pos[0]), float(thing.pos[1]) + body, float(thing.pos[2])]
+        lift = body
         if target == "player":
             player = fio.player(logic)
             lift = float(getattr(player, "camera_height", 48.0) or 48.0) * 0.6

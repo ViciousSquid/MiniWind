@@ -35,7 +35,10 @@ def test_a_failed_mixer_is_not_reprobed_on_every_sound(main_window, qt_app, monk
     clock = [100.0]
     # Patching the shared time module also rewinds the real logic thread's
     # scheduler and can leave it sleeping past Stop. Only the view uses this clock.
-    monkeypatch.setattr(qt_game_view, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
+    # The mixer probe lives in engine.view_audio (Fio 3.5 split it out of the
+    # view): swap that module's clock, not the shared time module.
+    from engine import view_audio
+    monkeypatch.setattr(view_audio, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
     view = qt_game_view.QtGameView(main_window)
     try:
         ensure = view.audio._ensure_pygame_mixer

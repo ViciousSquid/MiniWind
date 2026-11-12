@@ -6931,7 +6931,7 @@ class MiniwindSession(SettlementLaw):
         sprite = arrow_sprite(shot.id if shot is not None else
                               eq.equipped_id(c, "ammo"))
 
-        start = [ppos[0], ppos[1] + 48.0, ppos[2]]
+        start = [ppos[0], ppos[1] + fio.projectile_body_lift(), ppos[2]]
         aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
@@ -7605,7 +7605,7 @@ class MiniwindSession(SettlementLaw):
         from engine.monster_constants import (
             MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST)
 
-        start = [ppos[0], ppos[1] + 48.0, ppos[2]]
+        start = [ppos[0], ppos[1] + fio.projectile_body_lift(), ppos[2]]
         aim = self._cast_point(aim, start, MONSTER_PROJECTILE_MAX_DIST) \
             or self._projectile_aim_point(start)
 

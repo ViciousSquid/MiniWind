@@ -4,7 +4,8 @@
 
 Archives contain the original bytes and project-relative paths. Existing
 archives are replaced only after verification; a category with no loose files
-keeps its existing archive (notably the shipped sounds.fiopak).
+keeps its existing archive. Sounds ship as the loose assets/sounds folder, so
+they are packed only when asked for by name (``pack_assets.py sounds``).
 """
 
 from __future__ import annotations
@@ -18,12 +19,17 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.asset_archives import ASSET_CATEGORIES, category_member, _entries
 
+#: Packed by a bare ``pack_assets.py``. Sounds ship loose (assets/sounds/).
+DEFAULT_CATEGORIES = tuple(c for c in ASSET_CATEGORIES if c != 'sounds')
+
 
 def pack_category(root, category):
     root = Path(root).resolve()
     assets = root / 'assets'
-    base = assets if category == 'editor' else assets / category
-    candidates = base.glob('*') if category == 'editor' else base.rglob('*')
+    if category == 'editor':        # root images + assets/editor/** artwork
+        candidates = [*assets.glob('*'), *(assets / 'editor').rglob('*')]
+    else:
+        candidates = (assets / category).rglob('*')
     files = sorted((p for p in candidates if p.is_file()
                     and category_member(p.relative_to(root).as_posix(), category)),
                    key=lambda p: p.relative_to(root).as_posix())
@@ -71,7 +77,7 @@ def main(argv=None):
     parser.add_argument('--root', default=Path(__file__).resolve().parents[1])
     parser.add_argument('categories', nargs='*', choices=ASSET_CATEGORIES)
     args = parser.parse_args(argv)
-    for category in args.categories or ASSET_CATEGORIES:
+    for category in args.categories or DEFAULT_CATEGORIES:
         path, count = pack_category(args.root, category)
         print(f'{path.name}: {count} files packed' if count
               else f'{path.name}: no loose files; existing archive preserved')

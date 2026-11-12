@@ -62,6 +62,7 @@ class ConsoleCommandHandler:
             'monster_revive':     self.cmd_monster_revive,
             'monster_revive_all': self.cmd_monster_revive_all,
             'botdebug': self.cmd_botdebug,
+            'monsterdebug': self.cmd_monsterdebug,
 
             'ent': self.cmd_info,
             'info': self.cmd_info,
@@ -189,6 +190,7 @@ class ConsoleCommandHandler:
             # Debug
             'notarget': self.cmd_notarget,
             'sg': self.cmd_spatial_grid,
+            'hitboxes': self.cmd_hitboxes,
             'showcollision': self.cmd_show_collision,
             'collisionvis': self.cmd_show_collision,
             'collision': self.cmd_show_collision,
@@ -211,7 +213,8 @@ class ConsoleCommandHandler:
     #: plugin code), like a key binding.  ``vsync`` / ``r_vsync`` do nothing
     #: but flip the stored preference in settings.ini.  ``quit`` closes Fio
     #: without asking, so a map could throw away the user's unsaved work.
-    USER_ONLY_COMMANDS = frozenset({'bind', 'r_renderer', 'vsync', 'r_vsync', 'quit', 'botdebug'})
+    USER_ONLY_COMMANDS = frozenset({'bind', 'r_renderer', 'vsync', 'r_vsync', 'quit', 'botdebug',
+                                    'monsterdebug'})
 
     def cmd_botdebug(self, args):
         if args.strip().lower() not in ('', 'on', 'off'):
@@ -224,6 +227,18 @@ class ConsoleCommandHandler:
             return
         from editor.bot_debug import show_bot_debug
         show_bot_debug(self.main_window)
+
+    def cmd_monsterdebug(self, args):
+        """monsterdebug [on|off] — the floating Monster Debug window (F7 in play)."""
+        arg = args.strip().lower()
+        if arg not in ('', 'on', 'off', '1', '0'):
+            debug_log('Error', 'Usage: monsterdebug [on|off]')
+            return
+        from editor.monster_debug import hide_monster_debug, show_monster_debug
+        if arg in ('off', '0'):
+            hide_monster_debug(self.main_window)
+        else:
+            show_monster_debug(self.main_window)
 
     def handle_command(self, cmd_string, *, from_map=False):
         """Run one console command line.
@@ -1011,6 +1026,7 @@ class ConsoleCommandHandler:
 <b style="color:orange;">disconnect</b> &lt;src&gt; &lt;out&gt; &lt;tgt&gt; &lt;in&gt;<br>
 <b style="color:cyan;">=== Monsters ===</b><br>
 <b style="color:orange;">botdebug</b> [on|off] — Floating live decisions: overview and one tab per bot<br>
+<b style="color:orange;">monsterdebug</b> [on|off] — Floating Monster Debug window: overview, inspector, perception, combat, patrol (F7 in play)<br>
 <b style="color:orange;">monster_kill</b> &lt;name&gt; — Instantly kill a named monster<br>
 <b style="color:orange;">monster_revive</b> &lt;name&gt; — Restore a named monster to full health<br>
 <b style="color:orange;">monster_revive_all</b> — Restore every monster in the level<br>
@@ -1060,6 +1076,7 @@ entity to drive them from the I/O system.</i><br>
 <b style="color:orange;">portal_delete</b> &lt;name&gt; [and_pair] — Remove portal(s)<br>
 <b style="color:cyan;">=== Debug ===</b><br>
 <b style="color:orange;">sg</b> — Toggle spatial grid visualisation<br>
+<b style="color:orange;">hitboxes</b> [1|0] — Outline monsters' actual hit spheres (pink)<br>
 <b style="color:orange;">god</b> — Toggle invincibility<br>
 <b style="color:orange;">buddha</b> — Toggle buddha mode (health cannot go below 2)<br>
 <b style="color:orange;">noclip</b> — Toggle noclip<br>
@@ -2230,6 +2247,27 @@ entity to drive them from the I/O system.</i><br>
         state = "ON" if view_3d.show_spatial_grid else "OFF"
         self.main_window.show_toast(f"Spatial Grid: {state}")
         debug_log("Info", f"Spatial grid display set to {state}")
+
+    def cmd_hitboxes(self, args):
+        """hitboxes [1|0|on|off|toggle] — Outline every shootable monster's
+        actual hit sphere (what player shots and melee test) in bright pink."""
+        if not self._require_play_mode("hitboxes"):
+            return
+        combat = self.main_window.view_3d.logic_thread.combat_runtime
+        arg = args.strip().lower() if args else "toggle"
+        if arg in ("on", "1", "true"):
+            combat.show_hitboxes = True
+        elif arg in ("off", "0", "false"):
+            combat.show_hitboxes = False
+        elif arg == "toggle":
+            combat.show_hitboxes = not combat.show_hitboxes
+        else:
+            debug_log("Error", "Usage: hitboxes [1|0]")
+            return
+        state = "ON" if combat.show_hitboxes else "OFF"
+        self.main_window.show_toast(f"Monster hitboxes: {state}")
+        debug_log("Info", f"Monster hitboxes set to {state}")
+        self.main_window.view_3d.update()
 
     def cmd_physics(self, args):
         if not self._require_play_mode("physics"):
