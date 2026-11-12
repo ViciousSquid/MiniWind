@@ -544,7 +544,7 @@ class SceneHierarchy(QWidget):
         # In the game (kiosk mode) the editor's docks are hidden, and a level
         # change would rebuild one tree item per entity of the new map for
         # nobody to see: rebuild once the panel is shown again instead.
-        if getattr(self.main_window, 'is_kiosk_mode', False) and not self.isVisible():
+        if getattr(self.main_window, 'editor_dormant', False) and not self.isVisible():
             self._refresh_deferred = True
             return
         self._refresh_deferred = False

@@ -387,7 +387,11 @@ if __name__ == "__main__":
 
     splash.set_progress(25, "Building editor UI...")
 
-    window = MainWindow(root_directory)
+    # Straight into the game: the editor is built dormant (hidden, its panels
+    # unfilled) and wakes only if the player leaves fullscreen.
+    window = MainWindow(root_directory, dormant=launch_choice == "play")
+    if launch_choice == "play":
+        window.begin_dormant_launch()
     
     # Set icon on main window
     if 'app_icon' in locals():
@@ -420,6 +424,11 @@ if __name__ == "__main__":
             # Reported on screen and in the log rather than leaving a window
             # that never shows the game.
             error_report.report_error("Could not start the game", exc)
+        finally:
+            # A dormant launch that did not reach the game wakes the editor
+            # rather than leave a window with its controls hidden.
+            if not window.is_kiosk_mode:
+                window.wake_editor()
 
     def _open_default_map_unguarded():
         title = (f"Loading {os.path.splitext(os.path.basename(default_map))[0]}"

@@ -758,9 +758,20 @@ class AssetBrowserTab(QWidget):
         # Collapse tree panel by default
         self.tree_frame.setVisible(False)
 
-        # Load initial directory and setup resize handling for dynamic columns
-        self.load_directory(self.current_asset_folder)
+        # Load initial directory and setup resize handling for dynamic columns.
+        # A dormant editor (MainWindow.editor_dormant: launched straight into
+        # the game) fills the grid when the tab is first shown instead: its
+        # thumbnails were most of the editor's start-up for nobody to see.
+        self._initial_load_pending = bool(getattr(editor, 'editor_dormant', False))
+        if not self._initial_load_pending:
+            self.load_directory(self.current_asset_folder)
         self.scroll_area.resizeEvent = self._on_resize
+
+    def showEvent(self, event):
+        if self._initial_load_pending:
+            self._initial_load_pending = False
+            self.load_directory(self.current_asset_folder)
+        super().showEvent(event)
 
     def _on_resize(self, event):
         """Debounced resize handler."""
