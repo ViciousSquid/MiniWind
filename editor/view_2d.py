@@ -1647,7 +1647,7 @@ class View2D(QWidget):
         # Build a lookup: node-name → thing, for fast resolution
         node_lookup = {}
         for t in self.editor.state.things:
-            if (isinstance(t, PathNode) or t.properties.get('type') == 'deathmatchnode') and not self._filtered(t):
+            if isinstance(t, PathNode) and not self._filtered(t):
                 n = t.properties.get('name', '') or ''
                 if n:
                     node_lookup[n] = t
@@ -1658,12 +1658,10 @@ class View2D(QWidget):
         olive_dim = QColor(128, 128, 0, 80)
         chain_pen = QPen(olive, 2, Qt.DashLine)
 
-        links = []
-        for name, node in node_lookup.items():
-            targets = ([node.get_next_node_name()] if isinstance(node, PathNode)
-                       else str(node.properties.get('links', '')).replace(',', ' ').split())
-            links.extend((node, target) for target in targets if target)
+        links = [(node, node.get_next_node_name()) for node in node_lookup.values()]
         for node, next_name in links:
+            if not next_name:
+                continue
             next_node = node_lookup.get(next_name)
             if next_node is None:
                 continue
@@ -1681,25 +1679,21 @@ class View2D(QWidget):
             p1 = self.world_to_screen(src_w)
             p2 = self.world_to_screen(dst_w)
 
-            navigation = node.properties.get('type') == 'deathmatchnode'
-            link_color = QColor(38, 166, 154, 230) if navigation else olive
-            painter.setPen(QPen(link_color, 2, Qt.SolidLine) if navigation else chain_pen)
+            painter.setPen(chain_pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawLine(p1, p2)
 
             # Small arrowhead at destination
-            self._draw_connection_arrow(painter, p1, p2, link_color)
-            if navigation:
-                self._draw_connection_arrow(painter, p2, p1, link_color)
+            self._draw_connection_arrow(painter, p1, p2, olive)
 
             # Tiny "next" label at midpoint
             mid = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
             painter.save()
-            painter.setPen(QPen(link_color if navigation else olive_dim))
+            painter.setPen(QPen(olive_dim))
             font = QFont()
             font.setPointSize(7)
             painter.setFont(font)
-            painter.drawText(mid + QPointF(4, -4), "nav" if navigation else "next")
+            painter.drawText(mid + QPointF(4, -4), "next")
             painter.restore()
 
         # --- 2. Monster → patrol_target lines (teal, dotted, thinner) ----
@@ -2377,7 +2371,7 @@ class View2D(QWidget):
                     painter.restore()
 
                 # 1c. Draw PathNode Radius
-                if (isinstance(thing, PathNode) or thing.properties.get('type') == 'deathmatchnode') and thing.properties.get('show_radius', False):
+                if isinstance(thing, PathNode) and thing.properties.get('show_radius', False):
                     radius = thing.get_radius() * self.zoom_factor
                     painter.setBrush(QBrush(QColor(38, 166, 154, 30)))
                     painter.setPen(QPen(QColor(38, 166, 154, 220), 1, Qt.DashLine))

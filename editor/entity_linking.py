@@ -41,8 +41,6 @@ def connect_entities(owner, source, target):
     field = None
     if kind == 'path_node' and target_kind == 'path_node':
         field = 'next_node'
-    elif kind == 'deathmatchnode' and target_kind == 'deathmatchnode':
-        field = 'links'
     elif kind == 'monster' and target_kind == 'path_node':
         field = 'patrol_target'
     elif kind == 'logic_camera' and target_kind == 'path_node':

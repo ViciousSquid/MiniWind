@@ -8,19 +8,18 @@ from editor.io_system import get_connections
 from editor.things import Monster, PathNode, Thing
 
 
-class DeathmatchNode(Thing):
-    """Stands in for Fio's Deathmatch navigation node, which MiniWind does
-    not ship: the editor's linking rules know the entity by its type string
-    and its ``links`` list, and placement by its ``on_editor_placed`` hook."""
+class LinkedNode(Thing):
+    """A plugin entity that links itself to its kind when placed, through the
+    editor's ``on_editor_placed`` hook (as a navigation node would)."""
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
-        self.properties["type"] = "deathmatchnode"
+        self.properties["type"] = "linkednode"
         self.properties.setdefault("links", "")
 
     def on_editor_placed(self, state):
         others = [t.properties.get("name") for t in state.things
-                  if t is not self and t.properties.get("type") == "deathmatchnode"]
+                  if t is not self and t.properties.get("type") == "linkednode"]
         self.properties["links"] = ",".join(name for name in others if name)
 
 pytestmark = pytest.mark.qt
@@ -40,20 +39,6 @@ def test_native_path_link_is_undoable_and_enables_monster_patrol(main_window):
     connect_entities(main_window, restored_monster, restored_a)
     assert restored_monster.properties['patrol']
     assert restored_monster.properties['patrol_target'] == 'A'
-
-
-def test_deathmatch_links_append_without_duplicates(main_window):
-    a = DeathmatchNode([0, 90, 0], {'name': 'A'})
-    b = DeathmatchNode([300, 90, 0], {'name': 'B'})
-    c = DeathmatchNode([600, 90, 0], {'name': 'C'})
-    main_window.state.things = [a, b, c]
-    connect_entities(main_window, a, b)
-    connect_entities(main_window, a, c)
-    assert a.properties['links'] == 'B,C'
-    assert connect_entities(main_window, b, a).startswith('Already linked')
-    assert b.properties['links'] == ''
-    assert connect_entities(main_window, a, b).startswith('Already linked')
-    assert a.properties['links'] == 'B,C'
 
 
 def test_trigger_link_creates_declared_output_input_and_stable_target_id(main_window):
@@ -165,9 +150,9 @@ def test_placing_navigation_node_auto_links_in_one_undo_step(main_window):
     manager.set_enabled(plugin, True)
     try:
         main_window.state.brushes = [box_brush('Floor', (0, -25, 0), (3000, 50, 3000))]
-        a = DeathmatchNode([0, 90, 0], {'name': 'A'})
+        a = LinkedNode([0, 90, 0], {'name': 'A'})
         main_window.state.things = [a]
-        main_window.view_top._place_plugin_entity(plugin, DeathmatchNode, 'Bot Navigation Node', [300, 90, 0])
+        main_window.view_top._place_plugin_entity(plugin, LinkedNode, 'Bot Navigation Node', [300, 90, 0])
         assert len(main_window.state.things) == 2
         placed = main_window.state.things[-1]
         assert placed.properties['links'] == 'A'
