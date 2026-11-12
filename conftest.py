@@ -71,7 +71,22 @@ def pytest_addoption(parser):
              "excluded from the normal suite)")
 
 
+#: Where MiniWind's own tests live: the game layer's, and the engine seams'
+#: (tests/miniwind/). Everything under them is in the ``miniwind`` tier, so
+#: ``-m "not miniwind"`` runs Fio's suite as Fio ships it (the engine still
+#: meeting upstream's contract) and ``-m miniwind`` the game's.
+_MINIWIND_TEST_ROOTS = tuple(
+    os.path.join(_ROOT, *rel.split("/")) + os.sep
+    for rel in ("game/tests", "tests/miniwind"))
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
+    # First, so ``-m miniwind`` / ``-m "not miniwind"`` select on it.
+    miniwind = pytest.mark.miniwind
+    for item in items:
+        if str(item.fspath).startswith(_MINIWIND_TEST_ROOTS):
+            item.add_marker(miniwind)
     if config.getoption("--run-benchmarks"):
         return
     skip = pytest.mark.skip(reason="benchmark tier: pass --run-benchmarks to run it")
