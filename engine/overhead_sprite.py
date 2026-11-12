@@ -192,15 +192,18 @@ void main() {
 }"""
 
 
-#: The batched form of the shaders above: one instanced draw per run of
-#: sprites sharing a texture. Each instance is three texels of a texture
-#: buffer -- (x, y, z, theta), (size, squash, opacity, 0), tint -- so the model
+#: The batched form of the shaders above. Every image is a layer of one
+#: texture array (:class:`_OverheadLayers`), so sprites of different images
+#: and owners share a draw; one instanced draw per run sharing a depth bias
+#: and depth write. Each instance is three texels of a texture buffer --
+#: (x, y, z, theta), (size, squash, opacity, layer), tint -- so the model
 #: matrix is built here rather than with glm in Python per sprite.
 _SPRITE_VERT_BATCH = """#version 330 core
 layout (location = 0) in vec2 aPos;
 out vec2 TexCoords;
 flat out vec4 vTint;
 flat out float vOpacity;
+flat out float vLayer;
 uniform mat4 vp;
 uniform samplerBuffer instances;
 uniform int base;
@@ -210,6 +213,7 @@ void main() {
     vec4 b = texelFetch(instances, i + 1);
     vTint = texelFetch(instances, i + 2);
     vOpacity = b.z;
+    vLayer = b.w;
     TexCoords = vec2(aPos.x + 0.5, 0.5 - aPos.y);
     // glm.rotate(theta, +Y) of the scaled quad, then the translation.
     float lx = aPos.x * b.x;
@@ -223,16 +227,45 @@ _SPRITE_FRAG_BATCH = """#version 330 core
 in vec2 TexCoords;
 flat in vec4 vTint;
 flat in float vOpacity;
+flat in float vLayer;
 out vec4 FragColor;
-uniform sampler2D tex;
+uniform sampler2DArray tex;
 void main() {
-    vec4 c = texture(tex, TexCoords);
+    vec4 c = texture(tex, vec3(TexCoords, vLayer));
     if (c.a < 0.05) discard;
     FragColor = vec4(
         mix(c.rgb, vTint.rgb, clamp(vTint.a, 0.0, 1.0)),
         c.a * clamp(vOpacity, 0.0, 1.0)
     );
 }"""
+
+
+def glm_identity():
+    import glm
+    return glm.mat4(1.0)
+
+
+class _OverheadLayers:
+    """:class:`engine.sprite_layers.SpriteLayers` filtered as the overhead
+    sprites' own 2D textures are: linear, no mipmaps, clamped at the edge."""
+
+    def __new__(cls):
+        from engine.sprite_layers import SpriteLayers
+
+        class Layers(SpriteLayers):
+            def _allocate(self, size, capacity):
+                super()._allocate(size, capacity)
+                import OpenGL.GL as gl
+                gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.texture)
+                for name, value in ((gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
+                                    (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR),
+                                    (gl.GL_TEXTURE_MAX_LEVEL, 0),
+                                    (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
+                                    (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, name, value)
+                gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, 0)
+
+        return Layers(max_size=256, min_size=16)
 
 
 def _assets_root() -> str:
@@ -292,6 +325,7 @@ class OverheadSpriteRenderer:
         self._batch = None
         self._batch_vp = None
         self._batch_prog = None
+        self._layers = None
 
     def facing_theta(self, facing: float) -> float:
         return float(facing) + math.radians(self.facing_offset_deg)
@@ -540,6 +574,26 @@ class OverheadSpriteRenderer:
         gl = self._gl
         n = len(batch)
         data = np.array([row[:12] for row in batch], dtype=np.float32)
+        if self._layers is None:
+            self._layers = _OverheadLayers()
+        layers = self._layers.layers_for([row[12] for row in batch])
+        if layers is None:
+            # An image the array cannot hold (more than the driver's layer
+            # limit, or unreadable): draw these one at a time, as before, and
+            # stop batching for this renderer.
+            self._batch_prog = None
+            offset = math.radians(self.facing_offset_deg)
+            for row in batch:
+                self._draw_texture(
+                    self._batch_vp, glm_identity(), row[0:3], row[3] - offset,
+                    row[12], row[4], row[13], tint=row[8:12], depth_write=row[14],
+                    opacity=row[6], squash=row[5])
+            return
+        if layers is not None:
+            # One texture for the lot: a run breaks only where the depth state
+            # does, whatever image or owner each sprite has.
+            data[:, 7] = layers
+            batch = [row[:12] + (0,) + row[13:] for row in batch]
         gl.glBindBuffer(gl.GL_TEXTURE_BUFFER, self._batch_buffer)
         if n > self._batch_capacity:
             self._batch_capacity = max(64, n * 2)
@@ -550,7 +604,7 @@ class OverheadSpriteRenderer:
 
         loc = self._batch_loc
         gl.glUseProgram(self._batch_prog)
-        gl.glUniformMatrix4fv(loc["vp"], 1, gl.GL_FALSE,
+        self._glraw().uniform_matrix4fv(gl, loc["vp"], 1, gl.GL_FALSE,
                               self._glm.value_ptr(self._batch_vp))
         gl.glActiveTexture(gl.GL_TEXTURE1)
         gl.glBindTexture(gl.GL_TEXTURE_BUFFER, self._batch_texture)
@@ -569,7 +623,7 @@ class OverheadSpriteRenderer:
                 key = batch[i][12:] if i < n else None
                 if i and key == (texture, bias, depth_write):
                     continue
-                if i > start and texture is not None:
+                if i > start and (texture is not None):
                     gl.glUniform1i(loc["base"], start)
                     gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, 6, i - start)
                 if key is None:
@@ -577,7 +631,10 @@ class OverheadSpriteRenderer:
                 start = i
                 new_texture, new_bias, new_depth = key
                 if new_texture != texture:
-                    gl.glBindTexture(gl.GL_TEXTURE_2D, new_texture)
+                    if layers is not None:
+                        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._layers.texture)
+                    else:
+                        gl.glBindTexture(gl.GL_TEXTURE_2D, new_texture)
                 if new_bias != bias:
                     if new_bias:
                         gl.glEnable(gl.GL_POLYGON_OFFSET_FILL)
@@ -654,7 +711,7 @@ class OverheadSpriteRenderer:
             mvp = projection * view * model
 
             gl.glUseProgram(self._prog)
-            gl.glUniformMatrix4fv(
+            self._glraw().uniform_matrix4fv(gl, 
                 self._mvp_loc,
                 1,
                 gl.GL_FALSE,
@@ -710,6 +767,11 @@ class OverheadSpriteRenderer:
 
         except Exception:
             self._ok = False
+
+    @staticmethod
+    def _glraw():
+        from engine.renderer.core import glraw
+        return glraw
 
     def _ready(self) -> bool:
         if self._ok is False:

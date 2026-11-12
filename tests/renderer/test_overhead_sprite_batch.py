@@ -74,12 +74,33 @@ def test_a_batch_draws_what_single_sprites_draw(monkeypatch):
 
         background = one_by_one[0, 0]
         assert (np.abs(one_by_one - background).max(axis=-1) > 8).mean() > 0.05  # it drew
+        # Every image is a layer of one texture array, resampled to the
+        # layer's square size: the same picture, give or take resampling at
+        # the sprites' edges.
         delta = np.abs(one_by_one - batched).max(axis=-1)
-        assert delta.max() <= 1 and (delta > 0).mean() < 0.002
+        assert delta.max() <= 32 and (delta > 8).mean() < 0.005
+        # Images and owners no longer split a draw: only the depth state does.
         runs = 1 + sum(1 for a, b in zip(scene, scene[1:])
-                       if (a["texture"], a["y_offset"], a["depth_write"])
-                       != (b["texture"], b["y_offset"], b["depth_write"]))
+                       if (a["y_offset"], a["depth_write"])
+                       != (b["y_offset"], b["depth_write"]))
         assert len(draws) == runs and sum(draws) == len(scene)
+
+
+def test_the_same_layer_serves_every_owner_of_an_image():
+    """A player's and an NPC's sword are one image and one layer."""
+    from engine.overhead_sprite import OverheadSpriteRenderer
+    import glm
+    with GLTestContext(64, 64):
+        renderer = OverheadSpriteRenderer(size=64.0)
+        assert renderer.begin(glm.mat4(1.0), glm.mat4(1.0))
+        tex = next(t for t in renderer._textures.values() if t)
+        for x in (0.0, 10.0, 20.0):
+            renderer._draw_texture(glm.mat4(1.0), glm.mat4(1.0), (x, 0, 0), 0.0, tex,
+                                   10.0, 0.0)
+        renderer.end()
+        layers = renderer._layers.layers_for([tex, tex])
+        assert layers is not None and layers[0] == layers[1]
+        assert renderer._layers.count == 1
 
 
 def test_nothing_collected_draws_nothing():
