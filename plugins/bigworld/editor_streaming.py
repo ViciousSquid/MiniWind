@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from .cell import cell_of_point
 from .config import config_from_properties
-from .manager import BigWorldManager, DEFAULT_PERSISTENT_TYPES
+from .manager import BigWorldManager, DEFAULT_PERSISTENT_TYPES, brush_cells
 
 
 def record_id(record, kind):
@@ -72,6 +72,33 @@ class EditorCellStream:
             start = resolve_start_record(level)
             position = start.get('pos', [0, 150, 400]) if start else [0, 150, 400]
         return cls(level, position, adopt=adopt)
+
+    #: Above this share of the brushes re-filed one by one, the whole index is
+    #: rebuilt instead (:meth:`refile_brushes`).
+    REFILE_MAX_SHARE = 0.25
+
+    def refile_brushes(self, replaced):
+        """Re-file the brushes whose records *replaced* swaps, ``[(old, new),
+        ...]``, leaving the rest of the index as it is.
+
+        For a load that replaces a few records before anything is active (a
+        version 3 map's angled brushes moved into their local frame): a
+        whole :meth:`reindex` walked every brush of the world to move those.
+        Many replacements fall back to the rebuild, which is cheaper then.
+        """
+        brushes = self.records['brushes']
+        if not replaced:
+            return
+        if len(replaced) > self.REFILE_MAX_SHARE * max(1, len(brushes)):
+            self.reindex()
+            return
+        manager = self.manager
+        for old, new in replaced:
+            for coord in brush_cells(old, manager.cell_size):
+                cell = manager.cells.get(coord)
+                if cell is not None:
+                    cell.brushes[:] = [b for b in cell.brushes if b is not old]
+            manager.add_brush(new)
 
     def reindex(self):
         self.order = {kind: {identity: i for i, identity in enumerate(records)}

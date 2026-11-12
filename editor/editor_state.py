@@ -861,13 +861,14 @@ class EditorState:
             # not, so a later save writes the canonical layout throughout:
             # no play state (Stage 2b), and a legacy file's faces.
             records = stream.records['brushes']
-            replaced = False
+            replaced = {}
             for identity, record in list(records.items()):
+                original = record
                 if any(key in record for key in _PLAY_STATE_KEYS):
                     record = dict(record)
                     _drop_play_state(record)
                     records[identity] = record
-                    replaced = True
+                    replaced[identity] = (original, record)
                 if legacy and 'geometry' in record:
                     record = dict(record)
                     _migrate_legacy_faces(record)
@@ -878,11 +879,13 @@ class EditorState:
                     records[identity] = record
                     # Filed before this ran, reading world planes as local:
                     # re-filed below from where it is.
-                    replaced = True
+                    replaced[identity] = (original, record)
+            for identity, (original, record) in list(replaced.items()):
+                replaced[identity] = (original, records[identity])
             if replaced:
                 # A box saved mid-motion is back at its authored placement, an
                 # angled brush is in its local frame: file each at home.
-                stream.reindex()
+                stream.refile_brushes(list(replaced.values()))
         local = stream.local_data() if stream is not None else level_data
         brushes_data = local.get('brushes') or []
         things_data = local.get('things') or []

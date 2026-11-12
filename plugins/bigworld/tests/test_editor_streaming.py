@@ -198,3 +198,53 @@ def test_map_load_shows_the_whole_world_by_default_and_honours_opt_out(main_wind
     assert main_window._load_level(level())
     assert main_window.state.editor_stream.whole_world is show_whole_world
     assert ('far-brush' in ids(main_window.state)) is show_whole_world
+
+
+def _cells(manager):
+    return {coord: sorted(b['id'] for b in cell.brushes)
+            for coord, cell in manager.cells.items() if cell.brushes}
+
+
+def _world_plane_level():
+    """A version 3 streamed world with one angled brush whose world-space
+    planes sit far from its stale ``pos``: the load moves it into its local
+    frame, so it must be re-filed where it really is."""
+    from engine import brush_geometry
+    data = level()
+    planes = [brush_geometry._plane_to_json(p) for p in
+              brush_geometry.box_planes([4096, 0, 4096], [64, 64, 64])]
+    data['brushes'].append({'id': 'angled', 'pos': [0, 0, 0], 'size': [64, 64, 64],
+                            'geometry': {'planes': planes}})
+    return data
+
+
+def test_a_load_refiles_only_the_records_it_replaced(monkeypatch):
+    from plugins.bigworld.editor_streaming import EditorCellStream
+    rebuilt = []
+    original = EditorCellStream.reindex
+
+    def counting(self):
+        rebuilt.append(1)
+        return original(self)
+    monkeypatch.setattr(EditorCellStream, 'reindex', counting)
+    state = EditorState()
+    state.load_from_data(_world_plane_level(), stream_editor=True)
+    stream = state.editor_stream
+    assert rebuilt == [1], "only the stream's construction indexes the whole world"
+    refiled = _cells(stream.manager)
+    original(stream)
+    assert refiled == _cells(stream.manager)
+    from plugins.bigworld.cell import cell_of_point
+    assert 'angled' in refiled[cell_of_point(4096, 4096, stream.manager.cell_size)]
+
+
+def test_many_replaced_records_rebuild_the_index_whole(monkeypatch):
+    from plugins.bigworld.editor_streaming import EditorCellStream
+    state = EditorState()
+    state.load_from_data(level(), stream_editor=True)
+    stream = state.editor_stream
+    rebuilt = []
+    monkeypatch.setattr(EditorCellStream, 'reindex', lambda self: rebuilt.append(1))
+    records = stream.records['brushes']
+    stream.refile_brushes([(r, dict(r)) for r in records.values()])
+    assert rebuilt == [1]
