@@ -43,6 +43,17 @@ class OverlaysMixin:
                     low = high = 1.0
             except Exception:
                 low = high = 1.0
+            # A forward-compatible core context (what Qt asks for on macOS,
+            # and what Mesa gives a core request) refuses any width above 1.0
+            # with GL_INVALID_VALUE, whatever the range above reports. With
+            # PyOpenGL's error checking off (as shipped) nothing raises, so the
+            # error stays queued and is blamed on a later call.
+            try:
+                flags = int(gl.glGetIntegerv(gl.GL_CONTEXT_FLAGS))
+                if flags & gl.GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT:
+                    low = high = 1.0
+            except Exception:
+                pass
             self._line_width_range = (low, high)
         low, high = self._line_width_range
         clamped = max(low, min(high, float(width)))

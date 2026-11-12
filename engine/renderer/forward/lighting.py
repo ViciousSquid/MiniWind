@@ -7,6 +7,7 @@ upload, and omnidirectional point-light shadows as depth cube-maps.
 import glm
 import numpy as np
 import OpenGL.GL as gl
+from engine.renderer.core import glraw
 
 from engine import render_table
 from engine import shaders
@@ -586,12 +587,12 @@ class LightingMixin:
                 gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
                 lsm = proj * glm.lookAt(
                     center, center + face_dirs[face][0], face_dirs[face][1])
-                gl.glUniformMatrix4fv(
+                glraw.uniform_matrix4fv(gl, 
                     lsm_loc, 1, gl.GL_FALSE, glm.value_ptr(lsm))
 
                 if len(cube_slots) and stream is not None:
                     gl.glUseProgram(depth_instanced)
-                    gl.glUniformMatrix4fv(
+                    glraw.uniform_matrix4fv(gl, 
                         inst_lsm_loc, 1, gl.GL_FALSE, glm.value_ptr(lsm))
                     gl.glUniform3f(inst_lightpos_loc, lx, ly, lz)
                     gl.glUniform1f(inst_far_loc, far_plane)
@@ -602,7 +603,7 @@ class LightingMixin:
                         gl.GL_TRIANGLES, 0, 36, len(cube_slots))
                     self.render_stats.shadow_draw_calls += 1
                     gl.glUseProgram(shader)
-                    gl.glUniformMatrix4fv(
+                    glraw.uniform_matrix4fv(gl, 
                         lsm_loc, 1, gl.GL_FALSE, glm.value_ptr(lsm))
                 elif len(cube_slots):
                     cube_models, _ = self._frame_transforms(table, cube_slots)
@@ -636,7 +637,7 @@ class LightingMixin:
                     gl.glBindVertexArray(obj.vao)
                     if (getattr(obj, 'ebo', None) is not None
                             and getattr(obj, 'index_count', 0)):
-                        gl.glDrawElements(
+                        glraw.draw_elements(gl, 
                             gl.GL_TRIANGLES, obj.index_count,
                             gl.GL_UNSIGNED_INT, None)
                     else:

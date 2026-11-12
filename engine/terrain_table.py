@@ -381,13 +381,17 @@ class TerrainTable:
         # footprint. Both centres are the same x/z expression.
         cy = np.where(built, (lo + hi) / 2, 0.0)
         half_y = np.where(built, (hi - lo) / 2 + 10, 1.0e6)
-        inside = np.ones(n, dtype=bool)
-        for a, b, c, d in frustum_planes:
-            px = np.where(a >= 0, cx + half, cx - half)
-            py = np.where(b >= 0, cy + half_y, cy - half_y)
-            pz = np.where(c >= 0, cz + half, cz - half)
-            inside &= ~(a * px + b * py + c * pz + d < 0)
-        return inside
+        # All planes at once, (n, planes): the same per-plane expression as
+        # one plane at a time, so the same bits, in a fixed handful of NumPy
+        # calls rather than four per plane.
+        planes = np.asarray(frustum_planes, dtype=np.float64).reshape(-1, 4)
+        a, b, c, d = planes[:, 0], planes[:, 1], planes[:, 2], planes[:, 3]
+        cx, cy, cz = cx[:, None], cy[:, None], cz[:, None]
+        half, half_y = half[:, None], half_y[:, None]
+        px = np.where(a >= 0, cx + half, cx - half)
+        py = np.where(b >= 0, cy + half_y, cy - half_y)
+        pz = np.where(c >= 0, cz + half, cz - half)
+        return ~((a * px + b * py + c * pz + d) < 0).any(axis=1)
 
     def schedule(self, slots, dist_sq, visible, near_detail_radius,
                  lod_resolutions, lod_distances_sq, hysteresis_frames):

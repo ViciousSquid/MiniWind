@@ -10,7 +10,39 @@ import weakref
 import numpy as np
 import OpenGL.GL as gl
 from OpenGL.raw.GL.VERSION.GL_2_0 import (
-    glVertexAttribPointer as _raw_vertex_attrib_pointer)
+    glVertexAttribPointer as _wrapped_vertex_attrib_pointer)
+
+from engine.renderer.core import glraw
+
+
+def _raw_vertex_attrib_pointer(location, size, kind, normalized, stride, offset):
+    """``glVertexAttribPointer`` with an integer offset into the bound buffer.
+
+    The native entry point taking the offset as ``void *`` when it resolves
+    (glraw.pointer_fn): no Python runs for the call, where PyOpenGL's raw
+    function still ran its pointer argument through a Python ``from_param``
+    -- 24 Python calls per brush run, over 1,100 a frame. Else the raw
+    function as before."""
+    native = _VERTEX_ATTRIB_POINTER[0]
+    if native is None:
+        native = _VERTEX_ATTRIB_POINTER[0] = (
+            glraw.pointer_fn("glVertexAttribPointer") or False)
+    if native:
+        native(location, size, kind, normalized, stride,
+               offset.value if isinstance(offset, ctypes.c_void_p) else offset)
+    else:
+        _wrapped_vertex_attrib_pointer(location, size, kind, normalized, stride,
+                                       offset if isinstance(offset, ctypes.c_void_p)
+                                       else ctypes.c_void_p(offset))
+
+
+#: The resolved native entry point (False: use the wrapper), resolved on the
+#: first call, which is made with a context current.
+_VERTEX_ATTRIB_POINTER = [None]
+_FLOAT = int(gl.GL_FLOAT)
+_FALSE = int(gl.GL_FALSE)
+_SPRITE_ATTRIBUTES = ((1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28),
+                      (6, 2, 32), (7, 3, 40))
 
 from engine import change_detection, render_table
 from engine.render_keys import KeyLayout, sort_into_runs
@@ -481,10 +513,16 @@ class InstancingMixin:
         # buffer, so PyOpenGL's array handling and the pointer bookkeeping it
         # keeps per context (a dict write per call) buy nothing here -- and
         # they were most of the cost of a brush pass.
+        native = _VERTEX_ATTRIB_POINTER[0]
+        if native:
+            for location in range(3, 11):
+                native(location, 4, _FLOAT, _FALSE, stride,
+                       origin + (location - 3) * 16)
+            return
         for location in range(3, 11):
             _raw_vertex_attrib_pointer(
                 location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride,
-                ctypes.c_void_p(origin + (location - 3) * 16))
+                origin + (location - 3) * 16)
 
     def _ensure_sprite_instance_buffer(self, count):
         """Grow the sprite instance VBO and its staging array to *count* rows."""
@@ -548,12 +586,9 @@ class InstancingMixin:
         origin = base * stride
         # The raw entry point, as for brush runs: an integer offset into the
         # bound buffer needs none of the wrapper's array handling.
-        for location, size, offset in (
-            (1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28),
-            (6, 2, 32), (7, 3, 40)
-        ):
-            _raw_vertex_attrib_pointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
-                                       stride, ctypes.c_void_p(origin + offset))
+        for location, size, offset in _SPRITE_ATTRIBUTES:
+            _raw_vertex_attrib_pointer(location, size, _FLOAT, _FALSE,
+                                       stride, origin + offset)
 
     def _ensure_effect_instance_buffer(self, count):
         if self._effect_instance_vbo is None:
