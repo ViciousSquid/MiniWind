@@ -28,7 +28,10 @@ tree and is present, in its Fio 3.5 home where the file was split.
 Fio's `3.5.0.1111_CANARY` branch is `9b2dca95` plus 18 later commits under
 the same version string (monster hit volumes and heights, sprite framing,
 sounds shipped loose, end-user `.fiopak` packs, a textured-pass shortcut).
-They are **not** included: the migration stays on the pinned release.
+They are **not** included: the migration stays on the pinned release. One
+test-only fix from it is taken (`0afded73`, the hierarchy-indicator test
+reading archived editor icons), because that test fails on pristine
+`9b2dca95` too.
 
 Engine provenance is `editor/version.txt` (`version 3.5.0.1111`). MiniWind's
 own version is `game.rpg.GAME_VERSION`; the launcher shows both
@@ -48,8 +51,11 @@ ways: MiniWind's additions present (or moved), and Fio 3.5's lines present
 The Android player (`player/`), the Deathmatch and Tidy plugins, Fio's demo
 maps and showcase cutscene, `CHANGELOG.md`/`STAGE2_HANDOFF.md`, and the
 Android, macOS-DMG and stand-alone build workflows. Fio tests that only
-exercise those products were removed; tests that used Fio's maps build their
-level in code (`tests/helpers/scenes.py`) or use a MiniWind map.
+exercise those products were removed. Tests written against Fio's example
+maps either build their level in code (`tests/helpers/scenes.py`), use a
+MiniWind map, or load one of four Fio example maps kept as test fixtures in
+`tests/fixtures/maps/` (`_SHOWCASE`, `Simple_Map_Test_Extended`,
+`Office_Corridor`, `Angled_Brush_Test`); nothing in the game loads those.
 
 ## Where MiniWind's seams live now
 
@@ -85,6 +91,25 @@ level in code (`tests/helpers/scenes.py`) or use a MiniWind map.
 * Six loose sounds absent from `sounds.fiopak` would not have loaded.
 * The renderer's `[Renderer] grass`/`low_grass` settings now decide what the
   terrain grows, not only what is drawn.
+
+## The editor while the game is fullscreen
+
+Fullscreen play (F12, or the launcher's Play) leaves the editor dormant. Its
+docks are hidden and do no per-frame work: in fullscreen the main thread
+spends ~90% of its time in the 3D paint. Panels that would rebuild for nobody
+wait until shown (the scene hierarchy, the asset browser), and the map
+autosave waits too: nothing can be edited, and it wrote the world as play had
+changed it.
+
+Started from the launcher's Play, the editor is built dormant
+(`MainWindow(dormant=True)`, `begin_dormant_launch()`): its chrome is hidden
+before the window is first shown, so the first paint is the 3D view, and the
+asset browser does not decode its 139 thumbnails. Launcher Play to the game:
+6.3–6.6 s → 4.4–4.7 s, 125 MB less peak memory. F12 or Escape back to the
+editor restores the saved layout and fills each panel as it is shown; a launch
+whose map fails to open wakes the editor. The rest of the editor (docks,
+toolbars, property editor, 2D views; about 0.15 s) is still constructed:
+game hooks patch its menus and the player can return to it at any time.
 
 ## Map and save compatibility
 
