@@ -92,7 +92,7 @@ CROSSBOW_DAMAGE = 0.85
 
 def is_crossbow(props) -> bool:
     """Whether the ranged weapon in *props*' hand is a crossbow."""
-    from .rpg import items
+    import game.rpg.items as items
     d = items.get(props.get("_active_weapon") or props.get("equipped_weapon") or "")
     return d is not None and d.get("kind") == items.KIND_CROSSBOW
 
@@ -100,7 +100,7 @@ def is_crossbow(props) -> bool:
 def offhand_crossbow(props) -> str:
     """The crossbow in *props*' actor's off hand, or '' (bows never pair)."""
     from .held_weapons import offhand_in_use
-    from .rpg import items
+    import game.rpg.items as items
     off = offhand_in_use(props)
     d = items.get(off) if off else None
     return off if d is not None and d.get("kind") == items.KIND_CROSSBOW else ""
@@ -118,7 +118,7 @@ def loaded_hand(props, now):
 
 def crossbow_in_kit(props):
     """The crossbow *props*' actor would fight with at range, or ''."""
-    from .rpg import items
+    import game.rpg.items as items
     try:
         weapon = combat_loadout.weapon_for(combat_loadout.build_loadout(props),
                                            combat_loadout.BOW)

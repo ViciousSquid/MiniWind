@@ -162,7 +162,7 @@ def _changer(name, pos, target, spawn, prompt):
 
 
 def _stack(item_id, qty):
-    from ..rpg import items as rpg_items
+    import game.rpg.items as rpg_items
     return rpg_items.make(item_id, int(qty)) or {"id": item_id, "qty": int(qty)}
 
 

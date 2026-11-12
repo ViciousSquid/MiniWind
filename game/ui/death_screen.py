@@ -102,7 +102,8 @@ def button(key):
 def draw(painter, view, w, h) -> None:
     """Paint the death screen over the frame."""
     global _buttons, _selected
-    from . import fonts, theme as T
+    import game.ui.fonts as fonts
+    import game.ui.theme as T
     T.dim_screen(painter, w, h, alpha=200)
     painter.fillRect(0, 0, w, h, QColor(90, 0, 0, 70))
     info = _autosave_info(view)

@@ -95,7 +95,7 @@ def _is_weapon(iid) -> bool:
     if not iid:
         return False
     try:
-        from ..rpg import items
+        import game.rpg.items as items
         d = items.get(iid)
     except Exception:
         return False
@@ -108,7 +108,7 @@ def _spell_of(stack):
     if not sid:
         return None
     try:
-        from ..rpg import magic
+        import game.rpg.magic as magic
         return magic.get(sid)
     except Exception:
         return None
@@ -137,7 +137,7 @@ class InventoryStrip(FloatingWindow):
         self._press = None         # (QPoint, slot index)
         self._dragging = False
         self._last_click = (0.0, None)
-        from . import fonts
+        import game.ui.fonts as fonts
         self.f_count = fonts.dialogue_font_px(14)
         self.f_name = fonts.dialogue_font_px(16)
         self.f_number = fonts.dialogue_font_px(11)
@@ -281,7 +281,7 @@ class InventoryStrip(FloatingWindow):
         rarity = (stack or {}).get("rarity")
         if rarity and rarity != "common":
             try:
-                from ..rpg import items
+                import game.rpg.items as items
                 rgb = items.RARITY_INFO[items.rarity_of(stack)]["rgb"]
                 top = QColor(int(rgb[0] * 0.42), int(rgb[1] * 0.42), int(rgb[2] * 0.42), 250)
                 bot = QColor(int(rgb[0] * 0.14), int(rgb[1] * 0.14), int(rgb[2] * 0.14), 250)
@@ -314,7 +314,7 @@ class InventoryStrip(FloatingWindow):
     def _draw_name(self, painter, stack):
         name = str(stack.get("name") or stack.get("id"))
         try:
-            from ..rpg import items
+            import game.rpg.items as items
             colour = QColor(*items.RARITY_INFO[items.rarity_of(stack)]["rgb"])
         except Exception:
             colour = QColor(245, 240, 220)
@@ -335,7 +335,7 @@ class InventoryStrip(FloatingWindow):
         the mouse buttons that cast it)."""
         pm = None
         try:
-            from .. import item_icons
+            import game.item_icons as item_icons
             pm = item_icons.spell_pixmap(spell.id, rect.width() - 8)
         except Exception:
             pm = None
@@ -373,7 +373,7 @@ class InventoryStrip(FloatingWindow):
     def _draw_item(self, painter, rect, iid, stack, worn):
         pm = None
         try:
-            from .. import item_icons
+            import game.item_icons as item_icons
             pm = item_icons.icon_pixmap(iid, stack, rect.width() - 12)
         except Exception:
             pm = None

@@ -86,7 +86,7 @@ def _disposition():
     global _DISPOSITION
     if _DISPOSITION is None:
         try:
-            from ..rpg import disposition
+            import game.rpg.disposition as disposition
         except Exception:
             disposition = False
         _DISPOSITION = disposition
@@ -374,7 +374,7 @@ class Director:
         if tprops and "target_faction" not in data:
             data["target_faction"] = str(tprops.get("faction") or tprops.get("team") or "")
         if aprops and "actor_alignment" not in data:
-            from ..rpg import alignment
+            import game.rpg.alignment as alignment
             data["actor_alignment"] = alignment.of_npc(dict(aprops))
         event = WorldEvent(
             kind, actor=akey, actor_name=actor_name(actor, akey or "someone"),
@@ -472,7 +472,7 @@ class Director:
         elif mem == "kin_slain":
             return                                  # a stranger's death
         try:
-            from ..rpg import disposition as disp
+            import game.rpg.disposition as disp
             # A half-remembered rumour moves an opinion less than testimony.
             base = disp.EVENTS.get(mem, (0, False))[0]
             scaled = int(round(base * max(0.3, float(fact.get("certainty", 1.0)))))

@@ -91,7 +91,7 @@ def label(action: str) -> str:
     if action in FIXED:
         key, pad = FIXED[action]
         return pad if gamepad() else key
-    from . import keybinds
+    import game.keybinds as keybinds
     if gamepad():
         button = keybinds.pad_binding(action)
         return PAD_LABELS.get(button, button.upper()) if button else "—"

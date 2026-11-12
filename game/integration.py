@@ -57,7 +57,7 @@ def _register_wizards():
     """
     try:
         from plugins.manager import get_manager
-        from . import editor_wizards
+        import game.editor_wizards as editor_wizards
         mgr = get_manager()
         mgr.register_entity_wizard("npc", editor_wizards.npc_wizard)
         mgr.register_entity_wizard("creature", editor_wizards.creature_wizard)
@@ -298,7 +298,7 @@ def _open_quest_editor(MainWindow):
     """
     from PyQt5.QtWidgets import QMessageBox
     from .entities import GameSettings
-    from . import quest_editor
+    import game.quest_editor as quest_editor
     state = getattr(MainWindow, "state", None)
     settings_things = [t for t in getattr(state, "things", []) or []
                        if isinstance(t, GameSettings)]
@@ -313,7 +313,7 @@ def _open_quest_editor(MainWindow):
 
 def _open_spell_editor(MainWindow):
     try:
-        from . import editor_ui
+        import game.editor_ui as editor_ui
         saved = editor_ui.open_spell_editor(MainWindow)
         if saved and hasattr(MainWindow, "show_toast"):
             MainWindow.show_toast("Spells saved to game/data/spells.json")
@@ -323,7 +323,7 @@ def _open_spell_editor(MainWindow):
 def _open_dungeon_designer(MainWindow):
     """Open the Dungeon Designer (game/tools/dungeon_designer.py)."""
     try:
-        from .tools import dungeon_designer
+        import game.tools.dungeon_designer as dungeon_designer
         dungeon_designer.open_designer(MainWindow)
     except Exception as exc:
         _log(f"Dungeon Designer failed to open: {exc}")
@@ -332,7 +332,7 @@ def _open_dungeon_designer(MainWindow):
 def _open_world_sim(MainWindow):
     """Open the World Simulation window (actors · history · simulate event)."""
     try:
-        from . import sim_editor
+        import game.sim_editor as sim_editor
         sim_editor.open_world_window(MainWindow)
     except Exception as exc:
         _log(f"World Simulation window failed to open: {exc}")
@@ -664,7 +664,7 @@ def install_play_menu(view):
     """Install the pause menu on *view* and configure the music from its editor."""
     from .ui.pause_actions import PauseActions
     from .ui.pause_menu import PauseMenu
-    from . import music
+    import game.music as music
     view.play_menu = PauseMenu(view, PauseActions(view))
     # Character creation, trading and conversations take the mouse.
     from .ui.hits import GamePointer
@@ -679,7 +679,7 @@ def install_play_menu(view):
     install_bow_draw(view)
     # A gamepad plays it too, beside the keyboard and mouse (game/gamepad.py).
     try:
-        from . import gamepad
+        import game.gamepad as gamepad
         gamepad.install(view)
     except Exception as exc:
         print(f"[MiniWind] gamepad unavailable: {exc}")
@@ -690,10 +690,10 @@ def install_play_menu(view):
         music.PLAYER.configure(config, getattr(editor, "save_config", None))
         # The GAME settings (dice visuals, dialogue heads) are read live from
         # the same config by the play session.
-        from . import runtime
+        import game.runtime as runtime
         runtime.set_editor_config(config)
         # Where the player has put the HUD's panels (game/ui/hud_layout.py).
-        from .ui import hud_layout
+        import game.ui.hud_layout as hud_layout
         hud_layout.configure(config, getattr(editor, "save_config", None))
 
 
@@ -792,7 +792,7 @@ def _use_game_fonts_for_loading():
     try:
         from PyQt5.QtGui import QFont
         from editor import loading_overlay
-        from .ui import fonts
+        import game.ui.fonts as fonts
     except Exception:
         return
     title = fonts.menu_family()

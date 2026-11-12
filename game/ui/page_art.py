@@ -63,7 +63,7 @@ def _unit(item_id) -> float:
 
 def style_of(item_id, note=False) -> str:
     """How the book or note *item_id* is dressed (module docstring)."""
-    from ..rpg import items
+    import game.rpg.items as items
     if note and "crier" in str(item_id):
         return NEWSPRINT
     d = items.get(item_id)

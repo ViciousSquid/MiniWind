@@ -102,10 +102,6 @@ class SettlementLaw:
         event.note("the watch raised the hue and cry within earshot")
         self.law.persist()
 
-    #: Seconds between re-reading who is a guard (a role or faction change is
-    #: rare and not journalled; beliefs and deaths are checked every frame).
-    WITNESS_ROSTER_SECONDS = 1.0
-
     def witness_markers(self):
         """Live messengers carrying unreported player crimes, for both maps.
 
@@ -114,29 +110,23 @@ class SettlementLaw:
         out without a second marker lifecycle or a duplicate witness registry.
 
         Drawn every frame by the minimap, so it is answered from what changed:
-        the roster (non-guard NPCs and their belief keys) is rebuilt when the
-        NPC set changes or each :data:`WITNESS_ROSTER_SECONDS`; the accounts
+        the roster (non-guard NPCs and their belief keys) follows the NPC set
+        and the change journal (an NPC's role, side or death); the accounts
         are re-derived only when a belief token, a death or a reported flag
         changes. Positions are read fresh for the (few) witnesses.
         """
-        import time
+        from engine.change_journal import JOURNAL, OVERFLOW
         store = self.store
         bucket = self._things_of_type("npc")
-        now = time.monotonic()
-        cache = getattr(self, "_witness_cache", None)
-        roster = None
-        if (cache is None or cache["bucket"] is not bucket or len(bucket) != cache["count"]
-                or now - cache["roster_at"] > self.WITNESS_ROSTER_SECONDS):
-            roster = [(npc, knowledge.facts_key(actor_key(npc))) for npc in bucket
-                      if not self._is_guard(npc)]
-            if cache is not None and cache["roster"] == roster:
-                cache.update(bucket=bucket, count=len(bucket), roster_at=now)
-                roster = None
-        if roster is not None:
-            cache = self._witness_cache = {
-                "bucket": bucket, "count": len(bucket), "roster_at": now,
-                "roster": roster, "npcs": [npc for npc, _ in roster],
-                "keys": [key for _, key in roster], "token": None, "witnesses": []}
+        roster = getattr(self, "_witness_roster", None)
+        if roster is None:
+            roster = self._witness_roster = _WitnessRoster()
+        changes = JOURNAL.drain(roster)
+        if roster.bucket is not bucket or roster.count != len(bucket) or changes is OVERFLOW:
+            roster.rebuild(self, bucket)
+        elif changes:
+            roster.refresh(self, changes)
+        cache = roster.cache
         token = (knowledge.tokens(store, cache["keys"]),
                  tuple([bool(npc.properties.get("dead")) for npc in cache["npcs"]]),
                  tuple([crime.already_reported(store, e)
@@ -193,3 +183,53 @@ class SettlementLaw:
                 "text": f"Settle my writ in {region} ({amount} gold).",
                 "goto": "END", "actions": [{"op": "pay_bounty"}]})
         return tree
+
+
+class _WitnessRoster:
+    """The NPCs who could carry word of a crime (not guards), with their
+    belief keys: rebuilt when the NPC set changes, re-checked per NPC when the
+    change journal says that NPC changed (a guard's role, a side, a death)."""
+
+    __slots__ = ("bucket", "count", "guard", "by_id", "cache", "__weakref__")
+
+    def __init__(self):
+        self.bucket = None
+        self.count = -1
+        self.guard = {}
+        self.by_id = {}
+        self.cache = None
+
+    def rebuild(self, law, bucket):
+        self.bucket, self.count = bucket, len(bucket)
+        self.by_id = {id(npc): npc for npc in bucket}
+        self.guard = {key: bool(law._is_guard(npc)) for key, npc in self.by_id.items()}
+        self._publish(bucket)
+
+    def refresh(self, law, changes):
+        """Re-check the NPCs whose state the journal says changed (a move
+        alone cannot make or unmake a guard)."""
+        from engine.change_journal import STATE
+        by_id, guard = self.by_id, self.guard
+        flipped = False
+        for key, flags in changes.items():
+            if not flags & STATE:
+                continue
+            npc = by_id.get(key)
+            if npc is None:
+                continue
+            now = bool(law._is_guard(npc))
+            if guard.get(key) != now:
+                guard[key] = now
+                flipped = True
+        if flipped:
+            self._publish(self.bucket)
+
+    def _publish(self, bucket):
+        guard = self.guard
+        roster = [(npc, knowledge.facts_key(actor_key(npc))) for npc in bucket
+                  if not guard.get(id(npc))]
+        old = self.cache
+        if old is not None and old["roster"] == roster:
+            return
+        self.cache = {"roster": roster, "npcs": [npc for npc, _ in roster],
+                      "keys": [key for _, key in roster], "token": None, "witnesses": []}

@@ -1056,5 +1056,5 @@ MAX_RESIDENT_TRIPS = 3
 
 
 def _hostile(a: str, b: str) -> bool:
-    from ..rpg import factions
+    import game.rpg.factions as factions
     return factions.is_hostile(a, b)

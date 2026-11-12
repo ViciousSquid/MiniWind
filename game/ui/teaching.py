@@ -41,7 +41,7 @@ _PIXMAPS = {}
 
 
 def _screens():
-    from . import screens
+    import game.ui.screens as screens
     return screens
 
 

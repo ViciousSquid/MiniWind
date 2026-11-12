@@ -179,7 +179,7 @@ def look_for(spell_id="", colour=None, element="magic", visuals=None) -> dict:
     look.update(SPELL_LOOKS.get(str(spell_id), {}))
     look.update(clean_visuals(visuals))
     if colour is None:
-        from .rpg import magic
+        import game.rpg.magic as magic
         colour = magic.element_color(element)
     look["colour"] = _rgb(colour)
     look["element"] = element
@@ -381,7 +381,7 @@ class MagicFX:
         hot = _mix(c, (1.0, 1.0, 1.0), 0.45)
         # A bolt flies at body height (fio.projectile_body_lift above the
         # caster's pos): its impact's ground is that far below where it struck.
-        from . import fio
+        import game.fio as fio
         ground = _lift(pos, GROUND_LIFT - fio.projectile_body_lift())
         rows = [self._row(pos, FLASH, 0.35, look["flash"] * 0.5, look["flash"], hot, 1.0,
                           now=now),

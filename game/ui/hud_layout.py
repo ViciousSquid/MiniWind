@@ -371,7 +371,7 @@ class HudWindow(FloatingWindow):
         self.window_rect = QRect(0, 0, int(view_w), int(view_h))
 
     def draw(self, painter, focused=False):
-        from . import hits
+        import game.ui.hits as hits
         draw_chrome(painter, *self.view, pointer=hits.pointer,
                     dragging=self._drag[0] if self._drag else None)
 
@@ -399,7 +399,7 @@ class HudWindow(FloatingWindow):
         return True
 
     def handle_mouse_move(self, event, view_w, view_h):
-        from . import hits
+        import game.ui.hits as hits
         hits.pointer = (event.x(), event.y())
         if self._drag is None:
             return False

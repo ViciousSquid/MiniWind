@@ -210,7 +210,7 @@ class Character:
         # or a custom magic-specialised class) must never start with no spell.
         if klass.specialisation == sk.MAGIC and not starting:
             starting.append("flare")
-        from . import magic
+        import game.rpg.magic as magic
         for sp in starting:
             if rng is not None:
                 sp = magic.awarded(sp, c.known_spells, rng)
@@ -280,7 +280,7 @@ class Character:
 
     @property
     def is_overencumbered(self) -> bool:
-        from . import inventory as inv
+        import game.rpg.inventory as inv
         return inv.total_weight(self.inventory) > self.carry_capacity
 
     # ----------------------------------------------------------- skill use / xp
@@ -347,7 +347,7 @@ class Character:
 
     def spell_upgrade_cost(self, spell_id: str) -> int:
         """Experience to raise *spell_id* one level (0 when it cannot rise)."""
-        from . import magic
+        import game.rpg.magic as magic
         spell = magic.get(spell_id)
         if spell is None or spell_id not in self.known_spells:
             return 0
@@ -663,7 +663,7 @@ class Character:
         if isinstance(levels, dict):
             c.spell_levels = {str(k): max(1, int(v)) for k, v in levels.items()}
         c.recompute_derived(reset_current=False)
-        from . import equipment
+        import game.rpg.equipment as equipment
         saved_hands = data.get("hand_spells", {})
         if isinstance(saved_hands, dict):
             for hand in ("main", "off"):

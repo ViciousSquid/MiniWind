@@ -1109,7 +1109,7 @@ class LivingWorld:
         if story is None or not story.enabled or x.properties.get("_justified_said"):
             return ""
         from ..sim.director import peek_actor_key
-        from .. import chatter
+        import game.chatter as chatter
         row = story.justified_view(peek_actor_key(x))
         if not row or row.get("destination") != self.board.nearest_place(x.pos[0], x.pos[2], jn.TOWNS):
             return ""
@@ -1176,7 +1176,8 @@ class LivingWorld:
 
         Narration of their own stored facts (game/sim/rumours.py); reading
         them writes nothing and draws no random number."""
-        from ..sim import knowledge, rumours
+        import game.sim.knowledge as knowledge
+        import game.sim.rumours as rumours
         from ..sim.director import peek_actor_key
         store = getattr(self.session, "store", None)
         key = peek_actor_key(npc)
@@ -1192,7 +1193,7 @@ class LivingWorld:
     def departures(self, place, limit: int = 2) -> List[str]:
         """Neighbours' accounts of actual journeys that set out from *place*:
         faction orders, and residents on justified trips."""
-        from ..sim import rumours
+        import game.sim.rumours as rumours
         from ..sim.director import PLAYER_KEY, peek_actor_key
         if self.board is None or not place:
             return []
@@ -1221,7 +1222,9 @@ class LivingWorld:
     def notices(self, place, limit: int = 4) -> List[str]:
         """What the watch has posted in *place*: reported crimes its residents
         know of, newest first. Only reported accounts are posted."""
-        from ..sim import crime, knowledge, rumours
+        import game.sim.crime as crime
+        import game.sim.knowledge as knowledge
+        import game.sim.rumours as rumours
         from ..sim.director import peek_actor_key
         store = getattr(self.session, "store", None)
         if store is None or self.board is None or not place:

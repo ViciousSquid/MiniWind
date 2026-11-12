@@ -30,6 +30,8 @@ Pure Python — safe everywhere.
 
 from __future__ import annotations
 
+import functools
+
 from typing import Dict, List, Optional
 
 ITEM_TYPES = ("weapon", "armour", "consumable", "quest", "misc", "key", "gold")
@@ -42,10 +44,11 @@ ITEM_TYPES = ("weapon", "armour", "consumable", "quest", "misc", "key", "gold")
 MAX_STACK = 5
 
 
+@functools.lru_cache(maxsize=4096)
 def stack_limit(item_id) -> Optional[int]:
     """How many of *item_id* one slot holds: 1 for a weapon, None (no limit)
     for ammunition and coin, :data:`MAX_STACK` for anything else."""
-    from . import items
+    import game.rpg.items as items
     d = items.get(str(item_id or ""))
     if d is None:
         return MAX_STACK
@@ -59,14 +62,20 @@ def stack_limit(item_id) -> Optional[int]:
 def slot_sizes(item_id, qty) -> List[int]:
     """The slots *qty* of *item_id* fill, as their counts: ``[5, 5, 2]`` for
     twelve potions, ``[1, 1]`` for a pair of swords, ``[20]`` for arrows."""
-    qty = int(qty or 0)
+    return list(_slot_sizes(str(item_id or ""), int(qty or 0)))
+
+
+@functools.lru_cache(maxsize=4096)
+def _slot_sizes(item_id, qty):
+    """:func:`slot_sizes`, memoised (the strip asks for every carried stack
+    every frame; an item's class does not change during play)."""
     if qty <= 0:
-        return []
+        return ()
     limit = stack_limit(item_id)
     if not limit:
-        return [qty]
+        return (qty,)
     full, rest = divmod(qty, limit)
-    return [limit] * full + ([rest] if rest else [])
+    return (limit,) * full + ((rest,) if rest else ())
 
 
 def make_item(item_id: str, name: str = "", qty: int = 1, item_type: str = "misc",
@@ -169,3 +178,17 @@ def total_weight(inv: List[Dict]) -> float:
 
 def total_value(inv: List[Dict]) -> int:
     return sum(int(s.get("value", 0)) * int(s.get("qty", 0)) for s in _coerce(inv))
+
+
+def _forget_item_classes():
+    stack_limit.cache_clear()
+    _slot_sizes.cache_clear()
+
+
+def _watch_items():
+    import game.rpg.items as items
+    if _forget_item_classes not in items.ON_CHANGE:
+        items.ON_CHANGE.append(_forget_item_classes)
+
+
+_watch_items()

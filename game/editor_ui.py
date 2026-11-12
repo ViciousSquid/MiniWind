@@ -242,7 +242,7 @@ def make_appearance_tab(thing):
         return None
     import os
     from PyQt5 import QtGui
-    from .rpg import heads
+    import game.rpg.heads as heads
 
     class Tab(QtWidgets.QWidget):
         def __init__(self):
@@ -385,11 +385,11 @@ def _InventoryTab(thing, QtWidgets, QtCore):
     picker, and an inline detail editor — replacing the old spreadsheet table."""
     Qt = QtCore.Qt
     try:
-        from . import item_icons
+        import game.item_icons as item_icons
     except Exception:  # pragma: no cover
         item_icons = None
     try:
-        from .rpg import items as itemdb
+        import game.rpg.items as itemdb
     except Exception:  # pragma: no cover
         itemdb = None
 
@@ -784,7 +784,7 @@ def make_spawn_tab(thing):
 
 def _roles_for_kind(kind):
     """(role_id, human label) pairs for a spawn kind, from the bestiary."""
-    from .rpg import bestiary
+    import game.rpg.bestiary as bestiary
     want = bestiary.NPC if kind == "npc" else bestiary.CREATURE
     out = []
     for role in bestiary.roles_of_kind(want):
@@ -1548,7 +1548,7 @@ def _TiesTab(thing, QtWidgets, QtCore):
 # ===========================================================================
 def _castable_spells():
     """(id, label) for spells an NPC can hurl as a projectile, from the registry."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     out = []
     for sid, sp in magic.SPELLS.items():
         if sp.delivery in (magic.PROJECTILE, magic.TARGET) or sp.damage > 0:
@@ -1640,7 +1640,7 @@ def make_player_spells_tab(thing):
     except Exception:  # pragma: no cover
         return None
     from PyQt5 import QtGui
-    from .rpg import magic
+    import game.rpg.magic as magic
 
     Qt = QtCore.Qt
     _DELIV = {magic.SELF: "self", magic.TOUCH: "touch",
@@ -1789,7 +1789,7 @@ def make_player_spells_tab(thing):
             self._update_summary()
 
         def _filter(self, text):
-            from .rpg import magic as _m
+            import game.rpg.magic as _m
             t = text.strip().lower()
             for sid, card in self.cards.items():
                 sp = _m.get(sid)
@@ -1817,7 +1817,7 @@ def _SpellsTab(thing, QtWidgets, QtCore):
     selected card expands to show its per-bolt colour, damage and speed (an NPC
     cycles through its chosen spells, one per shot)."""
     from PyQt5 import QtGui
-    from .rpg import magic
+    import game.rpg.magic as magic
 
     Qt = QtCore.Qt
     _DELIV = {magic.SELF: "self", magic.TOUCH: "touch",
@@ -2075,8 +2075,8 @@ def open_spell_editor(parent=None):
         from PyQt5 import QtGui
     except Exception:  # pragma: no cover
         return False
-    from .rpg import magic
-    from .rpg import skills as sk
+    import game.rpg.magic as magic
+    import game.rpg.skills as sk
 
     ELEMENTS = ["fire", "frost", "shock", "magic"]
     DELIVERIES = [magic.SELF, magic.TOUCH, magic.TARGET, magic.PROJECTILE]
@@ -2515,7 +2515,7 @@ def make_quests_tab(thing):
     # launcher for the large, card-based Quest Editor (with a guided Wizard).
     # Falls back to the legacy in-panel editor if that module can't load.
     try:
-        from . import quest_editor
+        import game.quest_editor as quest_editor
         launcher = quest_editor.make_quests_launcher(thing)
         if launcher is not None:
             return apply_dark(launcher)

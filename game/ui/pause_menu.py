@@ -180,7 +180,7 @@ class PauseMenu:
         actor picker, which hold theirs, can neither thaw the world behind
         the menu nor be thawed by it closing.
         """
-        from .. import fio
+        import game.fio as fio
         logic = getattr(self.view, 'logic_thread', None)
         if getattr(getattr(logic, "game_session", None), "coop", None) is not None:
             return
@@ -878,7 +878,7 @@ def _display_font(pt):
     Enchanted Land when it is installed, a little larger as its letters are
     small for their size and without a synthetic bold; bold serif otherwise.
     """
-    from . import fonts
+    import game.ui.fonts as fonts
     family = fonts.menu_family()
     if family == fonts.FALLBACK_FAMILY:
         return QFont(family, int(pt), QFont.Bold)
@@ -896,14 +896,14 @@ DISPLAY_WORD_SPACING = 0.4
 
 
 def _display_face_installed() -> bool:
-    from . import fonts
+    import game.ui.fonts as fonts
     return fonts.menu_family() != fonts.FALLBACK_FAMILY
 
 
 def _text_font(pt):
     """Small print (captions, details, key hints): MedievalSharp, the game's
     reading face, when installed; Georgia otherwise."""
-    from . import fonts
+    import game.ui.fonts as fonts
     family = fonts.dialogue_family()
     if family == fonts.DIALOGUE_FALLBACK:
         return QFont(fonts.FALLBACK_FAMILY, int(pt))

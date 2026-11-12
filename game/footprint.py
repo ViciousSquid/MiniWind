@@ -23,7 +23,7 @@ def evaluate(accounts=(), *, threads=0, writs=None, vendettas=0, traffic=None, w
     The existing Karma remains the moral axis. Legend records which good and
     evil deeds people actually know; Karma alone supplies no testimony.
     """
-    from .rpg import alignment
+    import game.rpg.alignment as alignment
     known = {}
     for holder, facts in accounts:
         for f in facts:

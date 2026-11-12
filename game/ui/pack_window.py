@@ -89,7 +89,7 @@ class PackWindow(InventoryWindow):
             self.viewport.update()
 
     def _map_data(self):
-        from . import worldmap
+        import game.ui.worldmap as worldmap
         world = worldmap.WORLD
         if not world.ready and not world.building:
             worldmap.ensure_for(self.session.logic, self.viewport)
@@ -193,7 +193,8 @@ class PackWindow(InventoryWindow):
         return act
 
     def _draw_skills(self, painter, rect):
-        from . import hits, skill_tree
+        import game.ui.hits as hits
+        import game.ui.skill_tree as skill_tree
         inner = self._panel(painter, rect, "Skills")
         c = self._character()
         if c is None:
@@ -207,7 +208,7 @@ class PackWindow(InventoryWindow):
     def _draw_fortune(self, painter, rect):
         """Everything Charisma and Luck are doing for the character, with the
         number and the reason (game.rpg.fortune.benefits)."""
-        from ..rpg import fortune
+        import game.rpg.fortune as fortune
         inner = self._panel(painter, rect, "Fortune")
         c = self._character()
         if c is None:
@@ -247,7 +248,7 @@ class PackWindow(InventoryWindow):
     def _draw_alignment(self, painter, rect):
         """Where the character stands from Villainous to Saintly, what it is
         doing for and against them, and the deeds that put them there."""
-        from ..rpg import alignment
+        import game.rpg.alignment as alignment
         inner = self._panel(painter, rect, "Alignment")
         c = self._character()
         if c is None:

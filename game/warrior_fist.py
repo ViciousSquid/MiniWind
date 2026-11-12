@@ -45,7 +45,8 @@ def is_warrior(character) -> bool:
 
 def ensure_fist(session) -> bool:
     """Give a Warrior their fist, in quick slot 1. True if anything changed."""
-    from .rpg import inventory as inv, items as rpg_items
+    import game.rpg.inventory as inv
+    import game.rpg.items as rpg_items
     c = session.game.character
     if not is_warrior(c):
         return False
@@ -73,7 +74,7 @@ def ensure_fist(session) -> bool:
 
 def innate(item_id) -> bool:
     """Whether *item_id* is part of its owner (never sold or dropped)."""
-    from .rpg import items as rpg_items
+    import game.rpg.items as rpg_items
     d = rpg_items.get(item_id)
     return bool(d is not None and d.get("innate"))
 
@@ -97,7 +98,7 @@ def strike(session, charge: float) -> bool:
     arc = ARC_DOT[0] + (ARC_DOT[1] - ARC_DOT[0]) * charge
     power = 1.0 + (MAX_POWER - 1.0) * charge * charge
     struck = []
-    from . import fio
+    import game.fio as fio
     for t in fio.things(s.logic):
         if not s._attackable(t):
             continue
@@ -129,7 +130,7 @@ def strike(session, charge: float) -> bool:
 def burst(session, at, charge) -> None:
     """The blow's effect: a one-off EXPLOSION Effect where it lands, sized by
     the charge, with its sound. Cleared away after :data:`EFFECT_SECONDS`."""
-    from . import fio
+    import game.fio as fio
     logic = session.logic
     try:
         from engine.effect_entity import Effect
@@ -170,7 +171,7 @@ def clear_spent(session) -> None:
     if not spent:
         return
     session._transient_effects = [(t, e) for t, e in pending if t > now]
-    from . import fio
+    import game.fio as fio
     things = fio.things(session.logic)
     for e in spent:
         try:

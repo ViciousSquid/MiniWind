@@ -115,7 +115,7 @@ def mood(props, target=None, confidence=None) -> Tuple[str, str]:
 
 
 def _alignment_text(props) -> str:
-    from .rpg import alignment
+    import game.rpg.alignment as alignment
     value = alignment.of_npc(props)
     return f"{alignment.tier(value)} ({value:+.0f})"
 
@@ -157,7 +157,8 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     ]
 
     # ---- Vitals / combat --------------------------------------------
-    from .rpg import attributes as _attr, charisma as _cha
+    import game.rpg.attributes as _attr
+    import game.rpg.charisma as _cha
     vitals = [
         ("Strength", _fmt(_cha.core(props, _attr.STRENGTH))),
         ("Endurance", _fmt(_cha.core(props, _attr.ENDURANCE))),
@@ -216,7 +217,7 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     confidence = None
     if session is not None and not dead:
         try:
-            from . import runtime as _rt
+            import game.runtime as _rt
             sight = getattr(_rt, "FLEE_SIGHT", 480.0)
         except Exception:
             sight = 480.0
@@ -308,7 +309,7 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     # ---- Player standing (this NPC's remembered feelings toward the player) --
     if session is not None and not dead:
         try:
-            from .rpg import disposition as _disp
+            import game.rpg.disposition as _disp
             char = getattr(getattr(session, "game", None), "character", None)
             store = getattr(session, "store", None)
             if char is not None and store is not None:
@@ -372,7 +373,7 @@ def _knowledge_sections(thing, session):
         out.append(("Storyteller decisions", storyteller.inspector_rows()))
     spine = getattr(session, "faction_spine", None)
     if spine is not None and spine.enabled():
-        from .sim import knowledge
+        import game.sim.knowledge as knowledge
         from .sim.factions import identity, ledger
         facts = knowledge.facts(spine.store, identity(thing))
         feeling = spine.mood(thing, facts)
@@ -691,7 +692,8 @@ def speak_mind(props, facts=(), intents=(), player_key: str = "player") -> str:
             said.add(reason)
             break
 
-    from .sim import events, knowledge
+    import game.sim.events as events
+    import game.sim.knowledge as knowledge
     notable = [f for f in facts or () if knowledge.shareable(f)]
     if notable:
         top = max(notable, key=lambda f: float(f.get("certainty", 0.0))

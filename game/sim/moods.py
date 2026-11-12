@@ -10,7 +10,7 @@ def evaluate(props, facts, prosperity=0.0, goodwill=0.0):
     the resident faction's current opinion of the subject. Neither is a need
     meter. With no remembered threat there is no invented enemy or intent.
     """
-    from ..rpg import alignment
+    import game.rpg.alignment as alignment
     courage = max(0.0, min(1.0, float(props.get("courage", 0.3))))
     # Only a remembered, identified deed exposes a player's Karma snapshot.
     # alignment.of_npc writes defaults, so resolve it on a detached dictionary.

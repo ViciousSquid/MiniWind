@@ -145,7 +145,7 @@ class FloorObjects:
     def _rebuild(self, session, key, buckets):
         import numpy as np
         from engine.change_journal import JOURNAL
-        from .. import item_icons
+        import game.item_icons as item_icons
         logic = getattr(session, "logic", None)
         self.key = key
         self.things = [(t, kind) for kind, bucket in buckets for t in bucket]
@@ -156,7 +156,7 @@ class FloorObjects:
         JOURNAL.drain(self)          # subscribes; everything is read already
 
     def _refresh(self, session, changes):
-        from .. import item_icons
+        import game.item_icons as item_icons
         logic = getattr(session, "logic", None)
         slot_of = self.slot_of
         for oid in changes:
@@ -210,7 +210,7 @@ def visible_reference(session):
     ppos = session._player_pos() if hasattr(session, "_player_pos") else None
     if ppos is None:
         return []
-    from .. import item_icons
+    import game.item_icons as item_icons
     logic = getattr(session, "logic", None)
     r2 = DRAW_RADIUS * DRAW_RADIUS
     out = []

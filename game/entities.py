@@ -96,7 +96,7 @@ def _apply_head_sprite(p: dict) -> None:
     sprite (a single static image), drawn at the one head size; otherwise
     leave the role art in place. Accepts either a regular head (headNN) or,
     for NPCs with the guard role, one of the special guard heads (guard01…guard26)."""
-    from .rpg import heads
+    import game.rpg.heads as heads
     hid = str(p.get("head", "") or "")
     if heads.is_guard_head(hid) and not heads.is_guard(p):
         hid = p["head"] = heads.HEAD_IDS[0]
@@ -123,7 +123,7 @@ def _actor_2d_sprite_path(actor) -> str:
 
     head_id = str(p.get("head", "") or "").strip()
     if head_id:
-        from .rpg import heads
+        import game.rpg.heads as heads
         if heads.is_any_head(head_id):
             return heads.any_head_path(head_id)
 

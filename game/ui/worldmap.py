@@ -400,13 +400,19 @@ def minimap_rect(width, height):
 
 
 def _relation_colour(session, thing):
-    from PyQt5.QtGui import QColor
     props = getattr(thing, "properties", {}) or {}
-    if str(props.get("aggression", "")).lower() == "hostile":
+    return _team_colour(str(props.get("aggression", "")).lower() == "hostile",
+                        props.get("team") or props.get("faction") or "")
+
+
+def _team_colour(aggressive, team):
+    """A minimap dot's colour from what decides it: an actor's aggression and
+    its team's standing with the player."""
+    from PyQt5.QtGui import QColor
+    if aggressive:
         return QColor(225, 70, 60)
     try:
-        from ..rpg import factions
-        team = props.get("team") or props.get("faction") or ""
+        import game.rpg.factions as factions
         if factions.is_hostile("player", team):
             return QColor(225, 70, 60)
         if factions.is_friendly("player", team):
@@ -428,7 +434,7 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     which draws them over the map's edge."""
     from PyQt5.QtCore import QPointF, QRectF, Qt
     from PyQt5.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
-    from . import theme as T
+    import game.ui.theme as T
 
     world = world or WORLD
     logic = getattr(session, "logic", None)
@@ -472,12 +478,12 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
 
     # Dark at night, like the world: the lamps glow through (game/ui/daylight).
     if image is not None:
-        from . import daylight
+        import game.ui.daylight as daylight
         daylight.draw_map_night(painter, frame, daylight.map_night(session), to_screen,
                                 scale, player=(px, pz), key="minimap")
 
     # People and creatures nearby.
-    from . import law_marks
+    import game.ui.law_marks as law_marks
     status = session.law_status() if hasattr(session, "law_status") else None
     law_marks.draw_search(painter, status, to_screen, scale)
     reach2 = (MINIMAP_SPAN / 2.0) ** 2
@@ -486,15 +492,29 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     except Exception:
         actors = []
     painter.setPen(QPen(QColor(0, 0, 0, 160), 1))
+    # A dot's colour depends only on (aggression, team): decided once per
+    # pair this frame, not with two faction lookups per actor.
+    brushes = {}
+    current = None
     for thing in actors:
         props = getattr(thing, "properties", {}) or {}
         if props.get("dead") or props.get("hidden"):
             continue
-        dx, dz = thing.pos[0] - px, thing.pos[2] - pz
+        p = thing.pos
+        dx, dz = p[0] - px, p[2] - pz
         if dx * dx + dz * dz > reach2:
             continue
-        painter.setBrush(QBrush(_relation_colour(session, thing)))
-        painter.drawEllipse(to_screen(thing.pos[0], thing.pos[2]), 3.2, 3.2)
+        key = (props.get("aggression") == "hostile" or
+               str(props.get("aggression", "")).lower() == "hostile",
+               props.get("team") or props.get("faction") or "")
+        brush = brushes.get(key)
+        if brush is None:
+            brush = brushes[key] = QBrush(_team_colour(*key))
+        if brush is not current:
+            painter.setBrush(brush)
+            current = brush
+        painter.drawEllipse(QPointF(centre.x() + dx * scale, centre.y() + dz * scale),
+                            3.2, 3.2)
 
     # Actual living witnesses, derived from the same facts that drive reports.
     witnesses = session.witness_markers() if hasattr(session, "witness_markers") else []
@@ -571,7 +591,7 @@ def map_features(session):
     if hasattr(session, "law_status"):
         out["law"] = session.law_status()
     try:
-        from . import daylight
+        import game.ui.daylight as daylight
         out["night"] = daylight.map_night(session)
     except Exception:
         out["night"] = None

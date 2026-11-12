@@ -22,7 +22,7 @@ KIND_STYLES = {
 
 def weapon_attack_style(item_id):
     """The attack style *item_id* drives, or None when it is not a weapon."""
-    from .rpg import items
+    import game.rpg.items as items
     definition = items.get(str(item_id))
     if definition is None or definition.category != items.WEAPON:
         return None
@@ -31,7 +31,7 @@ def weapon_attack_style(item_id):
 
 def weapon_rating(item_id) -> float:
     """How hard *item_id* hits over time: its damage times its swing speed."""
-    from .rpg import items
+    import game.rpg.items as items
     definition = items.get(str(item_id))
     if definition is None or definition.category != items.WEAPON:
         return 0.0

@@ -268,7 +268,7 @@ def for_caster(character, spell_id: str) -> Optional[Spell]:
     spell = spell.at_level(int(levels.get(spell.id, 1)))
     # Alignment empowers a school: the good's healing and wards, the wicked's
     # strikes and dark arts (game.rpg.alignment.magic_power).
-    from . import alignment
+    import game.rpg.alignment as alignment
     factor = alignment.magic_power(getattr(character, "alignment", 0.0), spell.school)
     return spell.empowered(factor) if factor != 1.0 else spell
 

@@ -61,7 +61,7 @@ NOT_INTERESTED = "I'm not interested in that"
 
 
 def _writing(where: Optional[str], notes: bool) -> List[str]:
-    from .rpg import items
+    import game.rpg.items as items
     out = []
     for d in items.items_by_category(items.BOOK):
         found = d.get("found") or ()
@@ -82,7 +82,7 @@ def notes(where: Optional[str] = None) -> List[str]:
 
 
 def is_book(item_id) -> bool:
-    from .rpg import items
+    import game.rpg.items as items
     d = items.get(item_id)
     return d is not None and d.category == items.BOOK
 

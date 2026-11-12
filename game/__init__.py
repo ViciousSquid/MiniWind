@@ -54,7 +54,7 @@ def install() -> None:
     here must never stop the editor from starting.
     """
     global _installed
-    from . import facing as _facing
+    import game.facing as _facing
     _facing.install()            # MiniWind's actors swing round, never snap
     # Registration is the manager's (idempotent, and undone between tests by
     # the suite): made whenever it is missing. The editor integration below
@@ -69,7 +69,7 @@ def install() -> None:
         return
     _installed = True
     try:
-        from . import integration as _integration
+        import game.integration as _integration
         _integration.apply()
     except Exception as exc:  # pragma: no cover - editor/PyQt may be absent
         print(f"[MiniWind] editor integration skipped: {exc}")

@@ -105,8 +105,8 @@ def draw(painter, now=None):
     """Paint every flight and gold floater in progress, dropping finished ones."""
     from PyQt5.QtCore import QRectF, Qt
     from PyQt5.QtGui import QColor, QPen
-    from . import fonts
-    from . import theme as T
+    import game.ui.fonts as fonts
+    import game.ui.theme as T
 
     now = time.monotonic() if now is None else now
     with _lock:

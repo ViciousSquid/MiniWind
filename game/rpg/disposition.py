@@ -246,7 +246,7 @@ def of(character, npc_props: Dict, store) -> int:
     base = guilds.disposition(character, npc_props)
     # Like warms to like (game.rpg.alignment): a good soul to the decent, a
     # wicked one to brigands, and a known butcher to nobody decent.
-    from . import alignment
+    import game.rpg.alignment as alignment
     affinity = alignment.affinity(getattr(character, "alignment", 0.0),
                                   alignment.of_npc(npc_props))
     return max(0, min(100, base + delta(store, npc_props) + affinity))

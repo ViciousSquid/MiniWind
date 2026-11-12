@@ -120,7 +120,7 @@ def advance(props: Dict, hours: float) -> List[Yield]:
 
 
 def _make_yield(props: Dict) -> Yield:
-    from . import ownership
+    import game.sim.ownership as ownership
     try:
         qty = max(1, int(props.get("produce_quantity", 1)))
     except (TypeError, ValueError):

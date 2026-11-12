@@ -80,7 +80,7 @@ class OptionsPage:
             return None, None
 
     def _key_rows(self):
-        from .. import keybinds
+        import game.keybinds as keybinds
         config, _save = self._config()
         keys = keybinds.current(config)
         rows = []
@@ -88,7 +88,7 @@ class OptionsPage:
             value = "Press a key…" if self.capture == action else keybinds.label(keys[action])
             rows.append(("bind:" + action, label, value, True))
         rows.append(("pad_header", "Gamepad buttons", "", False))
-        from .. import controls
+        import game.controls as controls
         buttons = keybinds.current_pad(config)
         pad_actions = [(a, lab) for a, lab, _c, _d in keybinds.ACTIONS]
         pad_actions += [(a, lab) for a, lab, _b in keybinds.PAD_ONLY]
@@ -107,7 +107,7 @@ class OptionsPage:
         to it (an action already on it swaps over); B or Start cancels."""
         action, self.capture_pad = self.capture_pad, None
         if action is not None and button not in ("start",):
-            from .. import keybinds
+            import game.keybinds as keybinds
             config, save = self._config()
             if button in keybinds.PAD_BUTTONS:
                 keybinds.bind_pad(config, action, button, save)
@@ -117,7 +117,7 @@ class OptionsPage:
         """``[(key, label, value text, enabled)]`` top to bottom."""
         if self.keys_mode:
             return self._key_rows()
-        from . import launcher
+        import game.ui.launcher as launcher
         s = self.settings
         rows = []
         if s is not None:
@@ -136,7 +136,7 @@ class OptionsPage:
         return rows
 
     def _note(self, key):
-        from . import launcher
+        import game.ui.launcher as launcher
         s = self.settings
         if key == "mode" and s is not None:
             return launcher.mode_help(s.mode)
@@ -179,7 +179,7 @@ class OptionsPage:
 
     def change(self, key, step=1):
         """Move the row *key* one step (left -1, right / Enter +1)."""
-        from . import launcher
+        import game.ui.launcher as launcher
         s = self.settings
         if key == "volume":
             self._set_volume(self._volume() + step * VOLUME_STEP)
@@ -201,7 +201,7 @@ class OptionsPage:
             self.menu.view.update()
             return
         if key == "keys_reset":
-            from .. import keybinds
+            import game.keybinds as keybinds
             config, save = self._config()
             keybinds.reset(config, save)
             self.menu.view.update()
@@ -246,7 +246,7 @@ class OptionsPage:
         if self.capture is not None:
             # Waiting for the new key: Esc cancels, anything bindable binds.
             if key != Qt.Key_Escape:
-                from .. import keybinds
+                import game.keybinds as keybinds
                 name = keybinds.key_name(key)
                 if not name or name in keybinds.RESERVED:
                     return

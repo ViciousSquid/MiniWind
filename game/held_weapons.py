@@ -152,7 +152,8 @@ def _arm_off_hand(p, role, team, equipped, rng, make_stack) -> bool:
     a second crossbow. Bows take both hands and never pair."""
     if p.get("offhand_weapon") or not equipped:
         return False
-    from .rpg import equipment, items
+    import game.rpg.equipment as equipment
+    import game.rpg.items as items
     main = items.get(equipped)
     if main is None or not equipment.can_dual_wield(main) \
             or main.get("kind") not in (items.KIND_MELEE, items.KIND_CROSSBOW):
@@ -196,6 +197,8 @@ class HeldWeapons:
         #: overhead() (UI thread) to walk instead of every actor in the
         #: scene; None until the first update.
         self._near = None
+        #: The overhead list the last tick built (see publish()); None until then.
+        self._published = None
         #: id(actor) -> its weapons' springs (game/weapon_sway.py): an NPC's
         #: blades trail and overshoot a turn just as the player's do.
         self._sway = {}
@@ -266,7 +269,7 @@ class HeldWeapons:
     def _update_block(self, thing, target, now):
         """Shield users raise it between attacks, after a human reaction delay."""
         from .rpg.blocking import npc_shield
-        from . import npc_stamina
+        import game.npc_stamina as npc_stamina
 
         p = thing.properties
         shield = npc_shield(p)
@@ -296,18 +299,37 @@ class HeldWeapons:
         p["_shield_blocking"] = raised
         p["_shield_pose"] = pose * pose * (3 - 2 * pose)
 
+    def publish(self) -> None:
+        """Build the overhead list for this tick (logic thread): positions,
+        headings, what is in hand and the springs all change on the tick, so
+        the viewport reads one finished list each frame instead of walking
+        the actors itself."""
+        import time
+        ppos = self.session._player_pos()
+        self._published = (None if ppos is None else
+                           (self._build(time.perf_counter()), float(ppos[0]), float(ppos[2])))
+
     def overhead(self):
         """``[(pos, facing, weapon_id, handed, attacking, size[, block])]`` for the
-        actors near the player who hold something."""
+        actors near the player who hold something: the list the last tick
+        published (a copy: callers extend it), else built now."""
+        published = self._published
+        if published is not None:
+            ppos = self.session._player_pos()
+            if ppos is not None and ((ppos[0] - published[1]) ** 2 + (ppos[2] - published[2]) ** 2
+                                     <= NEAR_SLACK * NEAR_SLACK):
+                return list(published[0])
+        import time
+        return self._build(time.perf_counter())
+
+    def _build(self, now):
         s = self.session
         ppos = s._player_pos()
         if ppos is None:
             return []
         r2 = DRAW_RADIUS * DRAW_RADIUS
         out = []
-        import time
         from .weapon_sway import WeaponSway
-        now = time.perf_counter()
         near = self._near
         # The last update's set, unless the player has since moved further
         # than it allows for (a teleport between ticks).
@@ -358,7 +380,8 @@ def two_handed(item_id) -> bool:
     is cleared when a session starts)."""
     if not item_id:
         return False
-    from .rpg import equipment, items
+    import game.rpg.equipment as equipment
+    import game.rpg.items as items
     return equipment.is_two_handed(items.get(item_id))
 
 
@@ -374,3 +397,12 @@ def offhand_in_use(props) -> str:
     if two_handed(weapon):
         return ""
     return off
+
+
+def _watch_items():
+    import game.rpg.items as items
+    if two_handed.cache_clear not in items.ON_CHANGE:
+        items.ON_CHANGE.append(two_handed.cache_clear)
+
+
+_watch_items()

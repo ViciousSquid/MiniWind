@@ -164,11 +164,11 @@ class GamePointer:
         if session.game.character.is_dead:
             # The death screen's menu (restore, load, new game); there is no
             # live player to look around, so its buttons keep the pointer.
-            from . import death_screen
+            import game.ui.death_screen as death_screen
             return death_screen.has_button()
         if getattr(session, "spell_aiming", False):
             return True        # aiming a spell: the cursor says where it goes
-        from . import hud_layout
+        import game.ui.hud_layout as hud_layout
         if hud_layout.arranging:
             return True
         # Every Statistics tab and the merchant trade screen release the
@@ -267,7 +267,7 @@ class GamePointer:
             return True
         if session is not None and session.game.character.is_dead:
             # The tick is not running: the death screen acts here.
-            from . import death_screen
+            import game.ui.death_screen as death_screen
             death_screen.press(self.view, event.x(), event.y())
             self.view.update()
             return True

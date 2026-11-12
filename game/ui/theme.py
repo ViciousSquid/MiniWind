@@ -228,7 +228,7 @@ def heading(painter, rect, title, subtitle=None):
     # assets/fonts) rather than whatever display font the OS happens to have,
     # and sized in pixels so they fit the panel at any DPI. The face has one
     # upright weight, so it is never asked for bold or italic.
-    from . import fonts
+    import game.ui.fonts as fonts
     painter.save()
     painter.setFont(fonts.dialogue_font_px(28))
     painter.setPen(GOLD_BRIGHT)

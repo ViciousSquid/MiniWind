@@ -287,7 +287,7 @@ class MapPage:
 
     def _draw_witnesses(self, painter, rect, text_font):
         from .law_marks import draw_witness
-        from . import fonts
+        import game.ui.fonts as fonts
         witnesses = self.features.get("witnesses", [])
         if not witnesses:
             return
@@ -342,7 +342,7 @@ class MapPage:
         world = self.world
         if not night or world is None or not getattr(world, "ready", False):
             return
-        from . import daylight
+        import game.ui.daylight as daylight
         player = self.features.get("player")
         daylight.draw_map_night(painter, rect, night,
                                 lambda x, z: self.to_screen(rect, x, z),
@@ -437,7 +437,7 @@ class MapPage:
 
 def _caption() -> str:
     """The controls under the map, on whichever controls are in use."""
-    from .. import controls
+    import game.controls as controls
     if controls.gamepad():
         return ("A  waypoint      L-stick  move      A held  pan      R-stick  zoom      "
                 "B  back")

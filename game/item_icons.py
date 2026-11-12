@@ -125,7 +125,7 @@ def spell_icon_path(spell_id) -> Optional[str]:
     ``_spell.png``; None when there is none at all."""
     names = [str(spell_id or "")]
     try:
-        from .rpg import magic
+        import game.rpg.magic as magic
         spell = magic.get(spell_id)
     except Exception:
         spell = None

@@ -382,7 +382,7 @@ class ActorInspectorWindow(FloatingWindow):
 
         snap = None
         try:
-            from .. import mental_state
+            import game.mental_state as mental_state
             aggro_id = props.get("_aggro_target")
             aggro_actor = (_actor_by_id(logic, aggro_id)
                            if aggro_id is not None else None)
@@ -521,7 +521,7 @@ class ActorInspectorWindow(FloatingWindow):
 
     def _rows_inventory(self, rows, head, row, thing, logic, session, props):
         """What it carries, with icons; what it holds; a merchant's shop."""
-        from ..rpg import items as rpg_items
+        import game.rpg.items as rpg_items
         head("In hand")
         weapon = props.get("_active_weapon") or props.get("equipped_weapon")
         rows.append(("item", "Weapon", (weapon or "", None, "")))
@@ -608,7 +608,7 @@ class ActorInspectorWindow(FloatingWindow):
 
     def _link(self, painter, x, base, text, action, active=False):
         """Draw *text* as a link at (x, base); a click on it runs *action*."""
-        from . import hits
+        import game.ui.hits as hits
         fm = self._fm
         rect = QRectF(x - 2, base - fm.ascent() - 1, fm.horizontalAdvance(text) + 4,
                       fm.height() + 2)
@@ -706,7 +706,7 @@ class ActorInspectorWindow(FloatingWindow):
 
     def _button(self, painter, rect, text, action, active=False):
         """A small clickable button (a tab, a Focus) that runs *action*."""
-        from . import hits
+        import game.ui.hits as hits
         hot = False
         if hits.pointer is not None:
             hot = rect.contains(QPointF(hits.pointer[0], hits.pointer[1]))
@@ -732,7 +732,7 @@ class ActorInspectorWindow(FloatingWindow):
         icon = None
         if iid:
             try:
-                from .. import item_icons
+                import game.item_icons as item_icons
                 icon = item_icons.icon_pixmap(iid, stack, 26)
             except Exception:
                 icon = None
@@ -742,7 +742,7 @@ class ActorInspectorWindow(FloatingWindow):
         painter.setPen(_TEXT if iid else _MUTED)
         name = text
         try:
-            from ..rpg import items as rpg_items
+            import game.rpg.items as rpg_items
             d = rpg_items.get(iid) if iid else None
             if text in ("Weapon", "Off hand", "Torch"):
                 name = f"{text}: {d.name if d else (iid or 'none')}"

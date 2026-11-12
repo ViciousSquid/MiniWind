@@ -131,7 +131,7 @@ def persuade(character, npc_props: Dict, rng=None) -> Dict:
     """A speechcraft check that nudges an NPC's disposition up (or down on fail)."""
     import random
     rng = rng or random
-    from . import skills as sk
+    import game.rpg.skills as sk
     speech = character.skill(sk.SPEECHCRAFT)
     luck = character.attrs.get(attr.LUCK, 40)
     chance = (speech + luck * 0.2) / 100.0

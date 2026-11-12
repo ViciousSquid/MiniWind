@@ -62,8 +62,8 @@ def npc_wizard(parent=None):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return {}
-    from .rpg import bestiary
-    from . import editor_ui
+    import game.rpg.bestiary as bestiary
+    import game.editor_ui as editor_ui
 
     holder = _Holder({})
     wiz = QtWidgets.QWizard(parent)
@@ -144,7 +144,7 @@ def creature_wizard(parent=None):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return {}
-    from .rpg import bestiary
+    import game.rpg.bestiary as bestiary
 
     wiz = QtWidgets.QWizard(parent)
     wiz.setWindowTitle("New Monster — MiniWind")

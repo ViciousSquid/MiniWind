@@ -279,7 +279,8 @@ def _draw_bars(p, f, c):
 
 def _draw_identity(p, f, c):
     """Level, race and class, gold, and the level-up prompt, under the bars."""
-    from ..rpg import classes, races
+    import game.rpg.classes as classes
+    import game.rpg.races as races
     y = f.text_y
     # Clear of the ring at this height: without a magicka bar the text sits
     # higher, where the ring reaches further right.
@@ -317,7 +318,7 @@ def draw(painter, session, c, width, height):
     painter.drawEllipse(QPointF(f.cx, f.cy), f.r + 1.0, f.r + 1.0)
     painter.restore()
 
-    from . import worldmap
+    import game.ui.worldmap as worldmap
     worldmap.draw_minimap(painter, session, None, width, height)
 
     painter.save()
