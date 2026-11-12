@@ -253,9 +253,25 @@ def _monster_sprite_candidates(props, rotation=None):
         # A missing custom/variant view must not pin every angle to a single
         # front image while a matching built-in directional image exists.
         fallback = [(key, name, folder, cache) for _, name, folder, cache in candidates]
+        if custom and not _is_rotation_view(custom):
+            # An authored image that is not itself one view of a set
+            # (``heads/mara.png``, not ``ranger_3.png``): its own view of this
+            # angle first, if the mapper made one, then the image itself --
+            # before any built-in directional image. Otherwise the stock
+            # soldier's ``idle_5.png`` stood in for the mapper's art at every
+            # angle the art has no separate view for (all of them, for an
+            # actor drawn with one image).
+            return tuple(directional[:1] + fallback[:1] + directional[1:] + fallback[1:])
         return tuple(directional + fallback)
     return tuple(candidates)
 
+
+
+def _is_rotation_view(path):
+    """Whether *path* names one view of an eight-view set (``name_1.png`` ..
+    ``name_8.png``), which selects the whole set."""
+    stem = os.path.splitext(os.path.basename(str(path)))[0]
+    return len(stem) > 2 and stem[-2] == '_' and stem[-1] in '12345678'
 
 
 def _split_asset_path(path):

@@ -6,7 +6,7 @@ change's target map was only followed when the dialog supplied a start map
 (it never does), and asset references were copied from wherever they pointed —
 an absolute path or a ``../`` climb produced an archive entry outside the
 package root.  Every test here builds a small project on disk, exports it, and
-inspects the archive contents directly, independently of any package player.
+opens the result with the player's own reader.
 """
 
 import json
@@ -17,12 +17,7 @@ import numpy as np
 import pytest
 
 from editor.package_exporter import PackageExporter
-<<<<<<< MiniWind
-||||||| base
-from player.fiopak import FioPackage
-=======
 from engine.fiopak import FioPackage
->>>>>>> Fio-3.5
 
 
 def _write_json(path, data):
@@ -69,9 +64,10 @@ def test_manifest_names_the_entry_map(project, tmp_path):
     assert ok, errors
     with zipfile.ZipFile(out) as zf:
         manifest = json.loads(zf.read("metadata.json"))
-        assert manifest["map_path"] in zf.namelist()
     assert manifest["map_path"] == "maps/start.json", (
         "metadata.json was written before map_path was set")
+    with FioPackage.open(str(out)) as pak:
+        assert pak.start_map_path() == "maps/start.json"
 
 
 def test_level_change_targets_are_packaged(project, tmp_path):
@@ -85,18 +81,16 @@ def test_level_change_targets_are_packaged(project, tmp_path):
     ok, errors = _export(project, current, out)
 
     assert ok, errors
-    with zipfile.ZipFile(out) as zf:
-        assert sorted(n for n in zf.namelist() if n.startswith("maps/")) == [
-            "maps/first.json", "maps/second.json", "maps/third.json"]
-        assert json.loads(zf.read("metadata.json"))["map_path"] == "maps/first.json"
-        for name in ("first", "second", "third"):
-            assert json.loads(zf.read(f"maps/{name}.json"))["version"] == 3
+    with FioPackage.open(str(out)) as pak:
+        assert pak.list_maps() == ["maps/first.json", "maps/second.json",
+                                   "maps/third.json"]
+        assert pak.start_map_path() == "maps/first.json"
 
 
 def test_level_change_target_without_extension_is_packaged(project, tmp_path):
-    """LevelChanger adds ".json" to its target at run time (a map may say
-    ``target_map: "next"``); the exporter looked for the name verbatim,
-    reported the map missing and left it out of the package."""
+    """LevelChanger adds ".json" to its target at run time (MonsterTest.json
+    ships ``target_map: "Terrain_Test_small"``); the exporter looked for the
+    name verbatim, reported the map missing and left it out of the package."""
     _write_json(project / "maps" / "next.json", _level())
     current = _write_json(project / "maps" / "first.json",
                           _level([_changer("next")]))
@@ -106,15 +100,15 @@ def test_level_change_target_without_extension_is_packaged(project, tmp_path):
 
     assert ok, errors
     assert errors == [], errors
-    with zipfile.ZipFile(out) as zf:
-        assert json.loads(zf.read("maps/next.json")) == _level()
+    with FioPackage.open(str(out)) as pak:
+        assert "maps/next.json" in pak.list_maps()
 
 
 def test_a_sound_found_by_filename_at_run_time_is_packaged(project, tmp_path):
     """Speakers play ``assets/sounds/<basename>`` whatever directory the map
-    names (a map may say ``assets/sound/fireloop.mp3``), and the
-    exporter must resolve that same fallback rather than report the sound
-    missing and leave it out."""
+    names (_SHOWCASE.json ships ``assets/sound/fireloop.mp3``), and the
+    player's reader falls back to the basename too; the exporter resolved the
+    path literally, reported the sound missing and left it out."""
     speaker = {"type": "Speaker", "pos": [0, 0, 0],
                "properties": {"type": "Speaker",
                               "sound_file": "assets/sound/beep.wav"}}
@@ -127,7 +121,8 @@ def test_a_sound_found_by_filename_at_run_time_is_packaged(project, tmp_path):
     assert errors == [], errors
     with zipfile.ZipFile(out) as zf:
         assert "assets/sounds/beep.wav" in zf.namelist()
-        assert zf.read("assets/sounds/beep.wav") == b"beep"
+    with FioPackage.open(str(out)) as pak:
+        assert pak.read_asset("assets/sound/beep.wav") == b"beep"
 
 
 def test_referenced_assets_are_packaged_under_assets(project, tmp_path):
@@ -140,9 +135,9 @@ def test_referenced_assets_are_packaged_under_assets(project, tmp_path):
     ok, errors = _export(project, current, out)
 
     assert ok
-    with zipfile.ZipFile(out) as zf:
-        assert zf.read("assets/textures/floor.png") == b"floor"
-        assert zf.read("assets/sounds/beep.wav") == b"beep"
+    with FioPackage.open(str(out)) as pak:
+        assert pak.read_asset("floor.png") == b"floor"
+        assert pak.read_asset("beep.wav") == b"beep"
     assert any("missing.png" in e for e in errors)
 
 
@@ -214,20 +209,9 @@ def test_map_name_collisions_get_distinct_archive_paths(project, tmp_path):
     ok, errors = _export(project, current, out)
 
     assert ok, errors
-<<<<<<< MiniWind
-    with zipfile.ZipFile(out) as zf:
-        assert sorted(n for n in zf.namelist() if n.startswith("maps/")) == [
-            "maps/start.json", "maps/start_1.json"]
-        assert json.loads(zf.read("metadata.json"))["map_path"] == "maps/start.json"
-||||||| base
-    with FioPackage.open(str(out)) as pak:
-        assert pak.list_maps() == ["maps/start.json", "maps/start_1.json"]
-        assert pak.start_map_path() == "maps/start.json"
-=======
     with FioPackage.open(str(out)) as pak:
         assert pak.list_maps() == ["maps/start.json", "maps/sub/start.json"]
         assert pak.start_map_path() == "maps/start.json"
->>>>>>> Fio-3.5
 
 
 # ---------------------------------------------------------------------------

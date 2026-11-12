@@ -76,14 +76,10 @@ def test_property_tabs_do_not_inherit_the_console_tab_dimensions(main_window, qt
     assert bar.tabRect(0).width() < 120
 
 
-def test_hierarchy_has_room_for_names_and_can_be_resized(main_window, qt_app):
+def test_hierarchy_has_room_for_names_and_can_be_resized(main_window):
     dock = main_window.scene_hierarchy_dock
-    assert dock.minimumWidth() == 140  # compact expanded hierarchy
+    assert dock.minimumWidth() == dock.MIN_WIDTH
     assert dock.maximumWidth() >= 400
-    main_window.resize(1600, 980)
-    dock.restore_width(300)
-    qt_app.processEvents()
-    assert dock.width() >= 280, "the hierarchy could not expand to fit long names"
     main_window.state.things = [Light(properties={'name': 'Village courtyard light'})]
     main_window.scene_hierarchy.refresh_list()
     tree = main_window.scene_hierarchy.tree

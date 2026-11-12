@@ -6,6 +6,7 @@ buffer layouts are technique-specific and live with each renderer.
 """
 
 import math
+import os
 import weakref
 
 import numpy as np
@@ -280,12 +281,27 @@ class TablesMixin:
         return cached
 
     def _resolve_sprite_recipe(self, candidates):
-        """The GL texture id for one interned candidate list, or 0."""
+        """The GL texture id for one interned candidate list, or 0.
+
+        The first candidate whose image exists wins. ``load_texture`` answers
+        a missing file with the white default texture, which is a texture
+        like any other: taken at its word, the first candidate always "loaded"
+        and the rest were never tried -- so a monster with one custom image
+        and no ``_1``..``_8`` views of it (every MiniWind head) drew as a white
+        square, its directional candidate standing in front of the image it
+        has. Only when no candidate exists at all is the first one loaded as
+        before, default texture and all.
+        """
+        from engine.asset_archives import asset_exists
+        present = [c for c in candidates if c[1] and (
+            c[1] in ('default.png', 'caulk')
+            or asset_exists(os.path.join('assets', c[2], c[1])))]
         for key, filename, subfolder, cache in candidates:
             if key:
                 tex_id = self.sprite_textures.get(key)
                 if tex_id:
                     return int(tex_id)
+        for key, filename, subfolder, cache in (present or candidates):
             if not filename:
                 continue
             tex_id = self.load_texture(filename, subfolder)

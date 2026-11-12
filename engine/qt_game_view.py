@@ -1078,6 +1078,12 @@ class QtGameView(QOpenGLWidget):
         if terrain is None or not terrain.enabled:
             self._render_config["terrain"] = None
             return
+        # The renderer's grass settings ([Renderer] grass / low_grass) decide
+        # what the terrain grows, not only what is drawn: with grass off no
+        # blade is generated at all.
+        renderer = self.renderer
+        terrain.grass_allowed = bool(getattr(renderer, 'grass_enabled', True))
+        terrain.set_grass_quality(getattr(renderer, 'grass_quality', 'high'))
         terrain.advance(camera_pos, frustum_planes(projection * view))
         self._render_config["terrain"] = terrain.publish()
 

@@ -5,8 +5,23 @@ from PyQt5.QtTest import QTest
 
 from editor.entity_linking import connect_entities
 from editor.io_system import get_connections
-from editor.things import Monster, PathNode
-from plugins.deathmatch.entities import DeathmatchNode
+from editor.things import Monster, PathNode, Thing
+
+
+class DeathmatchNode(Thing):
+    """Stands in for Fio's Deathmatch navigation node, which MiniWind does
+    not ship: the editor's linking rules know the entity by its type string
+    and its ``links`` list, and placement by its ``on_editor_placed`` hook."""
+
+    def __init__(self, pos=None, properties=None):
+        super().__init__(pos, properties)
+        self.properties["type"] = "deathmatchnode"
+        self.properties.setdefault("links", "")
+
+    def on_editor_placed(self, state):
+        others = [t.properties.get("name") for t in state.things
+                  if t is not self and t.properties.get("type") == "deathmatchnode"]
+        self.properties["links"] = ",".join(name for name in others if name)
 
 pytestmark = pytest.mark.qt
 
@@ -145,7 +160,7 @@ def test_placing_navigation_node_auto_links_in_one_undo_step(main_window):
     from tests.helpers.worlds import box_brush
     load_plugins()
     manager = get_manager()
-    plugin = manager.find_plugin('deathmatch')
+    plugin = manager.find_plugin('bigworld')     # any shipped plugin places it
     was_enabled = plugin.enabled
     manager.set_enabled(plugin, True)
     try:

@@ -262,7 +262,6 @@ def test_logic_thread_does_not_reintroduce_authoritative_world_aliases():
 MACHINERY_TEST_ROOTS = (
     "tests",
     "plugins/bigworld/tests",
-    "plugins/tidy/tests",
 )
 
 #: These names have appeared as substitutes for production owners in behavioural

@@ -1,5 +1,5 @@
-"""A desktop build leaves the ``player`` package out (Nuitka:
-``--nofollow-import-to=player``), so nothing the desktop runs may import it.
+"""Nothing the desktop runs may import the ``player`` package (Fio's Android
+player, which a desktop build leaves out and MiniWind does not ship at all).
 
 The package reader and the export's asset collector are shared with the
 player and live in the engine (``engine.fiopak``, ``engine.package_assets``);
@@ -37,14 +37,15 @@ def test_editor_engine_and_plugins_never_import_the_player():
     assert not offenders, "\n".join(offenders)
 
 
-def test_main_names_the_player_only_in_its_guarded_branch():
-    assert _player_imports(ROOT / "main.py") == [
-        (line, "player.main") for line, name in _player_imports(ROOT / "main.py")]
-    assert len(_player_imports(ROOT / "main.py")) == 1
+def test_main_never_imports_the_player():
+    """Fio's ``main.py`` names the player in one guarded Android branch.
+    MiniWind ships no player package, so its ``main.py`` names it nowhere."""
+    assert _player_imports(ROOT / "main.py") == []
 
 
-def test_every_release_build_leaves_the_player_out():
+def test_no_player_package_is_shipped():
+    """Fio's release builds pass ``--nofollow-import-to=player``; MiniWind's
+    have nothing to leave out."""
+    assert not (ROOT / "player").exists()
     for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
-        text = workflow.read_text(encoding="utf-8")
-        builds = text.count("--standalone")
-        assert text.count("--nofollow-import-to=player") == builds, workflow.name
+        assert "player/" not in workflow.read_text(encoding="utf-8"), workflow.name

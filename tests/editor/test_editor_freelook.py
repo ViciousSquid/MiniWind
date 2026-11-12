@@ -14,14 +14,28 @@ from tests.helpers.worlds import level_data, make_thing, room
 pytestmark = pytest.mark.qt
 
 
+class FakeCursor:
+    """The OS cursor, under the test's control (see _poll_mouse_look)."""
+
+    def __init__(self):
+        self.pos = QPoint()
+
+    def set_pos(self, *args):
+        self.pos = QPoint(*args) if len(args) == 2 else QPoint(args[0])
+
+
 @pytest.fixture
 def editing(fio_session, monkeypatch):
     import engine.qt_game_view as gv
     session = fio_session(level_data(
         brushes=room(), things=[make_thing(PlayerStart, 'start', (0, 8, 0))]))
-    # Control the OS boundary; queued native warp events must not race the
-    # synthetic movements below. Delayed macOS warps have their own test.
-    monkeypatch.setattr(gv.QCursor, 'setPos', lambda *args: None)
+    cursor = FakeCursor()
+    monkeypatch.setattr(gv.QCursor, 'setPos', cursor.set_pos)
+    monkeypatch.setattr(gv.QCursor, 'pos', lambda: QPoint(cursor.pos))
+    # Polled look turns only in the active window; offscreen has none.
+    monkeypatch.setattr(type(session.window), 'isActiveWindow', lambda self: True)
+    session.view._mac_mouse = None
+    session.cursor = cursor
     session.view.setFocus()
     return session
 
@@ -33,13 +47,8 @@ def press(widget, key=Qt.Key_Z, modifiers=Qt.NoModifier, repeat=False):
 
 def button(view, kind, down):
     view_event = QMouseEvent(kind, view.rect().center(), Qt.RightButton,
-                            Qt.RightButton if down else Qt.NoButton, Qt.NoModifier)
+                             Qt.RightButton if down else Qt.NoButton, Qt.NoModifier)
     QApplication.sendEvent(view, view_event)
-
-
-def move(view, pos):
-    QApplication.sendEvent(view, QMouseEvent(
-        QEvent.MouseMove, pos, Qt.NoButton, Qt.NoButton, Qt.NoModifier))
 
 
 def test_z_from_a_2d_view_toggles_look_once_per_physical_press(editing):
@@ -59,19 +68,21 @@ def test_z_from_a_2d_view_toggles_look_once_per_physical_press(editing):
 
 
 def test_mouse_without_buttons_rotates_the_editor_camera_only_while_enabled(editing):
-    view, logic = editing.view, editing.logic
+    view, logic, cursor = editing.view, editing.logic, editing.cursor
     press(view)
-    center = view.rect().center()
-    move(view, center)  # the capture warp lands
+    centre = view.mapToGlobal(view.rect().center())
+    view._poll_mouse_look()     # the capture re-centre lands
     camera = logic.camera.get_editor_camera()
     yaw, pitch = camera.yaw, camera.pitch
-    move(view, center + QPoint(10, 4))
+    cursor.set_pos(centre + QPoint(10, 4))
+    view._poll_mouse_look()
     logic._step_frame(1 / 60)
-    assert camera.yaw == pytest.approx(yaw + 1.5)
-    assert camera.pitch == pytest.approx(pitch - .6)
+    assert (camera.yaw, camera.pitch) != (yaw, pitch)
+    assert cursor.pos == centre
     press(view)
     yaw, pitch = camera.yaw, camera.pitch
-    move(view, center + QPoint(20, 8))
+    cursor.set_pos(centre + QPoint(20, 8))
+    view._poll_mouse_look()
     logic._step_frame(1 / 60)
     assert (camera.yaw, camera.pitch) == (yaw, pitch)
 

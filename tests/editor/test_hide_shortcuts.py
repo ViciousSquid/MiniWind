@@ -10,7 +10,11 @@ from PyQt5.QtGui import QKeyEvent                   # noqa: E402
 
 pytestmark = [pytest.mark.qt, pytest.mark.integration]
 
-MAP = "maps/Office_Corridor.json"
+# Fio opens its Office_Corridor example map here; MiniWind does not ship
+# Fio's maps, so the level is built in code (tests/helpers/scenes.py).
+def MAP():
+    from tests.helpers import scenes
+    return scenes.showcase()
 
 
 def _press(window, key, modifiers=Qt.NoModifier):
@@ -18,7 +22,7 @@ def _press(window, key, modifiers=Qt.NoModifier):
 
 
 def test_h_hides_a_selected_thing(fio_session):
-    session = fio_session(MAP)
+    session = fio_session(MAP())
     window, thing = session.window, session.state.things[0]
     window.set_selected_objects([thing])
     _press(window, Qt.Key_H)
@@ -27,7 +31,7 @@ def test_h_hides_a_selected_thing(fio_session):
 
 
 def test_h_hides_every_selected_object(fio_session):
-    session = fio_session(MAP)
+    session = fio_session(MAP())
     window = session.window
     brush, thing = session.state.brushes[0], session.state.things[1]
     window.set_selected_objects([brush, thing])
@@ -36,7 +40,7 @@ def test_h_hides_every_selected_object(fio_session):
 
 
 def test_shift_h_shows_everything_without_a_selection(fio_session):
-    session = fio_session(MAP)
+    session = fio_session(MAP())
     window = session.window
     brush, thing = session.state.brushes[0], session.state.things[0]
     window.set_selected_objects([brush, thing])
@@ -47,7 +51,7 @@ def test_shift_h_shows_everything_without_a_selection(fio_session):
 
 
 def test_hiding_is_one_undo_step(fio_session):
-    session = fio_session(MAP)
+    session = fio_session(MAP())
     window, thing = session.window, session.state.things[0]
     depth = len(session.state.undo_stack)
     window.set_selected_objects([thing])

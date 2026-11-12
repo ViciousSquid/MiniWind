@@ -5497,6 +5497,9 @@ class MainWindow(QMainWindow):
             from editor.package_session import PackageSession
             session = PackageSession(file_path)
             level_data = session.load_json(session.start_map)
+            # Refused here, before file_path is cleared and the scene is
+            # replaced, an invalid map leaves the open one as it was.
+            self.state.validate_level_data(level_data)
 
             # Never point file_path at the package: save_level() writes that
             # path, and writing a map over the .fiopak replaces the archive

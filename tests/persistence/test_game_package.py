@@ -1,6 +1,7 @@
 """The editor can play exports without importing the removed player package."""
 
 import json
+import os
 import shutil
 import stat
 import zipfile
@@ -107,7 +108,10 @@ def test_editor_plays_an_export_without_the_standalone_player(
     main_window.play_package_from_path(str(path))
     assert launched == [True]
     assert main_window.file_path is None
-    assert main_window._package_level_dir == main_window._package_temp_dir
+    # Read in place (Fio 3.5): a package session, nothing extracted.
+    assert main_window._package is not None
+    assert os.path.samefile(main_window._package.path, path)
+    main_window._close_package()
     assert path.read_bytes() == before
 
 
@@ -124,4 +128,4 @@ def test_invalid_package_map_preserves_the_open_map(main_window, tmp_path, monke
     main_window.play_package_from_path(str(path))
     assert main_window.file_path == original
     assert main_window.state.get_level_data() == before
-    assert main_window._package_level_dir is None
+    assert main_window._package is None

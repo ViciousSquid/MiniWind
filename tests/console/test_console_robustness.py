@@ -26,17 +26,20 @@ def _logged(handler, line):
 
 # -- help ----------------------------------------------------------------------
 
-def test_help_lists_the_commands_plugins_registered(main_window):
+def test_help_lists_the_commands_plugins_registered(main_window, monkeypatch):
     """The plugin manager returns its commands as a mapping; help iterated it
     as pairs and raised for any plugin command whose name is not two letters."""
     from plugins.manager import get_manager
     manager = get_manager()
-    # Shipped off; a map that uses it (the Deathmatch arenas) turns it on.
-    deathmatch = next(p for p in manager.plugins if "addbot" in manager._console_commands
-                      and manager._console_commands["addbot"][0] is p)
-    manager.set_enabled(deathmatch, True)
+    # Fio lists its Deathmatch plugin's ``addbot`` here; MiniWind does not ship
+    # that plugin, so a command is registered for one it does ship.
+    owner = manager.find_plugin("bigworld")
+    assert owner is not None
+    monkeypatch.setitem(manager._console_commands, "worldprobe",
+                        (owner, lambda *args: None, "a plugin's own command"))
+    monkeypatch.setattr(manager, "is_enabled", lambda plugin: True)
     commands = manager.console_commands()
-    assert "addbot" in commands
+    assert "worldprobe" in commands
     text = _logged(main_window.console_handler, "help")
     assert "Plugin Commands" in text
     for name, entry in commands.items():

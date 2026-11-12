@@ -58,8 +58,12 @@ def test_directional_recipe_preserves_custom_and_variant_fallbacks():
     props = dict(monster_type='human', variant='variant1', is_shooting=True,
                  custom_shoot='assets/sprites/custom.png')
     recipe = _monster_sprite_candidates(props, 5)
-    assert [(r[1], r[2]) for r in recipe[:4]] == [
+    # MiniWind: the authored image itself comes straight after its own view
+    # of the angle, ahead of the built-in directional images, so an actor
+    # drawn with one custom image is never shown as the stock soldier.
+    assert [(r[1], r[2]) for r in recipe[:5]] == [
         ('custom_5.png', 'sprites'),
+        ('custom.png', 'sprites'),
         ('shoot_5.png', 'sprites/monsters/human/variant1'),
         ('shoot_5.png', 'sprites/monsters/human'),
         ('idle_5.png', 'sprites/monsters/human/variant1')]
@@ -72,24 +76,6 @@ def test_selecting_any_custom_view_resolves_the_whole_rotation_set(selected):
     props = dict(monster_type='human', custom_idle=f'assets/sprites/monsters/ranger_{selected}.png')
     assert [_monster_sprite_candidates(props, view)[0][1] for view in range(1, 9)] == [
         f'ranger_{view}.png' for view in range(1, 9)]
-
-
-@pytest.mark.qt
-def test_missing_custom_view_uses_matching_builtin_direction():
-    from editor.things import Monster
-    from engine.entity_table import EntityTable
-    from player.render.renderer import GLESRenderer
-
-    class Package:
-        def has_asset(self, name):
-            return name in {'assets/sprites/monsters/custom_1.png',
-                            'assets/sprites/monsters/human/idle_5.png'}
-    table = EntityTable()
-    table.begin_frame([Monster([0, 96, 0], {
-        'custom_idle': 'assets/sprites/monsters/custom_1.png'})], epoch=1)
-    renderer = GLESRenderer()
-    renderer._scene = {'package': Package()}
-    assert renderer._sprite_image(table, 0, (0, 96, -100)).endswith('human/idle_5.png')
 
 
 def test_corpse_retains_the_single_rotation_zero_frame():
@@ -152,19 +138,3 @@ def test_every_builtin_has_complete_packaged_rotation_images(appearance):
             archive.close()
 
 
-@pytest.mark.qt
-@pytest.mark.parametrize('camera,expected', [((0, 0, 100), 'idle_1.png'),
-                                             ((0, 0, -100), 'idle_5.png')])
-def test_standalone_player_uses_camera_relative_recipe(camera, expected):
-    from editor.things import Monster
-    from engine.entity_table import EntityTable
-    from player.render.renderer import GLESRenderer
-
-    table = EntityTable()
-    table.begin_frame([Monster([0, 96, 0])], epoch=1)
-    class Package:
-        def has_asset(self, name):
-            return True
-    renderer = GLESRenderer()
-    renderer._scene = {'package': Package()}
-    assert renderer._sprite_image(table, 0, camera).endswith(expected)
