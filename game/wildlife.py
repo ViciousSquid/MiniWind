@@ -112,7 +112,7 @@ class Wildlife:
             speed = float(p.get("move_speed", 90.0) or 90.0) * PACE
             step = min(speed * delta, dist)
             if s._step_to(t, x + dx / dist * step, z + dz / dist * step):
-                face_heading(p, dx, dz, delta)
+                face_heading(t, dx, dz, delta)
                 p["_roam_blocked"] = 0
             else:
                 blocked = int(p.get("_roam_blocked", 0)) + 1

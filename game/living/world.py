@@ -986,8 +986,8 @@ class LivingWorld:
             if math.hypot(leader.pos[0] - ppos[0], leader.pos[2] - ppos[2]) <= GREET_RADIUS:
                 entry["greeted"] = True
                 s.bark(leader, self._greeting(j, leader))
-                face = __import__("game.facing", fromlist=["face_heading"]).face_heading
-                face(leader.properties, ppos[0] - leader.pos[0], ppos[2] - leader.pos[2], 1.0)
+                from ..facing import face_heading
+                face_heading(leader, ppos[0] - leader.pos[0], ppos[2] - leader.pos[2], 1.0)
 
     def _react(self, j, x, ppos) -> bool:
         """Fight or flight for one traveller. True when there is a threat."""

@@ -430,7 +430,6 @@ class CoopSession:
             dead=c.is_dead,
             hidden=not context.connected,
             inventory=[],
-            _facing=context.physics.angle,
             equipped_weapon=equipment.equipped_id(c, "weapon"),
             offhand_weapon=equipment.equipped_id(c, "shield"),
             handed=c.handed,
@@ -439,6 +438,8 @@ class CoopSession:
             _attack_anim=context.session._attack_anim_time,
             _offhand_anim=context.session._offhand_anim_time,
         )
+        from ..facing import set_heading
+        set_heading(actor, context.physics.angle)
         actor.pos = [
             float(context.physics.pos[0]),
             float(context.physics.pos[1]) + 64.0,

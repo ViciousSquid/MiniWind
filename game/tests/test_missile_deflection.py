@@ -45,7 +45,7 @@ def test_npc_missile_ricochets_without_impact_then_can_hit_the_shooter(dense, sp
     shooter = make_thing(Monster, "Shooter", (0, 0, 200), team="red")
     defender = make_thing(Monster, "Lucky guard", (0, 0, 0), team="blue")
     defender.properties.update(luck=100, offhand_weapon="iron_shield",
-                               _shield_blocking=True, _facing=0)
+                               _shield_blocking=True, angle=0)
     logic = _logic([shooter, defender], [])
     combat = logic.combat_runtime
     combat.PROJECTILE_DENSE_THRESHOLD = 0 if dense else 100

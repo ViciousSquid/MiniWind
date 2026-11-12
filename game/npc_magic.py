@@ -52,6 +52,7 @@ import weakref
 from types import SimpleNamespace
 
 from . import fio
+from .facing import face_heading
 
 #: Below this fraction of its health, a caster that can heals before fighting on.
 HEAL_BELOW = 0.4
@@ -573,8 +574,7 @@ class NpcMagic:
             lift = float(getattr(player, "camera_height", 48.0) or 48.0) * 0.6
         aim = [target_pos[0], target_pos[1] + lift, target_pos[2]]
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
-        if dx or dz:
-            p["_facing"] = math.atan2(dx, dz)
+        face_heading(thing, dx, dz)
         dist = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
         speed = max(1.0, speed)
         vel = [dx / dist * speed, dy / dist * speed, dz / dist * speed]

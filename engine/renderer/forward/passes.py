@@ -1404,9 +1404,7 @@ class PassesMixin:
         textures = self._sprite_texture_scratch[:slot_count]
         drawn = self._sprite_draw_mask[:slot_count]
 
-        from engine.monster_facing import sprite_keys_for_view
-        eye = None if camera_pos is None else self._camera_xyz(camera_pos)
-        key_ids[:] = sprite_keys_for_view(table, slots, eye)
+        np.take(table.sprite_key_id, slots, out=key_ids)
         drawn[:] = key_ids >= 0
         if len(gl_ids):
             np.maximum(key_ids, 0, out=key_ids)

@@ -232,6 +232,8 @@ def _isolate_process_singletons(_plugins_loaded_before_isolation):
     if things is not None:
         counters = dict(things.Thing._counters)
     plugin_state = _snapshot_plugin_state()
+    from engine import monster_facing as _monster_facing
+    turn_rate = _monster_facing.TURN_RATE
     # The editor sets the application font from settings.ini when a window is
     # built (MainWindow.update_global_font). It is process-wide: left changed,
     # it changes how the next test's windows lay out.
@@ -243,6 +245,7 @@ def _isolate_process_singletons(_plugins_loaded_before_isolation):
         from PyQt5.QtWidgets import QApplication
         QApplication.setFont(app_font)
     _restore_plugin_state(plugin_state)
+    _monster_facing.TURN_RATE = turn_rate
 
     io_system = sys.modules.get("editor.io_system")
     if io_system is not None:

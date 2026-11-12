@@ -38,7 +38,7 @@ FIELDS = frozenset(
         "offhand_weapon",
         "handed",
         "is_shooting",
-        "_facing",
+        "angle",
         "_attack_anim",
         "_offhand_anim",
         "_active_weapon",

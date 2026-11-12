@@ -71,6 +71,7 @@ head-less test -- still imports this module.
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from itertools import chain
@@ -200,7 +201,7 @@ SPRITE_NONE = -1
 _LOOKUP_ONLY = ('', '', False)
 
 
-def _monster_sprite_candidates(props, rotation=None):
+def _monster_sprite_candidates(props):
     """The monster sprite branch, expressed as numeric texture candidates.
 
     Reads the same four state fields that branch reads, from a Monster's
@@ -244,34 +245,8 @@ def _monster_sprite_candidates(props, rotation=None):
         if sprite_type != 'idle':
             candidates.append((key, 'idle.png', base_folder, True))
 
-    if rotation is not None and sprite_type != 'dead':
-        from .monster_facing import rotation_filename
-        key += '_rotation_%d' % rotation
-        directional = []
-        for _, name, folder, cache in candidates:
-            directional.append((key, rotation_filename(name, rotation), folder, cache))
-        # A missing custom/variant view must not pin every angle to a single
-        # front image while a matching built-in directional image exists.
-        fallback = [(key, name, folder, cache) for _, name, folder, cache in candidates]
-        if custom and not _is_rotation_view(custom):
-            # An authored image that is not itself one view of a set
-            # (``heads/mara.png``, not ``ranger_3.png``): its own view of this
-            # angle first, if the mapper made one, then the image itself --
-            # before any built-in directional image. Otherwise the stock
-            # soldier's ``idle_5.png`` stood in for the mapper's art at every
-            # angle the art has no separate view for (all of them, for an
-            # actor drawn with one image).
-            return tuple(directional[:1] + fallback[:1] + directional[1:] + fallback[1:])
-        return tuple(directional + fallback)
     return tuple(candidates)
 
-
-
-def _is_rotation_view(path):
-    """Whether *path* names one view of an eight-view set (``name_1.png`` ..
-    ``name_8.png``), which selects the whole set."""
-    stem = os.path.splitext(os.path.basename(str(path)))[0]
-    return len(stem) > 2 and stem[-2] == '_' and stem[-1] in '12345678'
 
 
 def _split_asset_path(path):
@@ -613,20 +588,17 @@ def _is_head_art(props) -> bool:
 
 
 def _sprite_spin(thing):
-    """``(heading, 1)`` for a living head actor with a heading, else no spin.
+    """``(heading, 1)`` for a living head actor, else no spin.
 
-    The heading is the transient ``_facing`` every system that turns an actor
-    writes (radians, forward ``(sin a, 0, cos a)``); the sprite shader turns
-    the billboard so the art's front points along it when seen from above.
+    The heading is the actor's ``angle`` (degrees; written only by
+    :mod:`engine.monster_facing`), passed on in radians: the sprite shader
+    turns the billboard so the art's front points along it seen from above.
     """
     props = _props_of(thing)
     if props.get('dead') or not _is_head_art(props):
         return _NO_SPIN
-    facing = props.get('_facing')
-    if facing is None:
-        return _NO_SPIN
     try:
-        return (float(facing), 1.0)
+        return (math.radians(float(props.get('angle', 0.0) or 0.0)), 1.0)
     except (TypeError, ValueError):
         return _NO_SPIN
 
@@ -719,8 +691,6 @@ _COLUMNS = (
     #: Interned sprite recipe id; :data:`SPRITE_NONE` for a row that draws none.
     ('sprite_key_id', (), np.int32, SPRITE_NONE),
     #: Camera-relative recipes, chosen independently for each viewport.
-    ('sprite_direction_ids', (8,), np.int32, SPRITE_NONE),
-    ('monster_angle', (), np.float64, 0.0),
     #: Interned model recipe id; -1 means no model.
     ('model_recipe_id', (), np.int32, -1),
     #: Model transform, a flattened mat4, and its normal matrix padded to 12.
@@ -1427,12 +1397,6 @@ class EntityTable:
                                   else _NO_SPIN)
         self.sprite_overlay[slot] = bool(props.get('_sprite_overlay', False))
         self.sprite_key_id[slot] = self.intern_sprite(sprite_candidates(thing))
-        self.sprite_direction_ids[slot] = SPRITE_NONE
-        self.monster_angle[slot] = _float_property(props.get('angle', 0.0))
-        if self.class_bits[slot] & ENT_MONSTER and not props.get('dead'):
-            self.sprite_direction_ids[slot] = [
-                self.intern_sprite(_monster_sprite_candidates(props, rotation))
-                for rotation in range(1, 9)]
 
         if self.class_bits[slot] & ENT_EFFECT:
             self._effect_published = None

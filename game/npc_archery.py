@@ -32,6 +32,7 @@ import math
 
 from . import combat_loadout
 from . import fio
+from .facing import face_heading
 
 #: The same numbers the player's bow uses (game.runtime re-exports these so
 #: there is one definition): a full draw, and the range it buys.
@@ -267,8 +268,7 @@ class NpcArchery:
             p["_bow_charge"] = draw["charge"]
             dx = target_pos[0] - thing.pos[0]
             dz = target_pos[2] - thing.pos[2]
-            if dx or dz:
-                p["_facing"] = math.atan2(dx, dz)
+            face_heading(thing, dx, dz)
             if draw["charge"] >= draw["plan"]:
                 self._loose(thing, draw, target_pos)
 

@@ -54,6 +54,8 @@ def install() -> None:
     here must never stop the editor from starting.
     """
     global _installed
+    from . import facing as _facing
+    _facing.install()            # MiniWind's actors swing round, never snap
     # Registration is the manager's (idempotent, and undone between tests by
     # the suite): made whenever it is missing. The editor integration below
     # patches classes, so it is applied once.

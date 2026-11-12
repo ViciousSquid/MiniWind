@@ -223,11 +223,16 @@ def test_an_actor_with_no_choice_never_gets_a_live_weapon_written():
 def test_the_renderer_shows_whatever_is_actually_in_hand():
     from editor.things import Monster
 
+    from types import SimpleNamespace
+    from game.held_weapons import HeldWeapons
+
     monster = Monster([0, 0, 0])
     monster.properties.update(_guard())
-    assert monster.get_render_snapshot()["weapon_id"] == "iron_shortsword"
+    held = HeldWeapons(SimpleNamespace(_player_pos=lambda: (0.0, 0.0, 0.0),
+                                       _actors=[monster]))
+    assert held.overhead()[0][2] == "iron_shortsword"
     monster.properties["_active_weapon"] = "hunting_bow"
-    assert monster.get_render_snapshot()["weapon_id"] == "hunting_bow"
+    assert held.overhead()[0][2] == "hunting_bow"
 
 def test_melee_only_npc_cannot_hit_the_player_at_bow_range():
     from types import SimpleNamespace

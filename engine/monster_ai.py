@@ -769,7 +769,7 @@ all accumulated time when it runs, so simulation time is not lost.
                                 monster_table.MODE_SEARCH)
 
         for i in np.flatnonzero(in_sight):
-            face_direction(monsters[rows[i]], target_pos[i] - p32[i])
+            face_direction(monsters[rows[i]], target_pos[i] - p32[i], delta)
 
         # ---- Step toward the target, sliding along walls ------------------
         final = p32.copy()
@@ -1160,7 +1160,7 @@ all accumulated time when it runs, so simulation time is not lost.
 
         pursuit_range = monster_table.engagement_range(thing.properties)
         if distance_sq <= pursuit_range * pursuit_range:
-            face_direction(thing, target_pos - thing_pos)
+            face_direction(thing, target_pos - thing_pos, delta)
             # ---- Entered engagement range ----
             if not state['in_sight']:
                 state['in_sight'] = True
@@ -1868,7 +1868,7 @@ the scalar fallback for callers that do not have the dense table.
             return False
 
         # Move toward the sound source
-        face_direction(monster, sound_pos - thing_pos)
+        face_direction(monster, sound_pos - thing_pos, delta)
         direction = sound_pos - thing_pos
         dir_len = glm.length(direction)
         if dir_len > 0.001:
@@ -2099,7 +2099,7 @@ the scalar fallback for callers that do not have the dense table.
             if direction is None:
                 return      # the node is directly overhead; no way to walk to it
 
-        face_direction(monster, direction)
+        face_direction(monster, direction, delta)
         step = direction * MONSTER_MOVE_SPEED * speed_mult * delta
         new_pos = m_pos + step
 

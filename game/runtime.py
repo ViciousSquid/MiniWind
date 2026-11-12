@@ -32,7 +32,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from . import controls, fio
-from .facing import face_heading
+from .facing import face_heading, heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
@@ -2139,7 +2139,8 @@ class MiniwindSession(SettlementLaw):
                 "max_health": 1,
                 "_reaper": True,
                 "_opacity": 0.0,
-                "_facing": bearing + math.pi,   # already looking at the body
+                # Already looking at the body (degrees, game.facing's heading).
+                "angle": math.degrees(bearing + math.pi) % 360.0,
             })
         except Exception:
             return None
@@ -2251,7 +2252,7 @@ class MiniwindSession(SettlementLaw):
 
     def _reaper_face_body(self, visit) -> None:
         reaper, body = visit["thing"], visit["body"]
-        face_heading(reaper.properties,
+        face_heading(reaper,
                      float(body.pos[0]) - float(reaper.pos[0]),
                      float(body.pos[2]) - float(reaper.pos[2]))
 
@@ -2274,7 +2275,7 @@ class MiniwindSession(SettlementLaw):
         reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
                       float(body.pos[1]),
                       float(reaper.pos[2]) + dz / distance * step]
-        face_heading(reaper.properties, dx, dz)
+        face_heading(reaper, dx, dz)
         return distance - step <= REAPER_REACH
 
     def _reaper_walk_off(self, visit, delta: float) -> None:
@@ -2287,7 +2288,7 @@ class MiniwindSession(SettlementLaw):
         reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
                       float(reaper.pos[1]),
                       float(reaper.pos[2]) + dz / distance * step]
-        face_heading(reaper.properties, dx, dz)
+        face_heading(reaper, dx, dz)
 
     def _despawn_reaper(self, visit) -> None:
         """Take one reaper out of the scene."""
@@ -2424,7 +2425,7 @@ class MiniwindSession(SettlementLaw):
         Cheap and allocation-light: one pass builds the set of holders that
         should have a lit torch right now (the player if a torch is equipped,
         plus any NPC whose flags say so, or who carries one after dark),
-        existing lights are repositioned in place onto their holder, new ones
+        existing lights are moved onto their holder, new ones
         are spawned and vanished ones removed, and the engine caches are
         rebuilt only when the light set actually changes (a spawn/despawn),
         never on a mere reposition. Each flame flickers, and with GAME →
@@ -2482,10 +2483,12 @@ class MiniwindSession(SettlementLaw):
                 self._torch_lights[key] = light
                 changed = True
             else:
+                # Assigned, not edited in place: assigning pos is what journals
+                # the move (an in-place edit leaves every table's copy stale).
+                at = (float(pos[0]), float(pos[1]) + TORCH_LIGHT_HEIGHT, float(pos[2]))
                 lp = light.pos
-                lp[0] = pos[0]
-                lp[1] = pos[1] + TORCH_LIGHT_HEIGHT
-                lp[2] = pos[2]
+                if (lp[0], lp[1], lp[2]) != at:
+                    light.pos = list(at)
             lprops = light.properties
             lprops["casts_shadows"] = bool(cast)
             phase = lprops.get("_torch_phase")
@@ -6289,13 +6292,9 @@ class MiniwindSession(SettlementLaw):
                 p["_blocked_ticks"] = 0
             return
         p["_blocked_ticks"] = 0
-        # Turn to face the way it is walking. This has to go through
-        # engine.facing: the renderer reads an actor's heading from the
-        # transient '_facing' property (that is what Monster.get_render_state
-        # snapshots for the head billboard, the overhead ground sprite and the
-        # weapon overlay), so writing a bare 'angle' here left schedule-driven
-        # NPCs sliding around the world without ever rotating.
-        face_heading(p, dx, dz, delta)
+        # Turn to face the way it is walking (game.facing: the one heading
+        # the head billboard, the weapon overlay and the 2D map all read).
+        face_heading(npc, dx, dz, delta)
 
     # ================================================================ roads
     def _refresh_roads(self, force=False) -> None:
@@ -7108,7 +7107,7 @@ class MiniwindSession(SettlementLaw):
             glows = npc_magic.hand_glows(p)
             if not glows:
                 continue
-            facing = float(p.get("_facing", 0.0) or 0.0)
+            facing = heading(t)
             forward = (math.sin(facing), math.cos(facing))
             handed = str(p.get("handed", "right") or "right")
             for hand, spell in glows:

@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 
 from . import combat_loadout
+from .facing import heading
 
 #: Fighters who may carry a second weapon, and the chance they do.
 SECOND_WEAPON_FACTIONS = {"guards": 0.7, "bandits": 0.55, "mercenaries": 0.8,
@@ -184,9 +185,6 @@ class HeldWeapons:
     def __init__(self, session):
         self.session = session
         self._last = {}               # id(actor) -> (x, z)
-        #: id(actor) -> the heading last told to the renderer, so a head
-        #: sprite turns with its actor (engine.change_journal.FACING).
-        self._published = {}
         #: id(actor) -> its weapons' springs (game/weapon_sway.py): an NPC's
         #: blades trail and overshoot a turn just as the player's do.
         self._sway = {}
@@ -194,10 +192,11 @@ class HeldWeapons:
         self._blocks = {}
 
     def update(self) -> None:
-        """Facing for every actor near the player, eased into each turn and
-        handed on to the renderer, which turns the actor's head with it."""
+        """Facing for every actor near the player, eased into each turn.
+
+        game.facing journals each turn, so the renderer turns the head without
+        being handed anything here."""
         import time
-        from engine.change_journal import FACING, touch
         from .facing import face_heading
         s = self.session
         ppos = s._player_pos()
@@ -206,7 +205,6 @@ class HeldWeapons:
         now = time.perf_counter()
         delta = None if self._clock is None else max(0.0, min(0.1, now - self._clock))
         self._clock = now
-        published = {}
         r2 = DRAW_RADIUS * DRAW_RADIUS
         actors = s._actors
         cached = getattr(s, "_actors_by_id", None)
@@ -238,17 +236,9 @@ class HeldWeapons:
                 if fx * fx + fz * fz < TURN_MIN_STEP * TURN_MIN_STEP:
                     fx = fz = 0.0
             if fx or fz:
-                face_heading(p, fx, fz, delta)
+                face_heading(t, fx, fz, delta)
             self._update_block(t, target, getattr(s, "_archery_clock", now))
-            # Whoever turned it (this, the schedule mover, a bow's aim), the
-            # head sprite turns too.
-            facing = p.get("_facing")
-            if facing is not None:
-                published[key] = facing
-                if self._published.get(key) != facing:
-                    touch(t, FACING)
         self._last = last
-        self._published = published
         self._blocks = {key: value for key, value in self._blocks.items() if key in last}
         # overhead() (UI thread) adds springs; drop those of actors gone out
         # of range, from a copy of the keys.
@@ -314,7 +304,7 @@ class HeldWeapons:
                 continue
             size = float(p.get("sprite_width", 128) or 128)
             handed = str(p.get("handed", "right"))
-            facing = float(p.get("_facing", 0.0))
+            facing = heading(t)
             weapon = p.get("_active_weapon") or p.get("equipped_weapon") or ""
             attacking = bool(p.get("is_shooting") or p.get("_bow_charge") is not None)
             # Each hand trails a turn on its own spring, as the player's do.

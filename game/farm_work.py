@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from typing import Dict, List, Optional
+from .facing import face_heading
 
 #: Roles that farm.
 FARM_ROLES = ("farmer", "farmhand", "peasant")
@@ -274,7 +275,7 @@ class FarmWork:
                           npc.pos[2] + (animal.pos[2] - npc.pos[2]) * k]
         else:
             p.pop("_dest", None)
-            p["_facing"] = math.atan2(animal.pos[0] - npc.pos[0], animal.pos[2] - npc.pos[2])
+            face_heading(npc, animal.pos[0] - npc.pos[0], animal.pos[2] - npc.pos[2])
             if str(animal.properties.get("npc_role", "")).lower() == "cow":
                 session.collect_produce(npc, animal, "milk")
         return True
