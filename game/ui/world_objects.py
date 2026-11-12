@@ -255,10 +255,15 @@ def draw(projection, view, objects) -> int:
         return 0
     renderer._gl.glEnable(renderer._gl.GL_DEPTH_TEST)
     drawn = 0
-    for pos, turn, image, size, layer in objects:
-        tex = renderer.texture(image)
-        if not tex:
-            continue
-        renderer._draw_texture(projection, view, pos, turn, tex, size, layer)
-        drawn += 1
+    batching = renderer.begin(projection, view)     # one upload, a draw per image
+    try:
+        for pos, turn, image, size, layer in objects:
+            tex = renderer.texture(image)
+            if not tex:
+                continue
+            renderer._draw_texture(projection, view, pos, turn, tex, size, layer)
+            drawn += 1
+    finally:
+        if batching:
+            renderer.end()
     return drawn

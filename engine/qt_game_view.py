@@ -617,6 +617,20 @@ class QtGameView(QOpenGLWidget):
                 size=float(self.overhead_sprite_size),
                 facing_offset_deg=float(self.overhead_sprite_facing_offset))
 
+        # Every head, weapon and torch of the frame goes to the GPU together:
+        # one instanced draw per run sharing a texture (OverheadSpriteRenderer.begin).
+        renderer = self._overhead_sprite_renderer
+        batching = renderer.begin(self.projection_matrix, self.view_matrix)
+        try:
+            self._draw_overhead_actors(render_state, lt, coop)
+        finally:
+            if batching:
+                renderer.end()
+
+    def _draw_overhead_actors(self, render_state, lt, coop):
+        """The player's head and what every nearby actor holds (see
+        :meth:`_draw_overhead_sprite`)."""
+        from engine.overhead_sprite import SpriteController
         sess = getattr(lt, "game_session", None)
         if coop is not None:
             # Co-op heads already use published actor sprites. Their held

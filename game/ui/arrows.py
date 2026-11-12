@@ -78,13 +78,18 @@ def draw_arrows(projection, view, arrows) -> int:
     if not renderer._ready():
         return 0
     drawn = 0
-    for pos, vel, sprite in arrows:
-        tex = renderer.texture(sprite)
-        if not tex:
-            continue
-        renderer._draw_texture(projection, view, pos, heading_of(vel), tex,
-                               ARROW_SIZE, 0.0, depth_write=False)
-        drawn += 1
+    batching = renderer.begin(projection, view)     # one upload, a draw per image
+    try:
+        for pos, vel, sprite in arrows:
+            tex = renderer.texture(sprite)
+            if not tex:
+                continue
+            renderer._draw_texture(projection, view, pos, heading_of(vel), tex,
+                                   ARROW_SIZE, 0.0, depth_write=False)
+            drawn += 1
+    finally:
+        if batching:
+            renderer.end()
     return drawn
 
 
@@ -157,6 +162,15 @@ def draw_paths(projection, view, paths, now=None) -> int:
     if not tex:
         return 0
     now = time.perf_counter() if now is None else now
+    batching = renderer.begin(projection, view)     # every dot of every trail at once
+    try:
+        return _draw_path_dots(renderer, projection, view, paths, tex, now)
+    finally:
+        if batching:
+            renderer.end()
+
+
+def _draw_path_dots(renderer, projection, view, paths, tex, now) -> int:
     drawn = 0
     for start, end, loosed, reached in paths:
         if now - reached >= PATH_FADE_SECONDS:
