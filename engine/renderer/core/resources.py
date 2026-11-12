@@ -39,11 +39,17 @@ _MODEL_RETRY_S = 5.0
 
 
 # ---------- Utility classes ----------
-class UniformCache:
-    __slots__ = ('program', '_cache', 'shadow_slots', 'env', 'active_lights')
+class UniformCache(dict):
+    """Uniform locations by name for one program, asked for on first use.
+
+    A ``dict`` whose ``__missing__`` asks GL: every lookup after the first is
+    a plain dict hit, made in C -- a pass reads a dozen of these per frame,
+    and a Python ``__getitem__`` was a call each."""
+    __slots__ = ('program', 'shadow_slots', 'env', 'active_lights')
+
     def __init__(self, shader_program):
+        super().__init__()
         self.program = shader_program
-        self._cache = {}
         # The last values given to this program's fog/ambient block and its
         # active_lights (M4): uniform values are program state, so they hold
         # until the program is deleted, and a recompiled program, a new
@@ -53,18 +59,32 @@ class UniformCache:
         # The shadowMaps[i] slots this program samples, once their sampler
         # units are assigned (see Renderer._bind_shadow_maps); None before.
         self.shadow_slots = None
-    def __getitem__(self, name):
-        loc = self._cache.get(name)
-        if loc is None:
-            loc = gl.glGetUniformLocation(self.program, name)
-            self._cache[name] = loc
+
+    def __missing__(self, name):
+        loc = gl.glGetUniformLocation(self.program, name)
+        self[name] = loc
         return loc
+
+    @property
+    def _cache(self):
+        return self
+
     def preload(self, names):
         for name in names:
-            if name not in self._cache:
-                self._cache[name] = gl.glGetUniformLocation(self.program, name)
+            if name not in self:
+                self[name] = gl.glGetUniformLocation(self.program, name)
+
     def get(self, name, default=-1):
-        return self._cache.get(name, default)
+        return dict.get(self, name, default)
+
+    def __bool__(self):             # a program's cache, however few names it holds
+        return True
+
+    def __hash__(self):             # used as a key (memo per program)
+        return id(self)
+
+    def __eq__(self, other):
+        return self is other
 
 
 class ShaderLoader:

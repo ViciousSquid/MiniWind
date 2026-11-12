@@ -12,7 +12,7 @@ import OpenGL.GL as gl
 from OpenGL.raw.GL.VERSION.GL_2_0 import (
     glVertexAttribPointer as _wrapped_vertex_attrib_pointer)
 
-from engine.renderer.core import glraw
+from engine import glraw
 
 
 def _raw_vertex_attrib_pointer(location, size, kind, normalized, stride, offset):

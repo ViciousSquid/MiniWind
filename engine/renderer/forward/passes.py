@@ -11,7 +11,7 @@ from contextlib import contextmanager
 import glm
 import numpy as np
 import OpenGL.GL as gl
-from engine.renderer.core import glraw
+from engine import glraw
 
 from engine import render_table
 from engine import shaders
@@ -409,6 +409,14 @@ class PassesMixin:
 
         current_tex = None
         triangles = vertex_count // 3
+        # The native attribute-pointer entry point, called inline: eight C
+        # calls per run and no Python frame (instancing._raw_vertex_attrib_pointer).
+        from engine.renderer.forward import instancing as _instancing
+        if _instancing._VERTEX_ATTRIB_POINTER[0] is None:
+            self._point_brush_instances_at(0)          # resolves it
+        native = _instancing._VERTEX_ATTRIB_POINTER[0]
+        stride = self.BRUSH_INSTANCE_FLOATS * 4
+        f32, false = _instancing._FLOAT, _instancing._FALSE
         for run in range(len(run_starts) - 1):
             begin = int(run_starts[run])
             length = int(run_starts[run + 1]) - begin
@@ -419,7 +427,18 @@ class PassesMixin:
                 gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
                 current_tex = tex_id
                 self.render_stats.batched_draws += 1
-            self._point_brush_instances_at(begin)
+            if native:
+                origin = begin * stride
+                native(3, 4, f32, false, stride, origin)
+                native(4, 4, f32, false, stride, origin + 16)
+                native(5, 4, f32, false, stride, origin + 32)
+                native(6, 4, f32, false, stride, origin + 48)
+                native(7, 4, f32, false, stride, origin + 64)
+                native(8, 4, f32, false, stride, origin + 80)
+                native(9, 4, f32, false, stride, origin + 96)
+                native(10, 4, f32, false, stride, origin + 112)
+            else:
+                self._point_brush_instances_at(begin)
             gl.glDrawArraysInstanced(gl.GL_TRIANGLES, int(run_first[run]),
                                      vertex_count, length)
             self.render_stats.draw_calls += 1

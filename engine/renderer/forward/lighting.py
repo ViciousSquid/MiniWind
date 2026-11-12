@@ -7,7 +7,7 @@ upload, and omnidirectional point-light shadows as depth cube-maps.
 import glm
 import numpy as np
 import OpenGL.GL as gl
-from engine.renderer.core import glraw
+from engine import glraw
 
 from engine import render_table
 from engine import shaders

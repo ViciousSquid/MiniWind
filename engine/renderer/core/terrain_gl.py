@@ -21,7 +21,7 @@ import time
 import glm
 import numpy as np
 import OpenGL.GL as gl
-from engine.renderer.core import glraw
+from engine import glraw
 from OpenGL.GL.shaders import compileProgram, compileShader
 
 from engine import shaders

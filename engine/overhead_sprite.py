@@ -770,7 +770,7 @@ class OverheadSpriteRenderer:
 
     @staticmethod
     def _glraw():
-        from engine.renderer.core import glraw
+        from engine import glraw
         return glraw
 
     def _ready(self) -> bool:

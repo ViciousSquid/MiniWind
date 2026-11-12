@@ -841,9 +841,22 @@ class Terrain:
             self.table.mark_grass_dirty()
 
     def appearance_uniforms(self) -> Dict[str, object]:
-        return terrain_style.shader_uniforms(
+        """The appearance as shader uniforms. Published every frame and
+        changed only by an edit: recomputed when its inputs differ (one
+        comparison of their values), not re-derived each frame."""
+        # repr: a value snapshot (lists edited in place included), made in C.
+        key = (repr(vars(self.appearance)), self._height_range,
+               self.biome.name, self.mesh_scale, self.offset_x, self.offset_z)
+        cached = self.__dict__.get('_appearance_uniforms')
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        uniforms = terrain_style.shader_uniforms(
             self.appearance, self._layer_height_range(), self._layer_heights(),
             self.mesh_scale, (self.offset_x, self.offset_z))
+        # Taken after the call: _layer_height_range() may have just measured.
+        key = key[:1] + (self._height_range,) + key[2:]
+        self._appearance_uniforms = (key, uniforms)
+        return uniforms
 
 
     def set_biome(self, biome_name: str):
@@ -923,6 +936,15 @@ class Terrain:
         """The tip colour in use: the chosen one, else a sun-bleached shade."""
         if self.grass_tip_color is not None:
             return tuple(self.grass_tip_color)
+        key = tuple(self.grass_color)
+        cached = self.__dict__.get('_grass_tip_cache')
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        tip = self._bleached_tip()
+        self._grass_tip_cache = (key, tip)
+        return tip
+
+    def _bleached_tip(self) -> Tuple[float, float, float]:
         base = np.asarray(self.grass_color, dtype=np.float64)
         tip = np.clip(base * 1.3, 0.0, 1.0) * 0.7 + np.array([0.80, 0.78, 0.55]) * 0.3
         return tuple(float(c) for c in tip)

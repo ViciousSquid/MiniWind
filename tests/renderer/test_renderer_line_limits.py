@@ -54,9 +54,14 @@ def test_width_above_the_real_driver_limit_is_clamped(renderer, monkeypatch):
 
     result = obj._set_line_width(request)
 
-    assert captured == [pytest.approx(high)]
-    assert result == pytest.approx(high) or result == pytest.approx(1.0)
-    assert obj._line_width_range == pytest.approx((low, high))
+    # A forward-compatible core context refuses any width above 1.0 with
+    # GL_INVALID_VALUE whatever range it advertises; there the limit is 1.
+    flags = int(gl.glGetIntegerv(gl.GL_CONTEXT_FLAGS))
+    limit = 1.0 if flags & gl.GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT else high
+    assert captured == [pytest.approx(limit)]
+    assert result == pytest.approx(limit) or result == pytest.approx(1.0)
+    assert obj._line_width_range == pytest.approx(
+        (low, high) if limit == high else (1.0, 1.0))
 
 
 def test_width_at_the_real_driver_minimum_is_used(renderer):

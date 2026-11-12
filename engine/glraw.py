@@ -173,16 +173,12 @@ def has_base_instance() -> bool:
 # counts draws patches ``gl.glDrawElements``): the native entry point is used
 # only while the module attribute is PyOpenGL's own.
 
-_ORIGINAL = {name: getattr(gl, name, None)
-             for name in ("glUniformMatrix4fv", "glDrawElements")}
-_NATIVE = {}
-
-
-def _native_for(name):
-    native = _NATIVE.get(name)
-    if native is None:
-        native = _NATIVE[name] = pointer_fn(name) or False
-    return native
+_ORIGINAL_U4 = getattr(gl, "glUniformMatrix4fv", None)
+_ORIGINAL_DRAW = getattr(gl, "glDrawElements", None)
+#: [native entry point], resolved on first use with a context current
+#: (False: none; use the wrapper).
+_U4 = [None]
+_DRAW = [None]
 
 
 def uniform_matrix4fv(via, location, count, transpose, value):
@@ -190,8 +186,10 @@ def uniform_matrix4fv(via, location, count, transpose, value):
     pointer): *via* is the caller's ``gl`` module, so a stand-in a test put
     there still sees the call."""
     current = via.glUniformMatrix4fv
-    if current is _ORIGINAL["glUniformMatrix4fv"]:
-        native = _native_for("glUniformMatrix4fv")
+    if current is _ORIGINAL_U4:
+        native = _U4[0]
+        if native is None:
+            native = _U4[0] = pointer_fn("glUniformMatrix4fv") or False
         if native:
             try:
                 native(location, count, transpose, value)
@@ -205,9 +203,11 @@ def draw_elements(via, mode, count, kind, indices):
     """``via.glDrawElements`` with *indices* an offset into the bound element
     buffer (*via* as for :func:`uniform_matrix4fv`)."""
     current = via.glDrawElements
-    if current is _ORIGINAL["glDrawElements"] and (indices is None or isinstance(
+    if current is _ORIGINAL_DRAW and (indices is None or isinstance(
             indices, (int, ctypes.c_void_p))):
-        native = _native_for("glDrawElements")
+        native = _DRAW[0]
+        if native is None:
+            native = _DRAW[0] = pointer_fn("glDrawElements") or False
         if native:
             native(mode, count, kind,
                    0 if indices is None else getattr(indices, "value", indices) or 0)
