@@ -765,15 +765,14 @@ class QtGameView(QOpenGLWidget):
         if not self.play_mode and self.editor.state.stream_editor_camera(self.camera.pos):
             self.editor.update_all_ui()
         current_time = time.perf_counter()
-        delta = current_time - self.last_time
-        self.last_time = current_time
-        self.frame_count += 1
+        # Frames are counted, and their times recorded, where they are
+        # painted (paintGL): the frame rate is the painted one, not this
+        # timer's. The figure shown is worked out here, on the timer.
         fps_elapsed = current_time - self.last_fps_time
         if fps_elapsed > 1.0:
             self.fps = self.frame_count / fps_elapsed
             self.frame_count = 0
             self.last_fps_time = current_time
-        self.sysmon.record_frame_time(delta * 1000.0)
         self.audio._process_sound_queue()
         self._process_console_command_queue()
 
@@ -881,11 +880,6 @@ class QtGameView(QOpenGLWidget):
         try:
             now = time.perf_counter()
             self.frame_count += 1
-            fps_elapsed = now - self.last_fps_time
-            if fps_elapsed > 1.0:
-                self.fps = self.frame_count / fps_elapsed
-                self.frame_count = 0
-                self.last_fps_time = now
             self.sysmon.record_frame_time((now - self.last_time) * 1000.0)
             self.last_time = now
             interpolate_camera(render_state, now, LogicThread.TICK_DURATION)
