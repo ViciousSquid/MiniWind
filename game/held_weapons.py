@@ -299,30 +299,67 @@ class HeldWeapons:
         p["_shield_blocking"] = raised
         p["_shield_pose"] = pose * pose * (3 - 2 * pose)
 
+    #: Ticks between rebuilds of the held-items list (who is in range, what
+    #: each holds, attack and block poses, the sway springs). The holders'
+    #: positions and headings are read live every frame, so a weapon never
+    #: trails its actor; only a change of item or pose waits. Measured: see
+    #: docs/MIGRATION_FIO_3.5.md (Performance).
+    REBUILD_TICKS = 5
+
     def publish(self) -> None:
-        """Build the overhead list for this tick (logic thread): positions,
-        headings, what is in hand and the springs all change on the tick, so
-        the viewport reads one finished list each frame instead of walking
-        the actors itself."""
+        """Rebuild the held-items list every :data:`REBUILD_TICKS` ticks
+        (logic thread), or at once when the player has moved further than the
+        list allows for (a teleport)."""
         import time
         ppos = self.session._player_pos()
-        self._published = (None if ppos is None else
-                           (self._build(time.perf_counter()), float(ppos[0]), float(ppos[2])))
+        if ppos is None:
+            self._published = None
+            return
+        published = self._published
+        self._ticks_since_build = getattr(self, "_ticks_since_build", 0) + 1
+        if (published is not None and self._ticks_since_build < self.REBUILD_TICKS
+                and (ppos[0] - published[1]) ** 2 + (ppos[2] - published[2]) ** 2
+                <= NEAR_SLACK * NEAR_SLACK):
+            return
+        self._ticks_since_build = 0
+        self._published = (self._build(time.perf_counter()), float(ppos[0]), float(ppos[2]))
 
     def overhead(self):
         """``[(pos, facing, weapon_id, handed, attacking, size[, block])]`` for the
-        actors near the player who hold something: the list the last tick
-        published (a copy: callers extend it), else built now."""
+        actors near the player who hold something: the held-items list last
+        built, with each holder's position and heading as they are now."""
         published = self._published
         if published is not None:
             ppos = self.session._player_pos()
             if ppos is not None and ((ppos[0] - published[1]) ** 2 + (ppos[2] - published[2]) ** 2
                                      <= NEAR_SLACK * NEAR_SLACK):
-                return list(published[0])
+                return self._placed(published[0])
         import time
-        return self._build(time.perf_counter())
+        return self._placed(self._build(time.perf_counter()))
+
+    @staticmethod
+    def _placed(entries):
+        """The entries as drawn this frame: each at its holder's live position
+        and heading (plus its hand's sway); a holder dead or hidden since the
+        list was built drops out. Attribute reads and C calls only."""
+        out = []
+        radians = math.radians
+        for t, sway, weapon, handed, attacking, size, block in entries:
+            p = t.properties
+            if p.get("dead") or p.get("hidden"):
+                continue
+            tp = t.pos
+            facing = radians(float(p.get("angle", 0.0) or 0.0)) + sway
+            if block is None:
+                out.append(((tp[0], tp[1], tp[2]), facing, weapon, handed, attacking, size))
+            else:
+                out.append(((tp[0], tp[1], tp[2]), facing, weapon, handed, attacking, size,
+                            block))
+        return out
 
     def _build(self, now):
+        """``[(actor, sway, weapon_id, handed, attacking, size, block|None)]``:
+        what each actor near the player holds; placed by :meth:`_placed`."""
         s = self.session
         ppos = s._player_pos()
         if ppos is None:
@@ -345,7 +382,7 @@ class HeldWeapons:
                 continue          # Death's scythe comes and goes with him
             if str(p.get("head") or "").lower().startswith("spider"):
                 continue          # a spider's weapon is never seen in its legs
-            x, y, z = float(t.pos[0]), float(t.pos[1]), float(t.pos[2])
+            x, z = float(t.pos[0]), float(t.pos[2])
             if (x - ppos[0]) ** 2 + (z - ppos[2]) ** 2 > r2:
                 continue
             size = float(p.get("sprite_width", 128) or 128)
@@ -357,10 +394,10 @@ class HeldWeapons:
             sway = self._sway.get(id(t))
             if sway is None:
                 sway = self._sway[id(t)] = WeaponSway()
-            main_facing = facing + sway.offset("main", facing, now)
-            off_facing = facing + sway.offset("off", facing, now)
+            main_sway = sway.offset("main", facing, now)
+            off_sway = sway.offset("off", facing, now)
             if weapon:
-                out.append(((x, y, z), main_facing, weapon, handed, attacking, size))
+                out.append((t, main_sway, weapon, handed, attacking, size, None))
             # The other hand: a lit torch (the runtime marks who holds one:
             # game/runtime.py, _update_torch_lights), else a second weapon.
             # A two-handed weapon in hand (a bow) leaves neither.
@@ -368,7 +405,7 @@ class HeldWeapons:
             if off_item and not two_handed(weapon):
                 other = "left" if handed == "right" else "right"
                 striking = bool(p.get("_offhand_anim", 0.0)) and not p.get("_torch_lit")
-                out.append(((x, y, z), off_facing, off_item, other, striking, size,
+                out.append((t, off_sway, off_item, other, striking, size,
                             float(p.get("_shield_pose", 0))))
         return out
 

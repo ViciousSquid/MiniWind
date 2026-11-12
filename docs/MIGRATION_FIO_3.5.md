@@ -252,9 +252,25 @@ here was measured on M5 or Adreno hardware.
 | Cave, paused | 32.5 → 42.2 | 7.5 → 6.6 ms | 3,037 → 1,371 | 14 → 14 |
 
 `prepare_render_state` per tick: 0.80 → 0.27 ms (overworld). The logic tick
-p50 in the running overworld is 1.67 → 2.20 ms: the held-weapon overlay is now
-built once per tick for the viewport (60 a second) rather than walked in every
-painted frame; the UI thread is what got cheaper.
+is level with the baseline (p50 1.4-1.9 ms over twelve runs, against 1.67).
+
+The held-items list (who near the player holds what, their attack and block
+poses, the weapons' sway) is rebuilt every 5 ticks; each holder's position and
+heading are read live every frame, so a weapon never trails its actor. The
+interval, measured in the running overworld (two runs each):
+
+| Rebuilt every | fps | tick p50 | list cost per tick |
+|---|---|---|---|
+| 1 tick | 15.0 / 14.7 | 1.69 / 1.90 ms | 0.16-0.31 ms |
+| 2 ticks | 15.9 / 14.7 | 1.44 / 1.82 ms | 0.07 ms |
+| 5 ticks | 14.9 / 15.0 | 1.59 / 1.65 ms | 0.04 ms |
+| 10 ticks | 14.2 / 14.3 | 1.88 / 2.32 ms | 0.035 ms |
+| 20 ticks | 15.1 / 14.8 | 1.55 / 1.73 ms | 0.02 ms |
+| 60 ticks | 14.9 / 14.6 | 1.65 / 2.04 ms | 0.013 ms |
+
+Frame rate and tick time do not move beyond run-to-run noise at any
+interval; the list's own cost stops falling at about 5 ticks, where a new
+swing or a raised shield still shows within 83 ms (`HeldWeapons.REBUILD_TICKS`).
 
 Where the per-frame Python went (paused overworld, main thread): PyOpenGL's
 argument conversion for brush-instance pointers, matrices and element draws
