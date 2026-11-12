@@ -8,7 +8,7 @@ pytest.importorskip("PyQt5")
 
 pytestmark = [pytest.mark.qt, pytest.mark.gl, pytest.mark.integration]
 
-MAP = "maps/_SHOWCASE.json"
+MAP = "tests/fixtures/maps/_SHOWCASE.json"   # Fio's example map (tests only)
 
 
 def _water(session):

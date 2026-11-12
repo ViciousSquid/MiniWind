@@ -20,6 +20,7 @@ a helper's reading of the dicts.
 """
 
 import copy
+import os
 import json
 
 import numpy as np
@@ -307,7 +308,7 @@ def test_a_legacy_brush_draws_its_migrated_record(renderer, context):
     from engine import brush_geometry as bg
     from tests.helpers.paths import REPO_ROOT
     names = _recording(renderer)
-    showcase = {b['id']: b for b in bs.shipped_maps(REPO_ROOT)['_SHOWCASE.json']}
+    showcase = {b['id']: b for b in bs.shipped_maps(os.path.join(REPO_ROOT, 'tests', 'fixtures'))['_SHOWCASE.json']}
     raw = []
     for number, bid in enumerate(('5b10b49b-9b6c-45d9-91ee-0b6f06970590',
                                   '8c04e483-4d44-4217-a03d-32844a727043')):
@@ -355,7 +356,7 @@ def test_save_and_reload_draw_the_same_geometry_and_uvs(renderer, context):
     ft.set_transform(edited, _cut_key(edited), natural=True)
     box = box_brush("box", (300, 40, 0), (64, 64, 64), textures={'top': 'Dev/128.jpg'},
                     uv_shift={'top': [0.5, 0.0]})
-    showcase = [b for b in bs.shipped_maps(REPO_ROOT)['_SHOWCASE.json']
+    showcase = [b for b in bs.shipped_maps(os.path.join(REPO_ROOT, 'tests', 'fixtures'))['_SHOWCASE.json']
                 if bs.encoding(b) == 'convex']
     state = EditorState()
     state.load_from_data({'brushes': [edited, box] + showcase, 'things': []},
@@ -429,7 +430,7 @@ def test_the_angled_brush_test_map_through_load_edit_save_and_reload(renderer, c
                                            convex_programs)
     from tests.helpers.paths import repo_path
     names = _recording(renderer)
-    with open(repo_path('maps', 'Angled_Brush_Test.json')) as handle:
+    with open(repo_path('tests', 'fixtures', 'maps', 'Angled_Brush_Test.json')) as handle:
         data = json.load(handle)
     state = EditorState()
     state.load_from_data({'brushes': data['brushes'], 'things': []},

@@ -11,7 +11,7 @@ pytest.importorskip("PyQt5")
 
 pytestmark = [pytest.mark.qt, pytest.mark.integration]
 
-MAP = "maps/Office_Corridor.json"
+MAP = "tests/fixtures/maps/Office_Corridor.json"   # Fio's example map (tests only)
 
 
 def test_a_driver_without_the_extensions_is_not_asked(fio_session, monkeypatch):

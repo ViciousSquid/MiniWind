@@ -15,7 +15,7 @@ pytestmark = pytest.mark.qt
 
 from engine.view_hud import ViewHud
 
-MAP = "maps/Simple_Map_Test_Extended.json"
+MAP = "tests/fixtures/maps/Simple_Map_Test_Extended.json"   # Fio's example map (tests only)
 PLAYER = (100.0, 40.0, -50.0)
 
 

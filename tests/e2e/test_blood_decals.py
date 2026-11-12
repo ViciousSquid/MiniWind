@@ -16,7 +16,7 @@ pytest.importorskip("PyQt5")
 
 pytestmark = [pytest.mark.qt, pytest.mark.gl, pytest.mark.integration]
 
-MAP = "maps/Simple_Map_Test_Extended.json"
+MAP = "tests/fixtures/maps/Simple_Map_Test_Extended.json"   # Fio's example map (tests only)
 
 
 def _human(session):
@@ -135,7 +135,7 @@ def test_a_new_session_starts_clean(fio_session):
 def test_one_decal_paints_the_wall_the_floor_and_the_corner_between(fio_session):
     import glm
     from engine.decal_table import WALL
-    session = fio_session("maps/Office_Corridor.json", size=(320, 240))
+    session = fio_session("tests/fixtures/maps/Office_Corridor.json", size=(320, 240))
     view = session.view
     if view.renderer is None or not view.renderer.ready:
         pytest.skip("no OpenGL context")

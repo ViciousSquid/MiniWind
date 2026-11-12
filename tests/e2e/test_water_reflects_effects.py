@@ -13,7 +13,7 @@ pytest.importorskip("PyQt5")
 
 pytestmark = [pytest.mark.qt, pytest.mark.gl, pytest.mark.integration]
 
-MAP = "maps/_SHOWCASE.json"
+MAP = "tests/fixtures/maps/_SHOWCASE.json"   # Fio's example map (tests only)
 ORB = (960.0, 304.0, -192.0)            # the orb over the showcase's pool
 EYE = (620.0, 210.0, 200.0)
 

@@ -12,7 +12,7 @@ from engine.asset_archives import asset_exists, asset_listdir   # noqa: E402
 
 pytestmark = [pytest.mark.qt, pytest.mark.gl, pytest.mark.integration]
 
-MAP = "maps/_SHOWCASE.json"
+MAP = "tests/fixtures/maps/_SHOWCASE.json"   # Fio's example map (tests only)
 IMAGES = (".png", ".jpg", ".jpeg", ".tga", ".gif")
 
 
