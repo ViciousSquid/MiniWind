@@ -18,6 +18,33 @@ import numpy as np
 import pygame
 
 
+def _decode_in_background(pool, archive_path, members):
+    """Decode the archive *members* into *pool* (a :class:`ViewAudio`'s
+    ``sound_pool``) under the names :meth:`ViewAudio.preload_sounds` uses;
+    a sound already there is left alone. Runs on its own thread."""
+    from engine.audio_archives import AudioArchiveReader
+    try:
+        with AudioArchiveReader(archive_path, "assets/sounds") as reader:
+            for member in reader.members():
+                if member not in members or member in pool:
+                    continue
+                if not pygame.mixer.get_init():
+                    return
+                data = reader.read(member)
+                if data is None:
+                    continue
+                try:
+                    sound = pygame.mixer.Sound(file=io.BytesIO(data))
+                except (pygame.error, TypeError, ValueError) as exc:
+                    print(f"[Audio] Failed to load {member} from archive: {exc}")
+                    continue
+                relative = member[len("assets/sounds/"):]
+                for key in ([member, relative] if "/" not in relative else [member]):
+                    pool.setdefault(key, sound)
+    except (OSError, zipfile.BadZipFile) as exc:
+        print(f"[Audio] Cannot read sounds.fiopak: {exc}")
+
+
 class ViewAudio:
     #: Seconds between attempts to open the audio device after one failed.
     MIXER_RETRY_SECONDS = 10.0
@@ -56,7 +83,10 @@ class ViewAudio:
             print(f"[Audio] Cannot read sounds.fiopak: {exc}")
             return
         if large:
-            threading.Thread(target=self.preload_sounds, args=(frozenset(large),),
+            # The thread holds the cache only, never the view: a closed view
+            # (and its window) must not stay reachable while it decodes.
+            threading.Thread(target=_decode_in_background,
+                             args=(self.sound_pool, sound_archive, frozenset(large)),
                              name="sound-decode", daemon=True).start()
 
     def preload_sounds(self, only=None):

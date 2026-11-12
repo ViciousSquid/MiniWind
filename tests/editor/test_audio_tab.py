@@ -272,10 +272,12 @@ def test_starting_the_view_decodes_only_large_sounds_and_those_in_the_background
     view.audio.sound_pool.clear()
     view.audio._init_sound_system()
     assert view.audio.sound_pool == {}                     # nothing decoded here
-    (target, (only,)), = started
-    assert only == {'assets/sounds/ambience.mp3'}
-    decoded = {}
-    monkeypatch.setattr(view.audio, '_load_sound_bytes_to_cache',
-                        lambda names, data: decoded.update(dict.fromkeys(names, data)) or True)
-    target(only)                                           # the background decode
-    assert decoded == {'assets/sounds/ambience.mp3': b'ambience', 'ambience.mp3': b'ambience'}
+    (target, (pool, archive, only)), = started
+    assert pool is view.audio.sound_pool and only == {'assets/sounds/ambience.mp3'}
+    assert view not in (pool, archive, only)               # nothing holds the view
+    from engine import view_audio
+    monkeypatch.setattr(view_audio.pygame.mixer, 'get_init', lambda: True)
+    monkeypatch.setattr(view_audio.pygame.mixer, 'Sound', lambda file: ('sound', file.read()))
+    target(pool, archive, only)                            # the background decode
+    assert pool == {'assets/sounds/ambience.mp3': ('sound', b'ambience'),
+                    'ambience.mp3': ('sound', b'ambience')}
