@@ -265,19 +265,27 @@ def test_starting_the_view_decodes_only_large_sounds_and_those_in_the_background
     with zipfile.ZipFile(project / 'assets/sounds.fiopak', 'w') as archive:
         archive.writestr('assets/sounds/shot.wav', b'shot')
         archive.writestr('assets/sounds/ambience.mp3', b'ambience')
+    from engine import view_audio
     started = []
+    monkeypatch.setattr(view_audio, '_SHARED_SOUNDS', {})
+    monkeypatch.setattr(view_audio, '_DECODER', None)
     monkeypatch.setattr('engine.view_audio.threading.Thread',
                         lambda target, args, **kw: type('T', (), {
-                            'start': lambda self: started.append((target, args))})())
+                            'start': lambda self: started.append((target, args)),
+                            'is_alive': lambda self: False})())
     view.audio.sound_pool.clear()
     view.audio._init_sound_system()
     assert view.audio.sound_pool == {}                     # nothing decoded here
-    (target, (pool, archive, only)), = started
+    (target, ((shared, pool), archive, only)), = started
     assert pool is view.audio.sound_pool and only == {'assets/sounds/ambience.mp3'}
-    assert view not in (pool, archive, only)               # nothing holds the view
-    from engine import view_audio
+    assert view not in (shared, pool, archive, only)       # nothing holds the view
     monkeypatch.setattr(view_audio.pygame.mixer, 'get_init', lambda: True)
     monkeypatch.setattr(view_audio.pygame.mixer, 'Sound', lambda file: ('sound', file.read()))
-    target(pool, archive, only)                            # the background decode
-    assert pool == {'assets/sounds/ambience.mp3': ('sound', b'ambience'),
-                    'ambience.mp3': ('sound', b'ambience')}
+    target((shared, pool), archive, only)                  # the background decode
+    want = {'assets/sounds/ambience.mp3': ('sound', b'ambience'),
+            'ambience.mp3': ('sound', b'ambience')}
+    assert pool == want and shared == want
+    # A later view takes the shared result and starts no second decode.
+    view.audio.sound_pool.clear()
+    view.audio._init_sound_system()
+    assert view.audio.sound_pool == want and len(started) == 1

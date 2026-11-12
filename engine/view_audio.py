@@ -18,15 +18,32 @@ import numpy as np
 import pygame
 
 
-def _decode_in_background(pool, archive_path, members):
-    """Decode the archive *members* into *pool* (a :class:`ViewAudio`'s
-    ``sound_pool``) under the names :meth:`ViewAudio.preload_sounds` uses;
-    a sound already there is left alone. Runs on its own thread."""
+#: ``(archive path, mtime, size) -> {name: Sound}``: the large sounds the
+#: background decoder has finished, shared by every view in the process.
+_SHARED_SOUNDS = {}
+#: The one background decoder thread, while it runs.
+_DECODER = None
+
+
+def wait_for_background_decode(timeout=None) -> bool:
+    """Wait for the one-off background sound decode; True once none runs."""
+    decoder = _DECODER
+    if decoder is not None:
+        decoder.join(timeout)
+        return not decoder.is_alive()
+    return True
+
+
+def _decode_in_background(pools, archive_path, members):
+    """Decode the archive *members* into each of *pools* (the shared cache,
+    the starting view's ``sound_pool``) under the names
+    :meth:`ViewAudio.preload_sounds` uses; a sound already in a pool is left
+    alone there. Runs on its own thread."""
     from engine.audio_archives import AudioArchiveReader
     try:
         with AudioArchiveReader(archive_path, "assets/sounds") as reader:
             for member in reader.members():
-                if member not in members or member in pool:
+                if member not in members or all(member in pool for pool in pools):
                     continue
                 if not pygame.mixer.get_init():
                     return
@@ -40,7 +57,8 @@ def _decode_in_background(pool, archive_path, members):
                     continue
                 relative = member[len("assets/sounds/"):]
                 for key in ([member, relative] if "/" not in relative else [member]):
-                    pool.setdefault(key, sound)
+                    for pool in pools:
+                        pool.setdefault(key, sound)
     except (OSError, zipfile.BadZipFile) as exc:
         print(f"[Audio] Cannot read sounds.fiopak: {exc}")
 
@@ -82,12 +100,25 @@ class ViewAudio:
         except (OSError, zipfile.BadZipFile) as exc:
             print(f"[Audio] Cannot read sounds.fiopak: {exc}")
             return
-        if large:
-            # The thread holds the cache only, never the view: a closed view
-            # (and its window) must not stay reachable while it decodes.
-            threading.Thread(target=_decode_in_background,
-                             args=(self.sound_pool, sound_archive, frozenset(large)),
-                             name="sound-decode", daemon=True).start()
+        if not large:
+            return
+        # Decoded once per process and shared by every view (the mixer is
+        # process-wide): a later view takes what is decoded already.
+        st = os.stat(sound_archive)
+        shared = _SHARED_SOUNDS.setdefault(
+            (os.path.abspath(sound_archive), st.st_mtime_ns, st.st_size), {})
+        for key, sound in list(shared.items()):
+            self.sound_pool.setdefault(key, sound)
+        global _DECODER
+        if all(m in shared for m in large) or (_DECODER is not None and _DECODER.is_alive()):
+            return
+        # The thread holds the caches only, never the view: a closed view
+        # (and its window) must not stay reachable while it decodes.
+        _DECODER = threading.Thread(
+            target=_decode_in_background,
+            args=((shared, self.sound_pool), sound_archive, frozenset(large)),
+            name="sound-decode", daemon=True)
+        _DECODER.start()
 
     def preload_sounds(self, only=None):
         """Decode sounds from assets/sounds.fiopak (or the legacy loose
