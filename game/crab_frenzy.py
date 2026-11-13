@@ -2,7 +2,7 @@
 Crabs come for the dead.
 
 A body blown apart near water brings crabs out of it: more the bigger the
-body (a hen draws a couple, a man a handful, a bear a swarm). They scuttle up
+body (a hen draws a couple, a man six, a bear a swarm). They scuttle up
 from the water's edge, crowd the pieces and eat them -- bite by bite, chunks
 gone out of each piece until nothing is left (:meth:`GoreFX.bite`) -- then
 scuttle off out of sight and are gone. A brief feeding frenzy: only with
@@ -29,10 +29,10 @@ from .facing import face_heading
 #: How far from the remains water may be and still bring crabs.
 REACH = 650.0
 #: Crabs per unit of body mass (a person is 1.0), and the bounds.
-CRABS_PER_MASS = 4.0
-MIN_CRABS, MAX_CRABS = 2, 8
+CRABS_PER_MASS = 6.0
+MIN_CRABS, MAX_CRABS = 2, 12
 #: Frenzy crabs alive at once, at most, across every feast.
-MAX_LIVE = 16
+MAX_LIVE = 24
 #: The pieces within this of the remains are what the crabs come for, and
 #: they are held (not left to fade) this long while they do.
 FEAST_RADIUS = 320.0

@@ -370,8 +370,8 @@ When the fate die fails, the save stands, and the box still shows the die
 * A body blown apart can never be resurrected, and Death (the reaper, who
   otherwise attends one death in eight) never comes for it.
 * **Crabs feed on the dead.** A body blown apart within 650 units of water
-  you can see brings crabs out of it -- four for a person, more for a bigger
-  body (two at least, eight at most; sixteen in the world at once). The
+  you can see brings crabs out of it -- six for a person, more for a bigger
+  body (two at least, twelve at most; twenty-four in the world at once). The
   pieces wait for them instead of fading; the crabs scuttle up (sideways),
   crowd them two to a piece and eat them bite by bite -- chunks gone out of
   each piece, never shrunk -- until nothing is left, then scuttle off out of

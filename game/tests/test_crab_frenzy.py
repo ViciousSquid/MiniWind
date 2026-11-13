@@ -143,3 +143,9 @@ def test_a_save_restored_mid_feast_keeps_no_crabs(monkeypatch):
     made = frenzy.gibbed(session, (0.0, 0.0, -150.0), mass=1.0)
     assert cf.CrabFrenzy(random.Random(2)).purge(session) == made
     assert not [t for t in fio.things(session.logic) if t.properties.get("_frenzy")]
+
+
+def test_a_person_brings_six_crabs(monkeypatch):
+    session, clock = _session(monkeypatch)
+    _land_pieces(session.gore, clock, pos=(0.0, 0.0, -150.0))
+    assert cf.CrabFrenzy(random.Random(1)).gibbed(session, (0.0, 0.0, -150.0), mass=1.0) == 6
