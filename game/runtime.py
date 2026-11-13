@@ -3888,6 +3888,13 @@ class MiniwindSession(SettlementLaw):
         self._tick_dice_animation(delta)
 
     def notify(self, text, seconds=3.0):
+        # The same message again while it is still up is the same news:
+        # keep it up longer rather than stacking copies ("No healing potions"
+        # four deep when the key was pressed in a fight).
+        for note in self.notifications:
+            if note.get("text") == text and note.get("t", 0) > 0:
+                note["t"] = max(float(note["t"]), float(seconds))
+                return
         self.notifications.append({"text": text, "t": seconds})
         if len(self.notifications) > 6:
             self.notifications = self.notifications[-6:]

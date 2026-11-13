@@ -35,3 +35,17 @@ def test_a_sliver_of_health_keeps_the_engine_player_alive():
     c.health = 0.0
     session._sync_engine_health()
     assert c.is_dead and runtime.player_health == 0
+
+
+def test_the_same_toast_is_not_stacked_while_it_is_still_showing():
+    session = _session([])
+    for _ in range(4):
+        session.notify("No healing potions")
+    session.notify("Sneaking")
+    texts = [n["text"] for n in session.notifications]
+    assert texts == ["No healing potions", "Sneaking"]
+    for n in session.notifications:
+        n["t"] = 0.0
+    session.notifications[:] = [n for n in session.notifications if n["t"] > 0]
+    session.notify("No healing potions")
+    assert [n["text"] for n in session.notifications] == ["No healing potions"]
