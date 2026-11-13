@@ -199,7 +199,7 @@ def _draw_hand_ghost(painter, rect, side) -> bool:
 
 #: How far in from each side the side columns stand (a share of the doll's
 #: width): close to the head. The hand slots stand further out.
-COLUMN_IN = 0.19
+COLUMN_IN = 0.28
 #: How far in the two hand slots stand: close beside the head.
 HAND_IN = 0.17
 #: How far in the Head and Amulet slots stand: closer together, over the
