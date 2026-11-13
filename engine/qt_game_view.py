@@ -1043,6 +1043,7 @@ class QtGameView(QOpenGLWidget):
                                           self.show_glasses, self.player1_glasses)
         self._render_config["player_glasses_positions"] = _glass_positions
         self._render_config["player_glasses_sprites"] = _glass_sprites
+        self._render_config["reflected_heads"] = self._reflected_heads(render_state)
         self._render_config["spectator_glasses_active"] = _spectator_active
         self._render_config['player_glasses_self_candidates'] = (
             (True,) * (len(_glass_positions)-len(_spectator_positions))
@@ -1581,6 +1582,26 @@ class QtGameView(QOpenGLWidget):
             self._play_mode_hint_timer.stop()
             self._cached_hint_text = None
             self.update()
+
+    def _reflected_heads(self, render_state):
+        """The overhead player's head for the water to reflect (it is drawn
+        outside the entity table, so the sprite pass never sees it)."""
+        lt = self.logic_thread
+        head = getattr(lt, "player_head_sprite", None) if lt is not None else None
+        if not self.play_mode or not head or render_state is None:
+            return ()
+        session = getattr(lt, "game_session", None)
+        if getattr(session, "coop", None) is not None:
+            return ()           # a party's heads are entity-table sprites
+        pos = getattr(render_state, "player_pos", None)
+        if pos is None:
+            return ()
+        try:
+            centre = (float(pos.x), float(pos.y), float(pos.z))
+        except AttributeError:
+            centre = (float(pos[0]), float(pos[1]), float(pos[2]))
+        size = float(self.overhead_sprite_size)
+        return ((head, centre, (size, size), float(render_state.player_angle)),)
 
     def _toggle_splitscreen(self):
         if not self.pointer.splitscreen_allowed():

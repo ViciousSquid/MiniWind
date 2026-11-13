@@ -420,13 +420,43 @@ vec3 woundedColour(vec3 colour, vec2 uv, vec2 wound) {
                 'uniform sampler2D sprite_texture;\nuniform float alphaCutoff;', 1)
             frag = frag.replace(
                 cutoff, 'if(texColor.a < max(0.1, alphaCutoff)) discard;', 1)
-        if self._register_instanced_shader('sprite_instanced', source, frag,
+        ripple_vert, ripple_frag = self._with_sprite_ripple(source, frag)
+        if self._register_instanced_shader('sprite_instanced', ripple_vert, ripple_frag,
                                            extra_uniforms=['projection', 'view',
                                                            'sprite_texture',
                                                            'use_fixed_facing',
-                                                           'alphaCutoff']):
+                                                           'alphaCutoff',
+                                                           'spriteRipple',
+                                                           'spriteRippleTime']):
             print(f'{_RENDERER_PREFIX} Sprite instancing shader compiled successfully.')
         self._compile_layered_sprite_shader(source, frag)
+
+    @staticmethod
+    def _with_sprite_ripple(vertex, fragment):
+        """The billboard shaders with an optional ripple: ``spriteRipple``
+        (0 unless set) sways the image's columns, as a reflection in moving
+        water does (the water pass draws actors' reflections with it). At 0
+        -- every other draw -- the sprite is exactly as before."""
+        if ('out vec2 TexCoords;' not in vertex or 'TexCoords = aPos + 0.5;' not in vertex
+                or 'in highp vec2 TexCoords;' not in fragment or 'void main() {' not in fragment):
+            return vertex, fragment
+        vertex = vertex.replace('out vec2 TexCoords;', 'out vec2 TexCoordsIn;', 1)
+        vertex = vertex.replace('TexCoords = aPos + 0.5;', 'TexCoordsIn = aPos + 0.5;', 1)
+        fragment = fragment.replace(
+            'in highp vec2 TexCoords;',
+            'in highp vec2 TexCoordsIn;\nhighp vec2 TexCoords;\n'
+            'uniform float spriteRipple;\nuniform float spriteRippleTime;', 1)
+        fragment = fragment.replace(
+            'void main() {',
+            'void main() {\n'
+            '    TexCoords = TexCoordsIn;\n'
+            '    if (spriteRipple > 0.0) {\n'
+            '        TexCoords.x += spriteRipple * 0.022 * sin(TexCoordsIn.y * 31.0\n'
+            '                       + spriteRippleTime * 3.4 + FragPos.x * 0.035);\n'
+            '        TexCoords.y += spriteRipple * 0.012 * sin(TexCoordsIn.x * 17.0\n'
+            '                       - spriteRippleTime * 2.1 + FragPos.z * 0.03);\n'
+            '    }', 1)
+        return vertex, fragment
 
     def _compile_layered_sprite_shader(self, vertex, fragment):
         """The instanced billboard shader, sampling a texture-array layer.
@@ -453,10 +483,13 @@ vec3 woundedColour(vec3 colour, vec2 uv, vec2 wound) {
         fragment = fragment.replace(
             'texture(sprite_texture, TexCoords)',
             'texture(sprite_layers, vec3(TexCoords, InstanceLayer))', 1)
+        vertex, fragment = self._with_sprite_ripple(vertex, fragment)
         if self._register_instanced_shader('sprite_layered', vertex, fragment,
                                            extra_uniforms=['projection', 'view',
                                                            'sprite_layers',
-                                                           'use_fixed_facing']):
+                                                           'use_fixed_facing',
+                                                           'spriteRipple',
+                                                           'spriteRippleTime']):
             print(f'{_RENDERER_PREFIX} Layered sprite shader compiled successfully.')
 
     # One Effect row expands into deterministic virtual flame cards.

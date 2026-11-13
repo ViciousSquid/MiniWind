@@ -716,6 +716,8 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
                 editor_time=config.get('time', 0.0),
                 camera_pos=camera_pos)
 
+        # The water drawn below reflects these (passes._draw_water_reflections).
+        self._reflect_source = (etable, sprite_slots) if len(sprite_slots) else None
         if len(sprite_slots):
             self.draw_sprites_instanced(
                 projection, view, etable, sprite_slots, camera_pos=camera_pos)

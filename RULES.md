@@ -496,6 +496,14 @@ third of a calm surface's colour is sky. The clouds are a texture baked once
 while the game loads (no extra draw calls; a few texture reads per pixel of
 water).
 
+**Reflections of actors.** People and creatures beside or in water are
+reflected in it: upside down, fainter and blue-tinted, swaying with the
+ripples, laid in the water just below them as the overhead camera sees it --
+so someone on the far shore shows in the water, someone on the near shore
+does not, and a reflection stops at the water's edge. The player's own head
+is reflected too. Further above the water, a fainter reflection. It costs
+one extra draw where actors are near water, none elsewhere.
+
 **Water quality** is one graphics setting for all water (Pause → Graphics →
 Water; `[Renderer] water_quality`, high by default): high is depth colour,
 soft shores, caustics and reflections of the world and the sky; low is plain
