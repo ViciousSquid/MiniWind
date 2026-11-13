@@ -57,7 +57,7 @@ _PIN_METAL = {
 #: Where the rendered plates are drawn, in the escutcheon's coordinates
 #: (game/tools/make_lock_art.py renders them to fit these, channel for channel).
 PLATE_RECT = (-12.0, 130.0, 480.0, 320.0)
-PADLOCK_RECT = (100.0, 104.0, 270.0, 392.0)
+PADLOCK_RECT = (96.0, 100.0, 264.0, 330.0)
 _ART = {}
 
 
@@ -189,7 +189,7 @@ def _padlock_body(p):
 def _dial(p, a, style="ornate"):
     """The lock in front of you: its case or body, a live cutaway, springs and
     two-piece pins, and the pick. The mechanism and its numbers are the same
-    for every style; a padlock's is drawn turned upright."""
+    for every style: pins upright in their chambers, the pick in from the side."""
     global _PLATE
     p.save()
     p.translate(7, 8)
@@ -214,14 +214,9 @@ def _dial(p, a, style="ornate"):
             p.drawPixmap(QRectF(*PADLOCK_RECT), art, QRectF(art.rect()))
         else:
             _padlock_body(p)
-        # Turn the mechanism upright about the pins' centre, into the body.
-        p.translate(232, 314)
-        p.rotate(-90)
-        p.scale(.8, .8)
-        p.translate(-228, -300)
     _mechanism(p, a, style)
     p.restore()
-    if style != "padlock":
+    if True:
         p.save()
         p.translate(7, 8)
         p.scale(.95, .95)

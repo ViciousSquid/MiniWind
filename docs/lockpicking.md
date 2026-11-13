@@ -86,15 +86,15 @@ changes with what it locks (`lock_style` in `game/ui/lockpicking.py`):
 
 | Style | Seen on | Looks like |
 | --- | --- | --- |
-| Padlock | crates | a steel padlock; the mechanism stands upright inside it and the pick goes in from below |
+| Padlock | crates | a laminated steel padlock opened up like a practice lock: the pins upright in their chambers above a brass plug, the pick in through the keyway at its side |
 | Rusted | abandoned, burial and barrow chests; many novice locks | a pitted, rust-streaked iron case with dull pins |
 | Iron | strongboxes, coffers, hoards, the toll chest; most apprentice locks | a riveted steel case with steel pins |
 | Ornate | merchants' and fine chests; expert and master locks | the engraved brass escutcheon |
 
 The iron, rusted and padlock plates are rendered images, like the escutcheon,
 made by `python -m game.tools.make_lock_art` (a lit height field: forged and
-pitted metal, hammer marks, scratches, rivets, rust and flaking scale, a cast
-brass padlock with a steel shackle), laid out channel for channel with the
+pitted metal, hammer marks, scratches, rivets, rust and flaking scale, a laminated
+steel padlock with a cutaway into its works), laid out channel for channel with the
 pins and pick the game draws over them.
 
 A container can name its own with `"lock_style"` (`ornate`, `iron`, `rusted`,

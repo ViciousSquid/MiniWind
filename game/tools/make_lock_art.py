@@ -13,8 +13,9 @@ The plates share the escutcheon's layout, in the game's "plate" coordinates
 (``game/ui/lockpicking.py``: drawn into QRectF(-12, 130, 480, 320), 3.2 px per
 unit), so the live pins and pick the game draws sit in their channels: five
 channels at x = 173, 200, 228, 255, 282 above a keyway at y ~ 318-346. The
-padlock is drawn into QRectF(PADLOCK_RECT); its mechanism is turned upright
-(the pick enters from below) and its channels are laid out to match.
+padlock, drawn into QRectF(PADLOCK_RECT), is a cutaway practice lock: its pin
+chambers and plug sit in that same place, the pins upright, the pick in from
+the left through the keyway.
 
 Deterministic (fixed seeds). Run from the repo root::
 
@@ -32,7 +33,7 @@ from PIL import Image, ImageDraw, ImageFilter
 OUT = os.path.join("assets", "ui", "lockpicking")
 SCALE = 3.2                       # px per plate unit, as escutcheon.png
 PLATE_RECT = (-12.0, 130.0, 480.0, 320.0)
-PADLOCK_RECT = (100.0, 104.0, 270.0, 392.0)
+PADLOCK_RECT = (96.0, 100.0, 264.0, 330.0)
 PINS = (173, 200, 228, 255, 282)
 LIGHT = np.array([-0.55, -0.62, 0.56])
 LIGHT = LIGHT / np.linalg.norm(LIGHT)
@@ -317,84 +318,75 @@ def rusted_lock():
 
 
 # ------------------------------------------------------------------ padlock
-def padlock_layout():
-    """Plate-unit geometry of the padlock, and where the upright mechanism's
-    channels land (game/ui/lockpicking.py turns it about (232, 314) by -90
-    degrees at 0.8 scale)."""
-    c, s = (232.0, 314.0), 0.8
-    rows = [c[1] - s * (x - 228) for x in PINS]                # channel centre rows
-    return {"centre": c, "scale": s, "rows": rows,
-            "chan_x": (c[0] + s * (214 - 300), c[0] + s * (322 - 300)),
-            "keyway_x": (c[0] + s * (318 - 300), c[0] + s * (348 - 300))}
-
-
 def padlock():
+    """A laminated steel padlock opened up, as a cutaway practice lock is: the
+    shackle above, the body's laminations, and a window into the works -- the
+    pin chambers standing upright above a brass plug, its keyway open at the
+    body's left side, where the pick comes in. The pins and pick the game
+    draws stand in these chambers (the box locks' layout)."""
     cv = Canvas(PADLOCK_RECT)
     rng = np.random.default_rng(37)
-    lay = padlock_layout()
-    body, shackle, recess, window = cv.mask(), cv.mask(), cv.mask(), cv.mask()
-    cv.rrect(body, 132, 236, 332, 456, 30)
-    path = [(176, 246), (176, 182)]
+    body, shackle, window, plug, recess = (cv.mask() for _ in range(5))
+    cv.rrect(body, 118, 196, 338, 412, 16)
+    path = [(170, 204), (170, 160)]
     for i in range(0, 181, 6):
         a = math.radians(180 - i)
-        path.append((232 + 56 * math.cos(a), 182 - 64 * math.sin(a)))
-    path += [(288, 182), (288, 246)]
-    cv.line(shackle, path, 22)
-    cv.rrect(window, 152, 252, 312, 380, 10)            # the cutaway into the works
-    x0, x1 = lay["chan_x"]
-    for row in lay["rows"]:
-        cv.rrect(recess, x0, row - 7.4, x1, row + 7.4, 3)
-    k0, k1 = lay["keyway_x"]
-    cv.rrect(recess, k0, 300, k1, 470, 6)               # the keyway, out through the foot
-    b, sh, rc, wn = arr(body), arr(shackle), arr(recess), arr(window)
+        path.append((228 + 58 * math.cos(a), 160 - 46 * math.sin(a)))
+    path += [(286, 160), (286, 204)]
+    cv.line(shackle, path, 24)
+    cv.rrect(window, 146, 204, 312, 362, 6)             # the cutaway into the works
+    cv.rrect(plug, 134, 310, 312, 356, 10)              # the brass plug, its shear line on top
+    for x in PINS:
+        cv.rrect(recess, x - 9, 212, x + 9, 324, 4)     # the pin chambers
+    cv.rrect(recess, 112, 318, 306, 348, 7)             # the keyway, open at the left side
+    b, sh, wn, pg, rc = arr(body), arr(shackle), arr(window), arr(plug), arr(recess)
     shape = b.shape
-    h = 0.6 * bevel(b, 10 * SCALE) + 0.5 * bevel(sh, 5 * SCALE) * (1 - b)
-    h += 0.5 * sh * 0  # the shackle's roundness comes from its bevel
-    h -= 0.35 * blur(wn, 3) * b
-    h -= 0.6 * blur(rc * np.maximum(b, wn), 2)
-    cast = noise(shape, 70, rng, 6)
-    h += 0.035 * (cast - 0.5) * b
-    h += 0.03 * blur(dents(shape, rng, 500, 4, 18), 1.2) * b
-    scr = scratches(shape, rng, 900, 50)
+    h = 0.6 * bevel(b, 8 * SCALE) + 0.55 * bevel(sh, 6 * SCALE) * (1 - b)
+    # Laminations: the stacked steel plates a padlock body is riveted from.
+    lam = np.zeros(shape, np.float32)
+    for y in range(206, 412, 9):
+        g = cv.mask()
+        cv.rrect(g, 118, y, 338, y + 1.4, 0.6)
+        lam = np.maximum(lam, arr(g))
+    h -= 0.05 * blur(lam, 1.2) * b * (1 - wn)
+    h -= 0.45 * blur(wn, 2.5) * b                       # the window is cut in
+    h += 0.42 * bevel(pg, 6 * SCALE) * wn               # the round plug stands proud in it
+    h -= 0.7 * blur(rc * np.maximum(b, pg), 1.8)
+    h += 0.03 * blur(dents(shape, rng, 600, 3, 14), 1.2) * b
+    scr = scratches(shape, rng, 1100, 50)
     h -= 0.02 * scr * (b + sh)
-    # A stamped maker's mark on the face, below the cutaway.
+    rivets = np.zeros(shape, np.float32)
+    for (x, y) in ((132, 210), (324, 210), (132, 398), (324, 398), (170, 206), (286, 206)):
+        rivets = np.maximum(rivets, dome(cv, shape, x, y, 5.5))
+    h += 0.2 * rivets
     mark = cv.mask()
-    cv.rrect(mark, 156, 398, 226, 428, 4)
+    cv.rrect(mark, 184, 374, 272, 400, 4)
     inner = cv.mask()
-    cv.rrect(inner, 160, 402, 222, 424, 3)
+    cv.rrect(inner, 188, 378, 268, 396, 3)
     stamp = arr(mark) - arr(inner)
-    border = cv.mask()
-    cv.rrect(border, 140, 244, 324, 448, 24)
-    border_in = cv.mask()
-    cv.rrect(border_in, 143, 247, 321, 445, 21)
-    stamp = np.maximum(stamp, (arr(border) - arr(border_in)) * 0.8)
-    for k, x in enumerate((168, 180, 192, 204)):
+    for k, x in enumerate((198, 212, 226, 240, 254)):
         dot = cv.mask()
-        cv.rrect(dot, x - 3, 410, x + 3, 420, 1.5)
-        stamp = np.maximum(stamp, arr(dot) * (0.7 + 0.1 * k))
-    h -= 0.05 * blur(stamp, 1.0)
-    rivet = np.maximum(dome(cv, shape, 176, 252, 6.0), dome(cv, shape, 288, 252, 6.0))
-    h += 0.18 * rivet
+        cv.rrect(dot, x - 3.5, 382, x + 3.5, 392, 1.5)
+        stamp = np.maximum(stamp, arr(dot) * 0.8)
+    h -= 0.05 * blur(stamp, 1.0) * b
     alpha = np.clip(b + sh, 0, 1)
-    steel = np.array([0.46, 0.48, 0.51])
-    brass = np.array([0.62, 0.48, 0.26])
     tone = noise(shape, 220, rng, 5)
-    patina = noise(shape, 90, rng, 5)
-    body_col = brass * (0.75 + 0.45 * tone[..., None])
-    body_col = body_col * (1 - 0.3 * patina[..., None]) + np.array([0.30, 0.30, 0.20]) * 0.3 * patina[..., None]
-    steel_col = steel * (0.78 + 0.4 * tone[..., None])
-    on_body = b[..., None]
-    albedo = body_col * on_body + steel_col * (1 - on_body)
-    edge = np.clip(bevel(b, 3 * SCALE) - bevel(b, 12 * SCALE), 0, 1) + np.clip(
-        bevel(sh, 2 * SCALE) - bevel(sh, 6 * SCALE), 0, 1)
-    shine = np.array([0.92, 0.80, 0.52]) * on_body + np.array([0.80, 0.82, 0.84]) * (1 - on_body)
-    albedo = albedo * (1 - 0.35 * edge[..., None]) + shine * 0.35 * edge[..., None]
+    steel = np.array([0.50, 0.52, 0.55]) * (0.78 + 0.4 * tone[..., None])
+    albedo = steel.copy()
+    edge = np.clip(bevel(b, 2.5 * SCALE) - bevel(b, 10 * SCALE), 0, 1) + np.clip(
+        bevel(sh, 2 * SCALE) - bevel(sh, 7 * SCALE), 0, 1)
+    albedo = albedo * (1 - 0.35 * edge[..., None]) + np.array([0.82, 0.84, 0.86]) * 0.35 * edge[..., None]
+    albedo *= (1 - 0.35 * blur(lam, 1.5)[..., None] * (1 - wn[..., None]))
     grime = blur(np.clip(1 - h * 1.6, 0, 1), 8) * noise(shape, 40, rng, 4)
-    albedo *= (1 - 0.35 * grime[..., None])
-    albedo += 0.2 * scr[..., None] * alpha[..., None]
-    albedo = albedo * (1 - wn[..., None] * 0.75) + np.array([0.05, 0.05, 0.06]) * wn[..., None] * 0.75
-    albedo = albedo * (1 - rc[..., None]) + np.array([0.03, 0.03, 0.035]) * rc[..., None]
-    rgba = shade(h, albedo, alpha, strength=7.5, spec=0.7, gloss=40.0)
+    albedo *= (1 - 0.3 * grime[..., None])
+    albedo += 0.18 * scr[..., None] * alpha[..., None]
+    inside = np.array([0.20, 0.21, 0.22])              # the body's drilled interior
+    albedo = albedo * (1 - wn[..., None]) + inside * (0.7 + 0.5 * tone[..., None]) * wn[..., None]
+    brass = np.array([0.66, 0.50, 0.26]) * (0.8 + 0.35 * noise(shape, 60, rng, 4)[..., None])
+    on_plug = (pg * wn)[..., None]
+    albedo = albedo * (1 - on_plug) + brass * on_plug
+    albedo = albedo * (1 - rc[..., None]) + np.array([0.035, 0.035, 0.04]) * rc[..., None]
+    rgba = shade(h, albedo, alpha, strength=7.5, spec=0.65, gloss=38.0)
     save(rgba, "padlock.png", shadow_from=alpha)
 
 
