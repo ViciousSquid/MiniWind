@@ -1,22 +1,21 @@
 """
-The top-left status frame: a bronze ring holding the minimap, four small fins
-fanned round its lower left, and the health and magicka bars running out from
+The top-left status frame: a bronze ring holding the minimap, set in the
+window's top-left corner, and the health and magicka bars running out from
 behind the ring to the right: health always, with stamina a thin line along its
 bottom edge, and magicka under them for anyone who works magic.
 
-Everything is drawn with QPainter -- no artwork asset -- in three layers:
+Everything is drawn with QPainter -- no artwork asset -- in layers:
 
 .. code-block:: text
 
-    back    the four fins                        cached pixmap
     bars    health (stamina a line beneath), magicka   live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
     ring    the bronze ring                     cached pixmap
     north   a gently damped, upright "N"        live, every frame
 
 The ring goes over the minimap and over the bars' left ends, so the bars read
-as coming out from behind it. The two static layers are painted once per size
-and kept as pixmaps: a pixmap that lives on keeps its texture on the GL paint
+as coming out from behind it. The static ring is painted once per size
+and kept as a pixmap: a pixmap that lives on keeps its texture on the GL paint
 engine, where re-tessellating a dozen gradient paths every frame would not.
 
 :func:`layout` is the single source of the geometry, so the minimap
@@ -38,7 +37,8 @@ from . import theme as T
 from ..compass import CompassNeedle
 from ..rpg.character import whole_health
 
-#: Gap between the frame and the window's top-left corner.
+#: Gap between the ring and the window's top and left edges (the clock keeps
+#: the same gap from the top right).
 MARGIN = 14
 #: The minimap's radius, as a fraction of the ring's outer radius.
 INNER = 0.82
@@ -48,7 +48,7 @@ STAMINA_LINE = 2.0
 _BRONZE_DARK = QColor(52, 28, 10)
 _BRONZE_EDGE = QColor(34, 18, 6)
 
-#: ``(ring radius, device pixel ratio) -> (back, ring)`` pixmaps.
+#: ``(ring radius, device pixel ratio) -> ring`` pixmaps.
 _CACHE = {}
 
 
@@ -64,7 +64,7 @@ def layout(width, height, magical=True):
     is the baseline of the first line written under the bars.
     """
     R = max(70.0, min(118.0, height * 0.13))
-    cx = MARGIN + 1.22 * R
+    cx = MARGIN + R
     cy = MARGIN + R
     bar_x = cx + 0.55 * R
     bar_w = max(190.0, min(280.0, 2.4 * R))
@@ -99,24 +99,6 @@ def _circle(cx, cy, radius):
 
 
 # ------------------------------------------------------------------ layers
-
-def _paint_back(p, f):
-    """Four small fins fanned round the ring's lower left, behind it."""
-    cx, cy, R = f.cx, f.cy, f.R
-    lean = math.radians(5.0)
-    for deg in (128.0, 150.0, 172.0, 194.0):
-        a0, a1 = math.radians(deg - 5.0), math.radians(deg + 5.0)
-        inner, outer = 0.94 * R, 1.17 * R
-        blade = QPainterPath()
-        blade.moveTo(cx + math.cos(a0) * inner, cy + math.sin(a0) * inner)
-        blade.lineTo(cx + math.cos(a0 + lean) * outer, cy + math.sin(a0 + lean) * outer)
-        blade.lineTo(cx + math.cos(a1 + lean) * outer, cy + math.sin(a1 + lean) * outer)
-        blade.lineTo(cx + math.cos(a1) * inner, cy + math.sin(a1) * inner)
-        blade.closeSubpath()
-        p.setBrush(QBrush(_bronze_linear(cx - 1.2 * R, cy - 0.4 * R, cx - 0.6 * R, cy + R)))
-        p.setPen(QPen(_BRONZE_EDGE, 1.4))
-        p.drawPath(blade)
-
 
 def _paint_ring(p, f):
     """The static bronze ring round the minimap."""
@@ -190,7 +172,7 @@ def _layers(f, dpr):
     if layers is None:
         if len(_CACHE) > 8:            # window resizes: keep only recent sizes
             _CACHE.clear()
-        layers = (_layer_pixmap(f, _paint_back, dpr), _layer_pixmap(f, _paint_ring, dpr))
+        layers = _layer_pixmap(f, _paint_ring, dpr)
         _CACHE[key] = layers
     return layers
 
@@ -308,7 +290,7 @@ def _draw_identity(p, f, c):
 # ------------------------------------------------------------------- entry
 
 #: The frame's two cached pictures (game/ui/paint_cache.py): what lies under
-#: the minimap (the fins, the bars, the map's well) and what lies over it (the
+#: the minimap (the bars, the map's well) and what lies over it (the
 #: ring, the identity text). Only the map and the north marker are live.
 _UNDER = None
 _OVER = None
@@ -330,7 +312,7 @@ def draw(painter, session, c, width, height):
     device = painter.device()
     dpr = float(device.devicePixelRatioF()) if device is not None else 1.0
     rects = dict(f.bars)
-    # Room for the fins and ring, the bars, and the identity lines beside
+    # Room for the ring, the bars, and the identity lines beside
     # the ring (level, race and class, gold, the level-up prompt).
     right = max([f.cx + 2.0 * f.R] + [r.right() for r in rects.values()])
     region = QRect(0, 0, int(math.ceil(right)) + 280,
@@ -343,8 +325,6 @@ def draw(painter, session, c, width, height):
                  if "magicka" in rects else None)
 
     def paint_under(p):
-        back, _ring = _layers(f, dpr)
-        p.drawPixmap(0, 0, back)
         _draw_bars(p, f, c)
         # The well the map sits in. The bars run in behind the ring, so this
         # is what keeps their ends out of the circle when there is no map to
@@ -362,8 +342,7 @@ def draw(painter, session, c, width, height):
                 c.gold, bool(c.can_level_up))
 
     def paint_over(p):
-        _back, ring = _layers(f, dpr)
-        p.drawPixmap(0, 0, ring)
+        p.drawPixmap(0, 0, _layers(f, dpr))
         _draw_identity(p, f, c)
 
     _OVER.draw(painter, over_key, region, paint_over)

@@ -22,15 +22,20 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
   *For developers:* setting `dice_seed` under `[GAME]` in `settings.ini` makes
   the dice repeat exactly, roll for roll, to reproduce a bug. Empty (the
   default) is truly random.
-* **Roll boxes.** A roll shows in a small box over whoever rolls it (never a
-  corner panel): their name in their side's colour (gold you, green an ally,
+* **Roll boxes.** A roll shows in a small box: the roller's name in their side's colour (gold you, green an ally,
   red a foe), what the roll is for, the real dice tumbling, the verdict, and —
   for a hit — the damage. Your own rolls sit on a black box; everyone else's
   (allies, foes, fights between NPCs) on a blue-slate one.
-  Boxes that overlap more than their margins lock into one stack, the
-  attacker's roll on top (Settings › Game › *Stack dialogs*, on by default);
-  a stack that would cover another moves to the nearest clear place on
-  screen, so no box ever hides another's words. A character
+  Your own roll sits over you. Everyone else's line up in one column down
+  the right edge of the screen, under the weapon panel and above the
+  shortcut bar, all one narrow width (the roller's name on one line, what
+  they roll for on the next), attacks first, so the fight itself stays in
+  view; a thick line in the roller's colour joins each box to its roller; when more are rolling than the column holds, the ones that don't
+  fit aren't shown. (With the column turned off, each box sits over its
+  roller: boxes that overlap more than their margins lock into one stack,
+  the attacker's roll on top — Settings › Game › *Stack dialogs* — and a
+  stack that would cover another moves to the nearest clear place, so no
+  box ever hides another's words.) A character
   with a roll box over its head says nothing (speech bubbles, barks and
   thoughts wait).
 * **Who rolls where it can be seen.** Only actors in the NEAR simulation tier

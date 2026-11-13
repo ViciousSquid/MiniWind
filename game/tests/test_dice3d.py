@@ -546,3 +546,32 @@ def test_your_rolls_sit_on_black_everyone_elses_on_blue(qt_app, side, kind, bg):
     expect = [round(c * alpha + 255 * (1 - alpha)) for c in (want.red(), want.green(), want.blue())]
     assert abs(px.red() - expect[0]) <= 3 and abs(px.green() - expect[1]) <= 3 \
         and abs(px.blue() - expect[2]) <= 3, (px.getRgb(), expect)
+
+
+def test_a_brawl_never_runs_under_the_shortcut_bar():
+    """Six fighters in one knot: the stack shows what fits above the bar,
+    the player's own roll always among them."""
+    from ..ui import hud
+    entries = [((640.0, 400.0 + 8 * k), _box("Roll to hit"), _layout(280, 120)) for k in range(5)]
+    mine = ((650.0, 420.0), {"result": {"label": "Roll to hit"}, "side": "you"}, _layout(280, 120))
+    entries.append(mine)
+    groups = hud._stack_roll_boxes(entries, 1280, 720, floor=610)
+    shown = [e for g in groups for e in g]
+    assert all(y >= 4 and y + layout["h"] <= 610 for _x, y, _sp, _b, layout, _p in shown)
+    assert len(shown) == 4                       # four 120 px boxes fit in 602 px
+    assert any(b is mine[1] for _x, _y, _sp, b, _l, _p in shown)
+
+
+def test_docked_rolls_are_one_column_of_one_width_on_the_right():
+    from ..ui import hud
+    entries = [((300.0 + 40 * k, 400.0), _box("Roll to hit"), _layout(180 + 30 * k, 120)) for k in range(3)]
+    mine = ((640.0, 420.0), {"result": {"label": "Roll to hit"}, "side": "you"}, _layout(200, 120))
+    groups = hud._stack_roll_boxes(entries + [mine], 1280, 720, floor=620, dock="right", dock_top=200)
+    column = [e for g in groups for e in g if e[3] is not mine[1]]
+    assert len(column) == 3
+    assert {e[0] + e[4]["w"] for e in column} == {1280 - 12}      # flush right
+    assert {e[4]["w"] for e in column} == {hud.ROLL_DOCK_W}       # one narrow width
+    assert all(e[4]["h"] == 120 + hud.ROLL_DOCK_LINE_H for e in column)   # two-line title
+    assert column[0][1] == 200 and all(not e[5] for e in column)  # no pointer tails
+    (own,) = [e for g in groups for e in g if e[3] is mine[1]]
+    assert abs(own[0] + 100 - 640) < 2                            # yours stays over you

@@ -541,9 +541,9 @@ def draw_roll_boxes(painter, session, viewport, width, height):
             sp = (width * 0.5, height * 0.4)       # first person: over the view's middle
         if sp is None:
             continue
-        layout = _roll_box_layout(box, width)
-        if layout is not None:
-            anchored.append((sp, box, layout))
+        lay = _roll_box_layout(box, width)
+        if lay is not None:
+            anchored.append((sp, box, lay))
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     stack = True
@@ -551,9 +551,27 @@ def draw_roll_boxes(painter, session, viewport, width, height):
         stack = bool(session.stack_dialogs_enabled())
     except Exception:
         pass
-    for group in _stack_roll_boxes(anchored, width, height, stack=stack):
-        for bx, by, sp, box, layout, pointer in group:
-            _draw_roll_box(painter, box, layout, bx, by, sp, ROLL_BOX_GAP_PX, pointer=pointer)
+    floor = height
+    try:
+        if not layout.collapsed("strip"):
+            floor = int(layout.screen_rect("strip", width, height).top()) - 4
+    except Exception:
+        floor = height
+    dock_top = 8
+    try:
+        if not layout.collapsed("active"):
+            dock_top = int(layout.screen_rect("active", width, height).bottom()) + 8
+    except Exception:
+        dock_top = 8
+    groups = _stack_roll_boxes(anchored, width, height, stack=stack, floor=floor,
+                               dock=ROLL_STACK_DOCK, dock_top=dock_top)
+    for group in groups:               # the lines first, under every box
+        for bx, by, sp, box, lay, _pointer in group:
+            if lay.get("docked"):
+                _draw_leader(painter, box, lay, bx, by, sp)
+    for group in groups:
+        for bx, by, sp, box, lay, pointer in group:
+            _draw_roll_box(painter, box, lay, bx, by, sp, ROLL_BOX_GAP_PX, pointer=pointer)
     painter.restore()
 
 
@@ -562,22 +580,39 @@ def draw_roll_boxes(painter, session, viewport, width, height):
 #: any closer and they become one stack (or move clear of one).
 ROLL_BOX_OVERLAP_OK = 0.06
 ROLL_BOX_STACK_GAP = 1      # stacked boxes sit locked together
+#: Where everyone else's roll boxes go: "right", one column down the right
+#: edge of the screen, out of the fight's way (the player's own stays over
+#: the player); None, each over its roller, stacked where they meet.
+ROLL_STACK_DOCK = "right"
+#: A docked box's width: the roller's name on one line, what they roll for
+#: on the next, so the column stays narrow however long the names.
+ROLL_DOCK_W = 210
+#: The docked title's second line.
+ROLL_DOCK_LINE_H = 15
+#: The line joining a docked box to its roller: its width and its dark edge.
+ROLL_LEADER_W = 5.0
+ROLL_LEADER_EDGE = 1.5
 
 
 def _is_attack(box) -> bool:
     return "to hit" in str((box.get("result") or {}).get("label", "")).lower()
 
 
-def _stack_roll_boxes(anchored, width, height, stack=True):
+def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
+                      dock=None, dock_top=8):
     """Lay the boxes out: each right over its roller, a slight overlap
     allowed; boxes closer than that join one stack over their rollers, the
     attacker's roll always at the top (with *stack* off -- Settings > Game >
     "Stack dialogs" -- they stay over their rollers, overlapping).
     Returns groups of ``(x, y, anchor, box, layout, pointer)``, bottom box
-    last in a stack."""
+    last in a stack. Everything stays above *floor* (the shortcut bar's
+    top; the screen's bottom by default): a stack too tall for the screen
+    shows the boxes that fit -- the player's own first, then attacks -- and
+    drops the rest, so a brawl never runs under the bar."""
+    height = min(height, floor) if floor else height
     natural = []
-    for sp, box, layout in anchored:
-        w, h = layout["w"], layout["h"]
+    for sp, box, lay in anchored:
+        w, h = lay["w"], lay["h"]
         x = int(max(4, min(width - w - 4, sp[0] - w / 2)))
         y = int(sp[1] - ROLL_BOX_GAP_PX - h)
         natural.append((x, y, w, h))
@@ -621,12 +656,21 @@ def _stack_roll_boxes(anchored, width, height, stack=True):
         return False
 
     groups = []
+    if dock == "right":
+        groups.append(_docked_column(anchored, natural, width, height, dock_top, placed))
+        order = [m for m in order if all(_box_side(anchored[i][1]) == "you" for i in m)]
     for members in order:
         # Attacks on top, then the rest (saves), each in roll order.
         members.sort(key=lambda i: (not _is_attack(anchored[i][1]), i))
+        room = height - 8
+        while len(members) > 1 and (sum(natural[i][3] for i in members)
+                                    + ROLL_BOX_STACK_GAP * (len(members) - 1)) > room:
+            spare = [i for i in members if _box_side(anchored[i][1]) != "you"]
+            members.remove(spare[-1] if spare else members[-1])
         heights = [natural[i][3] for i in members]
         total = sum(heights) + ROLL_BOX_STACK_GAP * (len(members) - 1)
         widest = max(natural[i][2] for i in members)
+
         xs = [anchored[i][0][0] for i in members]
         bottom = min(natural[i][1] + natural[i][3] for i in members)
         above = (sum(xs) / len(xs), bottom - total)
@@ -653,6 +697,56 @@ def _stack_roll_boxes(anchored, width, height, stack=True):
         placed.append((int(centre - widest / 2), int(chosen[1]), int(widest), int(total)))
         groups.append(group)
     return groups
+
+
+def _docked_column(anchored, natural, width, height, top, placed):
+    """Docked layout: everyone's rolls but the player's own in one column
+    down the right edge, from *top*, attacks first, all one width; as many
+    as fit above *height*. The player's own roll stays over the player."""
+    members = [i for i in range(len(anchored)) if _box_side(anchored[i][1]) != "you"]
+    members.sort(key=lambda i: (not _is_attack(anchored[i][1]), i))
+    room = height - 8 - top
+    while members and (sum(natural[i][3] + ROLL_DOCK_LINE_H for i in members)
+                       + ROLL_BOX_STACK_GAP * (len(members) - 1)) > room:
+        members.pop()
+    if not members:
+        return []
+    widest = max(_docked(anchored[i][2])["w"] for i in members)
+    x, y = int(width - 12 - widest), int(top)
+    group = []
+    for i in members:
+        sp, box, lay = anchored[i]
+        lay = dict(_docked(lay), w=widest)
+        group.append((x, y, sp, box, lay, False))
+        y += lay["h"] + ROLL_BOX_STACK_GAP
+    placed.append((x, int(top), int(widest), int(y - top)))
+    return group
+
+
+def _docked(lay):
+    """*lay* (a roll box's layout) for the docked column: narrow, the title
+    on two lines -- the roller, then what they roll for and against whom."""
+    dice_w = len(lay.get("visuals") or ()) * (ROLL_BOX_DIE + 14) + 26
+    return dict(lay, docked=True, w=int(max(ROLL_DOCK_W, dice_w)),
+                h=int(lay["h"] + ROLL_DOCK_LINE_H))
+
+
+def _draw_leader(painter, box, lay, bx, by, anchor):
+    """The thick line from a docked box to its roller's head, in the
+    roller's side's colour on a dark edge, ending in a dot on the roller."""
+    alpha = lay.get("alpha", 255)
+    ink = QColor(*ROLL_SIDE_INK.get(lay.get("side"), (190, 196, 214)), int(alpha * 0.85))
+    dark = QColor(10, 12, 18, int(alpha * 0.6))
+    start = QPointF(bx, by + 24)
+    end = QPointF(anchor[0], anchor[1] + 10)
+    for pen_w, colour in ((ROLL_LEADER_W + 2 * ROLL_LEADER_EDGE, dark), (ROLL_LEADER_W, ink)):
+        pen = QPen(colour, pen_w)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(start, end)
+    painter.setPen(QPen(dark, ROLL_LEADER_EDGE))
+    painter.setBrush(ink)
+    painter.drawEllipse(end, ROLL_LEADER_W + 2, ROLL_LEADER_W + 2)
 
 
 def _clear_spot(above, w, h, width, height, heavy):
@@ -754,11 +848,31 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         painter.drawPolygon(QPolygonF([QPointF(tip - 7, by + h - 1), QPointF(tip + 7, by + h - 1),
                                        QPointF(tip, by + h + 9)]))
     painter.setFont(layout["title_font"])
-    x = bx + (w - layout["title_w"]) / 2.0
-    for text, ink in parts:
+    if layout.get("docked"):
+        # Two lines: who rolls, then what for and against whom.
+        name, ink = parts[0]
+        name = fm.elidedText(name, Qt.ElideRight, int(w - 16))
         painter.setPen(QColor(*ink, alpha))
-        painter.drawText(QPointF(x, by + 20), text)
-        x += fm.horizontalAdvance(text)
+        painter.drawText(QPointF(bx + (w - fm.horizontalAdvance(name)) / 2.0, by + 20), name)
+        rest = [(t.lstrip(": ").strip() if k == 0 else t, c) for k, (t, c) in enumerate(parts[1:])]
+        total = sum(fm.horizontalAdvance(t) for t, _c in rest)
+        room = w - 16
+        if total > room and len(rest) > 1:
+            keep = room - fm.horizontalAdvance(rest[0][0])
+            rest[-1] = (fm.elidedText(rest[-1][0], Qt.ElideRight, int(max(20, keep))), rest[-1][1])
+            total = sum(fm.horizontalAdvance(t) for t, _c in rest)
+        x = bx + (w - total) / 2.0
+        for text, ink in rest:
+            painter.setPen(QColor(*ink, alpha))
+            painter.drawText(QPointF(x, by + 20 + ROLL_DOCK_LINE_H), text)
+            x += fm.horizontalAdvance(text)
+        by += ROLL_DOCK_LINE_H                 # the dice and verdict sit lower
+    else:
+        x = bx + (w - layout["title_w"]) / 2.0
+        for text, ink in parts:
+            painter.setPen(QColor(*ink, alpha))
+            painter.drawText(QPointF(x, by + 20), text)
+            x += fm.horizontalAdvance(text)
     settled = True
     first_done = False           # the roll's own (first) die has landed
     # The player's dice in colour, anyone else's greyscale; never two alike.
