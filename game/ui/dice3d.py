@@ -227,16 +227,26 @@ def face_label(sides: int, index: int) -> str:
 
 
 # ------------------------------------------------------------------ motion
-# -- timing: quick enough that a roll never becomes a wait (tweak here) --
-#: How long a die tumbles before it settles (seconds, a range).
-TUMBLE_SECONDS = (0.55, 0.80)
+# -- timing (tweak here) ---------------------------------------------------
+# Every die lands -- its face readable -- quickly, so a result (and the
+# damage) is told within DAMAGE_TOLD_BY seconds of the blow. Now and then a
+# roll keeps rattling after it lands (the rolled face staying up), for a
+# little drama, but no roll ever lasts longer than ROLL_MAX_SECONDS.
+DAMAGE_TOLD_BY = 1.0       # the damage is always shown by now (seconds)
+ROLL_MAX_SECONDS = 1.2     # no roll, rattle and all, lasts longer
+#: How long a die tumbles before it lands (seconds, a range).
+TUMBLE_SECONDS = (0.45, 0.68)
 #: A die may start up to this late, so a pair is never thrown in step.
-START_JITTER = 0.06
+START_JITTER = 0.04
 #: The second die (damage) is thrown this much after the first (to hit).
-SECOND_DIE_DELAY = 0.12
+SECOND_DIE_DELAY = 0.10
 #: Every roll as a whole runs this much faster or slower (+/-), so no two
 #: rolls feel the same.
-ROLL_SPEED_VARIANCE = 0.12
+ROLL_SPEED_VARIANCE = 0.10
+#: About this share of rolls keep rattling after they land ...
+LONG_RATTLE_CHANCE = 0.25
+#: ... rocking up to this many degrees, dying away.
+RATTLE_DEGREES = 11.0
 
 
 def roll_speed(seed: int) -> float:
@@ -245,13 +255,20 @@ def roll_speed(seed: int) -> float:
                                                            ROLL_SPEED_VARIANCE)
 
 
-def motion(seed: int, *, delay: float = 0.0, speed: float = 1.0) -> Dict:
+def rattles(seed: int) -> bool:
+    """Whether a roll keeps rattling after its dice land (LONG_RATTLE_CHANCE)."""
+    return random.Random(seed * 104729 + 3).random() < LONG_RATTLE_CHANCE
+
+
+def motion(seed: int, *, delay: float = 0.0, speed: float = 1.0,
+           rattle: bool = False) -> Dict:
     """One die's own throw: its delay, how long it tumbles, its spin axis and
-    turns, where it comes in from and how it bounces. Different for every
-    seed, so dice thrown together never move in step; *speed* scales the
-    whole of it (a roll's own pace, :func:`roll_speed`)."""
+    turns, where it comes in from and how it bounces -- and, with *rattle*,
+    how long it keeps rocking after it lands (never past ROLL_MAX_SECONDS).
+    Different for every seed, so dice thrown together never move in step;
+    *speed* scales the whole of it (a roll's own pace, :func:`roll_speed`)."""
     rng = random.Random(seed)
-    return {
+    m = {
         "delay": (delay + rng.uniform(0.0, START_JITTER)) * speed,
         "duration": rng.uniform(*TUMBLE_SECONDS) * speed,
         "axis": _norm((rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-1, 1))),
@@ -260,7 +277,12 @@ def motion(seed: int, *, delay: float = 0.0, speed: float = 1.0) -> Dict:
         "from_x": rng.choice((-1.0, 1.0)) * rng.uniform(0.9, 1.5),
         "bounces": rng.choice((2, 3)),
         "hop": rng.uniform(0.35, 0.6),
+        "rattle": 0.0,
     }
+    if rattle:
+        room = ROLL_MAX_SECONDS - (m["delay"] + m["duration"])
+        m["rattle"] = max(0.0, room * rng.uniform(0.5, 1.0))
+    return m
 
 
 #: How a settled die is tipped toward the light: its rolled face up and to
@@ -286,6 +308,14 @@ def pose(sides: int, value: int, m: Dict, local: float):
     duration = max(0.05, m["duration"])
     p = max(0.0, min(1.0, local / duration))
     if p >= 1.0:
+        # Landed: its face is the result. A long roll keeps rocking a while,
+        # the rolled face staying up, dying away.
+        t, rattle = local - duration, float(m.get("rattle", 0.0))
+        if 0.0 <= t < rattle:
+            fade = (1.0 - t / rattle) ** 1.5
+            wobble = math.radians(RATTLE_DEGREES) * fade * math.sin(t * 38.0)
+            return (_mat_mul(rest, _axis_angle(m["axis"], wobble)),
+                    0.03 * fade * math.sin(t * 29.0), 0.0, True)
         return rest, 0.0, 0.0, True
     left = (1.0 - _ease_out(p))
     angle = m["turns"] * 2.0 * math.pi * left * left

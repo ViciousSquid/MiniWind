@@ -283,3 +283,35 @@ def test_the_box_tells_each_result_as_its_die_lands(qt_app):
             "14 (need 8+) — HIT", "Iron Longsword d12+9.5: rolled 9 → 15 damage"]
     finally:
         hud.T.text_in = orig
+
+
+def test_damage_is_told_within_a_second_and_no_roll_lasts_past_1_2():
+    """Every die lands quickly: the damage (last die down, plus the reveal
+    beat) is told within 1.0 s of the blow. Some rolls rattle on after
+    landing -- face up -- but none lasts longer than 1.2 s; and rolls vary."""
+    from ..runtime import REVEAL_PAUSE
+    told, longest, paces, rattled = 0.0, 0.0, set(), 0
+    for seed in range(1, 3000):
+        speed = dice3d.roll_speed(seed)
+        paces.add(round(speed, 3))
+        long_roll = dice3d.rattles(seed)
+        rattled += long_roll
+        a = dice3d.motion(seed * 31, speed=speed, rattle=long_roll)
+        b = dice3d.motion(seed * 31 + 977, delay=dice3d.SECOND_DIE_DELAY, speed=speed,
+                          rattle=long_roll)
+        land = max(a["delay"] + a["duration"], b["delay"] + b["duration"])
+        told = max(told, land + REVEAL_PAUSE)
+        longest = max(longest, *(m["delay"] + m["duration"] + m["rattle"] for m in (a, b)))
+    assert told <= dice3d.DAMAGE_TOLD_BY == 1.0
+    assert longest <= dice3d.ROLL_MAX_SECONDS == 1.2
+    assert 0.15 < rattled / 2999 < 0.35 and len(paces) > 100
+
+
+def test_a_rattling_die_keeps_its_rolled_face_up():
+    m = dice3d.motion(5, rattle=True)
+    assert m["rattle"] > 0
+    _verts, faces = dice3d.solid(20)
+    for t in (0.01, m["rattle"] / 3, m["rattle"] * 0.8):
+        rotation, _dx, _dy, settled = dice3d.pose(20, 13, m, m["duration"] + t)
+        toward = [dice3d._apply(rotation, n)[2] for _idx, n in faces]
+        assert settled and max(range(20), key=toward.__getitem__) == 12

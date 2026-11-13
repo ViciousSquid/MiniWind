@@ -1515,10 +1515,12 @@ def _prepare_dice_animation(animation, result):
         entries += [dict(e, role="damage") for e in _dice_entries(companion)]
     base = int(animation.get("seed", 0) or 0) or (id(animation) & 0xFFFF)
     speed = dice3d.roll_speed(base)             # this roll's own pace
+    long_roll = dice3d.rattles(base)            # now and then, a rattle after landing
     for index, entry in enumerate(entries):
         seed = base * 31 + index * 977 + entry["sides"] * 13 + entry["value"] * 7
         delay = dice3d.SECOND_DIE_DELAY if entry["role"] == "damage" else 0.0
-        visuals.append(dict(entry, motion=dice3d.motion(seed, delay=delay, speed=speed)))
+        visuals.append(dict(entry, motion=dice3d.motion(seed, delay=delay, speed=speed,
+                                                        rattle=long_roll)))
     animation["dice_visuals"] = visuals
     animation["dice_visuals_for"] = key
     return visuals

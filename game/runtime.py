@@ -363,7 +363,7 @@ ATTACK_FLOAT_SECONDS = 1.0
 #: Anticipation: a result is never told before its die has landed, and then
 #: only after this beat -- HIT / MISS / Crit!, the damage number, the blood,
 #: the shake, the target's health bar (see _present_player_blow).
-REVEAL_PAUSE = 0.12
+REVEAL_PAUSE = 0.08
 #: Over the player when their blow is a critical hit: it replaces HIT, and
 #: any speech bubble, bark or thought over the player gives way to it.
 CRIT_TEXT = "Crit!"
