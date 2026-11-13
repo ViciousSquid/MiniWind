@@ -729,6 +729,7 @@ layout (location = 10) in float iInstanceAlpha;
             'roughness', 'fresnelIntensity', 'normalMatrix',
             'waveAmp', 'brushSize',
             'sceneDepth', 'hasSceneDepth', 'ssrEnabled', 'invProjection',
+            'skyState', 'skyDrift', 'skyClouds',
         ])
         uniforms.preload(self.ENV_UNIFORMS)
 

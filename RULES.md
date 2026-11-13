@@ -474,6 +474,16 @@ the sky, fading in as weather does):
   run together, slide down when heavy, and dry off when the rain stops.
   None of it ever covers the HUD.
 
+**The sky** is only ever seen in water (the camera looks down). Open water
+reflects a real one: a layer of clouds high above the world, drifting with
+the wind and thickening with the weather, lit from the sun's side by day,
+orange at dusk; by night deep blue with stars, moonlit clouds with silver
+edges and the moon's light broken by the ripples. It is seen from the camera
+as it truly is, so the clouds slide across the water as you move. At least a
+third of a calm surface's colour is sky. The clouds are a texture baked once
+while the game loads (no extra draw calls; a few texture reads per pixel of
+water).
+
 ---
 
 ## 10. Learning from tutors

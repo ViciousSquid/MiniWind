@@ -1163,6 +1163,11 @@ class MiniwindSession(SettlementLaw):
         self.wind.update(hours)
         self.weather.update(hours)
         self.lens_water.update(delta, self.weather.rain if self.weather_enabled() else 0.0)
+        # The clouds the water reflects ride the wind (game/sky.py).
+        import game.sky as sky
+        wx, wz = self.wind.vector()
+        dx, dz = getattr(self, "sky_drift", (0.0, 0.0))
+        self.sky_drift = (dx + wx * sky.DRIFT_SPEED * delta, dz + wz * sky.DRIFT_SPEED * delta)
         self._aftermath_clock += delta
         if self._aftermath_clock >= 0.25:
             self._aftermath_clock = 0.0

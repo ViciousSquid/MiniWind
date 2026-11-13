@@ -1984,6 +1984,36 @@ class PassesMixin:
     #: How far across the water an effect's reflection is looked for, as a
     #: multiple of its height above the surface.
     EFFECT_REFLECTION_REACH = 4.0
+    #: Texture unit of the sky's baked clouds (engine/sky_clouds.py).
+    SKY_CLOUD_UNIT = 13
+
+    def _sky_cloud_texture(self):
+        """The sky's clouds, baked and uploaded once (engine/sky_clouds.py):
+        a few texture reads per water pixel instead of fractal noise."""
+        tex = getattr(self, '_sky_clouds_tex', 0)
+        if tex:
+            return tex
+        from engine import sky_clouds
+        baked = sky_clouds.ready()          # baked while the game loaded
+        if baked is None:
+            return 0                        # not yet: a cloudless sky for now
+        data = np.ascontiguousarray(baked)
+        tex = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, data.shape[1], data.shape[0], 0,
+                        gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data)
+        gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+        for param, value in ((gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT),
+                             (gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT),
+                             (gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR),
+                             (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)):
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, param, value)
+        self._sky_clouds_tex = tex
+        return tex
+
+    #: The sky water reflects when no game says otherwise: day, a few
+    #: clouds, no gloom, no dusk (night, cloud cover, gloom, dusk).
+    DEFAULT_SKY_STATE = (0.0, 0.35, 0.0, 0.0)
 
     def _write_effect_depth(self, uniforms, ordered_textures, run_starts):
         """Write the solid part of the effects just drawn into the depth
@@ -2100,6 +2130,17 @@ class PassesMixin:
         gl.glUniform3fv(
             uniforms['viewPos'], 1, glm.value_ptr(camera_pos))
         gl.glUniform1f(uniforms['time'], config.get('time', 0.0))
+        # The sky the water reflects (water.frag skyColor): a game sets
+        # ``sky_state`` (night, cloud cover, gloom, dusk) and ``sky_drift``;
+        # otherwise a fair day.
+        sky = getattr(self, 'sky_state', None) or self.DEFAULT_SKY_STATE
+        drift = getattr(self, 'sky_drift', None) or (0.0, 0.0)
+        gl.glUniform4f(uniforms['skyState'], *[float(v) for v in sky])
+        gl.glUniform2f(uniforms['skyDrift'], float(drift[0]), float(drift[1]))
+        gl.glActiveTexture(gl.GL_TEXTURE0 + self.SKY_CLOUD_UNIT)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self._sky_cloud_texture())
+        gl.glUniform1i(uniforms['skyClouds'], self.SKY_CLOUD_UNIT)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
 
         # Water uses the same scene capture as Glass, but captures before any
         # water surface is submitted so transmission never contains the water

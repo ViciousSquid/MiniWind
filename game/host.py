@@ -826,6 +826,20 @@ class MiniwindGame:
         host.on("render.overlay", self._on_overlay)
         host.on("render.post_scene", self._on_post_scene)
         host.on("render.pre_sprites", self._on_pre_sprites)
+        host.on("render.pre_scene", self._on_pre_scene)
+
+    def _on_pre_scene(self, ev):
+        """Before the world is drawn: tell the renderer what sky the water
+        reflects -- the hour, the cloud, the wind's drift (game/sky.py)."""
+        if not ev.get("play_mode"):
+            return
+        host = getattr(self, "_host", None)
+        session = getattr(getattr(host, "logic", None), "_miniwind", None)
+        renderer = ev.get("renderer")
+        if session is None or renderer is None:
+            return
+        import game.sky as sky
+        renderer.sky_state, renderer.sky_drift = sky.state(session)
 
     def _on_pre_sprites(self, ev):
         """Draw what lies on the floor, before Fio's effects and actors so they
@@ -886,6 +900,10 @@ class MiniwindGame:
 
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
+        # The water's sky clouds bake on their own thread while the game
+        # loads and the character is made (engine/sky_clouds.py).
+        from engine import sky_clouds
+        sky_clouds.prepare()
         logic._miniwind = None
         logic.game_session = None
         settings = self._find_settings(logic)
