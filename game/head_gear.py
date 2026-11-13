@@ -13,7 +13,8 @@ through (:data:`VISORS`), so the face and eyes show through them.
 Nothing of the head shows outside the helmet: it is clipped to the helmet's
 shape, so only the face shows, through the visor. Every helmet is drawn the
 same size, filling the head's square; the head moves (and, behind eye slits,
-scales a little) so its eyes sit in the openings.
+scales a little) so its eyes sit in the openings. Guard heads, which wear
+their own helmets, are never given another.
 One picture (:func:`composite`) serves the paperdoll and, written to a
 cached file (:func:`sprite_path`), the overhead sprite renderer.
 """
@@ -194,12 +195,55 @@ def helmet_picture(item_id):
     return out
 
 
+#: Eye positions measured by hand, for heads whose eyes the eye rig misses or
+#: mistakes (white hair, beards, fur, masks, a single eye): head id ->
+#: ((left x, right x), y), as shares of the picture's width and height.
+EYES = {
+    "head05": ((0.36, 0.62), 0.69), "head06": ((0.50, 0.50), 0.56),
+    "head09": ((0.38, 0.60), 0.66), "head15": ((0.34, 0.60), 0.70),
+    "head16": ((0.37, 0.60), 0.66), "head26": ((0.42, 0.66), 0.57),
+    "head103": ((0.36, 0.57), 0.66), "head120": ((0.43, 0.64), 0.70),
+    "head126": ((0.40, 0.63), 0.68), "head146": ((0.36, 0.61), 0.64),
+    "head153": ((0.42, 0.63), 0.55), "head164": ((0.41, 0.62), 0.65),
+    "head179": ((0.38, 0.60), 0.72), "head209": ((0.39, 0.62), 0.67),
+    "head210": ((0.40, 0.62), 0.70),
+}
+
+
+def _guard_head(head_path) -> bool:
+    """Whether *head_path* is a guard's head: it wears its own helmet, so
+    none is ever drawn over it."""
+    stem = os.path.splitext(os.path.basename(str(head_path)))[0]
+    try:
+        import game.rpg.heads as heads
+        return bool(heads.is_guard_head(stem))
+    except Exception:
+        return stem.startswith("guard")
+
+
+def _measured(head_path, head_img):
+    """The hand-measured eye pair for *head_path* (:data:`EYES`), in the
+    picture's pixels, or None."""
+    stem = os.path.splitext(os.path.basename(str(head_path)))[0]
+    known = EYES.get(stem)
+    if known is None:
+        return None
+    (lx, rx), y = known
+    w, h = head_img.width(), head_img.height()
+    return ((lx * w, y * h), (rx * w, y * h))
+
+
 def _eyes(head_path, head_img):
     """The middle of the head's two eyes, in its picture's pixels."""
     key = ("eyes", head_path)
     if key in _images:
         return _images[key]
     centre = None
+    measured = _measured(head_path, head_img)
+    if measured is not None:
+        centre = ((measured[0][0] + measured[1][0]) / 2.0, measured[0][1])
+        _images[key] = centre
+        return centre
     try:
         import game.ui.eye_rig as eye_rig
         rig = eye_rig.rig_for(head_path, head_img.width())
@@ -221,7 +265,10 @@ def _eye_pair(head_path, head_img):
     key = ("eye_pair", head_path)
     if key in _images:
         return _images[key]
-    pair = None
+    pair = _measured(head_path, head_img)
+    if pair is not None:
+        _images[key] = pair
+        return pair
     try:
         import game.ui.eye_rig as eye_rig
         rig = eye_rig.rig_for(head_path, head_img.width())
@@ -272,6 +319,8 @@ def composite(head_path, item_id):
     size: only what shows through the visor is left of the head -- nothing
     of it outside the helmet -- with the helmet over it. None when either
     picture is missing. Cached."""
+    if _guard_head(head_path):
+        return None             # a guard's head has its own helmet
     key = ("worn", head_path, item_id)
     if key in _images:
         return _images[key]
@@ -324,11 +373,11 @@ def sprite_path(head_path, item_id) -> str:
     """The overhead sprite for a head wearing *item_id*: *head_path* itself
     with no helmet (or no picture for it), else a cached image of
     :func:`composite` (written once per head and helmet)."""
-    if not item_id:
-        return head_path
+    if not item_id or _guard_head(head_path):
+        return head_path        # bare, or a guard's head (its own helmet)
     head_abs = head_path if os.path.isabs(head_path) else os.path.join(_ROOT, head_path)
     stem = os.path.splitext(os.path.basename(head_abs))[0]
-    out = os.path.join(_CACHE_DIR, f"{stem}__{item_id}__v7.png")
+    out = os.path.join(_CACHE_DIR, f"{stem}__{item_id}__v8.png")
     if os.path.isfile(out):
         return out
     img = composite(head_abs, item_id)

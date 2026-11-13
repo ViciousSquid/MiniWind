@@ -517,3 +517,24 @@ def test_nothing_of_the_head_shows_outside_the_helmet(qt_app, head, helmet):
     ox, oy = worn[2]
     k = width / worn[0].width()
     assert (img.pixel(int(left + ox * k), int(top + oy * k)) >> 24) & 0xFF > 0
+
+
+def test_a_guard_head_is_never_given_a_helmet(qt_app):
+    import os
+    import game.head_gear as head_gear
+    from ..rpg import heads
+    for guard in heads.GUARD_HEAD_IDS:
+        rel = heads.any_head_path(guard)
+        assert head_gear.sprite_path(rel, "iron_helmet") == rel
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        assert head_gear.composite(os.path.join(root, rel), "iron_helmet") is None
+
+
+def test_hand_measured_eyes_cover_the_heads_the_rig_gets_wrong(qt_app):
+    """Each entry names a real head, with its eyes inside the picture and
+    the left one left of the right."""
+    import game.head_gear as head_gear
+    from ..rpg import heads
+    for head, ((lx, rx), y) in head_gear.EYES.items():
+        assert heads.is_head(head), head
+        assert 0.0 < lx <= rx < 1.0 and 0.3 < y < 0.9, head
