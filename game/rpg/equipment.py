@@ -332,10 +332,6 @@ RATING_PER_AC = 4.0
 #: (None: all of it). Endurance gives +1 AC per 10 points above 40 -- a hardy
 #: body rolls with a blow, as far as its armour lets it move.
 ENDURANCE_CAP = {LIGHT: None, MEDIUM: 2, HEAVY: 0}
-#: Chance per point of AC above :data:`BASE_AC` that a blow glances off
-#: entirely, and the most that can ever do.
-DEFLECT_PER_AC = 0.025
-DEFLECT_MAX = 0.6
 
 
 def _armour_skill(character, weight: str) -> float:
@@ -416,9 +412,13 @@ def armour_class(character) -> int:
     return BASE_AC + armour + hardy + charms
 
 
-def deflect_chance(character) -> float:
-    """Chance a physical blow glances off without harm, from Armour Class."""
-    return max(0.0, min(DEFLECT_MAX, (armour_class(character) - BASE_AC) * DEFLECT_PER_AC))
+def deflect_chance(character, attack_bonus=None) -> float:
+    """Chance a physical blow misses the character outright: a typical foe's
+    d20 + attack bonus (or *attack_bonus*) falling short of their Armour
+    Class (game/rpg/armour_class.py)."""
+    from . import armour_class as ac_rules
+    bonus = ac_rules.TYPICAL_ATTACK_BONUS if attack_bonus is None else attack_bonus
+    return 1.0 - ac_rules.to_hit(bonus, armour_class(character))
 
 
 #: Armour materials that are metal. Metal interferes with magic: nobody can

@@ -94,7 +94,9 @@ def test_the_left_mouse_is_the_left_hand_and_does_not_cast_the_right_hands_spell
     assert not s.casts
 
 
-def test_left_mouse_with_a_shield_worn_bashes_the_foe_in_front():
+def test_left_mouse_with_a_shield_worn_bashes_the_foe_in_front(monkeypatch):
+    from ..rpg import armour_class
+    monkeypatch.setattr(armour_class, "to_hit", lambda *a: 1.0)   # the bash lands
     bandit = _Thing("Bandit", (0.0, 0.0, 60.0), type="npc", health=40, max_health=40,
                     aggression="hostile")
     s = _session("facing", bandit)
@@ -106,3 +108,17 @@ def test_left_mouse_with_a_shield_worn_bashes_the_foe_in_front():
     expected = s.BASH_DAMAGE + 8 * s.BASH_ARMOUR_SHARE
     assert bandit.properties["health"] == 40 - round(expected)
     assert s._offhand_cooldown > 0 and not s.casts
+
+
+def test_a_shield_bash_rolls_against_armour_class_and_can_miss(monkeypatch):
+    from ..rpg import armour_class
+    monkeypatch.setattr(armour_class, "to_hit", lambda *a: 0.0)   # it cannot land
+    bandit = _Thing("Bandit", (0.0, 0.0, 60.0), type="npc", health=40, max_health=40,
+                    aggression="hostile")
+    s = _session("facing", bandit)
+    from ..rpg import items, inventory as inv
+    inv.add_item(s.game.character.inventory, items.make("iron_shield", 1))
+    s.game.equip("iron_shield")
+    s._acquire_target = lambda reach, aim_dot=None: bandit
+    s.fire_player_weapon(s.logic, "primary")
+    assert bandit.properties["health"] == 40

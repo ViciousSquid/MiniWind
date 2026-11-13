@@ -348,6 +348,11 @@ JOIN_CIRCLE_PROMPT = "I wish to join the Arcane Circle."
 #: fizzles, and for how long.
 FIZZLE_TEXT = "*fizzled*"
 FIZZLE_SECONDS = 1.6
+#: Over every attacker in a fight -- the player, an NPC, an animal -- as its
+#: d20 to-hit roll lands or misses (game/rpg/armour_class.py).
+HIT_TEXT = "HIT"
+MISS_TEXT = "MISS"
+ATTACK_FLOAT_SECONDS = 1.0
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
 #: ordinary bark: it says more), how close they must be to pass the time of
 #: day, how long before either does so again (s), and the chance per decision
@@ -1232,12 +1237,19 @@ class MiniwindSession(SettlementLaw):
             # Every living thing has a Strength: a bear hits harder than a hen.
             raw_damage *= rpg_combat.strength_factor(
                 rpg_cha.core(attacker.properties, attr.STRENGTH))
+        import game.rpg.armour_class as rpg_ac
         res = rpg_combat.resolve_incoming(c, raw_damage,
                                           damage_kind=damage_kind,
                                           blocking=self._blocking, rng=self.rng,
                                           dice=self.game.dice,
-                                          attacker=self._attacker_name())
+                                          attacker=self._attacker_name(),
+                                          attack_bonus=rpg_ac.npc_attack_bonus(
+                                              attacker.properties) if attacker is not None
+                                          else None)
         final = res["final"]
+        if attacker is not None and "ac" in res:
+            # The attacker's to-hit roll against the player's Armour Class.
+            self.attack_outcome(attacker, not res.get("deflected"))
         # armour training whenever armour is tested -- a deflected blow too
         worn = res["armor_class"]
         if worn == "heavy":
@@ -5006,6 +5018,11 @@ class MiniwindSession(SettlementLaw):
         floats[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds),
                              float(seconds))
 
+    def attack_outcome(self, attacker, hit: bool) -> None:
+        """*attacker*'s to-hit roll landed or missed: HIT or MISS floats over
+        its head, the player's as much as any NPC's or animal's."""
+        self.float_text(attacker, HIT_TEXT if hit else MISS_TEXT, ATTACK_FLOAT_SECONDS)
+
     def fizzled(self, thing) -> None:
         """*thing*'s spell fizzled: say so over its head, and let it be heard
         from where it stands."""
@@ -6838,9 +6855,24 @@ class MiniwindSession(SettlementLaw):
         if target is None:
             return True
         damage = self.BASH_DAMAGE + float(d.get("armor_rating", 0) or 0) * self.BASH_ARMOUR_SHARE
+        # A bash is an attack: d20 + attack bonus (Block skill, Strength)
+        # against the target's Armour Class.
+        import game.rpg.armour_class as rpg_ac
+        from .diceroll import roll_check as _roll_check
+        target_ac = rpg_ac.of(target.properties)
+        bonus = rpg_ac.player_attack_bonus(
+            c, c.skill(sk.BLOCK), melee=True,
+            fatigue=c.stamina / c.max_stamina if c.max_stamina else 1.0)
+        chance = rpg_ac.to_hit(bonus, target_ac)
+        name = str(target.properties.get("display_name") or target.properties.get("name") or "")
+        roll = _roll_check(self.game.dice, chance, f"Shield bash {name}".strip(),
+                           source="combat.hit",
+                           why=f"d20 {bonus:+d} (Block {c.skill(sk.BLOCK)}) vs Armour Class "
+                               f"{target_ac} — {chance * 100:.0f}%",
+                           context={"attack_bonus": bonus, "armour_class": target_ac})
         res = self.game._apply_hit(target.properties, {
-            "hit": True, "damage": damage, "skill": sk.BLOCK, "difficulty": 1.0,
-            "sneak": False, "crit": False})
+            "hit": bool(roll["success"]), "damage": damage, "skill": sk.BLOCK,
+            "difficulty": 1.0, "sneak": False, "crit": False})
         self._land_player_hit(target, res, heavy=True)
         return True
 
@@ -6901,11 +6933,10 @@ class MiniwindSession(SettlementLaw):
             # a swing at nothing still trains the weapon a touch (and costs stamina)
             c.spend_stamina(4.0)
             return True
-        # Target acquisition already confirmed "near + facing" on the ground
-        # plane, so a lone weapon's swing is guaranteed to connect. Two weapons
-        # are two attacks, and each rolls to hit for itself.
-        res = self.game.attack_creature(target.properties, hand=hand,
-                                        guaranteed=not eq.dual_wielding(c))
+        # Target acquisition confirmed "near + facing"; the swing then rolls
+        # d20 + attack bonus against the target's Armour Class, like every
+        # attack. Two weapons are two attacks, each rolling for itself.
+        res = self.game.attack_creature(target.properties, hand=hand)
         self._land_player_hit(target, res)
         return True
 
@@ -6922,6 +6953,7 @@ class MiniwindSession(SettlementLaw):
         """What a landed (or missed) melee blow does: the number over the
         target, the blood, the target's anger, a kill."""
         _journal(target)     # a kill/gib changes how the target is drawn
+        self.attack_outcome(self.player_actor, bool(res.get("hit")))
         if res.get("hit"):
             self._gore_hit(target, res.get("damage", 0.0),
                            crit=bool(res.get("crit") or heavy), killed=bool(res.get("killed")))
@@ -6967,6 +6999,7 @@ class MiniwindSession(SettlementLaw):
         def _on_hit(hit_monster):
             res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
             _journal(hit_monster)
+            self.attack_outcome(self.player_actor, bool(res.get("hit")))
             if res.get("hit"):
                 self._gore_hit(hit_monster, res.get("damage", 0.0), crit=bool(res.get("crit")),
                                killed=bool(res.get("killed")))

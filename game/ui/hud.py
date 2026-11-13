@@ -1055,10 +1055,11 @@ def _draw_target(painter, session, width, height):
 
 def _target_odds(c, target_props):
     """What the player needs to roll against the target under the crosshair,
-    before acting: "To hit: need 14+ (35%)  ·  Critical: need 18+ (15%)".
+    before acting: "AC 12  ·  To hit: need 7+ (70%)  ·  Critical: need 18+ (15%)".
 
-    A lone melee weapon in reach always connects (see do_attack), so it reads
-    "Sure hit"; a readied spell shows its cast check instead."""
+    Every attack rolls d20 + the attack bonus against the target's Armour
+    Class, shown first; a readied spell shows its cast check instead.
+    """
     import game.rpg.combat as combat
     try:
         if c.active_weapon_kind == "spell":
@@ -1070,13 +1071,12 @@ def _target_odds(c, target_props):
                     f"({chance * 100:.0f}%)")
         if c.active_weapon_kind == rpg_items.KIND_STAFF:
             return ""                    # a staff looses its bound spell
-        ranged = c.active_weapon_kind in rpg_items.RANGED_KINDS
-        odds = combat.attack_odds(c, target_props,
-                                  sure_hit=not ranged and not eq.dual_wielding(c))
+        odds = combat.attack_odds(c, target_props)
     except (AttributeError, TypeError, ValueError, ZeroDivisionError):
         return ""
-    hit = ("Sure hit" if odds["sure_hit"] else
-           f"To hit: need {odds['hit_target']}+ ({odds['hit_chance'] * 100:.0f}%)")
+    # Every attack rolls d20 + your bonus against the target's Armour Class.
+    hit = (f"AC {odds['ac']}  ·  To hit: need {odds['hit_target']}+ "
+           f"({odds['hit_chance'] * 100:.0f}%)")
     return (f"{hit}  ·  Critical: need {odds['crit_target']}+ "
             f"({odds['crit_chance'] * 100:.0f}%)")
 

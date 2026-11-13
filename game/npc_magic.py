@@ -466,8 +466,27 @@ class NpcMagic:
         return out
 
     def damage_filter(self, victim, damage, _attacker=None, *, damage_kind="physical"):
-        """NPC shields roll a physical save, then wards soak what remains."""
+        """A physical blow between NPCs and creatures first rolls to hit: the
+        attacker's d20 + attack bonus against the victim's Armour Class
+        (game/rpg/armour_class.py) -- a miss does nothing. Then NPC shields
+        roll a physical save, and wards soak what remains."""
         props = getattr(victim, "properties", None)
+        if (isinstance(props, dict) and damage_kind == "physical" and damage > 0
+                and not props.get("multiplayer_player")):
+            from .rpg import armour_class as ac_rules
+            attacker = getattr(_attacker, "properties", None)
+            chance = ac_rules.to_hit(ac_rules.npc_attack_bonus(attacker), ac_rules.of(props))
+            rng = getattr(self.session, "rng", None)
+            roll = rng.random() if rng is not None else __import__("random").random()
+            hit = roll < chance
+            outcome = getattr(self.session, "attack_outcome", None)
+            if outcome is not None and _attacker is not None:
+                try:
+                    outcome(_attacker, hit)         # HIT / MISS over the attacker
+                except Exception:
+                    pass
+            if not hit:
+                return 0                    # turned aside by the victim's armour
         if isinstance(props, dict):
             from .rpg.blocking import npc_block
             game = getattr(self.session, "game", None)

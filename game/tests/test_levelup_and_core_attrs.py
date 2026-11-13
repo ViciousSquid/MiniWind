@@ -36,12 +36,17 @@ def test_an_old_save_naming_them_still_loads():
     assert custom.favored_attrs == [attr.ENDURANCE]
 
 
-def test_endurance_now_steadies_the_aim():
+def test_skill_and_strength_steady_the_aim_and_armour_turns_it():
+    """To hit is d20 + attack bonus against Armour Class: weapon skill (and,
+    in melee, Strength) raise the bonus; a higher AC is harder to hit."""
     c = Character()
-    c.attrs[attr.ENDURANCE] = 40
-    low = combat.hit_chance(c, 30, 40)
-    c.attrs[attr.ENDURANCE] = 90
-    assert combat.hit_chance(c, 30, 40) > low
+    c.attrs[attr.STRENGTH] = 40
+    low = combat.hit_chance(c, 30, 12)
+    assert combat.hit_chance(c, 60, 12) > low
+    c.attrs[attr.STRENGTH] = 90
+    assert combat.hit_chance(c, 30, 12) > low
+    assert combat.hit_chance(c, 30, 12, melee=False) == low   # bows: no Strength
+    assert combat.hit_chance(c, 30, 18) < combat.hit_chance(c, 30, 12)
 
 
 # ------------------------------------------- every living thing has three

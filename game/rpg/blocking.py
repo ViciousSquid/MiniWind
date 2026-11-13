@@ -34,20 +34,25 @@ def ready_npc_shield(props):
 
 
 def block_save(damage, skill, endurance, fatigue=1.0, *, shield=None,
-               dice=None, rng=None, defender="You", npc=False, against_player=False):
-    """A successful saving throw reduces damage; a failed save reduces none."""
+               dice=None, rng=None, defender="You", npc=False, against_player=False,
+               armour_class=None):
+    """A successful saving throw reduces damage; a failed save reduces none.
+    The blocker's *armour_class* makes the save easier: each point above 10
+    adds :data:`armour_class.BLOCK_PER_AC`."""
     damage = max(0.0, float(damage))
     fatigue = max(0.0, min(1.0, float(fatigue)))
     skill = max(0, min(100, float(skill)))
+    from . import armour_class as ac_rules
+    ac = ac_rules.BASE_AC if armour_class is None else int(armour_class)
     chance = max(0.05, min(0.9, (0.2 + skill * 0.006 + endurance * 0.0015)
-                          * (0.5 + fatigue * 0.5)))
+                          * (0.5 + fatigue * 0.5) + ac_rules.block_bonus(ac)))
     fraction = min(0.75, (0.2 if shield is not None else 0.05) + skill / 200.0)
     roll = roll_check(
         dice if dice is not None else DiceRoller(rng=rng), chance,
         f"{defender}: {'shield' if shield is not None else 'block'} saving throw",
         source="combat.block",
-        why=f"Block {skill:g}, Endurance {endurance:g}, stamina {fatigue:.0%}; "
-            f"a save blocks {fraction:.0%} of the blow",
+        why=f"Block {skill:g}, Endurance {endurance:g}, Armour Class {ac}, "
+            f"stamina {fatigue:.0%}; a save blocks {fraction:.0%} of the blow",
         context={"quiet": npc, "npc": npc, "against_player": against_player,
                  "saving_throw": True},
     )
@@ -69,11 +74,12 @@ def npc_block(props, damage, *, damage_kind="physical", dice=None, rng=None,
     fatigue = float(props.get("_stamina", top)) / top
     if fatigue <= 0:
         return {"damage": damage, "blocked": 0.0}
+    from . import armour_class as ac_rules
     return block_save(
         damage, skill, charisma.core(props, attributes.ENDURANCE), fatigue,
         shield=shield, dice=dice, rng=rng,
         defender=str(props.get("display_name") or props.get("name") or "NPC"),
-        npc=True, against_player=against_player,
+        npc=True, against_player=against_player, armour_class=ac_rules.of(props),
     )
 
 

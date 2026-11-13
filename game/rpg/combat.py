@@ -8,7 +8,8 @@ Pure, deterministic-ish formulas (an optional RNG is injected for tests). Covers
   luck-weighted critical chance;
 * **incoming damage mitigation** for the player — armour rating, active shield
   effects, blocking, and elemental resistances from the character;
-* **hit chance** — fatigue/endurance/weapon-skill vs a target's endurance.
+* **to hit** — every attack is d20 + the attacker's bonus against the
+  target's Armour Class (game/rpg/armour_class.py), the player's included.
 
 Creature-vs-creature and creature ranged travel are handled by the engine's
 :class:`~engine.monster_ai.MonsterAI` (now fantasy: melee & arrows, no guns);
@@ -26,6 +27,7 @@ from . import skills as sk
 from . import items
 from . import equipment as eq
 from . import charisma
+from . import armour_class as ac_rules
 from ..diceroll import DiceRoller, check_target, roll_check
 
 
@@ -35,37 +37,30 @@ from ..diceroll import DiceRoller, check_target, roll_check
 #: Two weapons at once cost accuracy: each hand's chance to hit is scaled by
 #: this, and a pair of crossbows scatters its bolts by up to DUAL_WIELD_SPREAD
 #: degrees. A trade some fighters decline (game.held_weapons).
-DUAL_WIELD_ACCURACY = 0.8
+DUAL_WIELD_ACCURACY = 0.8      # (old percentile rule; see armour_class.DUAL_WIELD_PENALTY)
 DUAL_WIELD_SPREAD = 5.0
 
 
-def hit_chance(character, weapon_skill: int, target_endurance: int = 40,
-               fatigue_frac: float = 1.0) -> float:
-    """Probability [0.05, 0.95] that a swing/shot lands.
-
-    Weapon skill + endurance/luck + fatigue, minus the
-    target's endurance (every living thing has one, see
-    :func:`charisma.core`). Fatigue below full drags the chance down.
-    """
-    end = character.attrs.get(attr.ENDURANCE, 40)
-    luck = character.attrs.get(attr.LUCK, 40)
-    attack = weapon_skill + end * 0.2 + luck * 0.1
-    attack *= (0.5 + 0.5 * max(0.0, min(1.0, fatigue_frac)))
-    defend = target_endurance * 0.15
-    chance = (attack - defend) / 100.0
-    return max(0.05, min(0.95, chance))
+def hit_chance(character, weapon_skill: int, target_ac: int = ac_rules.BASE_AC,
+               fatigue_frac: float = 1.0, *, melee: bool = True,
+               dual: bool = False) -> float:
+    """The chance the player's d20 + attack bonus (weapon skill, Luck, melee
+    Strength, winded and two-weapon penalties) reaches *target_ac*."""
+    bonus = ac_rules.player_attack_bonus(character, weapon_skill, melee=melee,
+                                         fatigue=fatigue_frac, dual=dual)
+    return ac_rules.to_hit(bonus, target_ac)
 
 
 def _target_name(target_props: Dict) -> str:
     return str(target_props.get("display_name") or target_props.get("name") or "")
 
 
-def _hit_why(character, skill_id: str, skill: int, target_endurance: int,
+def _hit_why(character, skill_id: str, skill: int, bonus: int, target_ac: int,
              fatigue_frac: float, chance: float) -> str:
-    """What went into a hit chance, in the player's terms:
-    ``Blade 35 vs their Endurance 40, winded — 48%``."""
-    parts = [f"{sk.label(skill_id)} {skill} vs their Endurance {target_endurance}"]
-    if fatigue_frac < 0.75:
+    """What went into a to-hit roll, in the player's terms:
+    ``d20 +5 (Blade 35) vs Armour Class 12, winded — 70%``."""
+    parts = [f"d20 {bonus:+d} ({sk.label(skill_id)} {skill}) vs Armour Class {target_ac}"]
+    if fatigue_frac < ac_rules.WINDED_BELOW:
         parts.append("winded")
     if eq.dual_wielding(character):
         parts.append("two weapons")
@@ -89,22 +84,25 @@ def attack_odds(character, target_props: Dict, hand: str = "main",
     the HUD shows them over a target.
 
     ``{"hit_chance", "hit_target", "sure_hit", "crit_chance", "crit_target",
-    "why"}`` -- the same numbers :func:`player_attack` will roll against. A
-    *sure_hit* (a lone melee weapon in reach) needs no hit roll at all.
+    "why", "ac", "bonus"}`` -- the same numbers :func:`player_attack` will
+    roll against: d20 + the attack bonus against the target's Armour Class.
+    Every attack rolls (*sure_hit* is kept for old callers and ignored).
     """
     w = eq.hand_weapon(character, hand)
+    kind = w.get("kind", items.KIND_MELEE) if w else items.KIND_MELEE
     skill_id = w.get("skill", sk.BLADE) if w else sk.BLADE
     skill = character.skill(skill_id)
-    target_end = charisma.core(target_props, attr.ENDURANCE)
+    target_ac = ac_rules.of(target_props)
     fatigue = character.stamina / character.max_stamina if character.max_stamina else 1.0
-    chance = hit_chance(character, skill, target_end, fatigue)
-    if eq.dual_wielding(character):
-        chance *= DUAL_WIELD_ACCURACY
+    dual = eq.dual_wielding(character)
+    bonus = ac_rules.player_attack_bonus(character, skill, melee=kind == items.KIND_MELEE,
+                                         fatigue=fatigue, dual=dual)
+    chance = ac_rules.to_hit(bonus, target_ac)
     crit = critical_chance(character)
     return {"hit_chance": chance, "hit_target": check_target(chance),
-            "sure_hit": bool(sure_hit),
+            "sure_hit": False, "ac": target_ac, "bonus": bonus,
             "crit_chance": crit, "crit_target": check_target(crit),
-            "why": _hit_why(character, skill_id, skill, target_end, fatigue, chance)}
+            "why": _hit_why(character, skill_id, skill, bonus, target_ac, fatigue, chance)}
 
 
 # ---------------------------------------------------------------------------
@@ -139,10 +137,9 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     ``skill``/``difficulty`` back to :meth:`Character.use_skill` so combat
     trains the weapon skill.
 
-    ``guaranteed_hit`` skips the hit-chance roll for melee swings only (bows
-    and staves still roll normally). The caller sets this when the target was
-    already confirmed to be in melee range and squarely faced — camera pitch
-    plays no part in that check, so a close, faced target should never whiff.
+    Every attack rolls d20 + the attack bonus against the target's Armour
+    Class. ``guaranteed_hit`` is kept for old callers and no longer skips the
+    roll: a melee swing at a close, faced target rolls like any other.
 
     ``hand`` is which weapon strikes: ``"main"`` or ``"off"`` (the second
     weapon of a dual wielder). Each hand is its own attack, with its own
@@ -161,7 +158,6 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         base = float(w.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
 
     skill = character.skill(skill_id)
-    target_end = charisma.core(target_props, attr.ENDURANCE)
     fatigue_frac = character.stamina / character.max_stamina if character.max_stamina else 1.0
 
     result = {"hit": False, "damage": 0.0, "crit": False, "sneak": False,
@@ -173,21 +169,25 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         result["no_ammo"] = True
         return result
 
-    hit_probability = hit_chance(character, skill, target_end, fatigue_frac)
-    if eq.dual_wielding(character):
-        hit_probability *= DUAL_WIELD_ACCURACY
-    if guaranteed_hit and kind == items.KIND_MELEE:
-        # Near + facing, confirmed by the caller: always connects.
-        result["hit_probability"] = hit_probability
-    elif dice is not None:
+    # Every attack rolls: d20 + the attack bonus against the target's Armour
+    # Class (game/rpg/armour_class.py), melee included.
+    target_ac = ac_rules.of(target_props)
+    bonus = ac_rules.player_attack_bonus(
+        character, skill, melee=kind == items.KIND_MELEE, fatigue=fatigue_frac,
+        dual=eq.dual_wielding(character))
+    hit_probability = ac_rules.to_hit(bonus, target_ac)
+    result["ac"], result["attack_bonus"] = target_ac, bonus
+    result["hit_probability"] = hit_probability
+    if dice is not None:
         # Resolved on a d20, not a percentile die: every roll is shown to the
         # player and there is no d100 in this game (see diceroll.CHECK_DIE).
         hit_roll = roll_check(
             dice, hit_probability, f"Roll to hit {_target_name(target_props)}".strip(),
             source="combat.hit",
-            why=_hit_why(character, skill_id, skill, target_end, fatigue_frac,
+            why=_hit_why(character, skill_id, skill, bonus, target_ac, fatigue_frac,
                          hit_probability),
-            context={"skill": skill_id, "target": target_props.get("name", "")})
+            context={"skill": skill_id, "target": target_props.get("name", ""),
+                     "attack_bonus": bonus, "armour_class": target_ac})
         result["hit_roll"] = hit_roll
         if not hit_roll["success"]:
             return result
@@ -248,7 +248,8 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
 # ---------------------------------------------------------------------------
 def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physical",
                      blocking: bool = False, rng: Optional[random.Random] = None,
-                     dice: Optional[DiceRoller] = None, attacker: str = "") -> Dict:
+                     dice: Optional[DiceRoller] = None, attacker: str = "",
+                     attack_bonus: Optional[int] = None) -> Dict:
     """Apply armour, shield, block and resistance to *raw_damage*.
 
     Returns ``{"final", "blocked", "armor", "resisted", "armor_class"}``. Does
@@ -268,21 +269,25 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     result = {"final": dmg, "blocked": 0.0, "armor": 0.0, "resisted": 0.0,
               "armor_class": eq.armor_class_worn(character)}
 
-    # Armour Class: a well-armoured, nimble body turns some blows aside
-    # completely before anything else is weighed.
+    # Armour Class: the attacker rolls d20 + their attack bonus against it;
+    # a miss is a blow the armour (or a nimble body) turned aside, before
+    # anything else is weighed.
     if damage_kind == "physical" and dmg > 0:
         result["ac"] = eq.armour_class(character)
-        deflect = eq.deflect_chance(character)
-        if dice is not None and deflect > 0.0:
+        bonus = ac_rules.TYPICAL_ATTACK_BONUS if attack_bonus is None else int(attack_bonus)
+        chance = ac_rules.to_hit(bonus, result["ac"])
+        result["attack_bonus"] = bonus
+        if dice is not None:
             roll = roll_check(
-                dice, 1.0 - deflect, f"{attacker or 'Your foe'} rolls to hit you",
+                dice, chance, f"{attacker or 'Your foe'} rolls to hit you",
                 source="combat.incoming",
-                why=f"against your Armour Class {result['ac']}",
-                context={"quiet": True, "against_player": True})
+                why=f"d20 {bonus:+d} against your Armour Class {result['ac']}",
+                context={"quiet": True, "against_player": True,
+                         "attack_bonus": bonus, "armour_class": result["ac"]})
             result["defence_roll"] = roll
             deflected = not roll["success"]
         else:
-            deflected = rng.random() < deflect
+            deflected = rng.random() >= chance
         if deflected:
             result["deflected"] = True
             result["final"] = 0.0
@@ -297,6 +302,7 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
             dmg, block_skill, character.attrs.get(attr.ENDURANCE, 40),
             character.stamina / max(1, character.max_stamina), shield=shield,
             dice=dice, rng=rng, defender=character.name or "You",
+            armour_class=eq.armour_class(character),
         )
         dmg = saved["damage"]
         result.update(blocked=saved["blocked"], block_roll=saved["block_roll"])

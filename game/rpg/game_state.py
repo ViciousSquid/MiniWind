@@ -84,6 +84,10 @@ def _stacks_from_text(text) -> List[Dict]:
     return out
 
 
+#: Weapon-skill practice from a miss, against a hit's ``1 + target health/120``.
+MISS_PRACTICE = 0.25
+
+
 #: Starting gear by class specialisation, granted at character creation.
 STARTER_KITS = {
     "Combat": [("iron_longsword", 1), ("iron_shield", 1), ("leather_cuirass", 1),
@@ -350,6 +354,10 @@ class GameState:
         returned unchanged."""
         char = self.character
         if not res["hit"]:
+            # A miss still teaches a little: using a weapon is how you get
+            # better with it.
+            if res.get("skill") and not res.get("no_ammo"):
+                char.use_skill(res["skill"], MISS_PRACTICE)
             return res
         from .blocking import npc_block
         physical = res.get("kind") in (items.KIND_MELEE, *items.RANGED_KINDS)

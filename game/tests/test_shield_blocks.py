@@ -37,12 +37,12 @@ def guard(**extra):
             **extra}
 
 
-def test_successful_character_save_mitigates_damage_and_failed_save_does_not(monkeypatch):
-    monkeypatch.setattr(equipment, "deflect_chance", lambda _: 0)
+def test_successful_character_save_mitigates_damage_and_failed_save_does_not():
+    # The attacker's to-hit roll lands (20), then the block save fails / saves.
     failed = combat.resolve_incoming(fighter().character, 100, blocking=True,
-                                     dice=DiceRoller(rng=Faces(1)))
+                                     dice=DiceRoller(rng=Faces(20, 1)))
     saved = combat.resolve_incoming(fighter().character, 100, blocking=True,
-                                    dice=DiceRoller(rng=Faces(20)))
+                                    dice=DiceRoller(rng=Faces(20, 20)))
     assert failed["blocked"] == 0 and not failed["block_roll"]["success"]
     assert saved["blocked"] > 0 and saved["block_roll"]["success"]
     assert saved["block_roll"]["dice_notation"] == "1d20"
@@ -79,7 +79,8 @@ def test_player_hit_tests_the_npc_shield_and_applies_the_saved_damage():
     outcomes = []
     for face in (1, 20):
         game = fighter()
-        game.dice = DiceRoller(rng=Faces(1, face))  # failed critical, then the defender's save
+        # The to-hit roll lands, a failed critical, then the defender's save.
+        game.dice = DiceRoller(rng=Faces(20, 1, face))
         target = guard()
         result = game.attack_creature(target, guaranteed=True)
         assert target["health"] == 500 - round(result["damage"])
@@ -88,8 +89,10 @@ def test_player_hit_tests_the_npc_shield_and_applies_the_saved_damage():
     assert outcomes[1] < outcomes[0]
 
 
-def test_npc_damage_filter_saves_then_applies_wards():
+def test_npc_damage_filter_saves_then_applies_wards(monkeypatch):
     from game.npc_magic import NpcMagic
+    from game.rpg import armour_class
+    monkeypatch.setattr(armour_class, "to_hit", lambda *a: 1.0)   # every blow lands
     from game.tests.test_npc_magic import _Session
 
     game = fighter()

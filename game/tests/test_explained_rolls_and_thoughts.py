@@ -62,7 +62,7 @@ def test_an_attack_roll_names_its_target_and_its_odds():
     source, hit = seen[0]
     assert source == "combat.hit"
     assert hit["label"] == "Roll to hit Bandit"
-    assert "vs their Endurance 30" in hit["why"]
+    assert "vs Armour Class 10" in hit["why"] and hit["why"].startswith("d20 +")
     assert hit["success"] == res["hit"]
     if res["hit"]:
         source, crit = seen[1]
@@ -241,16 +241,19 @@ def test_a_blow_against_the_player_is_the_attacker_rolling_to_hit():
         assert res.get("deflected", False) == (not roll["success"])
 
 
-def test_with_no_armour_class_to_beat_nothing_is_rolled():
+def test_every_blow_rolls_even_against_an_unarmoured_body():
+    """Every attack rolls d20 + the attacker's bonus against Armour Class --
+    an unarmoured AC 10 included: a typical foe (+7) needs a 3."""
     from ..rpg import combat
     from ..rpg.character import Character
     roller = diceroll.DiceRoller(rng=random.Random(5))
     seen = []
-    roller.add_roll_listener(lambda *a: seen.append(a))
+    roller.add_roll_listener(lambda result, source, ctx: seen.append((result, ctx)))
     c = Character()
     c.attrs["endurance"] = 40
-    combat.resolve_incoming(c, 10.0, dice=roller, attacker="Wolf")
-    assert seen == []
+    combat.resolve_incoming(c, 10.0, dice=roller, attacker="Wolf", attack_bonus=7)
+    (roll, ctx), = seen
+    assert roll["target"] == 3 and ctx["armour_class"] == 10 and ctx["attack_bonus"] == 7
 
 
 def test_their_rolls_go_in_the_log_coloured_for_the_player_not_the_panel(config):
@@ -271,7 +274,8 @@ def test_the_odds_shown_are_the_odds_rolled():
     target = {"endurance": 30}
     odds = combat.attack_odds(c, target)
     fatigue = c.stamina / c.max_stamina
-    assert odds["hit_chance"] == combat.hit_chance(c, c.skill("blade"), 30, fatigue)
+    assert odds["ac"] == 10
+    assert odds["hit_chance"] == combat.hit_chance(c, c.skill("blade"), 10, fatigue)
     assert odds["hit_target"] == check_target(odds["hit_chance"])
     assert odds["crit_target"] == check_target(combat.critical_chance(c))
 
@@ -282,9 +286,10 @@ def test_the_nameplate_says_what_the_player_needs(qt_app):
     from ..ui import hud
     c = Character()
     line = hud._target_odds(c, {"endurance": 30})
-    assert line.startswith("Sure hit") and "Critical: need" in line
+    # Every attack rolls, melee too: the target's AC first, then the odds.
+    assert line.startswith("AC 10  ·  To hit: need ") and "Critical: need" in line
     c.active_weapon_kind = "bow"
-    assert hud._target_odds(c, {"endurance": 30}).startswith("To hit: need ")
+    assert hud._target_odds(c, {"endurance": 30, "armour_class": 15}).startswith("AC 15")
 
 
 # ------------------------------------------------------------ conversations
