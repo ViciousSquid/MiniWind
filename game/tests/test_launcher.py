@@ -270,6 +270,16 @@ def test_continue_and_new_game_report_their_choice(app, ini, monkeypatch):
     dialog = lx.Launcher(ROOT, ini)
     assert dialog.continue_button is not None
     assert dialog.play_button.text() == "NEW GAME"
+    dialog.show()
+    app.processEvents()
+
+    def span(widget):
+        left = widget.mapTo(dialog, widget.rect().topLeft())
+        return left.x(), left.x() + widget.width(), left.y()
+    cont, play, edit = (span(dialog.continue_button), span(dialog.play_button),
+                        span(dialog.edit_button))
+    assert cont[0] == play[0] and cont[1] == edit[1] and cont[2] < play[2], \
+        "CONTINUE sits above NEW GAME and EDIT, as wide as the two"
     dialog.continue_button.click()
     assert dialog.choice == lx.PLAY and lx.chosen_resume() == "autosave"
 

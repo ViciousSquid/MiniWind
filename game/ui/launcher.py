@@ -574,7 +574,6 @@ class Launcher(QDialog):
                 f"QPushButton:hover {{ background-color:#388E3C; }}"
                 f"QPushButton:pressed {{ background-color:#1B5E20; }}")
             self.continue_button.clicked.connect(self._continue)
-            buttons.addWidget(self.continue_button)
 
         self.play_button = QPushButton("NEW GAME" if self._resume else "PLAY")
         self.play_button.setDefault(self._resume is None)
@@ -592,6 +591,14 @@ class Launcher(QDialog):
             "QPushButton:hover { background-color:#343841; }")
         self.edit_button.clicked.connect(lambda: self._finish(EDIT))
         buttons.addWidget(self.edit_button)
+        if self.continue_button is not None:
+            # Above NEW GAME and EDIT, as wide as the two of them (sized in
+            # _apply_metrics), so the row below keeps its two buttons' room.
+            continue_row = QHBoxLayout()
+            continue_row.setSpacing(0)
+            continue_row.addStretch(1)
+            continue_row.addWidget(self.continue_button)
+            body.addLayout(continue_row)
         body.addLayout(buttons)
 
         self.multiplayer_button = QPushButton("MULTIPLAYER")
@@ -670,7 +677,9 @@ class Launcher(QDialog):
         self.play_button.setMinimumSize(size)
         self.edit_button.setMinimumSize(size)
         if self.continue_button is not None:
-            self.continue_button.setMinimumSize(size)
+            self.continue_button.setMinimumHeight(size.height())
+            self.continue_button.setFixedWidth(
+                2 * size.width() + getattr(self, '_button_spacing', 10))
         # Spans PLAY and EDIT: their two widths and the gap between them.
         self.multiplayer_button.setFixedWidth(
             2 * size.width() + getattr(self, '_button_spacing', 10))
