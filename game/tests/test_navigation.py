@@ -18,7 +18,11 @@ class Clock:
 
 class CountingNavigator(Navigator):
     def __init__(self, blocked, clock):
-        super().__init__(blocked, clock, track_stats=True)
+        # Bounded by nodes, not wall time (as the other tests here are): a
+        # 3 ms real-time slot can run out on a busy machine and defer the
+        # search these tests count, failing them by load alone.
+        super().__init__(blocked, clock, track_stats=True,
+                         planning_budget=PlanningBudget(max_seconds=math.inf))
         self.line_checks = 0
 
     def line_clear(self, *args, **kwargs):

@@ -322,9 +322,20 @@ def _find(member):
         if name is not None:
             return ('package', path), name
     mounted = _ensure_index().get(member)
-    if mounted is not None:
+    if mounted is not None and not _is_category_archive(mounted):
         return ('mount', mounted), member
     return None, None
+
+
+def _is_category_archive(path) -> bool:
+    """``assets/<category>.fiopak``: a category archive. Those are indexed and
+    checked by :func:`prepare_asset_archives`, which has the last word for
+    them here -- one it refused (unsafe or foreign members) must not be read
+    member by member through the mount index instead."""
+    folder, name = os.path.split(os.path.normpath(path))
+    stem, ext = os.path.splitext(name)
+    return (ext.lower() == '.fiopak' and stem in ASSET_CATEGORIES
+            and os.path.basename(folder) == ASSET_DIR)
 
 
 def _read(found, info):
@@ -536,13 +547,7 @@ def archives() -> List[str]:
     so a later name overrides an earlier one (PK3 order)."""
     found = []
     for folder in SEARCH_DIRS:
-        for path in glob.glob(os.path.join(folder, ARCHIVE_GLOB)):
-            # assets/<category>.fiopak are the category archives, indexed and
-            # checked by prepare_asset_archives; never mount them unchecked.
-            stem = os.path.splitext(os.path.basename(path))[0]
-            if folder == ASSET_DIR and stem in ASSET_CATEGORIES:
-                continue
-            found.append(path)
+        found.extend(glob.glob(os.path.join(folder, ARCHIVE_GLOB)))
     # Absolute: the search folders are relative to the working folder, and
     # an index kept as relative paths would read another folder's archive
     # after a change of directory.
