@@ -1081,6 +1081,10 @@ class MiniwindSession(SettlementLaw):
             # and its critical, a kill's loot): listed under it, not over it.
             current.setdefault("followups", []).append(result)
             return
+        if current is not None:
+            # Attacking again before the last roll has landed: it is told at
+            # once, and the new roll takes its place. Nobody waits on dice.
+            self._hurry_dice()
         self.dice_animation = {
             "result": result,
             "elapsed": 0.0,
@@ -1143,7 +1147,32 @@ class MiniwindSession(SettlementLaw):
                "against": against, "seed": self.rng.randint(1, 1 << 15),
                "player_id": getattr(self, "player_id", None)}
         self.__dict__.setdefault("roll_boxes", {})[id(actor)] = box
+        if result.get("fate"):
+            self._tell_fate(actor, result)
         return box
+
+    def _tell_fate(self, actor, roll) -> None:
+        """Luck turned *actor*'s saving throw (game/rpg/luck.py): once its
+        dice have landed, LUCK! or UNLUCKY! floats over it and the player is
+        told what happened -- in a toast and the log, never left guessing."""
+        from .rpg import luck as luck_rules
+        word = (luck_rules.LUCK_TEXT if roll.get("fate") == "lucky"
+                else luck_rules.UNLUCKY_TEXT)
+        after = self._reveal_delay(actor, every_die=True)
+        self.float_text(actor, word, CRIT_FLOAT_SECONDS, after=after)
+        props = getattr(actor, "properties", None) or {}
+        mine = actor is self.player_actor
+        who = "" if mine else str(props.get("display_name") or props.get("name") or "")
+        text = f"{word} " + (f"{who}: " if who else "") + str(roll.get("fate_line") or "")
+        if roll.get("fate") == "lucky":
+            text += "" if not mine else " The blow misses you entirely."
+        elif mine:
+            text += " The whole blow lands."
+
+        def tell():
+            self.notify(text, 4.0)
+            self.game.message(text)
+        self._after_dice(after, tell)
 
     def _tell_damage(self, res) -> None:
         """Put the damage actually dealt under the player's roll box -- the
@@ -1426,6 +1455,8 @@ class MiniwindSession(SettlementLaw):
             self.attack_outcome(attacker, not res.get("deflected"), crit=bool(res.get("crit")))
             if res.get("crit"):
                 self.shake(*CRIT_SHAKE)
+        if res.get("fate") and res.get("block_roll"):
+            self._tell_fate(self.player_actor, res["block_roll"])    # LUCK! / UNLUCKY!
         # armour training whenever armour is tested -- a deflected blow too
         worn = res["armor_class"]
         if worn == "heavy":
@@ -5262,10 +5293,11 @@ class MiniwindSession(SettlementLaw):
         import time as _time
         now = _time.monotonic()
         entry = (self.__dict__.get("floats") or {}).get(id(thing))
-        if entry and entry[1] == CRIT_TEXT and entry[2] > now:
+        big = (CRIT_TEXT, "LUCK!", "UNLUCKY!")       # these hush its speech too
+        if entry and entry[1] in big and entry[2] > now:
             return True
         waiting = (self.__dict__.get("pending_floats") or {}).get(id(thing))
-        return bool(waiting) and waiting[1] == CRIT_TEXT
+        return bool(waiting) and waiting[1] in big
 
     def fizzled(self, thing) -> None:
         """*thing*'s spell fizzled: say so over its head, and let it be heard
@@ -7241,13 +7273,36 @@ class MiniwindSession(SettlementLaw):
             self._after_dice(told_hit, lambda: self.add_floater("miss", kind="miss"))
 
     def _after_dice(self, delay: float, show) -> None:
-        """Run *show* (something the player sees) *delay* seconds from now --
-        when its dice land -- or at once."""
+        """Run *show* (something the player sees of their own blow) *delay*
+        seconds from now -- when its dice land -- or at once; sooner still if
+        the player attacks again first (:meth:`_hurry_dice`)."""
         if delay <= 0.0:
             show()
             return
         import time as _time
         self.__dict__.setdefault("_reveals", []).append((_time.monotonic() + delay, show))
+
+    def _hurry_dice(self) -> None:
+        """Tell everything the player's last roll was still holding back --
+        HIT / MISS / Crit!, the damage, the blood, the shake, the target's
+        health bar -- now, rather than when its dice would have landed: the
+        player has attacked again and the new roll is replacing it. The rules
+        already happened at the blow; only the telling is brought forward."""
+        reveals = self.__dict__.get("_reveals") or []
+        self._reveals = []
+        for _at, show in sorted(reveals, key=lambda r: r[0]):
+            try:
+                show()
+            except Exception:
+                pass
+        pending = self.__dict__.get("pending_floats") or {}
+        waiting = pending.pop(id(self.player_actor), None)
+        if waiting is not None:
+            thing, text, _start, total = waiting
+            self.float_text(thing, text, total)
+        panel = self.__dict__.get("target_panel")
+        if panel is not None:
+            panel.release()
 
     def _run_reveals(self) -> None:
         """Show what is due (from the game tick)."""

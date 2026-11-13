@@ -366,9 +366,11 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
             character.stamina / max(1, character.max_stamina), shield=shield,
             dice=dice, rng=rng, defender=character.name or "You",
             armour_class=eq.armour_class(character),
+            luck=character.attrs.get(attr.LUCK, 40), level=character.level,
         )
         dmg = saved["damage"]
-        result.update(blocked=saved["blocked"], block_roll=saved["block_roll"])
+        result.update(blocked=saved["blocked"], block_roll=saved["block_roll"],
+                      fate=saved["fate"], fate_line=saved["fate_line"])
         character.use_skill(sk.BLOCK, 1.0)
 
     # Armour rating: each point reduces damage with diminishing returns.

@@ -456,3 +456,45 @@ def test_every_client_sees_the_same_dice(qt_app, monkeypatch):
                          {"wolf_7": client_wolf, "b": avatar}, avatar, "b")
     assert next(iter(client.roll_boxes.values())) is client_box
     assert client_box["elapsed"] == 0.4 and "dice_visuals" in client_box
+
+
+def test_mashing_attack_tells_the_last_roll_at_once_and_shows_the_new_one(qt_app, monkeypatch):
+    """Attacking again before the last roll has landed never makes the player
+    wait: that roll's results are told there and then (its damage, its HIT,
+    the target's bar), and the new roll replaces it at once."""
+    from .test_cast_controls import _Logic, _Thing
+    from ..runtime import MiniwindSession
+    from ..rpg import equipment as eq, inventory as inv
+    from ..ui import target_panel as tp
+    bandit = _Thing("Bandit", (0.0, 0.0, 60.0), type="npc", health=5000, max_health=5000,
+                    npc_role="bandit")
+    s = MiniwindSession(_Logic([bandit]), cfg={})
+    s._player_pos = lambda: [0.0, 0.0, 0.0]
+    monkeypatch.setattr(s, "_visualise_dice_rolls_enabled", lambda: True)
+    s.target_panel = tp.TargetTracker()
+    c = s.game.character
+    inv.add_item(c.inventory, items.make("iron_longsword"))
+    eq.equip(c, "iron_longsword")
+    floaters = []
+    monkeypatch.setattr(s, "add_floater", lambda text, kind="dmg", y=0.0: floaters.append(text))
+    for _ in range(40):
+        s.dice_animation = None
+        s._reveals = []
+        first = s.game.attack_creature(bandit.properties)
+        s._land_player_hit(bandit, first)
+        if first["hit"]:
+            break
+    assert first["hit"] and s._reveals                  # its damage is waiting on its dice
+    assert s.target_panel._held is not None
+    shown = s.dice_animation
+    s._tick_dice_animation(0.1)                         # a tenth of a second later: again
+    second = s.game.attack_creature(bandit.properties)
+    s._land_player_hit(bandit, second)
+    assert floaters and floaters[0] == f"-{int(first['damage'])}"   # told at once
+    assert s.dice_animation is not shown                 # the new roll, straight away
+    assert s.dice_animation["elapsed"] < 0.1
+    held = s.target_panel._held                         # the first blow's hold is gone
+    if second["hit"]:
+        assert held is not None and held[1] == second["health_before"]
+    else:
+        assert held is None

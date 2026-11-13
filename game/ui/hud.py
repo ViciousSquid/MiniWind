@@ -314,6 +314,10 @@ FLOAT_RISE_PX = 26.0
 CRIT_FLOAT_TEXT = "Crit!"
 CRIT_FLOAT_SIZE = 18
 CRIT_FLOAT_INK = (255, 255, 255)
+#: Words that float big, like "Crit!", each in its own ink: luck's verdicts
+#: on a saving throw (game/rpg/luck.py) -- gold for LUCK!, a sickly green for
+#: UNLUCKY!.
+BIG_FLOATS = {"LUCK!": (255, 214, 90), "UNLUCKY!": (170, 215, 100)}
 _FLOAT_INK = (214, 200, 255)
 
 
@@ -350,7 +354,7 @@ def draw_floats(painter, session, viewport, width, height):
             continue
         age = max(0.0, min(1.0, 1.0 - left / max(0.01, total)))
         alpha = int(255 * max(0.0, min(1.0, left / 0.5)))
-        crit = text == CRIT_FLOAT_TEXT
+        crit = text == CRIT_FLOAT_TEXT or text in BIG_FLOATS
         if crit:
             # "Crit!": bigger and white, popping in a touch over-size. The
             # word in the game's font; the "!" drawn as a shape (the font's
@@ -369,7 +373,7 @@ def draw_floats(painter, session, viewport, width, height):
             w, fh = ww + bang_w + 10, cm.height()
             left = sp[0] - w / 2 + 5
             base = sp[1] - FLOAT_RISE_PX * age - cm.descent()
-            ink = QColor(*CRIT_FLOAT_INK, alpha)
+            ink = QColor(*BIG_FLOATS.get(text, CRIT_FLOAT_INK), alpha)
             for dx, dy, colour in ((2, 2, QColor(0, 0, 0, int(alpha * 0.8))),
                                    (1, 1, QColor(0, 0, 0, int(alpha * 0.8))), (0, 0, ink)):
                 painter.setPen(colour)
@@ -674,11 +678,13 @@ def _roll_box_layout(box, width):
     if against and against[0]:
         parts.append((" " + str(against[0]).upper(), ROLL_SIDE_INK.get(against[1], (226, 224, 236))))
     details = []
-    companion = box.get("companion")
+    companion = _companion(box, result)
     if companion:
         details.append(str(companion.get("detail") or
                            f"{companion.get('dice_notation', 'die')}: rolled "
                            f"{companion.get('roll_result', '?')}"))
+    if companion and companion.get("line"):
+        details.append(str(companion["line"]))       # what luck did
     # (A critical needs no line here: "Crit!" floats just under the box.)
     die = ROLL_BOX_DIE
     # Small text in the small-text face (Texturina Light), never under 11px.
@@ -751,7 +757,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
                         tumbling=not done, flicker=int(local * 18.0) + index * 5)
         if d.get("role"):
             T.text_in(painter, QRect(int(cx - 36), int(cy + die / 2 - 1), 72, 13),
-                      "TO HIT" if d["role"] == "hit" else "DAMAGE", size=11,
+                      DIE_ROLE_LABELS.get(d["role"], ""), size=11,
                       color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
                       bold=True, family="small")
     line_y = by + ROLL_BOX_TITLE_H + die + 20
@@ -764,6 +770,11 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         if passed is not None and _box_against(box) and _box_against(box)[1] == "you" \
                 and side != "you":
             ink = _verdict_color(not passed, alpha)       # their hit is bad news
+        if settled and result.get("fate"):
+            # The fate die has landed too: luck's verdict replaces the save's.
+            word = "LUCK!" if result["fate"] == "lucky" else "UNLUCKY!"
+            verdict = f"{verdict.split(' — ')[0]} — {word}"
+            ink = QColor(*BIG_FLOATS[word], alpha)
         T.text_in(painter, QRect(bx, line_y, w, 18), verdict, size=13, color=ink,
                   align=T.ALIGN_CENTER, bold=True, family="small")
         for k, text in enumerate(details if settled else ()):
@@ -1548,25 +1559,37 @@ def _dice_entries(result):
             for value in result.get("roll_details", [])]
 
 
+def _companion(box, result):
+    """The die thrown beside a roll's own: a hit's damage die, or a saving
+    throw's fate die (game/rpg/luck.py)."""
+    return box.get("companion") or (result or {}).get("luck_roll")
+
+
+#: What each die in a two-dice roll box is for, written under it.
+DIE_ROLE_LABELS = {"hit": "TO HIT", "damage": "DAMAGE", "save": "SAVE", "luck": "LUCK"}
+
+
 def _prepare_dice_animation(animation, result):
     """Every displayed die's own throw (game/ui/dice3d.py): the roll's dice,
     then a hit's damage die (``animation["companion"]``) thrown a moment
     later, each with its own spin, timing and bounce -- never in step."""
-    companion = animation.get("companion")
+    companion = _companion(animation, result)
     key = "companion" if companion else "solo"
     if animation.get("dice_visuals_for") == key:
         return animation["dice_visuals"]
     from . import dice3d
     visuals = []
-    entries = [dict(e, role="hit" if companion else "") for e in _dice_entries(result)]
+    entries = [dict(e, role=result.get("die_role") or ("hit" if companion else ""))
+               for e in _dice_entries(result)]
     if companion:
-        entries += [dict(e, role="damage") for e in _dice_entries(companion)]
+        entries += [dict(e, role=companion.get("die_role") or "damage", second=True)
+                    for e in _dice_entries(companion)]
     base = int(animation.get("seed", 0) or 0) or (id(animation) & 0xFFFF)
     speed = dice3d.roll_speed(base)             # this roll's own pace
     long_roll = dice3d.rattles(base)            # now and then, a rattle after landing
     for index, entry in enumerate(entries):
         seed = base * 31 + index * 977 + entry["sides"] * 13 + entry["value"] * 7
-        delay = dice3d.SECOND_DIE_DELAY if entry["role"] == "damage" else 0.0
+        delay = dice3d.SECOND_DIE_DELAY if entry.get("second") else 0.0
         visuals.append(dict(entry, motion=dice3d.motion(seed, delay=delay, speed=speed,
                                                         rattle=long_roll),
                             shade=dice3d.pick_shade(base)))      # the roll's finishes

@@ -133,7 +133,10 @@ def test_npcs_roll_for_criticals_the_way_the_player_does():
     c = Character()
     c.attrs["luck"] = 70
     assert ac.crit_chance({"luck": 70}) == pytest.approx(combat.critical_chance(c))
-    assert ac.crit_chance({}) == pytest.approx(0.11)
+    assert ac.crit_chance({"luck": 40}) == pytest.approx(0.11)
+    wolf = {"name": "Wolf", "creature_role": "wolf"}
+    ac.crit_chance(wolf)                                # everyone has a Luck:
+    assert 0 <= wolf["luck"] <= 100                     # rolled once, and kept
 
 
 def test_a_critical_against_the_player_does_more_damage():

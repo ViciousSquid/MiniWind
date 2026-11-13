@@ -133,6 +133,11 @@ class TargetTracker:
         now = _now() if now is None else now
         self._held = (thing, float(health), now + float(seconds))
 
+    def release(self) -> None:
+        """Stop holding the bar back (see hold): the dice it waited for have
+        been told early, the player having attacked again."""
+        self._held = None
+
     def clear(self) -> None:
         self.__init__()
 

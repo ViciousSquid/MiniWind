@@ -98,6 +98,10 @@ def test_witness_retargets_the_nearest_living_guard_and_physically_routes_around
     witness.pos = [0, 0, 0]
     session.logic.player.pos = [0, 0, 0]
     session.logic.monster_ai = _AI([(-400, 400, 200, 260)])
+    # Routing, not the real-time planning budget: on a busy machine the
+    # loop below outruns the budget's wall-clock slots, so lift it.
+    budget = session.logic._miniwind_navigation_budget
+    budget.max_seconds, budget.max_nodes = float("inf"), 10 ** 9
     _theft(session)
     session._apply_sim_intent(witness)
     assert witness.properties["_dest"] == guard.pos

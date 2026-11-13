@@ -59,6 +59,11 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
   beat): HIT / MISS / Crit! when the to-hit die lands; the damage number, the
   blood, the screen shake and the target's health bar when the damage die
   lands. The rules themselves happen at the blow — only what you see waits.
+* **Never waiting on dice.** Attacking again before your last roll has landed
+  (mashing the attack button or clicking fast) tells that roll's results at
+  once — its HIT / MISS / Crit!, damage, blood, shake and health bar — and
+  the new roll replaces it straight away. Dice never slow your attacks; only
+  your weapon does.
 * **Timing.** A die tumbles 0.45–0.68 s; the damage die is thrown 0.10 s
   after the to-hit die; each roll runs ±10% faster or slower than the last.
   The result and damage are always shown within **1.0 s** of the blow. About
@@ -78,11 +83,14 @@ Six attributes, base **40**, range 0–100 (`game/rpg/attributes.py`):
 | **Intelligence** | magicka (INT × 1.5) |
 | **Speed** | governs Light Armor, Athletics and Acrobatics |
 | **Personality** (shown as *Charisma*) | prices, disposition, how strangers react to your face |
-| **Luck** | critical hits; attack bonus; loot; skill learning; casting |
+| **Luck** | critical hits; attack bonus (both ways); saving throws at the extremes (the fate die); loot; skill learning; casting |
 
-NPCs and creatures have Strength, Endurance and Charisma too: rolled once on
-3d6 around a baseline for their kind (a bear is strong, a hen is not), at half
-the swing of the player's roll, and kept for good (`game/rpg/charisma.py`).
+Everyone in the world has Strength, Endurance, Charisma and **Luck** — every
+NPC and every animal: rolled once on 3d6 around a baseline for their kind (a
+bear is strong, a hen is not), at half the swing of the player's roll, and
+kept for good (`game/rpg/charisma.py`). Luck's baseline is 40, except: beggar
+and mudcrab 25, skeletons 20, sheep 30, merchant 50, bandit chief 55, hen 55,
+dragon 60. An authored value always wins.
 
 ---
 
@@ -245,10 +253,13 @@ Class** — 5% to 95%. This decides your swings, shots, staff bolts and shield
 bashes (a close, faced melee swing rolls too), every blow on you, and every
 fight between NPCs and creatures.
 
-* **Your attack bonus** = 3 + weapon skill ÷ 10 + Luck (one per 20 above 40)
-  + Strength in melee (one per 15 above 40) − 2 if winded − 2 with two weapons.
+* **Your attack bonus** = 3 + weapon skill ÷ 10 + Luck + Strength in melee
+  (one per 15 above 40) − 2 if winded − 2 with two weapons.
 * **Anyone else's** = an authored `attack_bonus`, or 6 + level + Strength (one
-  per 15 above 40). An unknown attacker (a trap) counts as +7.
+  per 15 above 40) + Luck. An unknown attacker (a trap) counts as +7.
+* **Luck, both ways:** +1 for each full 20 above 40, −1 for each full 20 below
+  it — Luck 0 is −2, 20 is −1, 21–59 nothing, 60 is +1, 100 is +3. The lucky
+  land more blows; the unlucky fewer.
 
 HIT or MISS floats over the attacker as its die lands.
 
@@ -294,6 +305,30 @@ skill, Endurance and stamina, and **+2.5% per point of Armour Class above
 bonus`, held between 5% and 90%. A save blocks `0.2 + Block/200` of the blow
 (0.05 + Block/200 without a shield), at most 75%. NPCs with a raised shield
 save the same way.
+
+### Luck and saving throws: the fate die
+
+At the extremes, Luck reaches into saving throws. Whoever qualifies rolls a
+second d20 — the **fate die** — right after the save. It tumbles beside the
+save's die in the roll box (marked SAVE and LUCK) (`game/rpg/luck.py`).
+Nobody else ever rolls one.
+
+| | Who | When | Chance | What happens |
+|---|---|---|---|---|
+| **Lucky** | Luck 60+, level 10+ | the save **failed** | 5% + 0.4% per Luck above 60 + 0.4% per level above 10, at most 25% | the whole blow is turned aside — no damage at all |
+| **Unlucky** | Luck 25 or less, any level | the save **succeeded** | 5% + 0.8% per Luck below 25, at most 25% | the save comes undone — the whole blow lands |
+
+The player is always told what happened. Once the fate die lands:
+* **LUCK!** (gold) or **UNLUCKY!** (sickly green) floats big over the
+  character, like "Crit!", and hushes their speech.
+* The roll box's verdict turns to LUCK! or UNLUCKY!, with the fate die's roll
+  and a line saying what happened. For example, *"The blow caught on a belt
+  buckle."*, *"The attacker slipped on something unspeakable."*, *"Tripped
+  over a hen."* or *"Distracted by a butterfly."*
+* The same line appears as a toast and in the log.
+
+When the fate die fails, the save stands, and the box still shows the die
+("fate lets it be").
 
 ### Kills, gore and the dead
 

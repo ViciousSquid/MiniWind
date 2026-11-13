@@ -8,7 +8,7 @@ import pytest
 from game.diceroll import DiceRoller, roll_check
 from game.held_weapons import HeldWeapons
 from game.multiplayer.bots import PartyBots
-from game.rpg import blocking, combat, equipment, items
+from game.rpg import armour_class, blocking, combat, equipment, items
 from game.rpg.dialogue import DictStore
 from game.rpg.game_state import GameState
 from game.tests.test_multiplayer_bots import companions, think_until
@@ -155,12 +155,13 @@ def test_companion_save_changes_real_health_and_logs_without_animating(coop_game
     human, bot, *_ = companions(coop)
     c = bot.session.game.character
     monkeypatch.setattr(equipment, "deflect_chance", lambda _: 0)
+    monkeypatch.setattr(armour_class, "crit_chance", lambda *_a, **_k: 0.0)
     sentinel = {"result": {"label": "Player's own roll"}, "elapsed": 0.2}
     human.session.dice_animation = sentinel
     bot.session.toggle_block(True)
     before = c.health
     c.health = c.max_health
-    bot.session.game.dice.rng = Faces(20)
+    bot.session.game.dice.rng = Faces(20, 20)     # the foe's to-hit lands; the save holds
     reduced = coop.damage(bot.player_id, 25)
     assert reduced < 25 and c.health == c.max_health - reduced
     assert human.session.dice_animation is sentinel and bot.session.dice_animation is None
@@ -212,8 +213,9 @@ def test_humans_own_shield_save_animates(coop_game, monkeypatch):
     monkeypatch.setattr(human.session, "_visualise_dice_rolls_enabled", lambda: True)
     monkeypatch.setattr(equipment, "deflect_chance", lambda _: 0)
     human.session.dice_animation = None
+    monkeypatch.setattr(armour_class, "crit_chance", lambda *_a, **_k: 0.0)
     human.session.toggle_block(True)
-    human.session.game.dice.rng = Faces(20)
+    human.session.game.dice.rng = Faces(20, 20)   # the foe's to-hit lands; the save holds
     coop.damage(human.player_id, 10)
     result = human.session.dice_animation["result"]
     assert result["success"] and "shield saving throw" in result["label"]

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import random
+
 import pytest
 
 from game.multiplayer import lobby as launch_state
@@ -290,6 +292,12 @@ def test_enemy_damage_targets_one_character_and_allied_damage_is_ignored(coop_ga
 
     second.session.game.character.equipment.clear()
     second.session.game.character.attrs[attributes.ENDURANCE] = 40
+
+    class Lands(random.Random):
+        def randint(self, low, high):
+            return high                       # the to-hit die always a 20
+
+    second.session.game.dice.rng = Lands(0)
     coop.logic.monster_ai._apply_monster_damage(
         second.actor, 10000, attacker=NPC(pos=[0, 0, 0], properties={"name": "Enemy"})
     )
@@ -760,3 +768,48 @@ def test_a_pending_trip_does_not_stop_a_player_talking(coop_game, monkeypatch):
     assert talked == [villager] and readied == []
     assert coop.travel is not None, "the trip is still waiting for this player"
     coop.travel = None
+
+
+def test_every_client_sees_the_same_dice(coop_game, monkeypatch):
+    """The host rolls; the world frame carries that very roll to clients --
+    the same numbers, throw and finishes -- for a player's own roll and for a
+    roll box over anyone near them."""
+    import json
+    from game import fio
+    from game.multiplayer.replication import apply, capture
+    from game.ui import hud
+
+    coop = coop_game.logic.game_session.coop
+    player = list(coop.players.values())[0]
+    s = player.session
+    monkeypatch.setattr(s, "_visualise_dice_rolls_enabled", lambda: True)
+    s.dice_animation = None
+    s._on_dice_roll({"label": "Attack", "total": 15, "target": 10, "success": True,
+                     "components": [{"notation": "1d20", "roll_details": [15]}]},
+                    "test", {"against_name": "Wolf"})
+    assert s.dice_animation is not None and "seed" in s.dice_animation
+    npc = next(t for t in fio.things(coop.logic)
+               if t.properties.get("id") and getattr(t, "pos", None) is not None
+               and not t.properties.get("multiplayer_player"))
+    npc.properties["_sim_tier"] = 0
+    monkeypatch.setattr(s, "_player_pos", lambda: list(npc.pos))
+    box = s.show_roll_box(npc, {"label": "Roll to hit", "total": 4, "target": 12,
+                                "success": False,
+                                "components": [{"notation": "1d20", "roll_details": [4]}]})
+    assert box is not None
+
+    def seen(b):
+        return [(v["sides"], v["value"], v["shade"], v["motion"])
+                for v in hud._prepare_dice_animation(dict(b), b["result"])]
+
+    host_own, host_box = seen(s.dice_animation), seen(box)
+    frame = json.loads(json.dumps(capture(coop)))      # over the wire
+    s.dice_animation = None
+    s.__dict__["roll_boxes"] = {}
+    apply(coop, frame)
+    assert s.dice_animation["result"]["components"][0]["roll_details"] == [15]
+    assert s.dice_animation["actor"] is player.actor
+    assert seen(s.dice_animation) == host_own
+    (client_box,) = s.__dict__["roll_boxes"].values()
+    assert client_box["actor"] is npc and client_box["result"]["total"] == 4
+    assert seen(client_box) == host_box

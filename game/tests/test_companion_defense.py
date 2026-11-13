@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import random
+
 import glm
 import pytest
 
@@ -119,6 +121,12 @@ def test_actual_assaults_trigger_defense_and_distant_bots_defend_themselves(coop
     bot.returning = True
     enemy = enemy_near(coop, bot, 85, aggression="defensive", team="villagers")
     brain = coop._bots = PartyBots(coop)
+
+    class Lands(random.Random):
+        def randint(self, low, high):
+            return high                 # its blows land: this is about acting, not luck
+
+    bot.session.game.dice.rng = Lands(0)
     assert brain._threat(bot, human) is None
     coop.damage(bot.player_id, 2, source=enemy)
     assert brain._threat(bot, human) is enemy

@@ -153,7 +153,7 @@ def repel_chance(charisma: int) -> float:
 # ---------------------------------------------------------------------------
 #: The property names the three core attributes live under on an actor.
 CORE_KEYS = {attr.STRENGTH: "strength", attr.ENDURANCE: "endurance",
-             attr.PERSONALITY: "charisma"}
+             attr.PERSONALITY: "charisma", attr.LUCK: "luck"}
 
 #: (STRENGTH, ENDURANCE, CHARISMA) a kind of creature is rolled around, by
 #: role. Anything unlisted is an ordinary 40 / 40 / 40.
@@ -169,6 +169,13 @@ CORE_BASELINE = {
     "hen": (10, 20, 20),
 }
 
+#: LUCK a kind is rolled around, where it is not the ordinary 40: everyone
+#: has a Luck, the hen included, and some are born to it (or not).
+LUCK_BASELINE = {
+    "beggar": 25, "mudcrab": 25, "skeleton": 20, "skeleton_archer": 20,
+    "merchant": 50, "bandit_chief": 55, "dragon": 60, "hen": 55, "sheep": 30,
+}
+
 #: How far a creature's 3d6 moves each attribute: half what a player's does,
 #: so a wolf is still a wolf.
 CREATURE_PIP = POINTS_PER_PIP * 0.5
@@ -179,7 +186,7 @@ def _kind(props) -> str:
 
 
 def core(props, attr_id) -> int:
-    """STRENGTH, ENDURANCE or CHARISMA of any living thing, player aside.
+    """STRENGTH, ENDURANCE, CHARISMA or LUCK of any living thing, player aside.
 
     An authored value wins. Otherwise the creature rolls 3d6 for each, once,
     around the baseline for its kind (:data:`CORE_BASELINE`) -- the same roll
@@ -202,7 +209,8 @@ def core(props, attr_id) -> int:
 
 def _roll_core(props) -> None:
     import zlib
-    base = CORE_BASELINE.get(_kind(props), (40, 40, 40))
+    kind = _kind(props)
+    base = tuple(CORE_BASELINE.get(kind, (40, 40, 40))) + (LUCK_BASELINE.get(kind, 40),)
     seed = "|".join(str(props.get(k, "")) for k in ("name", "display_name", "npc_role",
                                                     "creature_role", "home"))
     rng = random.Random(zlib.crc32(seed.encode()))

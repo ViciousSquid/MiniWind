@@ -60,7 +60,8 @@ STRENGTH_FROM = 40
 STRENGTH_STEP = 15
 
 #: The player's attack bonus: this, plus a tenth of the weapon skill, plus
-#: Luck (one per :data:`LUCK_STEP` above :data:`LUCK_FROM`) and, for melee,
+#: Luck (one per :data:`LUCK_STEP` above :data:`LUCK_FROM`, one off per step below:
+#: :func:`luck_bonus`) and, for melee,
 #: Strength (one per :data:`STRENGTH_STEP` above :data:`STRENGTH_FROM`).
 PLAYER_ATTACK_BASE = 3
 LUCK_FROM = 40
@@ -150,7 +151,15 @@ def npc_attack_bonus(props: Optional[Dict]) -> int:
         return authored
     strength = charisma.core(props, attr.STRENGTH)
     return int(NPC_ATTACK_BASE + level(props)
-               + max(0, (strength - STRENGTH_FROM) // STRENGTH_STEP))
+               + max(0, (strength - STRENGTH_FROM) // STRENGTH_STEP)
+               + luck_bonus(charisma.core(props, attr.LUCK)))
+
+
+def luck_bonus(luck: int) -> int:
+    """What Luck does to anyone's attack bonus, both ways: +1 for each full
+    LUCK_STEP above LUCK_FROM, -1 for each full LUCK_STEP below it -- the
+    lucky land more blows, the unlucky fewer."""
+    return int((int(luck) - LUCK_FROM) / LUCK_STEP)      # toward zero
 
 
 def player_attack_bonus(character, skill: int, *, melee: bool,
@@ -158,7 +167,7 @@ def player_attack_bonus(character, skill: int, *, melee: bool,
     """The player's attack bonus with a weapon of *skill*."""
     luck = int(character.attrs.get(attr.LUCK, 40))
     bonus = PLAYER_ATTACK_BASE + int(skill) // 10
-    bonus += max(0, (luck - LUCK_FROM) // LUCK_STEP)
+    bonus += luck_bonus(luck)
     if melee:
         strength = int(character.attrs.get(attr.STRENGTH, 40))
         bonus += max(0, (strength - STRENGTH_FROM) // STRENGTH_STEP)
@@ -172,11 +181,8 @@ def player_attack_bonus(character, skill: int, *, melee: bool,
 def crit_chance(props: Optional[Dict]) -> float:
     """The chance a landed blow by anyone but the player is a critical hit:
     the player's rule, from its Luck (authored ``luck``, else 40)."""
-    luck = 40
-    if isinstance(props, dict):
-        luck = _int(props.get("luck"), 40)
-        luck = 40 if luck is None else max(0, min(100, luck))
-    return CRIT_BASE + luck * CRIT_PER_LUCK
+    luck = charisma.core(props, attr.LUCK) if isinstance(props, dict) else 40
+    return CRIT_BASE + max(0, min(100, luck)) * CRIT_PER_LUCK
 
 
 def roll_crit(props, dice=None, rng=None, name: str = "") -> bool:

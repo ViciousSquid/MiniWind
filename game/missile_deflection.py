@@ -27,7 +27,8 @@ def deflect(session, projectiles, row, target):
         if (p.get("dead") or not p.get("_shield_blocking") or blocking.npc_shield(p) is None
                 or float(p.get("_stamina", 1)) <= 0):
             return False
-        luck = p.get("luck", 40)
+        from .rpg import attributes as _attr, charisma as _cha
+        luck = _cha.core(p, _attr.LUCK)
         facing = heading(target)
         actor = target
         name = str(p.get("display_name") or p.get("name") or "NPC")
