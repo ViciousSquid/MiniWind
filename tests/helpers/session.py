@@ -205,8 +205,13 @@ class FioTestSession:
             self.window.close()
             self.window.deleteLater()
             self.window = self.view = self.logic = None
-            with open(self._settings_path, "wb") as handle:
+            # Swapped in whole: suites run sessions in parallel, and a
+            # truncate-then-write let another session read (and later
+            # "restore") an empty settings.ini, failing unrelated tests.
+            tmp = f"{self._settings_path}.{os.getpid()}.{id(self)}.tmp"
+            with open(tmp, "wb") as handle:
                 handle.write(self._settings)
+            os.replace(tmp, self._settings_path)
             os.chdir(self._previous_cwd)
             deadline = time.perf_counter() + 2.0
             while window() is not None and time.perf_counter() < deadline:
