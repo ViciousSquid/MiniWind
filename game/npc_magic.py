@@ -480,14 +480,15 @@ class NpcMagic:
             target_ac = ac_rules.of(props)
             chance = ac_rules.to_hit(bonus, target_ac)
             # A d20 of its own (no listeners: not the player's dice log).
-            roll = roll_check(DiceRoller(rng=getattr(self.session, "rng", None)), chance,
+            dice_rng = getattr(self.session, "dice_rng", None) or getattr(self.session, "rng", None)
+            roll = roll_check(DiceRoller(rng=dice_rng), chance,
                               "Roll to hit", source="combat.npc_hit",
                               why=f"d20 {bonus:+d} vs Armour Class {target_ac}",
                               context={"npc": True, "quiet": True})
             hit = bool(roll["success"])
             # It landed: the attacker rolls for a critical hit, as the
             # player does (from its Luck).
-            crit = hit and ac_rules.roll_crit(attacker, rng=getattr(self.session, "rng", None))
+            crit = hit and ac_rules.roll_crit(attacker, rng=dice_rng)
             if crit:
                 damage = damage * ac_rules.CRIT_DAMAGE
             outcome = getattr(self.session, "attack_outcome", None)

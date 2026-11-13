@@ -695,6 +695,7 @@ class MiniwindSession(SettlementLaw):
 
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
+        self._true_dice()
         self.law = Writs(self.store)
         self._arrest_region = ""
         self.needs_char_creation = str(cfg.get("start_scenario", "prompt")) == "prompt"
@@ -1141,6 +1142,32 @@ class MiniwindSession(SettlementLaw):
             line += f" → {int(res.get('damage', 0))} damage"
         companion["detail"] = line
 
+    # ------------------------------------------------------------------ dice
+    @property
+    def dice_rng(self):
+        """Where every die this session rolls gets its randomness
+        (game/dice_rng.py): the OS's cryptographic source, unless a developer
+        has set a dice seed in settings.ini (GAME -> dice_seed)."""
+        rng = self.__dict__.get("_dice_rng")
+        if rng is None:
+            import game.dice_rng as dice_rng
+            seed = ""
+            try:
+                config = self._editor_config()
+                if config is not None:
+                    seed = config.get("GAME", dice_rng.SEED_KEY, fallback="")
+            except Exception:
+                seed = ""
+            rng = self.__dict__["_dice_rng"] = dice_rng.source(seed)
+        return rng
+
+    def _true_dice(self) -> None:
+        """Point the game's dice at :attr:`dice_rng` (after it is made)."""
+        try:
+            self.game.dice.rng = self.dice_rng
+        except Exception:
+            pass
+
     def note_combat(self, foe, by_player: bool) -> None:
         """A blow between the player and *foe* (by_player: the player struck
         or swung at it; else it struck the player): the target panel shows it."""
@@ -1187,6 +1214,7 @@ class MiniwindSession(SettlementLaw):
         self._arrest_region = ""
         self.law = Writs(self.store)
         self.game = GameState(self.store, rng=self.rng)
+        self._true_dice()
         self.director.invalidate()
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
@@ -1357,7 +1385,7 @@ class MiniwindSession(SettlementLaw):
         import game.rpg.armour_class as rpg_ac
         res = rpg_combat.resolve_incoming(c, raw_damage,
                                           damage_kind=damage_kind,
-                                          blocking=self._blocking, rng=self.rng,
+                                          blocking=self._blocking, rng=self.dice_rng,
                                           dice=self.game.dice,
                                           attacker=self._attacker_name(),
                                           attack_bonus=rpg_ac.npc_attack_bonus(
@@ -1583,6 +1611,7 @@ class MiniwindSession(SettlementLaw):
             # STRENGTH, ENDURANCE and CHARISMA as the player rolled them.
             rpg_cha.apply_rolls(self.game.character, rolls)
         self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
+        self._true_dice()
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self.game.add_drink_listener(self._on_drink)

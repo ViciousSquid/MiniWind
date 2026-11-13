@@ -291,6 +291,10 @@ class CoopSession:
             self.party_quests, pid, character, rng=self.root.rng
         )
         session.store = session.game.store
+        # Every player's dice draw from the true random source (game/dice_rng.py).
+        true_dice = getattr(session, "_true_dice", None)
+        if true_dice is not None:
+            true_dice()
         # The root's store is the world store. Player-local rules explicitly
         # use GameState.store; additional sessions also use that scoped view.
         from ..sim.law import Writs
