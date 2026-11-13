@@ -13,6 +13,14 @@ detail distance) a meadow blade at the map's own size and the colour of its
 ground is a dark speck: only its shaded root shows. So the tufts are fuller,
 taller and a fresh green of their own, and read as grass.
 
+Grass near the player keeps its curved, many-segment blades; from
+:data:`DETAIL_END` units out every blade -- meadow, heath and wheat -- is
+one triangle, morphing between the two from :data:`DETAIL_START`. Fio's
+distances (350-700) suit a camera at head height; from MiniWind's, 800 units
+up, the far shape is hard to tell apart and costs a ninth of the vertices
+(grass at High: 31-36 ms a frame on llvmpipe at Fio's distances, 20-27 ms
+at these).
+
 The player's grass setting (``[Renderer] grass_quality``: high, medium, low,
 off) thins the meadow and the heath with it; at Off there is no grass at all.
 Wheat is a crop, not grass: its fields always grow in full, since the farms'
@@ -32,11 +40,16 @@ TUFT_RADIUS = 5.0
 BLADE_SCALE = 3.5
 #: The tufts' own green.
 COLOUR = (0.62, 0.85, 0.34)
+#: Grass detail distance from the player (world units): blades morph from
+#: curved to one triangle between these.
+DETAIL_START = 150.0
+DETAIL_END = 300.0
 
 
 def apply(terrain) -> bool:
-    """Grow MiniWind's meadow on *terrain* (at the start of Play). Regrows
-    its grass only when that changes anything; returns whether it did."""
+    """Grow MiniWind's meadow on *terrain* and set its grass detail distance
+    (at the start of Play). Regrows its grass only when that changes
+    anything; returns whether it did."""
     if terrain is None:
         return False
     wanted = {
@@ -46,6 +59,8 @@ def apply(terrain) -> bool:
         "meadow_colour": COLOUR,
         "GRASS_BLADES_PER_TUFT": BLADES_PER_TUFT,
         "GRASS_TUFT_RADIUS": TUFT_RADIUS,
+        "GRASS_LOD_START": DETAIL_START,
+        "GRASS_LOD_DISTANCE": DETAIL_END,
     }
     if all(getattr(terrain, name, None) == value for name, value in wanted.items()):
         return False

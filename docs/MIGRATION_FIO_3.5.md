@@ -17,7 +17,8 @@ the concern.
 | MiniWind (start) | `main` | `41eeb2c742b998ec3244356ac005a2faab450d0e` |
 | Fio (first target) | `3.5.0.1111_Latest` | `9b2dca952b88e7c1abd1f5f5979764c3783490b4` |
 | Fio (then) | `3.5.0.1111_CANARY` | `a278e956` (26 commits past `9b2dca95`) |
-| Fio (now) | `3.5.0.1211_Latest` | `77387caaeba284b5467a180b1ba39e147aace86d` (40 commits past `a278e956`) |
+| Fio (then) | `3.5.0.1211_Latest` | `77387caaeba284b5467a180b1ba39e147aace86d` (40 commits past `a278e956`) |
+| Fio (now) | `3.5.0.1211_Latest` | `bcf4d297d9d78e5269428353db36d30ab3aca19e` (23 commits past `77387caa`: Play's mouse grab) |
 | Common upstream ancestor | Fio `3.0.0.1010_Latest` | `f445fac1be58a1011da276a77de00ef9487add0a` |
 
 `backup_3.0.0.3010` is an ancestor of `41eeb2c` (22 commits behind it), so
@@ -118,6 +119,26 @@ MiniWind map, or load one of four Fio example maps kept as test fixtures in
 * Six loose sounds absent from `sounds.fiopak` would not have loaded.
 * The renderer's `[Renderer] grass`/`low_grass` settings now decide what the
   terrain grows, not only what is drawn.
+* **A left click in Play could press Stop instead of attacking** (fixed in
+  Fio, `bcf4d297`, merged three-way against `77387caa`). Play hid the cursor
+  and turned the camera from mouse movement but never grabbed the mouse, so
+  a click went to whatever widget the real pointer was over -- on macOS the
+  Play button just clicked. The view now grabs the mouse while Play's look
+  holds it (released for the pause menu, the console, an actor pick, a game
+  pointer, another window, and on leaving Play), and macOS waits for the
+  cursor's re-centre to land before detaching it. One conflict: where Play
+  stops, MiniWind's restore of the chosen camera and the fix's release of
+  the grab both stay. Tests: Fio's offscreen `tests/editor/test_play_mouse_grab.py`;
+  Fio's native-input `tests/native/test_play_click_native.py` (real clicks
+  through XTest, CGEventPost, `mouse_event` or a Wayland virtual pointer, on
+  Fio's showcase, a fixture here); and MiniWind's own
+  `tests/miniwind/test_play_click_native.py`, the same three checks on
+  MiniWind's world with a new character, where a click is an attack. Each
+  has a control that switches the grab off and must see the bug return. All
+  six pass on X11 (Xvfb, openbox, xdotool); `.github/workflows/play-click-native.yml`
+  runs them on Windows, macOS, X11 and Wayland and requires all six.
+  MiniWind's macOS mouse-look test now lets the re-centre land first. Not
+  taken: Fio's `.github/FUNDING.yml`.
 
 ## The editor while the game is fullscreen
 
@@ -337,9 +358,10 @@ At the village start (meadow everywhere; 10 s each, llvmpipe):
 | Off (wheat) | 12.7 ms | 1.0 ms | | 0.8 ms | 16.3 → 23.8-24.1 |
 
 High sends 28,000 of the 78,000 blades held, in 50-75 draws (one a chunk
-before, 4-16). A shorter detail distance (150-300 units, from 350-700) would
-bring High to 20-27 ms, with only the grass near the player keeping its
-curved blades: a visible choice, left as it is. Over the tundra (before the
+before, 4-16). MiniWind then shortens the grass detail distance to 150-300
+units from the player (Fio's 350-700 suits a camera at head height;
+`game/meadow.py`): only the grass near the player keeps its curved blades,
+and High falls to 20-27 ms (fps 15-16). Over the tundra (before the
 culling) High drew 336,000 heath blades at 3.8 fps and Off 40 fps.
 
 Where the per-frame Python went (paused overworld, main thread): PyOpenGL's

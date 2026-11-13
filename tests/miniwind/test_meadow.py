@@ -46,6 +46,15 @@ def test_play_grows_a_sparse_meadow_of_green_tufts(terrain):
             assert b[:, 3].min() >= 0.65 * meadow.BLADE_SCALE - 1e-4
 
 
+def test_grass_keeps_its_detail_only_near_the_player(terrain):
+    assert (terrain.GRASS_LOD_START, terrain.GRASS_LOD_DISTANCE) == (350.0, 700.0)   # Fio's
+    meadow.apply(terrain)
+    assert terrain.GRASS_LOD_START == meadow.DETAIL_START < meadow.DETAIL_END
+    frame = terrain.publish()
+    assert (frame.grass_lod_start, frame.grass_lod_distance) == (
+        meadow.DETAIL_START, meadow.DETAIL_END)
+
+
 def test_applying_again_changes_nothing_and_regrows_nothing(terrain):
     meadow.apply(terrain)
     table = terrain.table
