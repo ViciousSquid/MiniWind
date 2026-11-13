@@ -5,6 +5,8 @@ the overhead camera; thinned by the grass setting, gone at Off -- where the
 wheat fields, a crop the farms and the seasons depend on, still grow in full.
 """
 
+import importlib
+
 import numpy as np
 import pytest
 
@@ -12,7 +14,9 @@ pytest.importorskip("OpenGL", reason="engine.terrain imports PyOpenGL")
 
 from engine import terrain_biomes as tb   # noqa: E402
 from engine.terrain import Terrain        # noqa: E402
-from game import meadow                   # noqa: E402
+
+# Fio's own suite may not import MiniWind's game package by name.
+meadow = importlib.import_module("game.meadow")
 
 pytestmark = [pytest.mark.qt, pytest.mark.miniwind]
 

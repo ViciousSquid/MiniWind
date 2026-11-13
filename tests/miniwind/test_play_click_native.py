@@ -37,11 +37,13 @@ pytestmark = [
 def armed(fio_session, qt_app, monkeypatch):
     """MiniWind's own Play on its world: the game registered, a character
     made, the window active and the player at rest."""
+    import importlib
     import random
 
-    import game
-    from game.tools.soak import profiles
     from plugins.manager import get_manager
+    # Fio's own suite may not import MiniWind's game package by name.
+    game = importlib.import_module("game")
+    profiles = importlib.import_module("game.tools.soak").profiles
     monkeypatch.setenv("SDL_AUDIODRIVER", "dummy")
     get_manager().register_builtin_game(game.GAME)
     session = fio_session('maps/miniwind_world.json', size=(800, 450))
