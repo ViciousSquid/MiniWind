@@ -40,17 +40,172 @@ def _text(p, rect, text, size=11, color=PALE, bold=False, align=Qt.AlignLeft | Q
     p.drawText(QRectF(*rect), int(align | Qt.TextWordWrap), text)
 
 
-def _dial(p, a):
-    """Engraved escutcheon with a live cutaway, springs and two-piece pins."""
+#: Lock appearances. One minigame and one set of mechanics; only the art
+#: changes with the lock in front of you.
+STYLES = ("ornate", "iron", "rusted", "padlock")
+STYLE_LABELS = {"ornate": "ORNATE LOCK", "iron": "IRON LOCK", "rusted": "RUSTED LOCK",
+                "padlock": "PADLOCK"}
+#: Pin metal per style: (dark edge, highlight, body, dark edge).
+_PIN_METAL = {
+    "ornate": ("#65441e", "#f3cf79", "#bd8a36", "#735022"),
+    "padlock": ("#65441e", "#f3cf79", "#bd8a36", "#735022"),
+    "iron": ("#3f454b", "#d4dae0", "#8a9199", "#4a5056"),
+    "rusted": ("#4b2a12", "#c98a52", "#8a5228", "#3e220e"),
+}
+
+
+def lock_style(props) -> str:
+    """How the lock on a container with *props* looks: its own ``lock_style``,
+    or one that suits it -- a crate's padlock, an abandoned or burial chest's
+    rusted lock, a strongbox's or coffer's iron lock, a merchant's or a fine
+    lock's ornate brass. Fixed per container, so it looks the same each time."""
+    props = props or {}
+    style = str(props.get("lock_style", "") or "").lower()
+    if style in STYLES:
+        return style
+    name = str(props.get("display_name") or props.get("name") or "")
+    kind = str(props.get("container_kind", "") or "")
+    level = str(props.get("lock_difficulty", "novice") or "novice")
+    if kind == "crate" or "padlock" in name.lower():
+        return "padlock"
+    if any(w in name for w in ("Rusted", "Barrow", "Burial", "Rotten", "Drowned")):
+        return "rusted"
+    if any(w in name for w in ("Strongbox", "Coffer", "Hoard", "Cache", "Toll")):
+        return "iron"
+    if level in ("expert", "master"):
+        return "ornate"
+    key = str(props.get("id") or name)
+    roll = sum(ord(ch) * (i + 1) for i, ch in enumerate(key)) % 100
+    if level == "novice":
+        return "rusted" if roll < 55 else "iron"
+    if level == "apprentice":
+        return "iron" if roll < 65 else ("rusted" if roll < 85 else "ornate")
+    return "ornate" if roll < 50 else "iron"
+
+
+def _iron_plate(p, rusted):
+    """A plain box lock's case: a riveted iron plate, or the same pitted and
+    streaked with rust."""
+    case = QRectF(-6, 176, 468, 236)
+    body = QLinearGradient(0, 176, 0, 412)
+    if rusted:
+        body.setColorAt(0, QColor("#7a4a2a"))
+        body.setColorAt(.45, QColor("#5d3a22"))
+        body.setColorAt(1, QColor("#3b2416"))
+        edge = QColor("#2a180d")
+    else:
+        body.setColorAt(0, QColor("#6f767c"))
+        body.setColorAt(.45, QColor("#4c5257"))
+        body.setColorAt(1, QColor("#2f3438"))
+        edge = QColor("#1c2023")
+    p.setPen(QPen(edge, 3))
+    p.setBrush(body)
+    p.drawRoundedRect(case, 14, 14)
+    p.setPen(QPen(QColor(255, 255, 255, 28), 2))
+    p.drawLine(QPointF(8, 184), QPointF(450, 184))
+    p.save()
+    outline = QPainterPath()
+    outline.addRoundedRect(case.adjusted(2, 2, -2, -2), 12, 12)
+    p.setClipPath(outline, Qt.IntersectClip)       # the rust stays on the case
+    if rusted:
+        # Pitting and streaks, the same every time (no randomness per frame).
+        for i in range(46):
+            x = -2 + (i * 97) % 460
+            y = 182 + (i * 53) % 226
+            r = 3 + (i * 7) % 9
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(150 + (i * 13) % 60, 70 + (i * 11) % 40, 30, 70 + (i * 17) % 80))
+            p.drawEllipse(QPointF(x, y), r, r * .7)
+        for i in range(9):
+            x = 20 + i * 50 + (i * 17) % 23
+            streak = QLinearGradient(x, 300, x, 412)
+            streak.setColorAt(0, QColor(170, 90, 40, 0))
+            streak.setColorAt(1, QColor(150, 70, 30, 120))
+            p.setBrush(streak)
+            p.drawRect(QRectF(x, 300 + (i * 11) % 40, 5 + i % 3, 110))
+    p.restore()
+    # Rivets.
+    for rx, ry in ((14, 194), (442, 194), (14, 394), (442, 394), (228, 190), (228, 398)):
+        p.setPen(QPen(edge, 1.5))
+        p.setBrush(QColor("#8b6a50") if rusted else QColor("#9aa1a8"))
+        p.drawEllipse(QPointF(rx, ry), 7, 7)
+        p.setPen(QPen(QColor(255, 255, 255, 60), 1.2))
+        p.drawArc(QRectF(rx - 5, ry - 5, 10, 10), 40 * 16, 100 * 16)
+    # The cutaway behind the pins, and the keyway the pick enters by.
+    p.setPen(QPen(edge, 2))
+    p.setBrush(QColor("#141618"))
+    p.drawRoundedRect(QRectF(150, 214, 158, 156), 8, 8)
+    p.drawRoundedRect(QRectF(40, 322, 120, 22), 6, 6)
+
+
+def _padlock_body(p):
+    """A steel padlock: the shackle above, the body below, the keyway in its
+    foot (the mechanism inside is turned upright: the pick goes in from below)."""
+    steel = QLinearGradient(140, 0, 320, 0)
+    steel.setColorAt(0, QColor("#3a3f44"))
+    steel.setColorAt(.4, QColor("#a9b0b7"))
+    steel.setColorAt(1, QColor("#3d4247"))
+    shackle = QPainterPath(QPointF(178, 240))
+    shackle.lineTo(178, 178)
+    shackle.arcTo(QRectF(178, 132, 108, 92), 180, -180)
+    shackle.lineTo(286, 240)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(QColor("#22262a"), 26, Qt.SolidLine, Qt.FlatCap))
+    p.drawPath(shackle)
+    p.setPen(QPen(steel, 20, Qt.SolidLine, Qt.FlatCap))
+    p.drawPath(shackle)
+    body = QLinearGradient(0, 230, 0, 448)
+    body.setColorAt(0, QColor("#8d949b"))
+    body.setColorAt(.5, QColor("#5d6369"))
+    body.setColorAt(1, QColor("#363b40"))
+    p.setPen(QPen(QColor("#1d2124"), 3))
+    p.setBrush(body)
+    p.drawRoundedRect(QRectF(134, 230, 196, 218), 26, 26)
+    p.setPen(QPen(QColor(255, 255, 255, 40), 2))
+    p.drawLine(QPointF(152, 240), QPointF(312, 240))
+    p.setPen(QPen(QColor("#1d2124"), 2))
+    p.setBrush(QColor("#141618"))
+    p.drawRoundedRect(QRectF(164, 250, 136, 128), 8, 8)       # the cutaway
+    p.drawRoundedRect(QRectF(222, 384, 20, 56), 6, 6)        # the keyway, in the foot
+
+
+def _dial(p, a, style="ornate"):
+    """The lock in front of you: its case or body, a live cutaway, springs and
+    two-piece pins, and the pick. The mechanism and its numbers are the same
+    for every style; a padlock's is drawn turned upright."""
     global _PLATE
     p.save()
     p.translate(7, 8)
     p.scale(.95, .95)
-    if _PLATE is None:
-        _PLATE = QPixmap(str(Path(__file__).resolve().parents[2] /
-                            "assets/ui/lockpicking/escutcheon.png"))
-    p.setRenderHint(p.SmoothPixmapTransform, True)
-    p.drawPixmap(QRectF(-12, 130, 480, 320), _PLATE, QRectF(_PLATE.rect()))
+    if style == "ornate":
+        if _PLATE is None:
+            _PLATE = QPixmap(str(Path(__file__).resolve().parents[2] /
+                                "assets/ui/lockpicking/escutcheon.png"))
+        p.setRenderHint(p.SmoothPixmapTransform, True)
+        p.drawPixmap(QRectF(-12, 130, 480, 320), _PLATE, QRectF(_PLATE.rect()))
+    elif style in ("iron", "rusted"):
+        _iron_plate(p, style == "rusted")
+    else:
+        _padlock_body(p)
+        # Turn the mechanism upright about the pins' centre, into the body.
+        p.translate(232, 314)
+        p.rotate(-90)
+        p.scale(.8, .8)
+        p.translate(-228, -300)
+    _mechanism(p, a, style)
+    p.restore()
+    if style != "padlock":
+        p.save()
+        p.translate(7, 8)
+        p.scale(.95, .95)
+        _text(p, (65, 435, 335, 25), "DRAG ↑ / ↓ TO LIFT THE ACTIVE PIN", 9, MUTED,
+              align=Qt.AlignCenter)
+        p.restore()
+
+
+def _mechanism(p, a, style):
+    """Springs, two-piece pins and the pick, in the escutcheon's layout."""
+    metal = _PIN_METAL.get(style, _PIN_METAL["ornate"])
     xs = [173, 200, 228, 255, 282]
     shear = 312
     p.setPen(QPen(QColor(133, 203, 187, 95), 1, Qt.DashLine))
@@ -69,10 +224,10 @@ def _dial(p, a):
         gap = shear if set_ else shear + required - lift
         color = TEAL if set_ else GOLD if active else QColor("#857454")
         brass = QLinearGradient(cx - 6, 0, cx + 6, 0)
-        brass.setColorAt(0, QColor("#65441e"))
-        brass.setColorAt(.35, QColor("#f3cf79"))
-        brass.setColorAt(.7, QColor("#bd8a36"))
-        brass.setColorAt(1, QColor("#735022"))
+        brass.setColorAt(0, QColor(metal[0]))
+        brass.setColorAt(.35, QColor(metal[1]))
+        brass.setColorAt(.7, QColor(metal[2]))
+        brass.setColorAt(1, QColor(metal[3]))
         p.setBrush(brass)
         p.setPen(QPen(color, 1))
         p.drawRoundedRect(QRectF(cx - 5, gap - 27, 10, 26), 2, 2)
@@ -109,9 +264,6 @@ def _dial(p, a):
     p.drawPath(curve)
     p.setPen(QPen(QColor("#765139"), 7, Qt.SolidLine, Qt.RoundCap))
     p.drawLine(14, 333, 62, 333)
-    _text(p, (65, 435, 335, 25), "DRAG ↑ / ↓ TO LIFT THE ACTIVE PIN", 9, MUTED,
-          align=Qt.AlignCenter)
-    p.restore()
 
 
 def _pins(p, a):
@@ -159,9 +311,11 @@ def draw(p, session, x, y, w, h):
     name = session.lockpick_thing.properties.get("display_name") or "Locked container"
     _text(p, (32, 43, 750, 37), str(name), 23, PALE)
     count = inv.quantity(session.game.character.inventory, "lockpick")
+    style = lock_style(session.lockpick_thing.properties)
     _text(p, (32, 84, 750, 23),
-          f"{a.difficulty.upper()}    /    SECURITY {int(a.security)}    /    {count} PICKS    /    WORLD IS LIVE", 10, MUTED)
-    _dial(p, a)
+          f"{a.difficulty.upper()} {STYLE_LABELS[style]}    /    SECURITY {int(a.security)}    /    "
+          f"{count} PICKS    /    WORLD IS LIVE", 10, MUTED)
+    _dial(p, a, style)
     _pins(p, a)
     _text(p, (462, 124, 315, 23), f"TUMBLERS   {a.pins_set} / {a.lock.pins} LATCHED", 10, GOLD, True)
     _text(p, (462, 257, 315, 50), a.cue, 14, RED if a.strain >= .65 else TEAL if a.aligned else PALE)

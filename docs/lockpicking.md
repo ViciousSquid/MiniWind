@@ -78,3 +78,19 @@ The engraved plate is `assets/ui/lockpicking/escutcheon.png`. Pins, springs,
 shear line, pick, tension feedback, recoil and broken-pick segments are drawn
 as scalable vectors over it. `assets/sprites/spells/knock.png` is the 100×100
 placeholder spell icon.
+
+## Lock styles
+
+Every lock is picked the same way, with the same numbers; only its look
+changes with what it locks (`lock_style` in `game/ui/lockpicking.py`):
+
+| Style | Seen on | Looks like |
+| --- | --- | --- |
+| Padlock | crates | a steel padlock; the mechanism stands upright inside it and the pick goes in from below |
+| Rusted | abandoned, burial and barrow chests; many novice locks | a pitted, rust-streaked iron case with dull pins |
+| Iron | strongboxes, coffers, hoards, the toll chest; most apprentice locks | a riveted steel case with steel pins |
+| Ornate | merchants' and fine chests; expert and master locks | the engraved brass escutcheon |
+
+A container can name its own with `"lock_style"` (`ornate`, `iron`, `rusted`,
+`padlock`); otherwise it is chosen from its kind, name and difficulty, fixed
+per container so the same chest always shows the same lock.
