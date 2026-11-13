@@ -3984,18 +3984,28 @@ class MiniwindSession(SettlementLaw):
         if math.hypot(marker.pos[0] - ppos[0], marker.pos[2] - ppos[2]) < FAST_TRAVEL_NEAR:
             return False, f"You are already at {name}."
         if self._arrest_state or int(c.bounty or 0) and self._arrest_pursuers:
-            return False, "You can't fast travel while the watch is after you."
+            return False, "You cannot fast travel while the watch is after you."
         if c.is_overencumbered:
-            return False, "You are carrying too much to fast travel."
+            return False, "You cannot fast travel while carrying too much."
+        if self.hostile_near(FAST_TRAVEL_DANGER):
+            return False, "You cannot fast travel with enemies nearby."
+        hours = self._travel_hours(marker.pos[0], marker.pos[2])
+        return True, f"Fast travel to {name}? {_hours_text(hours)} on the road."
+
+    def hostile_near(self, radius) -> bool:
+        """Whether a living hostile actor stands within *radius* of the player
+        (Big World's parked actors are not there to be feared)."""
+        ppos = self._player_pos()
+        if ppos is None:
+            return False
         for t in list(self._things_of_type("creature")) + list(self._things_of_type("npc")):
             p = t.properties
             if (p.get("dead") or p.get("hidden") or "_bw_parked_hidden" in p
                     or str(p.get("aggression")) != "hostile"):
                 continue
-            if math.hypot(t.pos[0] - ppos[0], t.pos[2] - ppos[2]) < FAST_TRAVEL_DANGER:
-                return False, "You can't fast travel when enemies are nearby."
-        hours = self._travel_hours(marker.pos[0], marker.pos[2])
-        return True, f"Fast travel to {name}? {_hours_text(hours)} on the road."
+            if math.hypot(t.pos[0] - ppos[0], t.pos[2] - ppos[2]) < radius:
+                return True
+        return False
 
     def fast_travel(self, name) -> bool:
         """Travel to the discovered place called *name*: arrive there with the

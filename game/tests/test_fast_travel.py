@@ -65,12 +65,12 @@ def test_no_fast_travel_with_enemies_near_or_carrying_too_much():
                                                                  "aggression": "hostile"})
     logic.things.append(wolf)
     ok, text = s.fast_travel_check("Hollin's Cross")
-    assert not ok and text == "You can't fast travel when enemies are nearby."
+    assert not ok and text == "You cannot fast travel with enemies nearby."
     logic.things.remove(wolf)
     s.game.character.inventory.append({"id": "iron_ingot", "name": "Anvil", "qty": 1,
                                        "type": "misc", "value": 1, "weight": 100000.0})
     ok, text = s.fast_travel_check("Hollin's Cross")
-    assert not ok and text == "You are carrying too much to fast travel."
+    assert not ok and text == "You cannot fast travel while carrying too much."
 
 
 @pytest.mark.qt
