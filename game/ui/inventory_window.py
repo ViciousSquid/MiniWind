@@ -63,6 +63,9 @@ _OFF_HAND_FILL = QColor(44, 70, 86)
 #: The paperdoll's two hand slots, by the physical hand.
 HAND_LEFT = "left_hand"
 HAND_RIGHT = "right_hand"
+#: The glove slot's second box, under the right hand: the same slot as the
+#: one under the left hand (a pair of gloves), its picture mirrored.
+GLOVES_RIGHT = "hands_right"
 
 
 def _hand_slot(character, slot):
@@ -70,6 +73,8 @@ def _hand_slot(character, slot):
     hand's weapon slot or the other hand's slot, by the character's
     handedness (a right-hander's right hand is the main hand); any other
     slot is itself."""
+    if slot == GLOVES_RIGHT:
+        return "hands"
     if slot not in (HAND_LEFT, HAND_RIGHT):
         return slot
     handed = getattr(character, "handed", "right") if character is not None else "right"
@@ -189,6 +194,10 @@ def _draw_hand_ghost(painter, rect, side) -> bool:
     return False
 
 
+#: How far in from each side the side columns stand (a share of the doll's
+#: width): close to the head. The hand slots stand further out.
+COLUMN_IN = 0.19
+
 PAPERDOLL = (
     # The two hands sit mid-height on either side: the left hand on the
     # left, the right hand on the right, each its own slot with its own mouse
@@ -198,13 +207,16 @@ PAPERDOLL = (
     # slot (it still takes the off hand: lighting one puts a shield away).
     # Body armour, legs and feet stand in a column below the head, in body
     # order.
-    ("head", "Head", 0.14, 0.10),
-    ("light", "Torch", 0.14, 0.30),
+    ("head", "Head", COLUMN_IN, 0.10),
+    ("light", "Torch", COLUMN_IN, 0.30),
     (HAND_LEFT, "L", 0.115, 0.50),
-    ("hands", "Gloves", 0.14, 0.70),          # gauntlets, bracers, wraps
-    ("amulet", "Amulet", 0.86, 0.10),
-    ("ring", "Ring", 0.86, 0.30),
+    # Gloves under each hand: one slot (the pair), shown twice, the right
+    # one mirrored.
+    ("hands", "Gloves", COLUMN_IN, 0.70),     # gauntlets, bracers, wraps
+    ("amulet", "Amulet", 1.0 - COLUMN_IN, 0.10),
+    ("ring", "Ring", 1.0 - COLUMN_IN, 0.30),
     (HAND_RIGHT, "R", 0.885, 0.50),
+    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.70),
     ("chest", "Chest", 0.50, 0.555),
     ("legs", "Legs", 0.50, 0.737),
     ("feet", "Feet", 0.50, 0.92),
@@ -565,11 +577,12 @@ class InventoryWindow(FloatingWindow):
         painter.drawRoundedRect(rect, 4, 4)
 
     def _slot_box(self, painter, rect, iid, target=None, source=None, label=None,
-                  lit=False, number=None, stack=None, hand=None):
+                  lit=False, number=None, stack=None, hand=None, mirror=False):
         """One item slot: a sunken frame, its icon and count, its drop state.
         *stack* is what the slot shows when it is not the whole carried stack
         (one copy of a weapon carried twice). *hand* ("left" / "right") marks
-        a hand slot: empty, it shows a faint hand behind its label."""
+        a hand slot: empty, it shows a faint hand behind its label. *mirror*
+        draws the item's picture flipped (the right-hand glove)."""
         # Dragged, or picked up by a click: the slots it fits light up.
         dragging = self._drag or drag.offered()
         drag_def = _item(dragging[2]) if dragging else None
@@ -599,6 +612,10 @@ class InventoryWindow(FloatingWindow):
         if iid and not dragging_this:
             size = rect.width() - 10
             pm = self._icon(iid, size)
+            if mirror and pm is not None and not pm.isNull():
+                ratio = pm.devicePixelRatio()
+                pm = pm.transformed(QTransform().scale(-1, 1))
+                pm.setDevicePixelRatio(ratio)
             if pm is not None and not pm.isNull():
                 painter.drawPixmap(rect.x() + (rect.width() - pm.width()) // 2,
                                    rect.y() + (rect.height() - pm.height()) // 2, pm)
@@ -718,6 +735,7 @@ class InventoryWindow(FloatingWindow):
         s = SLOT_SIZE
         for slot, label, fx, fy in PAPERDOLL:
             hand = {HAND_LEFT: "left", HAND_RIGHT: "right"}.get(slot)
+            mirror = slot == GLOVES_RIGHT
             size = HAND_SLOT_SIZE if hand else SLOT_SIZE
             r = QRect(int(doll.x() + fx * doll.width() - size / 2),
                       int(doll.y() + fy * doll.height() - size / 2), size, size)
@@ -728,7 +746,7 @@ class InventoryWindow(FloatingWindow):
                 if c is not None and slot in ("weapon", "shield") else None
             self._slot_box(painter, r, iid, target=("equip", slot),
                            source=("equip", slot, iid) if iid else None, label=label,
-                           hand=hand if spell is None else None)
+                           hand=hand if spell is None else None, mirror=mirror)
             if spell is not None:
                 self._draw_spell_slot(painter, r, spell,
                                       ("spell_hand", "off" if slot == "shield" else "main", spell.id))
@@ -778,8 +796,9 @@ class InventoryWindow(FloatingWindow):
         painter.setPen(_INK)
         _fit(painter, f_left, Qt.AlignLeft | Qt.AlignVCenter,
              "Unarmoured" if weight == "none" else f"{weight.title()} armour")
-        self._draw_ac_badge(painter, QPoint(inner.x() + int(inner.width() * 0.31),
-                                            inner.y() + 40), ar)
+        # Bottom of the left column, under the gloves, clear of every slot.
+        self._draw_ac_badge(painter, QPoint(inner.x() + int(inner.width() * COLUMN_IN),
+                                            inner.y() + 12 + int(330 * 0.90)), ar)
         painter.setPen(_GOLD)
         _fit(painter, f_mid, Qt.AlignHCenter | Qt.AlignVCenter, f"{gold} gold")
         painter.setPen(_NO if cap and load > cap else _INK)

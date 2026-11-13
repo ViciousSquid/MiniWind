@@ -267,8 +267,12 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     assert where[iw.HAND_LEFT][0] < where["hands"][0]
     assert where[iw.HAND_RIGHT][0] > where["ring"][0]
     # The torch slot sits under the head slot; the glove slot says so.
-    assert labels["light"] == "Torch" and where["light"] == (0.14, 0.30)
-    assert labels["hands"] == "Gloves"
+    assert labels["light"] == "Torch" and where["light"] == (iw.COLUMN_IN, 0.30)
+    assert labels["hands"] == labels[iw.GLOVES_RIGHT] == "Gloves"
+    # A glove box under each hand, mirrored about the middle: one slot.
+    assert where["hands"][1] == where[iw.GLOVES_RIGHT][1] > where[iw.HAND_LEFT][1]
+    assert where["hands"][0] + where[iw.GLOVES_RIGHT][0] == pytest.approx(1.0)
+    assert iw._hand_slot(Righty(), iw.GLOVES_RIGHT) == "hands"
     # Body armour, legs, then feet, in a column below the head.
     assert where["chest"][0] == where["legs"][0] == where["feet"][0] == 0.50
     assert iw.HEAD_Y < where["chest"][1] < where["legs"][1] < where["feet"][1]
@@ -411,3 +415,29 @@ def test_a_torch_shows_in_its_own_slot_and_can_be_dropped_on_the_off_hand(qt_app
     # Dragged back to the pack, it is put away.
     assert s.inventory_move(("equip", "light", "torch"), ("pack", None), "torch")
     assert eq.light_source(c) is None
+
+
+def test_both_glove_boxes_are_the_one_pair(qt_app):
+    from PyQt5.QtGui import QImage, QPainter
+    from ..ui import inventory_window as iw
+    from .test_inventory_window import _session
+    s = _session("leather_gauntlets")
+    c = s.game.character
+    win = iw.InventoryWindow(s)
+
+    def cells():
+        image = QImage(1300, 860, QImage.Format_ARGB32)
+        painter = QPainter(image)
+        win._draw_content(painter, 0, 0, 1300, 860)
+        painter.end()
+        return [src for _r, src in win._targets if src == ("equip", "hands")], \
+               [src for _r, src in win._cells if src[0] == "equip" and src[1] == "hands"]
+
+    targets, worn = cells()
+    assert len(targets) == 2 and worn == []                # two boxes, one slot
+    assert s.inventory_move(("pack", None, "leather_gauntlets"), ("equip", "hands"),
+                            "leather_gauntlets")
+    targets, worn = cells()
+    assert worn == [("equip", "hands", "leather_gauntlets")] * 2   # shown in both
+    assert s.inventory_move(worn[1], ("pack", None), "leather_gauntlets")
+    assert eq.equipped_id(c, "hands") is None              # off from either
