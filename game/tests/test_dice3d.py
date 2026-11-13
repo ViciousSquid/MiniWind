@@ -146,14 +146,17 @@ def test_stack_dialogs_is_a_game_setting_on_by_default():
 
 
 def test_only_the_players_dice_are_in_colour():
-    mine20, theirs20 = dice3d.colours(20, True), dice3d.colours(20, False)
-    assert mine20[0] == dice3d.D20_BODY
+    assert dice3d.colours(20, True)[0] == dice3d.D20_BODY
+    shades = {dice3d.pick_shade(seed) for seed in range(200)}
+    assert shades == set(range(len(dice3d.GREYSCALE)))      # every finish turns up
     for sides in (20, 8):
-        body, ink = dice3d.colours(sides, False)
-        for colour in (body, ink):
-            assert colour.red() == colour.green() == colour.blue() or \
-                max(colour.red(), colour.green(), colour.blue()) - \
-                min(colour.red(), colour.green(), colour.blue()) <= 6   # greyscale
+        for shade in shades:
+            body, ink = dice3d.colours(sides, False, shade)
+            for colour in (body, ink):
+                rgb = (colour.red(), colour.green(), colour.blue())
+                assert max(rgb) - min(rgb) <= 6                       # greyscale
+    black, white_ink = dice3d.GREYSCALE[0]
+    assert black.lightness() < 30 and white_ink.lightness() > 230    # black dice, white numbers
 
 
 def test_a_roll_box_sits_over_its_roller_and_hushes_its_speech(qt_app):
@@ -191,6 +194,7 @@ def test_the_damage_line_is_the_damage_actually_dealt(qt_app, monkeypatch):
     monkeypatch.setattr(s, "add_floater", lambda text, kind="dmg", y=0.0: floaters.append(text))
     for _ in range(40):
         s.dice_animation = None
+        s._reveals = []                       # only this attempt's results are pending
         res = s.game.attack_creature(bandit.properties)
         s._land_player_hit(bandit, res)
         if res["hit"]:

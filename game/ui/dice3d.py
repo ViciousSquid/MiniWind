@@ -328,22 +328,30 @@ def pose(sides: int, value: int, m: Dict, local: float):
 
 # ----------------------------------------------------------------- drawing
 #: The player's dice are in colour -- the d20 red with gold numbers, any
-#: other die bone with dark ink. Anyone else's dice are greyscale: a dark
-#: grey d20 with pale numbers, any other die light grey with dark ones.
+#: other die bone with dark ink. Anyone else's dice are always greyscale,
+#: each die one of these finishes at random: (body, numbers).
 D20_BODY = QColor(150, 30, 34)
 D20_INK = QColor(255, 222, 140)
-OTHER_D20_BODY = QColor(62, 62, 66)
-OTHER_D20_INK = QColor(226, 226, 230)
-OTHER_DIE_BODY = QColor(196, 196, 200)
-OTHER_DIE_INK = QColor(40, 40, 44)
+GREYSCALE = (
+    (QColor(18, 18, 20), QColor(245, 245, 245)),      # black, white numbers
+    (QColor(52, 52, 56), QColor(236, 236, 238)),      # charcoal
+    (QColor(98, 98, 102), QColor(250, 250, 250)),     # slate
+    (QColor(176, 176, 180), QColor(28, 28, 30)),      # light grey
+    (QColor(232, 232, 234), QColor(16, 16, 18)),      # white, black numbers
+)
 
 
-def colours(sides: int, player: bool):
-    """``(body, ink)`` for a die of *sides* rolled by the player (colour) or
-    by anyone else (greyscale)."""
+def colours(sides: int, player: bool, shade: int = 0):
+    """``(body, ink)`` for a die of *sides*: the player's in colour, anyone
+    else's in greyscale finish *shade* (an index into GREYSCALE)."""
     if player:
         return (D20_BODY, D20_INK) if sides == 20 else (DIE_BODY, DIE_INK)
-    return (OTHER_D20_BODY, OTHER_D20_INK) if sides == 20 else (OTHER_DIE_BODY, OTHER_DIE_INK)
+    return GREYSCALE[int(shade) % len(GREYSCALE)]
+
+
+def pick_shade(seed: int) -> int:
+    """A random greyscale finish for one non-player die (stable per seed)."""
+    return random.Random(seed * 2654435761 + 11).randrange(len(GREYSCALE))
 DIE_BODY = QColor(226, 214, 186)
 DIE_INK = QColor(48, 34, 22)
 
