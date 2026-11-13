@@ -461,13 +461,60 @@ def _box_verdict(result):
     return f"{total} (need {target}+) — {word}", passed
 
 
+def _box_side(box):
+    """*box*'s side as this screen sees it (see _screen_roll_boxes)."""
+    return box.get("_view_side") or box.get("side") or "ally"
+
+
+def _box_against(box):
+    """Whom *box* is rolled against, ``(name, side)``, as this screen sees it."""
+    return box["_view_against"] if "_view_against" in box else box.get("against")
+
+
+def _screen_roll_boxes(session):
+    """Every roll box this screen shows. Alone, the session's own. In co-op,
+    every party member's too -- and "you" is whoever plays on this machine
+    (the local client): their rolls in colour, under YOU; another client's
+    player is a party member like any ally, named in green, dice greyscale."""
+    coop = getattr(session, "coop", None)
+    if coop is None:
+        return list(session.live_roll_boxes()) if hasattr(session, "live_roll_boxes") else []
+    local = {p.player_id for p in coop.local_players}
+
+    def name_of(pid):
+        context = coop.players.get(pid)
+        return str((context.profile or {}).get("name", "")) if context else ""
+
+    sessions = [session] + [p.session for p in coop.players.values()]
+    boxes, seen = [], set()
+    for s in sessions:
+        if s is None or id(s) in seen or not hasattr(s, "live_roll_boxes"):
+            continue
+        seen.add(id(s))
+        for box in s.live_roll_boxes():
+            if id(box) in seen:
+                continue
+            seen.add(id(box))
+            props = getattr(box.get("actor"), "properties", None) or {}
+            side, against = box.get("side") or "ally", box.get("against")
+            if side == "you":
+                pid = props.get("player_id") or box.get("player_id")
+                if pid not in local:
+                    side = "ally"
+            if against and against[1] == "you" and box.get("player_id") not in local:
+                against = (name_of(box.get("player_id")).upper() or against[0], "ally")
+            box["_view_side"], box["_view_against"] = side, against
+            boxes.append(box)
+    return boxes
+
+
 def draw_roll_boxes(painter, session, viewport, width, height):
     """Every roll on screen in a small box over the one rolling: the
     player's own (gold name), an ally's (green) or a foe's (red); a fight
     between NPCs alone on a cooler background. The real dice tumble in it
     (game/ui/dice3d.py). Boxes never overlap: a box that would is lifted
     clear above the others, a thin line still pointing to its roller."""
-    boxes = session.live_roll_boxes() if hasattr(session, "live_roll_boxes") else ()
+    boxes = _screen_roll_boxes(session)
     if not boxes or viewport is None:
         return
     try:
@@ -484,7 +531,7 @@ def draw_roll_boxes(painter, session, viewport, width, height):
             continue
         head_y = pos[1] + float(props.get("sprite_height", 112) or 112) * 0.5 + 24.0
         sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
-        if sp is None and (props.get("is_player") or box.get("side") == "you"):
+        if sp is None and _box_side(box) == "you":
             sp = (width * 0.5, height * 0.4)       # first person: over the view's middle
         if sp is None:
             continue
@@ -553,7 +600,7 @@ def _stack_roll_boxes(anchored, width, height, stack=True):
     # The player's own box first, then nearest the bottom of the screen;
     # later ones keep clear of what is already placed.
     order = sorted(clusters.values(), key=lambda m: (
-        all(anchored[i][1].get("side") != "you" for i in m),
+        all(_box_side(anchored[i][1]) != "you" for i in m),
         -max(anchored[i][0][1] for i in m)))
     placed = []
 
@@ -617,8 +664,8 @@ def _roll_box_layout(box, width):
         return None
     actor = box.get("actor")
     props = getattr(actor, "properties", None) or {}
-    side = box.get("side") or "ally"
-    against = box.get("against")
+    side = _box_side(box)
+    against = _box_against(box)
     name = "YOU" if side == "you" else str(props.get("display_name")
                                            or props.get("name") or "").upper()
     action = _box_action(result.get("label"), against[0] if against else "")
@@ -714,7 +761,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         verdict, passed = _box_verdict(result)
         ink = (_verdict_color(passed, alpha) if passed is not None
                else QColor(255, 214, 130, alpha))
-        if passed is not None and box.get("against") and box["against"][1] == "you" \
+        if passed is not None and _box_against(box) and _box_against(box)[1] == "you" \
                 and side != "you":
             ink = _verdict_color(not passed, alpha)       # their hit is bad news
         T.text_in(painter, QRect(bx, line_y, w, 18), verdict, size=13, color=ink,

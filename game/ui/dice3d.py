@@ -341,7 +341,6 @@ PLAYER_COLOURS = (
     (_WHITE, _NAVY),               # white, navy numbers
     (_WHITE, _EMBER),              # white, orange numbers
     (_IVORY, QColor(48, 34, 22)),  # ivory, dark numbers
-    (_BLUE, _ORANGE),              # blue, orange numbers
     (_BLUE, _PALE_ORANGE),         # blue, pale orange numbers
     (_PALE_ORANGE, _BLUE),         # pale orange, blue numbers
     (_EMBER, _ICE),                # ember, ice-blue numbers

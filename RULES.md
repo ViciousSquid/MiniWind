@@ -25,17 +25,33 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
 * **Roll boxes.** A roll shows in a small box over whoever rolls it (never a
   corner panel): their name in their side's colour (gold you, green an ally,
   red a foe), what the roll is for, the real dice tumbling, the verdict, and —
-  for a hit — the damage. Fights between NPCs alone use a blue-slate box. Your
-  dice are always in colour, shuffled: each die a random finish of whites
-  (white with navy or orange numbers, ivory), blues (blue with orange or pale
-  orange numbers), oranges (pale orange with blue numbers, ember with ice-blue
-  numbers) or red with gold numbers — any die, any finish. Everyone else's
-  dice are never in colour: always greyscale, each die a random finish —
-  black with white numbers, charcoal, slate, light grey, or white with black
-  numbers. The two dice of a roll are never the same colour. Boxes that
-  overlap more than slightly lock into one stack, the attacker's roll on top
-  (Settings › Game › *Stack dialogs*, on by default). A character with a roll
-  box over its head says nothing (speech bubbles, barks and thoughts wait).
+  for a hit — the damage. Fights between NPCs alone use a blue-slate box.
+  Boxes that overlap more than slightly lock into one stack, the attacker's
+  roll on top (Settings › Game › *Stack dialogs*, on by default). A character
+  with a roll box over its head says nothing (speech bubbles, barks and
+  thoughts wait).
+* **Who rolls where it can be seen.** Only actors in the NEAR simulation tier
+  roll dice on screen; anyone further out (ACTIVE, DISTANT, DORMANT), and
+  anyone Big World has parked, never does.
+* **Dice colours.** Your dice are always in colour, everyone else's never.
+  * *Yours:* each die a random finish, any die any finish — white with navy
+    numbers, white with orange numbers, ivory with dark numbers, blue with
+    pale-orange numbers, pale orange with blue numbers, ember with ice-blue
+    numbers, or red with gold numbers.
+  * *Everyone else's:* always greyscale, each die a random finish — black with
+    white numbers, charcoal, slate, light grey, or white with black numbers.
+  * The dice of one roll are never the same colour.
+* **Co-op.** "You" is whoever plays on your machine (the local client). Your
+  rolls are in colour under YOU; every other client's player is a party
+  member, and their rolls show on your screen too — under their name in
+  green, with greyscale dice. An NPC's roll against a party member names
+  them, not "you".
+* **One roll for everyone.** In co-op the host rolls every die. Every client
+  shows that same roll: the same numbers, the same tumble and the same dice
+  colours, all built from the roll's own seed. Rolls travel inside the world
+  update the host already sends (no extra messages), carrying only the
+  result, the seed and the clock; each client builds the dice once and only
+  keeps the clock in step after that.
 * **Honesty.** A box only ever shows what was rolled and what was used: the
   die's real face, the real target number, and the damage actually dealt —
   the same number that floats over the target.

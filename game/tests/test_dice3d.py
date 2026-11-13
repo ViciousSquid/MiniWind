@@ -4,6 +4,7 @@ rolled; a hit's damage die rolls beside its d20."""
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 
 import pytest
 
@@ -333,3 +334,125 @@ def test_a_rattling_die_keeps_its_rolled_face_up():
         rotation, _dx, _dy, settled = dice3d.pose(20, 13, m, m["duration"] + t)
         toward = [dice3d._apply(rotation, n)[2] for _idx, n in faces]
         assert settled and max(range(20), key=toward.__getitem__) == 12
+
+
+# ------------------------------------------------------------------ co-op
+def _coop_screen():
+    """Two clients' players: Ash plays on this machine, Bryn on another."""
+    def avatar(pid, name):
+        return SimpleNamespace(pos=[0.0, 0.0, 0.0], properties={
+            "name": name, "display_name": name, "is_player": True,
+            "player_id": pid, "multiplayer_player": True})
+
+    def roll(actor, pid, side="you", against=None):
+        return {"result": {"label": "Attack", "total": 12, "target": 10, "success": True,
+                           "components": [{"notation": "1d20", "roll_details": [12]}]},
+                "elapsed": 0.0, "actor": actor, "side": side, "against": against,
+                "kind": "party", "player_id": pid, "seed": 5}
+
+    ash, bryn = avatar("a", "Ash"), avatar("b", "Bryn")
+    wolf = SimpleNamespace(pos=[0.0, 0.0, 0.0], properties={"name": "Wolf"})
+    mine, theirs = roll(ash, "a"), roll(bryn, "b")
+    at_bryn = roll(wolf, "b", side="foe", against=("YOU", "you"))
+    sa = SimpleNamespace(live_roll_boxes=lambda: [mine])
+    sb = SimpleNamespace(live_roll_boxes=lambda: [theirs, at_bryn])
+    a = SimpleNamespace(player_id="a", session=sa, profile={"name": "Ash"})
+    b = SimpleNamespace(player_id="b", session=sb, profile={"name": "Bryn"})
+    sa.coop = SimpleNamespace(players={"a": a, "b": b}, local_players=[a])
+    return sa, mine, theirs, at_bryn
+
+
+def test_in_coop_you_are_whoever_plays_on_this_machine(qt_app):
+    from ..ui import hud
+    screen, mine, theirs, at_bryn = _coop_screen()
+    boxes = hud._screen_roll_boxes(screen)
+    assert {id(b) for b in boxes} == {id(mine), id(theirs), id(at_bryn)}   # the party's rolls too
+    assert hud._box_side(mine) == "you"                    # yours: in colour, YOU
+    assert hud._box_side(theirs) == "ally"                 # a party member's: greyscale
+    assert hud._box_against(at_bryn) == ("BRYN", "ally")   # not "vs YOU" on your screen
+    mine_layout = hud._roll_box_layout(mine, 1200)
+    their_layout = hud._roll_box_layout(theirs, 1200)
+    assert mine_layout["side"] == "you" and mine_layout["parts"][0][0] == "YOU"
+    assert their_layout["side"] == "ally" and their_layout["parts"][0][0] == "BRYN"
+
+
+def test_alone_your_rolls_are_still_yours(qt_app):
+    from ..ui import hud
+    box = {"side": "you", "actor": SimpleNamespace(pos=[0, 0, 0], properties={}), "player_id": None}
+    solo = SimpleNamespace(live_roll_boxes=lambda: [box])
+    assert hud._screen_roll_boxes(solo) == [box] and hud._box_side(box) == "you"
+
+
+def test_roll_boxes_only_open_in_the_near_tier(qt_app):
+    from engine.spatial import TIER_ACTIVE
+    from .test_cast_controls import _Logic, _Thing
+    from ..runtime import MiniwindSession
+    wolf = _Thing("Wolf", (100.0, 0.0, 0.0), type="creature", npc_role="wolf")
+    s = MiniwindSession(_Logic([wolf]), cfg={})
+    s._player_pos = lambda: [0.0, 0.0, 0.0]
+    roll = {"label": "Roll to hit", "roll_result": 7, "target": 9,
+            "components": [{"notation": "1d20", "roll_details": [7]}]}
+    wolf.properties["_sim_tier"] = TIER_ACTIVE
+    assert s.show_roll_box(wolf, roll) is None
+    wolf.properties["_sim_tier"] = 0
+    wolf.properties["_bw_parked_hidden"] = False          # parked: never rolls
+    assert s.show_roll_box(wolf, roll) is None
+    del wolf.properties["_bw_parked_hidden"]
+    assert s.show_roll_box(wolf, roll) is not None
+
+
+def test_every_client_sees_the_same_dice(qt_app, monkeypatch):
+    """The host rolls; a client shows that very roll -- the same numbers, the
+    same throw, the same finishes -- for a player's own roll and a roll box
+    over anyone near them, after a trip over the wire."""
+    import json
+    from .test_cast_controls import _Logic, _Thing
+    from ..multiplayer import replication
+    from ..runtime import MiniwindSession
+    from ..ui import hud
+
+    def session(wolf):
+        s = MiniwindSession(_Logic([wolf]), cfg={})
+        s._player_pos = lambda: [0.0, 0.0, 0.0]
+        s.player_id = "b"
+        return s
+
+    wolf = _Thing("Wolf", (100.0, 0.0, 0.0), type="creature", npc_role="wolf", id="wolf_7")
+    host = session(wolf)
+    monkeypatch.setattr(host, "_visualise_dice_rolls_enabled", lambda: True)
+    host._on_dice_roll({"label": "Attack", "total": 15, "target": 10, "success": True,
+                        "components": [{"notation": "1d20", "roll_details": [15]}]},
+                       "test", {"against_name": "Wolf"})
+    assert host.dice_animation is not None and "seed" in host.dice_animation
+    assert host.show_roll_box(wolf, {"label": "Roll to hit", "total": 4, "target": 12,
+                                     "success": False,
+                                     "components": [{"notation": "1d20", "roll_details": [4]}]})
+
+    def seen(box):
+        return [(v["sides"], v["value"], v["shade"], v["motion"])
+                for v in hud._prepare_dice_animation(dict(box), box["result"])]
+
+    host_box = next(iter(host.roll_boxes.values()))
+    wire = json.loads(json.dumps(replication.rolls_out(host)))
+    client_wolf = _Thing("Wolf", (100.0, 0.0, 0.0), type="creature", id="wolf_7")
+    avatar = _Thing("Bryn", (0.0, 0.0, 0.0), type="npc", id="b")
+    client = session(client_wolf)
+    replication.rolls_in(client, wire, {"wolf_7": client_wolf, "b": avatar}, avatar, "b")
+
+    assert client.dice_animation["actor"] is avatar
+    assert client.dice_animation["result"]["components"][0]["roll_details"] == [15]
+    assert seen(client.dice_animation) == seen(host.dice_animation)
+    (client_box,) = client.roll_boxes.values()
+    assert client_box["actor"] is client_wolf and client_box["result"]["total"] == 4
+    assert seen(client_box) == seen(host_box)
+    # Lean on the wire: the tumble is rebuilt from the seed, never sent.
+    hud._prepare_dice_animation(host_box, host_box["result"])
+    assert "dice_visuals" not in json.dumps(replication.rolls_out(host))
+    # The next frame keeps what is already shown (its dice built once), and
+    # only steps its clock to the host's.
+    hud._prepare_dice_animation(client_box, client_box["result"])
+    host_box["elapsed"] = 0.4
+    replication.rolls_in(client, json.loads(json.dumps(replication.rolls_out(host))),
+                         {"wolf_7": client_wolf, "b": avatar}, avatar, "b")
+    assert next(iter(client.roll_boxes.values())) is client_box
+    assert client_box["elapsed"] == 0.4 and "dice_visuals" in client_box

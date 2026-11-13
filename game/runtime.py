@@ -1090,6 +1090,11 @@ class MiniwindSession(SettlementLaw):
             "actor": self.player_actor, "side": "you", "kind": "party",
             "against": ((str(context["against_name"]), "foe")
                         if context.get("against_name") else None),
+            # Whose roll it is in co-op: "you" only on that player's own machine.
+            "player_id": getattr(self, "player_id", None),
+            # The dice's tumble and finishes come from this, so every co-op
+            # client sees the same throw (never from a memory address).
+            "seed": self.rng.randint(1, 1 << 15),
         }
         return
 
@@ -1111,6 +1116,14 @@ class MiniwindSession(SettlementLaw):
             return "foe"
         return "ally"
 
+    def rolls_dice(self, actor) -> bool:
+        """Whether *actor* rolls dice where they can be seen: only in the NEAR
+        simulation tier, and never while Big World has them parked."""
+        props = getattr(actor, "properties", None) or {}
+        if "_bw_parked_hidden" in props or "_bw_parked_disabled" in props:
+            return False
+        return self._tier_of(actor) <= TIER_NEAR
+
     def show_roll_box(self, actor, result, *, kind: str = "party", side=None,
                       against=None) -> Optional[Dict]:
         """Show *result* (a d20 check) in a small box over *actor*: the one
@@ -1120,12 +1133,15 @@ class MiniwindSession(SettlementLaw):
         enough to be on screen; one box per actor, the newest."""
         if actor is None or not result or getattr(actor, "pos", None) is None:
             return None
+        if not self.rolls_dice(actor):
+            return None
         ppos = self._player_pos()
         if ppos is not None and self._dist2d(actor.pos, ppos) > BARK_RADIUS:
             return None
         box = {"result": result, "elapsed": 0.0, "duration": DICE_DISPLAY_DURATION,
                "actor": actor, "kind": kind, "side": side or self.side_of(actor),
-               "against": against, "seed": self.rng.randint(1, 1 << 15)}
+               "against": against, "seed": self.rng.randint(1, 1 << 15),
+               "player_id": getattr(self, "player_id", None)}
         self.__dict__.setdefault("roll_boxes", {})[id(actor)] = box
         return box
 
