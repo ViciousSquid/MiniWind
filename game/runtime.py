@@ -11431,6 +11431,7 @@ class MiniwindSession(SettlementLaw):
         self.director.restore()
         self.director.invalidate()
         self.law.restore()
+        self.encounters.restore()
         self._clear_arrest()
         if getattr(self, "living", None) is not None:
             self.living.restore()

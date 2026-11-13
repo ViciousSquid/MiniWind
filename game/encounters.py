@@ -29,6 +29,10 @@ default :data:`THRESHOLD`) the encounter is *interesting*: it joins the
 session's chronicle -- what happened, who was there and the
 :mod:`game.provenance` of each -- whether or not anything is written.
 
+The chronicle rides in the session's store (:data:`STORE_KEY`), as the
+storyteller and the law do: a cave, a save and a load keep it, and restoring
+an autosave brings back the chronicle as it stood then.
+
 **Recording is optional** (``[GAME] record_encounters``, off by default; the
 pause menu's OPTIONS ▸ Advanced). Recorded, an interesting encounter is
 written to ``saves/encounters/<when>-<place>/``: ``encounter.json`` (the
@@ -57,6 +61,8 @@ QUIET_SECONDS = 8.0
 THRESHOLD = 10
 #: How many interesting encounters the chronicle keeps.
 CHRONICLE_SIZE = 20
+#: The session store key the chronicle is kept under.
+STORE_KEY = "encounters.chronicle"
 #: Roles that are a fight in themselves.
 BOSS_ROLES = ("bandit_chief", "wraith", "dragon", "yeti", "warboss", "giant_spider_queen",
               "necromancer", "bear")
@@ -118,6 +124,27 @@ class EncounterRecorder:
         #: Set by the host: ``<the game's root>/saves``.
         self.saves_root = None
         self._folder = None
+
+    # -- persistence --------------------------------------------------------
+    def persist(self) -> None:
+        """Write the chronicle into the session's store (only when it grows:
+        a record is a few kilobytes, too much to dump every second)."""
+        store = getattr(self.session, "store", None)
+        if store is not None:
+            store.set(STORE_KEY, json.dumps(self.chronicle, default=str))
+
+    def restore(self) -> None:
+        """Read the chronicle back from the session's store (a new map's
+        session, a loaded save)."""
+        store = getattr(self.session, "store", None)
+        raw = store.get(STORE_KEY, "") if store is not None else ""
+        try:
+            data = json.loads(raw) if raw and raw != "false" else []
+        except (TypeError, ValueError):
+            data = []
+        if not isinstance(data, list):
+            data = []
+        self.chronicle = [r for r in data if isinstance(r, dict)][-CHRONICLE_SIZE:]
 
     # -- settings -----------------------------------------------------------
     def _option(self, key, default):
@@ -297,6 +324,7 @@ class EncounterRecorder:
             except OSError:
                 pass
             self.capture_due = (end_shot, "end")
+        self.persist()
 
 
 def _named(session, foe, who: str) -> bool:

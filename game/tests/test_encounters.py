@@ -107,3 +107,24 @@ def test_only_a_name_of_its_own_counts_as_named():
     assert rec.current.score == 6 and rec.current.interesting_at is None
     rec.engage(wrexa)
     assert rec.current.reasons["named"] == 2
+
+
+def test_the_chronicle_survives_a_new_map_and_a_load():
+    """Every map (a cave, the way out, a loaded save) starts a new session:
+    the chronicle used to start empty each time, forgetting every fight."""
+    session = _session([])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    rec, clock = _recorder(session)
+    session.encounters = rec
+    for i in range(3):
+        rec.engage(entities.Creature(pos=[0, 0, 0], properties={
+            "npc_role": "bandit_chief", "display_name": f"Boss {i}"}))
+    clock.t += 20
+    rec.tick()
+    assert len(rec.chronicle) == 1
+    cave = _session([])
+    cave.store = cave.game.store = session.store      # one store, as across maps
+    cave.restore()
+    (record,) = cave.encounters.chronicle
+    assert record["summary"] == rec.chronicle[0]["summary"]
+    assert record["provenance"] == rec.chronicle[0]["provenance"]
