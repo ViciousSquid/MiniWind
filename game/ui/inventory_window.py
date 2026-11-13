@@ -217,15 +217,18 @@ PAPERDOLL = (
     ("ring", "Ring", 1.0 - COLUMN_IN, 0.30),
     (HAND_RIGHT, "R", 0.885, 0.50),
     (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.70),
-    ("chest", "Chest", 0.50, 0.555),
-    ("legs", "Legs", 0.50, 0.737),
-    ("feet", "Feet", 0.50, 0.92),
+    ("chest", "Chest", 0.50, 0.58),
+    ("legs", "Legs", 0.50, 0.755),
+    ("feet", "Feet", 0.50, 0.925),
 )
 
 #: Where the character's head sits in the doll (a share of its height) and
-#: how big it is drawn: high enough for the chest, legs and feet beneath it.
-HEAD_Y = 0.27
-HEAD_SIZE = 130
+#: how big it is drawn: below the Armour Class shield, and high enough for
+#: the chest, legs and feet beneath it.
+HEAD_Y = 0.315
+HEAD_SIZE = 110
+#: The Armour Class shield's centre, in pixels down from the doll's top.
+AC_BADGE_Y = 18
 
 #: Pack tabs: (label, categories shown; None = everything).
 TABS = (
@@ -796,16 +799,16 @@ class InventoryWindow(FloatingWindow):
         painter.setPen(_INK)
         _fit(painter, f_left, Qt.AlignLeft | Qt.AlignVCenter,
              "Unarmoured" if weight == "none" else f"{weight.title()} armour")
-        # Bottom of the left column, under the gloves, clear of every slot.
-        self._draw_ac_badge(painter, QPoint(inner.x() + int(inner.width() * COLUMN_IN),
-                                            inner.y() + 12 + int(330 * 0.90)), ar)
+        # Directly above the character's head, in the middle.
+        self._draw_ac_badge(painter, QPoint(inner.x() + inner.width() // 2,
+                                            inner.y() + 12 + AC_BADGE_Y), ar)
         painter.setPen(_GOLD)
         _fit(painter, f_mid, Qt.AlignHCenter | Qt.AlignVCenter, f"{gold} gold")
         painter.setPen(_NO if cap and load > cap else _INK)
         _fit(painter, f_right, Qt.AlignRight | Qt.AlignVCenter, f"{load:.0f} / {cap:.0f} wt")
 
     def _draw_ac_badge(self, painter, centre, ac):
-        """Armour Class on a little heater shield, top left of the paperdoll."""
+        """Armour Class on a little heater shield, above the paperdoll's head."""
         cx, cy = centre.x(), centre.y()
         path = QPainterPath()
         path.moveTo(cx - 20, cy - 22)
