@@ -654,7 +654,7 @@ def _draw_item_detail(painter, x, y, w, stack, c):
     # equipment summary at the top
     T.text(painter, x, y + 12, "Equipped", size=12, color=T.GOLD_BRIGHT, bold=True)
     slot_labels = [("weapon", "Weapon"), ("shield", "Shield"), ("head", "Head"),
-                   ("chest", "Body"), ("hands", "Hands"), ("legs", "Legs"),
+                   ("chest", "Body"), ("hands", "Gloves"), ("legs", "Legs"),
                    ("feet", "Feet"), ("ammo", "Ammo")]
     yy = y + 30
     for slot, label in slot_labels:

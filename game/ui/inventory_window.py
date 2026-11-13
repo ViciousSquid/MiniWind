@@ -194,17 +194,17 @@ PAPERDOLL = (
     # left, the right hand on the right, each its own slot with its own mouse
     # button. Which equipment slot backs each depends on handedness
     # (_hand_slot): the main hand is the weapon slot, the other hand the one
-    # that takes a shield, a second weapon or a spell.
+    # that takes a shield, a second weapon, a torch or a spell. Legs and feet
+    # stand below the head, in body order.
     ("head", "Head", 0.14, 0.10),
     ("chest", "Chest", 0.14, 0.30),
     (HAND_LEFT, "L", 0.115, 0.50),
-    ("hands", "Hands", 0.14, 0.70),
-    ("legs", "Legs", 0.14, 0.90),
+    ("hands", "Gloves", 0.14, 0.70),          # gauntlets, bracers, wraps
     ("amulet", "Amulet", 0.86, 0.10),
     ("ring", "Ring", 0.86, 0.30),
     (HAND_RIGHT, "R", 0.885, 0.50),
-    ("light", "Torch", 0.86, 0.70),
-    ("feet", "Feet", 0.86, 0.90),
+    ("legs", "Legs", 0.50, 0.73),
+    ("feet", "Feet", 0.50, 0.92),
 )
 
 #: Pack tabs: (label, categories shown; None = everything).
@@ -276,6 +276,14 @@ def slot_of(item_def):
     return None
 
 
+def _is_light(item_def) -> bool:
+    try:
+        import game.rpg.items as itemdb
+        return itemdb.is_light_source(item_def)
+    except Exception:
+        return False
+
+
 def fits(target, item_def) -> bool:
     """Whether an item may be dropped on *target* (``("equip", slot)``,
     ``("quick", i)``, ``("pack", None)``)."""
@@ -287,6 +295,8 @@ def fits(target, item_def) -> bool:
     if kind == "quick":
         return item_def.category == "weapon"
     if kind == "equip":
+        if key == "shield" and _is_light(item_def):
+            return True                 # a torch is held in the off hand
         if key == "shield" and item_def.category == "weapon":
             # The off hand: a second one-handed weapon is dual wielding.
             import game.rpg.equipment as equipment
@@ -635,7 +645,7 @@ class InventoryWindow(FloatingWindow):
         (there are no bodies in MiniWind). Faint spokes run from it to the
         slots round it."""
         cx = area.center().x()
-        cy = area.y() + int(area.height() * 0.45)
+        cy = area.y() + int(area.height() * 0.40)    # legs and feet stand below
         size = 150
         painter.setPen(QPen(QColor(90, 84, 72, 110), 1, Qt.DashLine))
         for _slot, _label, fx, fy in PAPERDOLL:
@@ -704,11 +714,15 @@ class InventoryWindow(FloatingWindow):
                       int(doll.y() + fy * doll.height() - size / 2), size, size)
             slot = _hand_slot(c, slot)
             iid = worn.get(slot)
+            held = slot
+            if slot == "shield" and not iid and worn.get("light"):
+                # A torch is held in the off hand (its own slot underneath).
+                iid, held = worn.get("light"), "light"
             import game.rpg.equipment as eq
             spell = eq.hand_spell(c, "off" if slot == "shield" else "main") \
                 if c is not None and slot in ("weapon", "shield") else None
             self._slot_box(painter, r, iid, target=("equip", slot),
-                           source=("equip", slot, iid) if iid else None, label=label,
+                           source=("equip", held, iid) if iid else None, label=label,
                            hand=hand if spell is None else None)
             if spell is not None:
                 self._draw_spell_slot(painter, r, spell,
