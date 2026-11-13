@@ -374,7 +374,7 @@ def _graphics(menu):
     page = _options(menu)
     _row(page, "advanced")
     menu.handle_key(_key(QtCore.Qt.Key_Return))
-    assert [r[0] for r in page.rows()] == ["graphics", "advanced_back"]
+    assert [r[0] for r in page.rows()] == ["graphics", "record", "advanced_back"]
     menu.handle_key(_key(QtCore.Qt.Key_Return))
     assert [r[0] for r in page.rows()] == ["grass", "graphics_back"]
     return page
@@ -393,6 +393,21 @@ def test_advanced_graphics_holds_the_grass_and_escape_climbs_back(app):
     assert page.section == "advanced" and menu.page == "options"
     menu.handle_key(_key(QtCore.Qt.Key_Escape))
     assert page.section is None and menu.page == "options"
+
+
+def test_advanced_turns_encounter_recording_on_and_off(app):
+    menu = _menu()
+    state = {"on": False}
+    menu.editor.pause_menu_record_encounters = lambda: state["on"]
+    menu.editor.pause_menu_set_record_encounters = lambda on: state.update(on=bool(on))
+    page = _graphics(menu)
+    menu.handle_key(_key(QtCore.Qt.Key_Escape))      # back up to Advanced
+    rows = {k: v for k, _l, v, _o in page.rows()}
+    assert rows["record"] == "Off"
+    _row(page, "record")
+    page.change("record")
+    assert state["on"] and {k: v for k, _l, v, _o in page.rows()}["record"] == "On"
+    _draw(menu)
 
 
 def test_the_grass_slider_steps_through_four_stops_and_applies_at_once(app):

@@ -1392,6 +1392,7 @@ class MiniwindGame:
                 # label is never hidden under a toast.
                 inspector.draw_pick_hover(painter, viewport, w, h)
                 self._serve_autosave(session, viewport)
+                self._serve_capture(session, viewport)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
                 if session.open_screen is None and session.dialogue is None \
@@ -1761,6 +1762,31 @@ class MiniwindGame:
         import game.ui.theme as T
         import game.ui.screens as screens
         T.dim_screen(painter, w, h, alpha=screens.CREATION_DIM)
+
+    @staticmethod
+    def _serve_capture(session, viewport):
+        """Take the screenshot the encounter recorder asked for
+        (game/encounters.py), on the UI thread, after this frame is drawn."""
+        recorder = getattr(session, "encounters", None)
+        if recorder is None or viewport is None:
+            return
+        if recorder.saves_root is None:
+            root = getattr(getattr(viewport, "editor", None), "root_dir", None)
+            if root:
+                import os
+                recorder.saves_root = os.path.join(root, "saves")
+        due, recorder.capture_due = recorder.capture_due, None
+        if not due:
+            return
+        path = due[0]
+        from PyQt5.QtCore import QTimer
+
+        def grab():
+            try:
+                viewport.grabFramebuffer().save(path)
+            except Exception:
+                pass
+        QTimer.singleShot(0, grab)
 
     @staticmethod
     def _serve_autosave(session, viewport):

@@ -79,6 +79,13 @@ class OptionsPage:
         self.menu._call_action("pause_menu_set_music_volume", value)
         self.menu.view.update()
 
+    def _recording(self) -> bool:
+        reader = getattr(self.menu.actions, "pause_menu_record_encounters", None)
+        try:
+            return bool(reader()) if reader is not None else False
+        except Exception:
+            return False
+
     def _config(self):
         reader = getattr(self.menu.actions, "pause_menu_config", None)
         try:
@@ -127,7 +134,9 @@ class OptionsPage:
         import game.ui.launcher as launcher
         s = self.settings
         if self.section == "advanced":
+            recording = self._recording()
             return [("graphics", "Graphics", "▸", True),
+                    ("record", "Record encounters", "On" if recording else "Off", True),
                     ("advanced_back", "Back", "", True)]
         if self.section == "graphics":
             rows = []
@@ -168,7 +177,10 @@ class OptionsPage:
         if key == "grass" and s is not None:
             return launcher.grass_help(s.grass) + "  Drag or use ← →."
         if key == "advanced":
-            return "Graphics: how much grass the world grows."
+            return "Graphics, and recording the fights worth remembering."
+        if key == "record":
+            return ("Keep a record and screenshots of each fight that becomes interesting, "
+                    "in saves/encounters.")
         if key == "graphics":
             return "Grass, changed while you play."
         if key == "volume":
@@ -223,6 +235,10 @@ class OptionsPage:
             self.section = {"advanced": "advanced", "graphics": "graphics",
                             "advanced_back": None, "graphics_back": "advanced"}[key]
             self.index = 0
+            self.menu.view.update()
+            return
+        if key == "record":
+            self.menu._call_action("pause_menu_set_record_encounters", not self._recording())
             self.menu.view.update()
             return
         if key == "keys_back":

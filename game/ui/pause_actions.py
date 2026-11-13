@@ -432,6 +432,13 @@ class PauseActions:
         if self._session() is not None:
             hits.queue(lambda session: session.toggle_waypoint(x, z, pick))
 
+    def pause_menu_record_encounters(self):
+        """Whether interesting encounters are recorded ([GAME] record_encounters)."""
+        return str(self._game_option("record_encounters", "False")).lower() in ("1", "true", "yes", "on")
+
+    def pause_menu_set_record_encounters(self, on):
+        self._set_game_option("record_encounters", bool(on))
+
     def pause_menu_travel_check(self, name):
         """``(may_travel, text)`` for fast travel to the place called *name*,
         asked while the game is paused (MiniwindSession.fast_travel_check)."""

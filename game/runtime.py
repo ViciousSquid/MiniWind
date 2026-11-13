@@ -838,6 +838,10 @@ class MiniwindSession(SettlementLaw):
         self._offscreen_tick = 0
         #: id(actor) -> (x, z, y) where it was last stood on the ground.
         self._grounded = {}
+        #: The fights worth remembering, and where everyone in them came from
+        #: (game/encounters.py, game/provenance.py).
+        from .encounters import EncounterRecorder
+        self.encounters = EncounterRecorder(self)
         #: Routes round walls for every walker (game/navigation.py).
         from .navigation import Navigator, PlanningBudget
         budget = getattr(logic, '_miniwind_navigation_budget', None)
@@ -1187,6 +1191,8 @@ class MiniwindSession(SettlementLaw):
         from .rpg import luck as luck_rules
         word = (luck_rules.LUCK_TEXT if roll.get("fate") == "lucky"
                 else luck_rules.UNLUCKY_TEXT)
+        if self.__dict__.get("encounters") is not None:
+            self.encounters.fate(word)
         after = self._reveal_delay(actor, every_die=True)
         self.float_text(actor, word, CRIT_FLOAT_SECONDS, after=after)
         props = getattr(actor, "properties", None) or {}
@@ -1249,8 +1255,13 @@ class MiniwindSession(SettlementLaw):
     def note_combat(self, foe, by_player: bool) -> None:
         """A blow between the player and *foe* (by_player: the player struck
         or swung at it; else it struck the player): the target panel shows it."""
+        if foe is None or foe is self.player_actor:
+            return
+        recorder = self.__dict__.get("encounters")
+        if recorder is not None:
+            recorder.engage(foe)
         panel = self.__dict__.get("target_panel")
-        if panel is None or foe is None or foe is self.player_actor:
+        if panel is None:
             return
         try:
             panel.note(foe, by_player)
@@ -1484,6 +1495,8 @@ class MiniwindSession(SettlementLaw):
             self.attack_outcome(attacker, not res.get("deflected"), crit=bool(res.get("crit")))
             if res.get("crit"):
                 self.shake(*CRIT_SHAKE)
+                if self.__dict__.get("encounters") is not None:
+                    self.encounters.crit(False)
         if res.get("fate") and res.get("block_roll"):
             self._tell_fate(self.player_actor, res["block_roll"])    # LUCK! / UNLUCKY!
         # armour training whenever armour is tested -- a deflected blow too
@@ -2192,6 +2205,7 @@ class MiniwindSession(SettlementLaw):
 
         # keep the engine's health pool in step with the character
         self._sync_engine_health()
+        self._watch_encounter()
 
         # the wandering Wisp companion light
         self._update_wisp(delta)
@@ -3188,6 +3202,8 @@ class MiniwindSession(SettlementLaw):
         an honest bandit-slaying apart from a murder at the player's own hand and
         remember the player accordingly (see :meth:`_on_npc_death`)."""
         p = getattr(target, "properties", {}) or {}
+        if self.__dict__.get("encounters") is not None:
+            self.encounters.kill(target)
         coop = getattr(self, "coop", None)
         if coop is not None:
             coop.party_quests.record("kill", [p.get(k) for k in ("id",) + KILL_FIELDS],
@@ -4024,6 +4040,18 @@ class MiniwindSession(SettlementLaw):
                 if not self._blocked_by_wall(px, gy + 40.0, pz):
                     return (float(px), float(pz))
         return (float(x), float(z))
+
+    def _watch_encounter(self) -> None:
+        """Tell the encounter recorder how the player stands (game/encounters.py)."""
+        recorder = self.__dict__.get("encounters")
+        if recorder is None or recorder.current is None:
+            return
+        c = self.game.character
+        if c.is_dead:
+            recorder.fell()
+            return
+        recorder.health(c.health / max(1.0, float(c.max_health)))
+        recorder.tick()
 
     # ---------------------------------------------------------- arrival cover
     def _update_arrival(self) -> None:
@@ -7473,6 +7501,8 @@ class MiniwindSession(SettlementLaw):
         hit = bool(res.get("hit"))
         self._tell_damage(res)
         self.note_combat(target, True)
+        if hit and res.get("crit") and self.__dict__.get("encounters") is not None:
+            self.encounters.crit(True)
         self.attack_outcome(self.player_actor, hit, crit=bool(res.get("crit")))
         if res.get("block_roll"):
             self.show_roll_box(target, res["block_roll"])     # their shield save
