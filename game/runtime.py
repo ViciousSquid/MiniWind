@@ -1242,6 +1242,15 @@ class MiniwindSession(SettlementLaw):
                 pass
         return done
 
+    def tutorial_enabled(self) -> bool:
+        """The experimental tutorial after character creation: only when
+        settings.ini has ``[developer] enable_tutorial = true``."""
+        import game.tutorial as tutorial
+        try:
+            return tutorial.enabled(self._editor_config())
+        except Exception:
+            return False
+
     def camera_rotation_enabled(self) -> bool:
         """Allow right-stick and bracket-key camera rotation; on by default."""
         return self._game_flag("camera_rotation")

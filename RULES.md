@@ -110,6 +110,14 @@ for Strength, Endurance and Charisma; each roll moves the attribute by
 `round((total − 10.5) × 4)` (−30 at 3, +30 at 18). Reroll as often as you
 like (`game/rpg/character.py`).
 
+**Tutorial (experimental).** With `[developer] enable_tutorial = true` in
+settings.ini, the last step of making a character has a "Show tutorial"
+checkbox (ticked; T toggles it). Begin then opens four short pages: moving,
+your two hands (a mouse button or trigger each), quick slots, the inventory.
+Every control named is the one in use: keyboard and mouse or gamepad,
+whichever was used last, switching at once, by your own bindings. Enter / A
+next, ← / D-pad ← back, Esc / B skip. Without the setting none of it appears.
+
 ### Classes
 
 Thirteen classes; the character creator offers six (★). A class sets your

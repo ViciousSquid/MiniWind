@@ -1470,7 +1470,7 @@ class MiniwindGame:
         "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
         "quest": "Current Quest",
         "lockpicking": "Lockpicking",
-        "training": "Training", "tutor": "Spell Tutor",
+        "training": "Training", "tutor": "Spell Tutor", "tutorial": "Tutorial",
     }
 
     def _close_overlay_screen(self, session, screen):

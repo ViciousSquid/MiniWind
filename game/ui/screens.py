@@ -90,6 +90,7 @@ _SCREEN_BODY_SIZE = {
     "lockpicking": (820, 560),
     "training": (760, 600),
     "tutor": (820, 600),
+    "tutorial": (720, 360),
 }
 
 
@@ -284,6 +285,9 @@ def _draw_charcreate(painter, session, w, h):
                    "Begin your adventure, or go back to change anything.")
         _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)
         hint = "Enter begin    Esc back"
+        if _tutorial_offered(session):
+            _draw_tutorial_box(painter, QRect(tx, inner.bottom() - 100, 260, 26), s)
+            hint = "Enter begin    T show tutorial    Esc back"
 
     # Back / Next (Begin on the last step), above the key hints.
     bw_, bh_ = 128, 32
@@ -534,6 +538,10 @@ def _handle_charcreate(session, key):
             if _roll_settled(s):
                 _cc_roll(session)
             return True
+    elif step == "confirm" and _tutorial_offered(session):
+        if key in ("t", "up", "down", "space"):
+            s["tutorial"] = not s.get("tutorial", True)
+            return True
     elif step in ("class", "birthsign"):
         ids = (classes.CREATION_CLASS_IDS if step == "class"
                else birthsigns.CREATION_BIRTHSIGN_IDS)
@@ -572,6 +580,119 @@ def _finish_charcreate(session):
         _cc_roll(session)
     session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head,
                                 handed=s.get("handed", "right"), rolls=s.get("rolls"))
+    if _tutorial_offered(session) and s.get("tutorial", True):
+        open_tutorial(session)
+
+
+# ===========================================================================
+# Tutorial (experimental: settings.ini [developer] enable_tutorial)
+# ===========================================================================
+def _tutorial_offered(session) -> bool:
+    check = getattr(session, "tutorial_enabled", None)
+    try:
+        return bool(check()) if check is not None else False
+    except Exception:
+        return False
+
+
+def _toggle_tutorial(session):
+    s = _cc(session)
+    s["tutorial"] = not s.get("tutorial", True)
+
+
+def _draw_tutorial_box(painter, rect, s):
+    """Character creation's "Show tutorial" checkbox (ticked by default)."""
+    on = s.get("tutorial", True)
+    hot = hits.hovered(rect)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    box = QRect(rect.x(), rect.y() + (rect.height() - 18) // 2, 18, 18)
+    painter.setBrush(QColor(34, 30, 44, 235))
+    painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD, 1.5))
+    painter.drawRoundedRect(box, 3, 3)
+    if on:
+        painter.setPen(QPen(T.GOLD_BRIGHT, 2.4))
+        painter.drawLine(box.x() + 4, box.y() + 9, box.x() + 8, box.y() + 13)
+        painter.drawLine(box.x() + 8, box.y() + 13, box.x() + 14, box.y() + 5)
+    painter.restore()
+    T.text(painter, box.right() + 10, box.y() + 14, "Show tutorial", size=12,
+           color=T.GOLD_BRIGHT if hot else T.INK, family="Georgia")
+    hits.add(QRect(rect), _toggle_tutorial, "Show tutorial")
+
+
+def open_tutorial(session):
+    _sel(session)["tutorial"] = {"page": 0}
+    session.open_screen = "tutorial"
+
+
+def _tutorial_turn(step):
+    def action(session):
+        _handle_tutorial(session, "return" if step > 0 else "left")
+    return action
+
+
+def _close_tutorial(session):
+    _sel(session).pop("tutorial", None)
+    if session.open_screen == "tutorial":
+        session.open_screen = None
+
+
+def _draw_tutorial(painter, session, w, h):
+    import game.tutorial as tutorial
+    st = _sel(session).setdefault("tutorial", {"page": 0})
+    book = tutorial.pages()
+    page = max(0, min(int(st.get("page", 0)), len(book) - 1))
+    title, lines = book[page]
+    x, y, bw, bh = _panel_rect(w, h, 0.56, 0.42)
+    inner = T.panel(painter, x, y, bw, bh)
+    ty = T.heading(painter, inner, title, f"Tutorial  ·  {page + 1} of {len(book)}")
+    line_y = ty + 14
+    metrics = QFontMetrics(T.font(13, False, False, "Georgia"))
+    line_w = inner.width() - 16
+    for line in lines:
+        tall = metrics.boundingRect(QRect(0, 0, line_w, 400), Qt.TextWordWrap, line).height()
+        T.text_in(painter, QRect(inner.x() + 8, line_y, line_w, tall + 4), line,
+                  size=13, color=T.INK, align=Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
+                  family="Georgia")
+        line_y += tall + 12
+    # page dots
+    cx = inner.x() + inner.width() // 2 - (len(book) - 1) * 9
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    for i in range(len(book)):
+        painter.setBrush(T.GOLD_BRIGHT if i == page else T.DIM)
+        painter.drawEllipse(QRectF(cx + i * 18 - 4, inner.bottom() - 70, 8, 8))
+    painter.restore()
+    bw_, bh_ = 120, 30
+    by = inner.bottom() - 22 - bh_
+    button(painter, QRect(inner.x(), by, bw_, bh_), "Back", _tutorial_turn(-1), enabled=page > 0)
+    button(painter, QRect(inner.x() + inner.width() // 2 - bw_ // 2, by, bw_, bh_), "Skip",
+           _close_tutorial)
+    button(painter, QRect(inner.right() - bw_, by, bw_, bh_),
+           "Finish" if page == len(book) - 1 else "Next", _tutorial_turn(1), primary=True)
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+              tutorial.hint(page, len(book)), size=10, color=T.DIM, align=T.ALIGN_CENTER,
+              family="Georgia")
+
+
+def _handle_tutorial(session, key):
+    import game.tutorial as tutorial
+    st = _sel(session).setdefault("tutorial", {"page": 0})
+    count = len(tutorial.pages())
+    if key in ("return", "enter", "right", "d", "space"):
+        if st["page"] >= count - 1:
+            _close_tutorial(session)
+        else:
+            st["page"] += 1
+        return True
+    if key in ("left", "a", "backspace"):
+        st["page"] = max(0, st["page"] - 1)
+        return True
+    if key in ("escape", "esc"):
+        _close_tutorial(session)
+        return True
+    return True
 
 
 # ===========================================================================
@@ -2077,7 +2198,7 @@ _DRAW = {
     "character": _draw_character, "journal": _draw_journal,
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
     "container": _draw_container, "quest": _draw_quest,
-    "lockpicking": _draw_lockpicking,
+    "lockpicking": _draw_lockpicking, "tutorial": _draw_tutorial,
     "training": lambda p, s, w, h: _teaching().draw_training(p, s, w, h),
     "tutor": lambda p, s, w, h: _teaching().draw_tutor(p, s, w, h),
 }
@@ -2086,7 +2207,7 @@ _HANDLE = {
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
     "container": _handle_container, "quest": _handle_quest,
-    "lockpicking": _handle_lockpicking,
+    "lockpicking": _handle_lockpicking, "tutorial": _handle_tutorial,
     "book": lambda session, key: _handle_book(session, key),
     "map": _handle_map,
     "training": lambda session, key: _teaching().handle_training(session, key),
