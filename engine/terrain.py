@@ -1262,6 +1262,16 @@ class Terrain:
     #: :meth:`_generate_meadow_blades`). Off: ordinary terrain stays clear,
     #: and grass is the biome map's wheat fields and tundra heath only.
     meadow_grass = False
+    #: Meadow tufts per square world unit; None uses the map's grass density
+    #: (which also scales the wheat and the tundra). A game that wants only
+    #: the odd tuft about the land sets it low.
+    meadow_density = None
+    #: Meadow blade size, times the map's blade height: a game seen from
+    #: high above grows its odd tuft taller so it reads as grass.
+    meadow_blade_scale = 1.0
+    #: The meadow's own blade colour (r, g, b), or None to take the colour of
+    #: the ground it grows on.
+    meadow_colour = None
 
     def _generate_grass_blades(self, slot: int) -> np.ndarray:
         """Per-blade instance records ``(x, y, z, size, yaw, tint, r, g, b)``.
@@ -1294,14 +1304,18 @@ class Terrain:
         """
         table = self.table
         size = float(table.size[slot])
+        density = self.grass_density if self.meadow_density is None else self.meadow_density
         limit = self.GRASS_MAX_PER_CHUNK
-        if self.grass_density > LEGACY_GRASS_DENSITY_MAX:
-            limit = int(limit * (self.grass_density / LEGACY_GRASS_DENSITY_MAX))
+        if density > LEGACY_GRASS_DENSITY_MAX:
+            limit = int(limit * (density / LEGACY_GRASS_DENSITY_MAX))
         tufts = min(
             limit,
-            int(max(0.0, self.grass_density) * size * size)
+            int(max(0.0, density) * size * size)
         )
-        if tufts <= 0:
+        # A lower grass quality keeps the first share of the tufts placed
+        # below: the same meadow, thinned, rather than a different one.
+        grown = int(tufts * self._grass_budget())
+        if grown <= 0:
             return np.empty((0, 9), dtype=np.float32)
 
         seed = (
@@ -1313,6 +1327,8 @@ class Terrain:
         tx = float(table.world[slot, 0]) + rng.random(tufts) * size
         tz = float(table.world[slot, 1]) + rng.random(tufts) * size
         edge_roll = rng.random(tufts)
+        if grown < tufts:
+            tx, tz, edge_roll = tx[:grown], tz[:grown], edge_roll[:grown]
 
         # Slope from the unterraced surface: terrace risers are a styling of
         # the ground, not cliffs, and should not strip the grass off a hill.
@@ -1373,14 +1389,17 @@ class Terrain:
         data[:, 0] = bx
         data[:, 1] = self._get_heights_batch(bx, bz)
         data[:, 2] = bz
-        data[:, 3] = size_roll
+        data[:, 3] = size_roll * float(self.meadow_blade_scale)
         data[:, 4] = yaw_roll
         data[:, 5] = tint_roll
         # The colour of the ground each blade stands on, for grass that
         # matches the terrain (the default until a blade colour is chosen).
-        data[:, 6:9] = self._ground_colors(
-            slot, data[:, 1], np.repeat(tuft_raw, per_tuft),
-            np.repeat(tuft_slope, per_tuft))
+        if self.meadow_colour is not None:
+            data[:, 6:9] = np.asarray(self.meadow_colour, dtype=np.float32)
+        else:
+            data[:, 6:9] = self._ground_colors(
+                slot, data[:, 1], np.repeat(tuft_raw, per_tuft),
+                np.repeat(tuft_slope, per_tuft))
         return data
 
     def _generate_wheat_blades(self, slot: int) -> np.ndarray:
@@ -1399,10 +1418,9 @@ class Terrain:
             return np.empty((0, 9), dtype=np.float32)
         density_scale = min(1.0, max(0.0, self.grass_density) / 0.02)
         height, ripeness, season_cover = self.wheat_stage
+        # Whatever the grass quality: a field is a crop, not grass.
         tufts = int(terrain_biomes.WHEAT_MAX_PER_CHUNK * min(1.0, cover * 1.3 + 0.1)
-                    * max(0.35, density_scale) * season_cover
-                    # low quality: the original 9,000 of today's 13,500
-                    * (1.0 if self.grass_quality != 'low' else 2.0 / 3.0))
+                    * max(0.35, density_scale) * season_cover)
         if tufts <= 0:
             return np.empty((0, 9), dtype=np.float32)
         seed = ((int(self.seed) * 2654435761)
@@ -1470,11 +1488,11 @@ class Terrain:
             self.table.mark_grass_dirty()
         return True
 
-    #: 'high' (thick meadows) or 'low' (the original grass: half the tufts,
-    #: narrower blades) -- settings.ini [Renderer] low_grass.
+    #: How much grass grows, by quality: the share of the meadow and tundra
+    #: tufts a chunk would grow at 'high' (settings.ini [Renderer]
+    #: grass_quality). Wheat is a crop, not grass: always grown in full.
     grass_quality = 'high'
-    #: (tuft budget multiplier, blade half-width) per quality.
-    GRASS_QUALITIES = {'high': (1.0, 0.45), 'low': (0.5, 0.35)}
+    GRASS_QUALITIES = {'high': 1.0, 'medium': 0.5, 'low': 0.25, 'off': 0.0}
     #: settings.ini [Renderer] grass: False (set by the host from the
     #: renderer's setting, before :meth:`advance`) grows and publishes no
     #: grass anywhere, whatever the map asks for.
@@ -1488,12 +1506,11 @@ class Terrain:
         if quality == self.grass_quality:
             return False
         self.grass_quality = quality
-        self.GRASS_BLADE_WIDTH = self.GRASS_QUALITIES[quality][1]
         self.table.mark_grass_dirty()
         return True
 
     def _grass_budget(self) -> float:
-        return self.GRASS_QUALITIES.get(self.grass_quality, (1.0, 0.45))[0]
+        return self.GRASS_QUALITIES.get(self.grass_quality, 1.0)
 
     def _biome_size_scale(self) -> float:
         """Wheat, reeds and tundra keep their own real heights whatever the

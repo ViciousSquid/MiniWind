@@ -223,6 +223,37 @@ def test_wheat_and_tundra_keep_their_full_blade_populations(terrain, channels, b
     np.testing.assert_array_equal(terrain._generate_grass_blades(slot), expected)
 
 
+def test_grass_quality_thins_the_meadow_to_a_subset_and_off_leaves_the_wheat(terrain):
+    """High, medium, low, off: all, half, a quarter and none of the meadow
+    tufts -- the first ones placed, so a lower quality thins the same meadow
+    -- while a wheat field grows in full at every quality."""
+    terrain.set_grass(True, density=0.05)
+    terrain.meadow_grass = True
+    slot = _slot(terrain)
+    tufts = {}
+    for quality in ("high", "medium", "low", "off"):
+        terrain.set_grass_quality(quality)
+        tufts[quality] = terrain._generate_meadow_blades(slot)
+    n = {q: len(b) for q, b in tufts.items()}
+    assert n["high"] > 0 and n["off"] == 0
+    assert 0.4 < n["medium"] / n["high"] < 0.6
+    assert 0.18 < n["low"] / n["high"] < 0.32
+    medium_roots = {(round(float(x), 3), round(float(z), 3)) for x, z in tufts["medium"][:, [0, 2]]}
+    # The blades scatter afresh round each tuft, but the tufts are high's:
+    # every medium blade lies within a tuft radius of some high blade.
+    hx = tufts["high"][:, [0, 2]]
+    for x, z in list(medium_roots)[:200]:
+        assert np.min(np.hypot(hx[:, 0] - x, hx[:, 1] - z)) <= 2 * terrain.GRASS_TUFT_RADIUS
+    _paint_vegetation(terrain, tb.WHEAT)
+    terrain.meadow_grass = False
+    wheat = {}
+    for quality in ("high", "off"):
+        terrain.set_grass_quality(quality)
+        wheat[quality] = terrain._generate_grass_blades(slot)
+    assert len(wheat["high"]) > 0
+    np.testing.assert_array_equal(wheat["off"], wheat["high"])
+
+
 def test_tundra_stand_has_twice_as_many_tufts_as_before(terrain, monkeypatch):
     """Dense heath doubles its placement budget, not the wheat or other biomes."""
     _paint_vegetation(terrain, tb.TUNDRA)

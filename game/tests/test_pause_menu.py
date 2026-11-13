@@ -107,6 +107,9 @@ class _Editor:
     def pause_menu_apply_display(self):
         self.applied += 1
 
+    def pause_menu_apply_grass(self, grass):
+        self.calls.append(("grass", grass))
+
     def pause_menu_rearrange_hud(self):
         self.calls.append(("hud",))
 
@@ -307,7 +310,8 @@ def _row(page, key):
 def test_options_show_the_launchers_display_settings_and_the_music_volume(app):
     page = _options(_menu())
     rows = {key: (label, value) for key, label, value, _on in page.rows()}
-    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "keys", "hud", "back"}
+    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "keys", "hud",
+                         "advanced", "back"}
     assert rows["mode"][1] == "Fullscreen"         # the launcher's default
     assert rows["volume"][1] == "50%"
     _draw(page.menu)                                # paints without error
@@ -355,6 +359,82 @@ def test_vsync_and_high_dpi_toggle_and_say_they_wait_for_a_relaunch(app):
     assert "next launch" in page._note("vsync")
 
 
+def _graphics(menu):
+    page = _options(menu)
+    _row(page, "advanced")
+    menu.handle_key(_key(QtCore.Qt.Key_Return))
+    assert [r[0] for r in page.rows()] == ["graphics", "advanced_back"]
+    menu.handle_key(_key(QtCore.Qt.Key_Return))
+    assert [r[0] for r in page.rows()] == ["grass", "graphics_back"]
+    return page
+
+
+def _grass_calls(menu):
+    return [c[1] for c in menu.editor.calls if c[0] == "grass"]
+
+
+def test_advanced_graphics_holds_the_grass_and_escape_climbs_back(app):
+    menu = _menu()
+    page = _graphics(menu)
+    assert dict((k, v) for k, _l, v, _o in page.rows())["grass"] == "High"
+    _draw(menu)                                     # paints without error
+    menu.handle_key(_key(QtCore.Qt.Key_Escape))
+    assert page.section == "advanced" and menu.page == "options"
+    menu.handle_key(_key(QtCore.Qt.Key_Escape))
+    assert page.section is None and menu.page == "options"
+
+
+def test_the_grass_slider_steps_through_four_stops_and_applies_at_once(app):
+    menu = _menu()
+    page = _graphics(menu)
+    seen = []
+    for _ in range(4):
+        menu.handle_key(_key(QtCore.Qt.Key_Left))
+        seen.append(page.settings.grass)
+    assert seen == ["medium", "low", "off", "off"]  # stops at the end
+    assert _grass_calls(menu) == ["medium", "low", "off"]
+    config = page.settings.config
+    assert config.get("Renderer", "grass_quality") == "off"
+    assert config.get("Renderer", "grass") == "True"  # the wheat still grows
+    menu.handle_key(_key(QtCore.Qt.Key_Right))
+    assert page.settings.grass == "low"
+    assert "next launch" not in page._note("grass")
+
+
+def test_the_grass_slider_follows_a_click_and_a_drag(app):
+    menu = _menu()
+    page = _graphics(menu)
+    _draw(menu)
+    track = page._sliders["grass"]
+
+    def at(fraction, kind=QtCore.QEvent.MouseButtonPress):
+        return QtGui.QMouseEvent(kind, QtCore.QPoint(int(track.left() + track.width() * fraction),
+                                                     int(track.center().y())),
+                                 QtCore.Qt.LeftButton, QtCore.Qt.LeftButton,
+                                 QtCore.Qt.NoModifier)
+    menu.handle_mouse_press(at(0.0))
+    assert page.settings.grass == "off"
+    menu.handle_mouse_move(at(0.36, QtCore.QEvent.MouseMove))
+    assert page.settings.grass == "low"
+    menu.handle_mouse_move(at(0.62, QtCore.QEvent.MouseMove))
+    menu.handle_mouse_move(at(0.70, QtCore.QEvent.MouseMove))   # same stop: no regrow
+    assert page.settings.grass == "medium"
+    assert _grass_calls(menu) == ["off", "low", "medium"]
+
+
+def test_applying_grass_tells_the_renderer_the_view_hands_the_terrain(app):
+    from types import SimpleNamespace
+    from ..ui.pause_actions import PauseActions
+    renderer = SimpleNamespace(grass_enabled=True, grass_quality="high")
+    view = SimpleNamespace(renderer=renderer, update=lambda: None)
+    actions = PauseActions.__new__(PauseActions)
+    actions.view = view
+    for grass in ("medium", "low", "off", "high"):
+        actions.pause_menu_apply_grass(grass)
+        # Off is a quality: grass stays enabled, so the wheat still grows.
+        assert (renderer.grass_enabled, renderer.grass_quality) == (True, grass)
+
+
 def test_music_volume_steps_and_zero_is_off(app):
     menu = _menu()
     page = _options(menu)
@@ -371,7 +451,7 @@ def test_the_volume_slider_follows_a_click_and_a_drag(app):
     menu = _menu()
     page = _options(menu)
     _draw(menu)
-    track = page._slider
+    track = page._sliders["volume"]
     press = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress,
                               QtCore.QPoint(int(track.left() + track.width() * 0.8),
                                             int(track.center().y())),

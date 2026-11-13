@@ -883,6 +883,8 @@ class MiniwindGame:
         host = getattr(self, "_host", None)
         globals_store = host.globals if host is not None else None
         fio.set_camera_mode(logic, PLAY_CAMERA)
+        from . import meadow
+        meadow.apply(fio.terrain(logic))      # the odd tuft about the land
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
         if party_lobby is not None:

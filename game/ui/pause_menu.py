@@ -224,7 +224,8 @@ class PauseMenu:
 
     def _heading(self):
         if self.page == 'options':
-            return 'OPTIONS'
+            section = getattr(self.options, 'section', None)
+            return {'advanced': 'ADVANCED', 'graphics': 'GRAPHICS'}.get(section, 'OPTIONS')
         if self.page == 'load':
             return 'LOAD GAME'
         if self.page == 'save':

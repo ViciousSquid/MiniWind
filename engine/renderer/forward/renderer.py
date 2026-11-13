@@ -104,10 +104,12 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             #: settings.ini [Renderer] grass: False turns terrain grass off
             #: everywhere, whatever each map asks for.
             self.grass_enabled = config.getboolean('Renderer', 'grass', fallback=True)
-            #: settings.ini [Renderer] low_grass: True keeps the original,
-            #: half-as-thick grass; False (default) the thick meadows.
-            self.grass_quality = ('low' if config.getboolean('Renderer', 'low_grass', fallback=False)
-                                  else 'high')
+            #: settings.ini [Renderer] grass_quality: how much grass grows
+            #: (Terrain.GRASS_QUALITIES: high, medium, low, off; wheat always
+            #: grows). An older file's low_grass = True was half the grass.
+            legacy = 'medium' if config.getboolean('Renderer', 'low_grass', fallback=False) else 'high'
+            self.grass_quality = str(config.get('Renderer', 'grass_quality',
+                                                fallback=legacy)).strip().lower() or legacy
             try:
                 shadow_size = config.getint('Renderer', 'shadow_map_size', fallback=self.SHADOW_MAP_SIZE)
             except Exception:

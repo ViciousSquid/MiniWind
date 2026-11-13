@@ -123,6 +123,33 @@ def test_reset_restores_the_documented_defaults(ini):
             == str(lx.DEFAULTS["high_dpi_scaling"]))
 
 
+def test_grass_round_trips_through_the_renderers_own_key(ini):
+    for grass in ("off", "low", "medium", "high"):
+        lx.DisplaySettings(ini).save("Fullscreen", 1280, 720, True, grass=grass)
+        assert _read(ini, "Renderer", "grass_quality") == grass
+        assert _read(ini, "Renderer", "grass") == "True"   # off keeps the wheat
+        assert lx.DisplaySettings(ini).grass == grass
+
+
+def test_an_older_files_grass_keys_still_read(ini):
+    config = configparser.ConfigParser()
+    config.read(ini)
+    config.remove_option("Renderer", "grass_quality")
+    config.set("Renderer", "low_grass", "True")
+    with open(ini, "w") as f:
+        config.write(f)
+    assert lx.DisplaySettings(ini).grass == "medium"      # it was half the grass
+    lx.DisplaySettings(ini).save("Fullscreen", 1280, 720, True, grass="low")
+    assert "low_grass" not in open(ini).read()             # one key from now on
+
+
+def test_reset_puts_the_grass_back_to_high(ini):
+    s = lx.DisplaySettings(ini)
+    s.save("Windowed", 1280, 720, True, grass="off")
+    s.reset()
+    assert lx.DisplaySettings(ini).grass == "high"
+
+
 # --- the launcher itself ---------------------------------------------------
 def test_it_opens_showing_what_is_in_the_file(ui, ini):
     assert ui.current_mode() == lx.DisplaySettings(ini).mode
@@ -143,6 +170,15 @@ def test_changing_a_control_writes_through_immediately(ui, ini):
     assert _read(ini, "Kiosk", "window_mode") == "Windowed"
     ui.vsync_check.setChecked(False)
     assert _read(ini, "Display", "vsync") == "False"
+
+
+def test_the_grass_control_writes_through_and_shows_the_file(app, ini):
+    lx.DisplaySettings(ini).save("Fullscreen", 1280, 720, True, grass="low")
+    dialog = lx.Launcher(ROOT, ini)
+    assert dialog.grass_combo.currentData() == "low"
+    dialog.grass_combo.setCurrentIndex(dialog.grass_combo.findData("off"))
+    assert _read(ini, "Renderer", "grass_quality") == "off"
+    dialog.close()
 
 
 def test_toggling_high_dpi_writes_through_and_warns_it_needs_a_restart(ui, ini):

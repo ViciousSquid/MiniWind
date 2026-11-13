@@ -401,6 +401,17 @@ class PauseActions:
             if apply is not None:
                 apply()
 
+    def pause_menu_apply_grass(self, grass):
+        """Grass quality now: the renderer's two settings, which the view hands
+        the terrain every frame (QtGameView._publish_terrain); the terrain
+        regrows its grass only when they change."""
+        renderer = getattr(self.view, "renderer", None)
+        if renderer is None:
+            return
+        renderer.grass_enabled = True          # Off still grows the wheat
+        renderer.grass_quality = grass
+        self.view.update()
+
     # --------------------------------------------------------------- leaving
     def pause_menu_map_data(self):
         """``(world map, features)`` for the MAP page (see game/ui/worldmap)."""
