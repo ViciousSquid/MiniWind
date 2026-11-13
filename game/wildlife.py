@@ -66,6 +66,17 @@ def roams(props) -> bool:
         return _roams(*key)
 
 
+def _point(value):
+    """*value* as an ``(x, z)`` pair, or None if it is not one. An older save
+    stored a roaming creature's destination as the string "(x, z)", and the
+    whole game tick failed on it, every frame, from then on."""
+    try:
+        x, z = value
+        return float(x), float(z)
+    except (TypeError, ValueError):
+        return None
+
+
 class Wildlife:
     def __init__(self, session):
         self.session = session
@@ -95,7 +106,7 @@ class Wildlife:
             if not self._idle(t, p, ppos):
                 p.pop("_roam_dest", None)
                 continue
-            dest = p.get("_roam_dest")
+            dest = _point(p.get("_roam_dest"))
             if dest is None:
                 wait = float(p.get("_roam_wait", 0.0)) - delta
                 if wait > 0.0:

@@ -45,3 +45,15 @@ def test_off_screen_npcs_move_in_strides_without_losing_time():
 def test_without_a_fitted_view_active_npcs_move_every_tick():
     seen = _moves(fit=False)
     assert len(seen["Off"]) == len(seen["Near"]) == 8
+
+
+def test_a_roaming_destination_saved_as_a_string_is_replaced_not_fatal():
+    """Older saves stored a creature's roaming destination as "(x, z)"; the
+    whole game tick then failed on it every frame (no health sync, no
+    quests, an engine death the game never saw)."""
+    from game.wildlife import _point
+    assert _point((1, 2)) == (1.0, 2.0)
+    assert _point([3.5, -4]) == (3.5, -4.0)
+    assert _point("(-9621.0, -1047.1)") is None
+    assert _point(None) is None
+    assert _point(7) is None
