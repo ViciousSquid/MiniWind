@@ -769,7 +769,7 @@ all accumulated time when it runs, so simulation time is not lost.
                                 monster_table.MODE_SEARCH)
 
         for i in np.flatnonzero(in_sight):
-            face_direction(monsters[rows[i]], target_pos[i] - p32[i], delta)
+            face_direction(monsters[rows[i]], target_pos[i] - p32[i], delta[i])
 
         # ---- Step toward the target, sliding along walls ------------------
         final = p32.copy()
