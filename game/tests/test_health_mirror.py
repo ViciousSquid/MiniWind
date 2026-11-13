@@ -49,3 +49,18 @@ def test_the_same_toast_is_not_stacked_while_it_is_still_showing():
     session.notifications[:] = [n for n in session.notifications if n["t"] > 0]
     session.notify("No healing potions")
     assert [n["text"] for n in session.notifications] == ["No healing potions"]
+
+
+def test_a_closed_shop_says_when_it_opens():
+    from .. import entities
+    elowen = entities.NPC(pos=[0, 0, 0], properties={
+        "name": "Elowen", "display_name": "Elowen the Trader", "npc_role": "merchant",
+        "merchant": True, "flour_target": 8})
+    session = _session([elowen])
+    session.clock.hour = 8.1
+    elowen.properties["opening_day"] = session.clock.day
+    elowen.properties["opening_hour"] = 9.5
+    assert session._shop_closed_text(elowen) == \
+        "The shop is closed. Elowen the Trader opens at 09:30."
+    session.clock.hour = 22.0
+    assert session._shop_closed_text(elowen).endswith("opens at 09:30 tomorrow.")

@@ -9798,6 +9798,22 @@ class MiniwindSession(SettlementLaw):
                           "actions": [{"op": "persuade"}]})
         return {"start": "g", "nodes": {"g": {"text": greeting, "responses": responses}}}
 
+    def _shop_closed_text(self, npc) -> str:
+        """Why a flour shop will not trade, and when it will: "The shop is
+        closed." alone left a new player at 08:00 with no idea it opens at
+        half past nine."""
+        p = npc.properties
+        who = str(p.get("display_name") or p.get("name") or "The shopkeeper")
+        opens = self.flour_supply.opening_hour(npc)
+        at = f"{int(opens):02d}:{int(round((opens % 1) * 60)) % 60:02d}"
+        hour = float(self.clock.hour)
+        if hour < opens:
+            return f"The shop is closed. {who} opens at {at}."
+        entry = self._schedule_entry(npc)
+        if hour >= 12.0 and (entry is None or entry.get("state") != sched.WORKING):
+            return f"The shop is closed for the night. {who} opens at {at} tomorrow."
+        return f"The shop is closed: {who} is away from it just now."
+
     def _dialogue_action(self, npc, action):
         op = action.get("op")
         if op == "fortune":
@@ -9813,7 +9829,7 @@ class MiniwindSession(SettlementLaw):
                     and not self.flour_supply.is_open(npc)):
                 self.end_dialogue()
                 self.merchant_npc = None
-                self.notify("The shop is closed.", 4.0)
+                self.notify(self._shop_closed_text(npc), 5.0)
                 return
             region = self._law_region(npc.pos, npc)
             if self.law.curfew(region, self._law_now()):
