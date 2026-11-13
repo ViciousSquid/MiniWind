@@ -47,3 +47,13 @@ def test_no_hostile_skeleton_stands_in_millbrooks_fields(world):
             if t["properties"].get("npc_role") == "skeleton"
             and math.hypot(t["pos"][0], t["pos"][2]) < 7000]
     assert not near, near
+
+
+def test_the_first_hour_has_locks_to_pick(world):
+    """Only distant chests were locked: a new player never met lockpicking."""
+    locks = {t["properties"]["name"]: t["properties"] for t in world["things"]
+             if t.get("type") == "container" and t["properties"].get("locked")}
+    for name in ("rusted_lockbox", "old_mill_strongbox", "aldric_toll_chest"):
+        assert name in locks, name
+    assert "owner" not in locks["rusted_lockbox"] and "owner" not in locks["old_mill_strongbox"]
+    assert locks["aldric_toll_chest"]["owner"] == "Aldric"

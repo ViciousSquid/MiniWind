@@ -742478,7 +742478,7 @@
                 "name": "Folk667'sChest_f0",
                 "id": "d6a69e19-4cd7-57d8-b220-d229b064eea2",
                 "container_kind": "chest",
-                "display_name": "Folk667's Chest",
+                "display_name": "Edda's Chest",
                 "inventory": [
                     {
                         "id": "egg",
@@ -742524,7 +742524,7 @@
                 "name": "Folk677'sBarrel_f0",
                 "id": "f6d9502b-71dc-5ff0-b1b7-ac062dc1bc9e",
                 "container_kind": "barrel",
-                "display_name": "Folk677's Barrel",
+                "display_name": "Joss's Barrel",
                 "inventory": [
                     {
                         "id": "cloth_wraps",
@@ -742579,7 +742579,7 @@
                 "name": "Folk681'sChest_f0",
                 "id": "0a7f490c-ef8b-5a64-8e60-4d7e5102bebf",
                 "container_kind": "chest",
-                "display_name": "Folk681's Chest",
+                "display_name": "Alys's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -742652,7 +742652,7 @@
                 "name": "Folk681'sBarrel_f1",
                 "id": "a45a7b34-4099-5522-9995-6093297ef240",
                 "container_kind": "barrel",
-                "display_name": "Folk681's Barrel",
+                "display_name": "Alys's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -742689,7 +742689,7 @@
                 "name": "Folk685'sChest_f0",
                 "id": "c98c4b18-64a7-5daa-a60e-43bee6d5c812",
                 "container_kind": "chest",
-                "display_name": "Folk685's Chest",
+                "display_name": "Bennet's Chest",
                 "inventory": [
                     {
                         "id": "wool",
@@ -742735,7 +742735,7 @@
                 "name": "Folk689'sBarrel_f0",
                 "id": "b381eb42-df72-5eb9-8620-d38215d50061",
                 "container_kind": "barrel",
-                "display_name": "Folk689's Barrel",
+                "display_name": "Cicely's Barrel",
                 "inventory": [
                     {
                         "id": "cloth_trousers",
@@ -742790,7 +742790,7 @@
                 "name": "Folk698'sChest_f0",
                 "id": "29bd9195-a5c1-5f6a-8396-c32fb6886a5f",
                 "container_kind": "chest",
-                "display_name": "Folk698's Chest",
+                "display_name": "Dickon's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -742854,7 +742854,7 @@
                 "name": "Folk702'sChest_f0",
                 "id": "fc3da26a-529a-5f68-b214-f866c623575b",
                 "container_kind": "chest",
-                "display_name": "Folk702's Chest",
+                "display_name": "Emmot's Chest",
                 "inventory": [
                     {
                         "id": "torch",
@@ -742900,7 +742900,7 @@
                 "name": "Folk702'sChest_f1",
                 "id": "8b38ec43-4185-5ad0-b4c4-dba3562ee497",
                 "container_kind": "chest",
-                "display_name": "Folk702's Chest",
+                "display_name": "Emmot's Chest",
                 "inventory": [
                     {
                         "id": "egg",
@@ -742955,7 +742955,7 @@
                 "name": "Folk723'sChest_f0",
                 "id": "c023bf2b-5f57-58d7-8614-0d33bd6da65d",
                 "container_kind": "chest",
-                "display_name": "Folk723's Chest",
+                "display_name": "Fennel's Chest",
                 "inventory": [
                     {
                         "id": "egg",
@@ -743001,7 +743001,7 @@
                 "name": "Folk725'sSack_f0",
                 "id": "7c364936-03ea-5f73-8570-6b80a0562acb",
                 "container_kind": "sack",
-                "display_name": "Folk725's Sack",
+                "display_name": "Gilly's Sack",
                 "inventory": [
                     {
                         "id": "gold",
@@ -743038,7 +743038,7 @@
                 "name": "Folk728'sChest_f0",
                 "id": "ae8b394f-47f7-5b2d-b8e3-fe9413384c34",
                 "container_kind": "chest",
-                "display_name": "Folk728's Chest",
+                "display_name": "Hob's Chest",
                 "inventory": [
                     {
                         "id": "shovel",
@@ -743075,7 +743075,7 @@
                 "name": "Folk728'sCrate_f1",
                 "id": "c51e991b-4e1b-5c58-8d40-8d69717d8b78",
                 "container_kind": "crate",
-                "display_name": "Folk728's Crate",
+                "display_name": "Hob's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743139,7 +743139,7 @@
                 "name": "Folk732'sCrate_f0",
                 "id": "b843d76e-7620-5f10-b226-3f5257090f6f",
                 "container_kind": "crate",
-                "display_name": "Folk732's Crate",
+                "display_name": "Idony's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743203,7 +743203,7 @@
                 "name": "Folk732'sBarrel_f1",
                 "id": "ecb72903-0c6c-537f-880e-13979e85905a",
                 "container_kind": "barrel",
-                "display_name": "Folk732's Barrel",
+                "display_name": "Idony's Barrel",
                 "inventory": [
                     {
                         "id": "wool",
@@ -743267,7 +743267,7 @@
                 "name": "Folk739'sChest_f0",
                 "id": "0f454a79-4a08-50e7-9f51-75be996ae413",
                 "container_kind": "chest",
-                "display_name": "Folk739's Chest",
+                "display_name": "Jankin's Chest",
                 "inventory": [
                     {
                         "id": "book_long_table",
@@ -743304,7 +743304,7 @@
                 "name": "Folk742'sBarrel_f0",
                 "id": "d5d9bdd4-4e3d-541a-bbd0-a03860396b1f",
                 "container_kind": "barrel",
-                "display_name": "Folk742's Barrel",
+                "display_name": "Kate's Barrel",
                 "inventory": [
                     {
                         "id": "torch",
@@ -743359,7 +743359,7 @@
                 "name": "Folk746'sBarrel_f0",
                 "id": "979db5a0-6c6b-539f-9f5b-6af0b4621fa8",
                 "container_kind": "barrel",
-                "display_name": "Folk746's Barrel",
+                "display_name": "Lambert's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743432,7 +743432,7 @@
                 "name": "Folk750'sChest_f0",
                 "id": "ec0d7c3f-4282-5cd5-b878-4d067a9cd2de",
                 "container_kind": "chest",
-                "display_name": "Folk750's Chest",
+                "display_name": "Mabel's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743487,7 +743487,7 @@
                 "name": "Folk754'sChest_f0",
                 "id": "ac743f00-2453-5805-8e4d-e7eece8f861f",
                 "container_kind": "chest",
-                "display_name": "Folk754's Chest",
+                "display_name": "Nicol's Chest",
                 "inventory": [
                     {
                         "id": "ingr_flax",
@@ -743542,7 +743542,7 @@
                 "name": "Folk767'sCrate_f0",
                 "id": "f8d19569-dcf4-5c20-ad27-3984995dc8d8",
                 "container_kind": "crate",
-                "display_name": "Folk767's Crate",
+                "display_name": "Orrin's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743588,7 +743588,7 @@
                 "name": "Folk774'sChest_f0",
                 "id": "9d59a13f-a099-593b-b086-6ffbb08c12cf",
                 "container_kind": "chest",
-                "display_name": "Folk774's Chest",
+                "display_name": "Parnel's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743634,7 +743634,7 @@
                 "name": "Folk774'sSack_f1",
                 "id": "a5bdba13-7328-5054-8809-58ca66ca7361",
                 "container_kind": "sack",
-                "display_name": "Folk774's Sack",
+                "display_name": "Parnel's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743671,7 +743671,7 @@
                 "name": "Folk778'sBarrel_f0",
                 "id": "1bed7d14-438c-54bf-8d65-bcff2d2fac3b",
                 "container_kind": "barrel",
-                "display_name": "Folk778's Barrel",
+                "display_name": "Rafe's Barrel",
                 "inventory": [
                     {
                         "id": "egg",
@@ -743726,7 +743726,7 @@
                 "name": "Folk782'sCrate_f0",
                 "id": "5e71bd67-7b1e-57d0-8d4f-36a852786984",
                 "container_kind": "crate",
-                "display_name": "Folk782's Crate",
+                "display_name": "Sibbe's Crate",
                 "inventory": [
                     {
                         "id": "wool",
@@ -743763,7 +743763,7 @@
                 "name": "Folk789'sSack_f0",
                 "id": "7ebd880a-61c6-5740-892f-b8aec3ffc703",
                 "container_kind": "sack",
-                "display_name": "Folk789's Sack",
+                "display_name": "Tibbot's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743800,7 +743800,7 @@
                 "name": "Folk796'sChest_f0",
                 "id": "2dd398b4-bb41-51cf-8e92-cef11e953e34",
                 "container_kind": "chest",
-                "display_name": "Folk796's Chest",
+                "display_name": "Ursel's Chest",
                 "inventory": [
                     {
                         "id": "wool",
@@ -743846,7 +743846,7 @@
                 "name": "Folk800'sBarrel_f0",
                 "id": "78fce94e-8aaa-53cd-9656-aaa196bac8a6",
                 "container_kind": "barrel",
-                "display_name": "Folk800's Barrel",
+                "display_name": "Walt's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743892,7 +743892,7 @@
                 "name": "Folk800'sCrate_f1",
                 "id": "5d4286a2-3851-5cca-8add-ac473db41564",
                 "container_kind": "crate",
-                "display_name": "Folk800's Crate",
+                "display_name": "Walt's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -743965,7 +743965,7 @@
                 "name": "Folk807'sBarrel_f0",
                 "id": "7a71ed22-9bc6-57fd-8d4e-1660e72da5ad",
                 "container_kind": "barrel",
-                "display_name": "Folk807's Barrel",
+                "display_name": "Avice's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744038,7 +744038,7 @@
                 "name": "Folk807'sBarrel_f1",
                 "id": "165249b6-19b5-59f4-84c6-9fdc206987f3",
                 "container_kind": "barrel",
-                "display_name": "Folk807's Barrel",
+                "display_name": "Avice's Barrel",
                 "inventory": [
                     {
                         "id": "egg",
@@ -744093,7 +744093,7 @@
                 "name": "Folk814'sChest_f0",
                 "id": "cbd5904b-7d20-52e7-be9a-14e44415b544",
                 "container_kind": "chest",
-                "display_name": "Folk814's Chest",
+                "display_name": "Bartle's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744157,7 +744157,7 @@
                 "name": "Folk817'sCrate_f0",
                 "id": "e67b1be0-7eca-5f0f-889f-1b874a33cd02",
                 "container_kind": "crate",
-                "display_name": "Folk817's Crate",
+                "display_name": "Collet's Crate",
                 "inventory": [
                     {
                         "id": "egg",
@@ -744221,7 +744221,7 @@
                 "name": "Folk821'sCrate_f0",
                 "id": "d8906ed8-c917-5fc4-9ea9-faa850fe3461",
                 "container_kind": "crate",
-                "display_name": "Folk821's Crate",
+                "display_name": "Davy's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744276,7 +744276,7 @@
                 "name": "Folk834'sChest_f0",
                 "id": "48720d7b-cb15-5579-963d-5ee2d9b59635",
                 "container_kind": "chest",
-                "display_name": "Folk834's Chest",
+                "display_name": "Ellot's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744340,7 +744340,7 @@
                 "name": "Folk834'sBarrel_f1",
                 "id": "5fe06bff-cde4-57a5-9dcc-b8652515decd",
                 "container_kind": "barrel",
-                "display_name": "Folk834's Barrel",
+                "display_name": "Ellot's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744395,7 +744395,7 @@
                 "name": "Folk836'sChest_f0",
                 "id": "a2422acf-5521-506e-8aa3-1046d1b63931",
                 "container_kind": "chest",
-                "display_name": "Folk836's Chest",
+                "display_name": "Fritha's Chest",
                 "inventory": [
                     {
                         "id": "ingr_flax",
@@ -744450,7 +744450,7 @@
                 "name": "Folk843'sChest_f0",
                 "id": "70593f41-3980-57c7-adc0-3ad4414b0b5f",
                 "container_kind": "chest",
-                "display_name": "Folk843's Chest",
+                "display_name": "Gib's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744514,7 +744514,7 @@
                 "name": "Folk847'sChest_f0",
                 "id": "0d7f2788-221f-593b-9b0c-ce56b9d0d8c9",
                 "container_kind": "chest",
-                "display_name": "Folk847's Chest",
+                "display_name": "Hawise's Chest",
                 "inventory": [
                     {
                         "id": "book_downwind",
@@ -744551,7 +744551,7 @@
                 "name": "Folk851'sBarrel_f0",
                 "id": "078958cf-72c7-52b6-8a31-97a080a9f461",
                 "container_kind": "barrel",
-                "display_name": "Folk851's Barrel",
+                "display_name": "Ibbot's Barrel",
                 "inventory": [
                     {
                         "id": "ingr_flax",
@@ -744597,7 +744597,7 @@
                 "name": "Folk855'sCrate_f0",
                 "id": "3aeae6d0-d4e7-51c6-b166-4088259a2775",
                 "container_kind": "crate",
-                "display_name": "Folk855's Crate",
+                "display_name": "Jacomin's Crate",
                 "inventory": [
                     {
                         "id": "gold",
@@ -744634,7 +744634,7 @@
                 "name": "Folk859'sSack_f0",
                 "id": "38378bdd-1778-5cd8-8e7e-2f1bcbc1aa71",
                 "container_kind": "sack",
-                "display_name": "Folk859's Sack",
+                "display_name": "Larkin's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744698,7 +744698,7 @@
                 "name": "Folk861'sChest_f0",
                 "id": "67e3655c-c269-557b-934e-8abd24a51629",
                 "container_kind": "chest",
-                "display_name": "Folk861's Chest",
+                "display_name": "Magot's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744762,7 +744762,7 @@
                 "name": "Folk861'sBarrel_f1",
                 "id": "8579ebc1-e3e9-5ab4-92ab-3a366ef56919",
                 "container_kind": "barrel",
-                "display_name": "Folk861's Barrel",
+                "display_name": "Magot's Barrel",
                 "inventory": [
                     {
                         "id": "shovel",
@@ -744799,7 +744799,7 @@
                 "name": "Folk868'sSack_f0",
                 "id": "a6102722-c64d-50cb-8f8a-3ff846df609e",
                 "container_kind": "sack",
-                "display_name": "Folk868's Sack",
+                "display_name": "Nan's Sack",
                 "inventory": [
                     {
                         "id": "milk",
@@ -744845,7 +744845,7 @@
                 "name": "Folk868'sCrate_f1",
                 "id": "a18485ac-32a6-53e4-9b8e-defe7ce814dc",
                 "container_kind": "crate",
-                "display_name": "Folk868's Crate",
+                "display_name": "Nan's Crate",
                 "inventory": [
                     {
                         "id": "wool",
@@ -744891,7 +744891,7 @@
                 "name": "Folk872'sSack_f0",
                 "id": "cee3a9e2-8ebc-512b-8a49-f273872187ff",
                 "container_kind": "sack",
-                "display_name": "Folk872's Sack",
+                "display_name": "Ottilie's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -744946,7 +744946,7 @@
                 "name": "Folk880'sChest_f0",
                 "id": "eead68a5-6dea-5c97-aaa5-91074539b382",
                 "container_kind": "chest",
-                "display_name": "Folk880's Chest",
+                "display_name": "Perkin's Chest",
                 "inventory": [
                     {
                         "id": "cloth_wraps",
@@ -744992,7 +744992,7 @@
                 "name": "Folk887'sChest_f0",
                 "id": "9de7cdb0-6185-52db-ab59-ba5272fd0c45",
                 "container_kind": "chest",
-                "display_name": "Folk887's Chest",
+                "display_name": "Rohese's Chest",
                 "inventory": [
                     {
                         "id": "torch",
@@ -745038,7 +745038,7 @@
                 "name": "Folk887'sChest_f1",
                 "id": "2822ac11-14f0-5830-8cd3-9f8f149ccb67",
                 "container_kind": "chest",
-                "display_name": "Folk887's Chest",
+                "display_name": "Rohese's Chest",
                 "inventory": [
                     {
                         "id": "ingr_flax",
@@ -745093,7 +745093,7 @@
                 "name": "Folk890'sSack_f0",
                 "id": "715286f6-8388-5433-b0ad-fd3b7baeb0cc",
                 "container_kind": "sack",
-                "display_name": "Folk890's Sack",
+                "display_name": "Simkin's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745157,7 +745157,7 @@
                 "name": "Folk890'sCrate_f1",
                 "id": "8345c2e0-41ff-585d-84b1-99d3486fc9d4",
                 "container_kind": "crate",
-                "display_name": "Folk890's Crate",
+                "display_name": "Simkin's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745203,7 +745203,7 @@
                 "name": "Folk900'sCrate_f0",
                 "id": "86ed04c7-5dd8-5a0d-b090-f19952e8af31",
                 "container_kind": "crate",
-                "display_name": "Folk900's Crate",
+                "display_name": "Tace's Crate",
                 "inventory": [
                     {
                         "id": "wool",
@@ -745249,7 +745249,7 @@
                 "name": "Folk904'sChest_f0",
                 "id": "1ea2232e-69d9-5770-b491-b1fc31e1df66",
                 "container_kind": "chest",
-                "display_name": "Folk904's Chest",
+                "display_name": "Watkin's Chest",
                 "inventory": [
                     {
                         "id": "potion_heal_minor",
@@ -745304,7 +745304,7 @@
                 "name": "Folk908'sBarrel_f0",
                 "id": "5808efb2-140e-5628-ba19-773606c64f76",
                 "container_kind": "barrel",
-                "display_name": "Folk908's Barrel",
+                "display_name": "Amice's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745359,7 +745359,7 @@
                 "name": "Folk915'sChest_f0",
                 "id": "b9d1b15c-4092-5a68-96dc-eab33a64daa2",
                 "container_kind": "chest",
-                "display_name": "Folk915's Chest",
+                "display_name": "Brice's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745423,7 +745423,7 @@
                 "name": "Folk917'sSack_f0",
                 "id": "d3931bd5-2071-522e-8433-874e6df49ec1",
                 "container_kind": "sack",
-                "display_name": "Folk917's Sack",
+                "display_name": "Clemence's Sack",
                 "inventory": [
                     {
                         "id": "torch",
@@ -745487,7 +745487,7 @@
                 "name": "Folk919'sSack_f0",
                 "id": "a49fccaf-1d66-506b-9f4a-34cbb38e69bb",
                 "container_kind": "sack",
-                "display_name": "Folk919's Sack",
+                "display_name": "Drew's Sack",
                 "inventory": [
                     {
                         "id": "egg",
@@ -745551,7 +745551,7 @@
                 "name": "Folk923'sChest_f0",
                 "id": "cb7f1d35-71bb-59c3-8696-d754786fe2a4",
                 "container_kind": "chest",
-                "display_name": "Folk923's Chest",
+                "display_name": "Elyn's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745624,7 +745624,7 @@
                 "name": "Folk930'sChest_f0",
                 "id": "8b18e0f8-7af6-5c3a-aebd-a1c8cc8dcd39",
                 "container_kind": "chest",
-                "display_name": "Folk930's Chest",
+                "display_name": "Floss's Chest",
                 "inventory": [
                     {
                         "id": "egg",
@@ -745670,7 +745670,7 @@
                 "name": "Folk937'sChest_f0",
                 "id": "7359023f-2783-58db-bd80-37f83724cb48",
                 "container_kind": "chest",
-                "display_name": "Folk937's Chest",
+                "display_name": "Goody's Chest",
                 "inventory": [
                     {
                         "id": "egg",
@@ -745725,7 +745725,7 @@
                 "name": "Folk944'sChest_f0",
                 "id": "d5b96c92-cbdf-59d2-868a-0120f3a06783",
                 "container_kind": "chest",
-                "display_name": "Folk944's Chest",
+                "display_name": "Hick's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745798,7 +745798,7 @@
                 "name": "Folk944'sBarrel_f1",
                 "id": "d599daff-078e-5170-b86e-0bfb2d2444e8",
                 "container_kind": "barrel",
-                "display_name": "Folk944's Barrel",
+                "display_name": "Hick's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745844,7 +745844,7 @@
                 "name": "Folk951'sChest_f0",
                 "id": "2d8fdb32-6738-50a0-80fc-0f3d55d290b9",
                 "container_kind": "chest",
-                "display_name": "Folk951's Chest",
+                "display_name": "Isot's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745899,7 +745899,7 @@
                 "name": "Folk951'sSack_f1",
                 "id": "f06a3ae6-df6b-5699-8f2e-28ad78f9b570",
                 "container_kind": "sack",
-                "display_name": "Folk951's Sack",
+                "display_name": "Isot's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -745981,7 +745981,7 @@
                 "name": "Folk955'sCrate_f0",
                 "id": "ead714e8-30f3-55b4-902c-d2788e124281",
                 "container_kind": "crate",
-                "display_name": "Folk955's Crate",
+                "display_name": "Jeb's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746045,7 +746045,7 @@
                 "name": "Folk959'sBarrel_f0",
                 "id": "82774fd4-d280-5dbf-b91d-36266c4c0a8c",
                 "container_kind": "barrel",
-                "display_name": "Folk959's Barrel",
+                "display_name": "Lovet's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746109,7 +746109,7 @@
                 "name": "Folk969'sChest_f0",
                 "id": "ec69e8e5-c8fe-5b2f-866c-90f1759c7efd",
                 "container_kind": "chest",
-                "display_name": "Folk969's Chest",
+                "display_name": "Mild's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746155,7 +746155,7 @@
                 "name": "Folk969'sSack_f1",
                 "id": "354f83b1-37d8-54e8-b7d8-7ea511bb440b",
                 "container_kind": "sack",
-                "display_name": "Folk969's Sack",
+                "display_name": "Mild's Sack",
                 "inventory": [
                     {
                         "id": "egg",
@@ -746201,7 +746201,7 @@
                 "name": "Folk979'sSack_f0",
                 "id": "5910ad9d-9454-5b2d-85b3-28c6efb6851d",
                 "container_kind": "sack",
-                "display_name": "Folk979's Sack",
+                "display_name": "Ned's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746256,7 +746256,7 @@
                 "name": "Folk988'sChest_f0",
                 "id": "c6cf9b69-a872-5eba-9557-fd3d0f5a46c4",
                 "container_kind": "chest",
-                "display_name": "Folk988's Chest",
+                "display_name": "Orrick's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746311,7 +746311,7 @@
                 "name": "Folk988'sCrate_f1",
                 "id": "41a2b065-f10c-5d8a-893d-ae7e4181fe88",
                 "container_kind": "crate",
-                "display_name": "Folk988's Crate",
+                "display_name": "Orrick's Crate",
                 "inventory": [
                     {
                         "id": "egg",
@@ -746357,7 +746357,7 @@
                 "name": "Folk992'sChest_f0",
                 "id": "b4a3d1c2-7929-5bd0-8ea5-a79493e8d0a9",
                 "container_kind": "chest",
-                "display_name": "Folk992's Chest",
+                "display_name": "Petronel's Chest",
                 "inventory": [
                     {
                         "id": "egg",
@@ -746412,7 +746412,7 @@
                 "name": "Folk994'sChest_f0",
                 "id": "418dd966-7bf0-5c9a-ab27-c49bb40e64bf",
                 "container_kind": "chest",
-                "display_name": "Folk994's Chest",
+                "display_name": "Randal's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746476,7 +746476,7 @@
                 "name": "Folk998'sChest_f0",
                 "id": "4fa6ef24-4e25-5d9f-a1b5-84e952116106",
                 "container_kind": "chest",
-                "display_name": "Folk998's Chest",
+                "display_name": "Sefton's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746540,7 +746540,7 @@
                 "name": "Folk1000'sBarrel_f0",
                 "id": "9e486edb-fb84-57c1-a0d0-785675c6b3e4",
                 "container_kind": "barrel",
-                "display_name": "Folk1000's Barrel",
+                "display_name": "Tamar's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746595,7 +746595,7 @@
                 "name": "Folk1000'sCrate_f1",
                 "id": "e3073b44-17f1-5aa2-9ea1-3cfb1433e199",
                 "container_kind": "crate",
-                "display_name": "Folk1000's Crate",
+                "display_name": "Tamar's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746668,7 +746668,7 @@
                 "name": "Folk1014'sChest_f0",
                 "id": "592bf4e6-f487-51be-9513-21de2d79aa76",
                 "container_kind": "chest",
-                "display_name": "Folk1014's Chest",
+                "display_name": "Wenna's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746741,7 +746741,7 @@
                 "name": "Folk1014'sChest_f1",
                 "id": "45016f9b-df1f-5c7c-aa01-559f624fe41b",
                 "container_kind": "chest",
-                "display_name": "Folk1014's Chest",
+                "display_name": "Wenna's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746796,7 +746796,7 @@
                 "name": "Folk1021'sChest_f0",
                 "id": "f89de8eb-3de8-5b15-93ab-ad55957f3c4a",
                 "container_kind": "chest",
-                "display_name": "Folk1021's Chest",
+                "display_name": "Abel's Chest",
                 "inventory": [
                     {
                         "id": "cloth_trousers",
@@ -746851,7 +746851,7 @@
                 "name": "Folk1021'sChest_f1",
                 "id": "2924fdc3-0e50-5490-b959-c5f6a56cd1f7",
                 "container_kind": "chest",
-                "display_name": "Folk1021's Chest",
+                "display_name": "Abel's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746906,7 +746906,7 @@
                 "name": "Folk1025'sSack_f0",
                 "id": "95f75051-a3c8-5ab6-8a43-2019e475a550",
                 "container_kind": "sack",
-                "display_name": "Folk1025's Sack",
+                "display_name": "Basset's Sack",
                 "inventory": [
                     {
                         "id": "bread",
@@ -746970,7 +746970,7 @@
                 "name": "Folk1032'sChest_f0",
                 "id": "63401fa6-0d93-5fc2-b94d-600d8ebe099f",
                 "container_kind": "chest",
-                "display_name": "Folk1032's Chest",
+                "display_name": "Dulcie's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747034,7 +747034,7 @@
                 "name": "Folk1032'sBarrel_f1",
                 "id": "98103dac-9acb-5009-9159-1e63dc93c814",
                 "container_kind": "barrel",
-                "display_name": "Folk1032's Barrel",
+                "display_name": "Dulcie's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747098,7 +747098,7 @@
                 "name": "Folk1036'sChest_f0",
                 "id": "9077edd4-8f45-5036-8e58-9cf5b4240011",
                 "container_kind": "chest",
-                "display_name": "Folk1036's Chest",
+                "display_name": "Ebbe's Chest",
                 "inventory": [
                     {
                         "id": "milk",
@@ -747162,7 +747162,7 @@
                 "name": "Folk1046'sChest_f0",
                 "id": "ecd86f2d-8e6e-5543-aaf9-7ecd869ac5e8",
                 "container_kind": "chest",
-                "display_name": "Folk1046's Chest",
+                "display_name": "Femmy's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747235,7 +747235,7 @@
                 "name": "Folk1053'sChest_f0",
                 "id": "1502ffcd-2801-5bdc-b817-1b113d780e57",
                 "container_kind": "chest",
-                "display_name": "Folk1053's Chest",
+                "display_name": "Garth's Chest",
                 "inventory": [
                     {
                         "id": "egg",
@@ -747308,7 +747308,7 @@
                 "name": "Folk1063'sChest_f0",
                 "id": "36b93508-5bfa-5210-9abf-bd070917958e",
                 "container_kind": "chest",
-                "display_name": "Folk1063's Chest",
+                "display_name": "Hester's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747381,7 +747381,7 @@
                 "name": "Folk1067'sChest_f0",
                 "id": "c8970da6-d4f5-50a1-9953-a53b2506845a",
                 "container_kind": "chest",
-                "display_name": "Folk1067's Chest",
+                "display_name": "Jessop's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747418,7 +747418,7 @@
                 "name": "Folk1071'sCrate_f0",
                 "id": "f2cd792a-0230-53d4-99d5-a70a2c7812b7",
                 "container_kind": "crate",
-                "display_name": "Folk1071's Crate",
+                "display_name": "Kenelm's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747473,7 +747473,7 @@
                 "name": "Folk1071'sBarrel_f1",
                 "id": "ebc71d42-5786-576b-982b-a675ea96e893",
                 "container_kind": "barrel",
-                "display_name": "Folk1071's Barrel",
+                "display_name": "Kenelm's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747528,7 +747528,7 @@
                 "name": "Folk1078'sChest_f0",
                 "id": "c06d7a90-b289-57ab-8367-b997af112075",
                 "container_kind": "chest",
-                "display_name": "Folk1078's Chest",
+                "display_name": "Lark's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747583,7 +747583,7 @@
                 "name": "Folk1088'sChest_f0",
                 "id": "be8c2a56-b0b8-5f86-a2c5-50ad00759544",
                 "container_kind": "chest",
-                "display_name": "Folk1088's Chest",
+                "display_name": "Merry's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747647,7 +747647,7 @@
                 "name": "Folk1092'sChest_f0",
                 "id": "23107b4c-a8e3-5e20-94e2-5eaa3ed4540e",
                 "container_kind": "chest",
-                "display_name": "Folk1092's Chest",
+                "display_name": "Noll's Chest",
                 "inventory": [
                     {
                         "id": "ingr_flax",
@@ -747693,7 +747693,7 @@
                 "name": "Folk1092'sChest_f1",
                 "id": "180028d6-ddba-5caa-923a-545bdf2fa5b6",
                 "container_kind": "chest",
-                "display_name": "Folk1092's Chest",
+                "display_name": "Noll's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747748,7 +747748,7 @@
                 "name": "Folk1096'sChest_f0",
                 "id": "3c1f1d3c-3965-5f7b-8394-59cb95a153a5",
                 "container_kind": "chest",
-                "display_name": "Folk1096's Chest",
+                "display_name": "Pip's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747785,7 +747785,7 @@
                 "name": "Folk1096'sChest_f1",
                 "id": "08f6e09e-a0a9-5aba-b926-b1cd076c9115",
                 "container_kind": "chest",
-                "display_name": "Folk1096's Chest",
+                "display_name": "Pip's Chest",
                 "inventory": [
                     {
                         "id": "torch",
@@ -747831,7 +747831,7 @@
                 "name": "Folk1100'sSack_f0",
                 "id": "50a3dff9-b054-53e2-bf45-d94dc983e263",
                 "container_kind": "sack",
-                "display_name": "Folk1100's Sack",
+                "display_name": "Quenna's Sack",
                 "inventory": [
                     {
                         "id": "milk",
@@ -747895,7 +747895,7 @@
                 "name": "Folk1104'sBarrel_f0",
                 "id": "9dfb225a-8efd-5c9d-bb09-ea3d64f58fd9",
                 "container_kind": "barrel",
-                "display_name": "Folk1104's Barrel",
+                "display_name": "Roger's Barrel",
                 "inventory": [
                     {
                         "id": "bread",
@@ -747950,7 +747950,7 @@
                 "name": "Folk1114'sSack_f0",
                 "id": "8fc9f380-58e6-5358-8896-873698b47841",
                 "container_kind": "sack",
-                "display_name": "Folk1114's Sack",
+                "display_name": "Saffy's Sack",
                 "inventory": [
                     {
                         "id": "wool",
@@ -747996,7 +747996,7 @@
                 "name": "Folk1114'sCrate_f1",
                 "id": "57394b4f-3151-5888-ae25-6b387a4482e4",
                 "container_kind": "crate",
-                "display_name": "Folk1114's Crate",
+                "display_name": "Saffy's Crate",
                 "inventory": [
                     {
                         "id": "bread",
@@ -748060,7 +748060,7 @@
                 "name": "Folk1117'sChest_f0",
                 "id": "19441979-ef78-5d7b-9f89-7bdcc0953a33",
                 "container_kind": "chest",
-                "display_name": "Folk1117's Chest",
+                "display_name": "Tom's Chest",
                 "inventory": [
                     {
                         "id": "bread",
@@ -748124,7 +748124,7 @@
                 "name": "Folk1120'sChest_f0",
                 "id": "a5bc778a-386c-5c5c-a68b-efb972519528",
                 "container_kind": "chest",
-                "display_name": "Folk1120's Chest",
+                "display_name": "Wiliam's Chest",
                 "inventory": [
                     {
                         "id": "ingr_flax",
@@ -748188,7 +748188,7 @@
                 "name": "Folk1124'sSack_f0",
                 "id": "1d0ac1e7-df12-58a3-bfa4-acc10787b1dd",
                 "container_kind": "sack",
-                "display_name": "Folk1124's Sack",
+                "display_name": "Aveline's Sack",
                 "inventory": [
                     {
                         "id": "egg",
@@ -764739,6 +764739,145 @@
                 "courage": 0.3,
                 "sched_state": "IDLE",
                 "io_enabled": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "container",
+            "pos": [
+                8651.8,
+                289.6,
+                -5731.0
+            ],
+            "properties": {
+                "type": "container",
+                "name": "old_mill_strongbox",
+                "id": "61e7f624-4636-558f-b42d-89b9ca514252",
+                "container_kind": "chest",
+                "display_name": "Bandits' Strongbox",
+                "inventory": [
+                    {
+                        "id": "gold",
+                        "name": "Gold",
+                        "qty": 60,
+                        "type": "gold",
+                        "value": 1,
+                        "weight": 0.0,
+                        "description": "The coin of the realm."
+                    },
+                    {
+                        "id": "potion_heal_minor",
+                        "name": "Minor Healing Potion",
+                        "qty": 2,
+                        "type": "potion",
+                        "value": 15,
+                        "weight": 0.5,
+                        "description": "Restores 30 health."
+                    },
+                    {
+                        "id": "lockpick",
+                        "name": "Lockpick",
+                        "qty": 2,
+                        "type": "misc",
+                        "value": 5,
+                        "weight": 0.0,
+                        "description": "For coaxing open stubborn locks."
+                    }
+                ],
+                "use_radius": 120.0,
+                "locked": true,
+                "lock_difficulty": "apprentice",
+                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "container",
+            "pos": [
+                710.0,
+                272,
+                -680.0
+            ],
+            "properties": {
+                "type": "container",
+                "name": "rusted_lockbox",
+                "id": "692bb864-54f2-55ed-bd8c-8d6026d10629",
+                "container_kind": "chest",
+                "display_name": "Rusted Lockbox",
+                "inventory": [
+                    {
+                        "id": "gold",
+                        "name": "Gold",
+                        "qty": 12,
+                        "type": "gold",
+                        "value": 1,
+                        "weight": 0.0,
+                        "description": "The coin of the realm."
+                    },
+                    {
+                        "id": "lockpick",
+                        "name": "Lockpick",
+                        "qty": 1,
+                        "type": "misc",
+                        "value": 5,
+                        "weight": 0.0,
+                        "description": "For coaxing open stubborn locks."
+                    },
+                    {
+                        "id": "potion_heal_minor",
+                        "name": "Minor Healing Potion",
+                        "qty": 1,
+                        "type": "potion",
+                        "value": 15,
+                        "weight": 0.5,
+                        "description": "Restores 30 health."
+                    }
+                ],
+                "use_radius": 120.0,
+                "locked": true,
+                "lock_difficulty": "novice",
+                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "container",
+            "pos": [
+                8930.0,
+                260.0,
+                7030.0
+            ],
+            "properties": {
+                "type": "container",
+                "name": "aldric_toll_chest",
+                "id": "9f42944a-4d37-52a8-9603-b8acb663f83a",
+                "container_kind": "chest",
+                "display_name": "Toll Chest",
+                "inventory": [
+                    {
+                        "id": "gold",
+                        "name": "Gold",
+                        "qty": 120,
+                        "type": "gold",
+                        "value": 1,
+                        "weight": 0.0,
+                        "description": "The coin of the realm."
+                    },
+                    {
+                        "id": "potion_heal",
+                        "name": "Healing Potion",
+                        "qty": 1,
+                        "type": "potion",
+                        "value": 40,
+                        "weight": 0.5,
+                        "description": "Restores 75 health."
+                    }
+                ],
+                "use_radius": 120.0,
+                "locked": true,
+                "lock_difficulty": "adept",
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "owner": "Aldric"
             },
             "io_connections": []
         }

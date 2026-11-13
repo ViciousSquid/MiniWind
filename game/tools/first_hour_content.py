@@ -135,8 +135,74 @@ def send_stray_skeletons_home(world, log):
         log.append(f"moved {moved} stray skeletons from Millbrook's fields to Barrow Hill")
 
 
+def rename_their_chests(world, log):
+    """Containers named after an owner's old counter ("Folk1120's Chest")
+    take the owner's given name, as the owner now has one."""
+    given = {}
+    for t in world["things"]:
+        p = t["properties"]
+        if t.get("type") == "npc" and p.get("name"):
+            given[p["name"]] = re.split(r" (?:the|of) ", str(p.get("display_name", "")))[0]
+    renamed = 0
+    for t in world["things"]:
+        p = t["properties"]
+        if t.get("type") != "container":
+            continue
+        shown = str(p.get("display_name", ""))
+        if re.match(r"Folk\d+'s ", shown) and given.get(p.get("owner")):
+            p["display_name"] = re.sub(r"^Folk\d+", given[p["owner"]], shown)
+            renamed += 1
+    if renamed:
+        log.append(f"renamed {renamed} containers after their owners")
+
+
+#: Locks on the first hour's road. Only 14 of the world's 330 containers were
+#: locked, the nearest 6.7 km from Millbrook, so a new player never met the
+#: lockpicking at all. Two locks with no crime attached (a lockbox lost in
+#: Bram's field outside Millbrook, the bandits' own strongbox at the Old Mill)
+#: and one tempting and serious (the Reeve's toll chest at Hollin's Cross).
+FIRST_LOCKS = (
+    dict(name="old_mill_strongbox", display_name="Bandits' Strongbox",
+         near="loc_old_mill_crate_f1", offset=(40.0, 60.0), lock="apprentice", owner=None,
+         loot=(("gold", 60), ("potion_heal_minor", 2), ("lockpick", 2))),
+    dict(name="rusted_lockbox", display_name="Rusted Lockbox", near="bram_farm",
+         offset=(-60.0, 90.0), lock="novice", owner=None,
+         loot=(("gold", 12), ("lockpick", 1), ("potion_heal_minor", 1))),
+    dict(name="aldric_toll_chest", display_name="Toll Chest", near="aldric_bed",
+         offset=(52.0, -40.0), lock="adept", owner="Aldric",
+         loot=(("gold", 120), ("potion_heal", 1))),
+)
+
+
+def place_first_locks(world, log):
+    import uuid
+    from game.rpg import items as rpg_items
+    things = world["things"]
+    for spec in FIRST_LOCKS:
+        if _by_name(things, spec["name"]):
+            continue
+        anchor = _by_name(things, spec["near"])
+        if not anchor:
+            raise SystemExit("no anchor %s for %s" % (spec["near"], spec["name"]))
+        ax, ay, az = anchor[0]["pos"]
+        props = {
+            "type": "container", "name": spec["name"],
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, "miniwind:first-hour:" + spec["name"])),
+            "container_kind": "chest", "display_name": spec["display_name"],
+            "inventory": [rpg_items.make(i, q) for i, q in spec["loot"]],
+            "use_radius": 120.0, "locked": True, "lock_difficulty": spec["lock"],
+            "custom_idle": "assets/sprites/miniwind/container_chest.png",
+        }
+        if spec["owner"]:
+            props["owner"] = spec["owner"]
+        things.append({"type": "container",
+                       "pos": [round(ax + spec["offset"][0], 1), ay, round(az + spec["offset"][1], 1)],
+                       "properties": props, "io_connections": []})
+        log.append(f"placed {spec['display_name']} ({spec['lock']} lock)")
+
+
 STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
-         send_stray_skeletons_home)
+         send_stray_skeletons_home, rename_their_chests, place_first_locks)
 
 
 def apply(world):
