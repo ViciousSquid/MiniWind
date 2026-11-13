@@ -200,6 +200,8 @@ def _draw_hand_ghost(painter, rect, side) -> bool:
 #: How far in from each side the side columns stand (a share of the doll's
 #: width): close to the head. The hand slots stand further out.
 COLUMN_IN = 0.28
+#: Torch and ring stand a touch further in still, nearer the head.
+TORCH_IN = 0.31
 #: How far in the two hand slots stand: close beside the head.
 HAND_IN = 0.17
 #: How far in the Head and Amulet slots stand: closer together, over the
@@ -222,13 +224,13 @@ PAPERDOLL = (
     # order.
     ("head", "Head", TOP_IN, 0.09),
     (HAND_LEFT, "L", HAND_IN, HEAD_Y),        # beside the head
-    ("light", "Torch", COLUMN_IN, 0.55),
+    ("light", "Torch", TORCH_IN, 0.55),
     # Gloves under each hand: one slot (the pair), shown twice, the right
     # one mirrored.
     ("hands", "Gloves", COLUMN_IN, 0.69),     # gauntlets, bracers, wraps
     ("amulet", "Amulet", 1.0 - TOP_IN, 0.09),
     (HAND_RIGHT, "R", 1.0 - HAND_IN, HEAD_Y), # beside the head
-    ("ring", "Ring", 1.0 - COLUMN_IN, 0.55),
+    ("ring", "Ring", 1.0 - TORCH_IN, 0.55),
     (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.69),
     ("chest", "Chest", 0.50, 0.555),
     ("legs", "Legs", 0.50, 0.735),

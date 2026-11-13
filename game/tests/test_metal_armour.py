@@ -267,7 +267,7 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     assert where[iw.HAND_LEFT][0] < where["hands"][0]
     assert where[iw.HAND_RIGHT][0] > where["ring"][0]
     # The torch slot sits under the head slot; the glove slot says so.
-    assert labels["light"] == "Torch" and where["light"][0] == iw.COLUMN_IN
+    assert labels["light"] == "Torch" and where["light"][0] == iw.TORCH_IN
     # Torch and ring below the hands, gloves below them.
     assert where["light"][1] == where["ring"][1] > where[iw.HAND_LEFT][1]
     assert labels["hands"] == labels[iw.GLOVES_RIGHT] == "Gloves"
