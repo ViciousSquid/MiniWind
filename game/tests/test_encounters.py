@@ -128,3 +128,26 @@ def test_the_chronicle_survives_a_new_map_and_a_load():
     (record,) = cave.encounters.chronicle
     assert record["summary"] == rec.chronicle[0]["summary"]
     assert record["provenance"] == rec.chronicle[0]["provenance"]
+
+
+def test_a_killing_blow_closes_the_encounter_as_a_fall(monkeypatch):
+    """The killing blow lands in the engine's monster pass, which then stops
+    ticking the game: the per-tick watch never saw the death, so the fight
+    that killed the player was never remembered."""
+    from .. import fio, runtime
+    session = _session([])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    rec, _clock = _recorder(session)
+    session.encounters = rec
+    chief = entities.Creature(pos=[0, 0, 0], properties={
+        "npc_role": "bandit_chief", "display_name": "Hal Corbin"})
+    fio.player_runtime(session.logic).last_damage = (chief, "attack", "physical")
+    monkeypatch.setattr(runtime.rpg_combat, "resolve_incoming",
+                        lambda *a, **kw: {"final": 9999, "armor_class": "none"})
+    session.store.set("fortune.escape_day", str(session.clock.day))   # no lucky escape
+    session._mitigate_incoming(9999)
+    assert session.game.character.is_dead
+    assert rec.current is None
+    (record,) = rec.chronicle
+    assert record["fell"] and record["lowest_health"] == 0.0
+    assert record["provenance"][0].startswith("Hal Corbin")

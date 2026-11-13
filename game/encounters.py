@@ -248,6 +248,7 @@ class EncounterRecorder:
         enc = self.current
         if enc is None or enc.fell:
             return
+        self.health(0.0)
         enc.fell = True
         enc.add("fell")
         enc.events.append({"t": round(self._clock() - enc.started, 2), "what": "the player fell"})

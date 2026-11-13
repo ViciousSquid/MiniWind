@@ -1871,6 +1871,10 @@ class MiniwindSession(SettlementLaw):
             self._player_flash = HIT_FLASH_TIME   # brief red flash on the head
             # Who or what did it, as the engine recorded (for the death screen).
             c._last_harm = getattr(fio.player_runtime(self.logic), "last_damage", None)
+            if c.is_dead:
+                # The same: the engine stops ticking the game once it sees the
+                # death, so the per-tick encounter watch never hears of it.
+                self._watch_encounter()
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
 
