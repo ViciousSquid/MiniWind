@@ -613,6 +613,8 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
   Gloves boxes are one slot. An empty hand slot shows a hand on yellowed
   paper. A worn helmet is drawn over your head — in the paperdoll and in the
   world — with the face showing through the visor; never over a guard's head.
+* **No split screen:** F9 does nothing; players on one computer share the
+  overhead view through Multiplayer's local co-op.
 * **Fonts:** MedievalSharp for names and headings; Texturina Light for small
   text, never under 11 px.
 

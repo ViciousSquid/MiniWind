@@ -118,5 +118,14 @@ class ViewPointer:
                              else "secondary", False)
 
     def splitscreen_allowed(self) -> bool:
-        """A party plays in one shared view: no split screen."""
-        return self._party() is None
+        """A party plays in one shared view: no split screen. A game may also
+        turn split screen off altogether (``allows_splitscreen = False`` on
+        its built-in game object)."""
+        if self._party() is not None:
+            return False
+        try:
+            from plugins.manager import get_manager
+            games = list(getattr(get_manager(), "_builtin_games", ()) or ())
+        except Exception:
+            games = []
+        return all(getattr(game, "allows_splitscreen", True) for game in games)

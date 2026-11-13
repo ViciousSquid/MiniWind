@@ -272,6 +272,9 @@ class MiniwindGame:
     description = ("MiniWind — a small living fantasy RPG: character creation, "
                    "skills, magic, quests, factions, schedules, melee & archery.")
     category = "MiniWind"
+    #: MiniWind has no split screen (F9 / the console's ``ss``): local players
+    #: share one overhead view through Multiplayer's local co-op instead.
+    allows_splitscreen = False
     # Marks this object as a built-in game to the manager's shared registries so
     # its entities surface under a native MiniWind menu, never the Plugins menu.
     is_builtin_game = True
