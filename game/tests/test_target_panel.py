@@ -203,3 +203,17 @@ def test_a_body_blown_apart_cannot_be_resurrected(qt_app):
     s = MiniwindSession(_Logic([body]), cfg={})
     s._player_pos = lambda: [0.0, 0.0, 0.0]
     assert s._nearest_dead_actor(500.0) is None
+
+
+def test_the_health_bar_waits_for_the_damage_die():
+    """The blow has landed in the rules, but the bar (and SLAIN) show the
+    health as it was until the dice have told it."""
+    t = tp.TargetTracker()
+    bandit = foe(health=55)
+    t.note(bandit, by_player=True, now=0.0)
+    bandit.properties.update(health=0, dead=True)
+    t.hold(bandit, 55.0, 0.9, now=2.0)
+    v = t.view(now=2.5)
+    assert v["health"] == 55 and not v["slain"]           # dice still rolling
+    v = t.view(now=3.0)
+    assert v["health"] == 0 and v["slain"]                 # told

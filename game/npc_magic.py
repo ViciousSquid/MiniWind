@@ -496,12 +496,12 @@ class NpcMagic:
             side = getattr(self.session, "side_of", None)
             if _attacker is not None:
                 try:
-                    if outcome is not None:
-                        outcome(_attacker, hit, crit)   # HIT / MISS / Crit! over the attacker
                     if show is not None:
                         name = str(props.get("display_name") or props.get("name") or "")
                         show(_attacker, roll, kind="npc",
                              against=(name.upper(), side(victim) if side else "ally"))
+                    if outcome is not None:
+                        outcome(_attacker, hit, crit)   # HIT / MISS / Crit!, as its die lands
                 except Exception:
                     pass
             if not hit:

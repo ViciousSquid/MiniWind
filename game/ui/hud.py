@@ -682,6 +682,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         painter.drawText(QPointF(x, by + 20), text)
         x += fm.horizontalAdvance(text)
     settled = True
+    first_done = False           # the roll's own (first) die has landed
     for index, d in enumerate(visuals):
         cx = bx + w / 2.0 + (index - (count - 1) / 2.0) * (die + 14)
         cy = by + ROLL_BOX_TITLE_H + die / 2.0
@@ -692,6 +693,8 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         local = elapsed - m["delay"]
         rotation, dx, dy, done = dice3d.pose(d["sides"], d["value"], m, local)
         settled = settled and done
+        if index == 0:
+            first_done = done
         # The player's dice are in colour; anyone else's are greyscale.
         body, ink = dice3d.colours(d["sides"], side == "you")
         dice3d.draw_die(painter, d["sides"], d["value"], cx + dx * die * 0.5,
@@ -704,7 +707,9 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
                       color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
                       bold=True, family="small")
     line_y = by + ROLL_BOX_TITLE_H + die + 20
-    if settled:
+    # Each line as its die lands: the verdict with the roll's own die, the
+    # damage once the damage die has landed too -- never ahead of its dice.
+    if first_done:
         verdict, passed = _box_verdict(result)
         ink = (_verdict_color(passed, alpha) if passed is not None
                else QColor(255, 214, 130, alpha))
@@ -713,7 +718,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
             ink = _verdict_color(not passed, alpha)       # their hit is bad news
         T.text_in(painter, QRect(bx, line_y, w, 18), verdict, size=13, color=ink,
                   align=T.ALIGN_CENTER, bold=True, family="small")
-        for k, text in enumerate(details):
+        for k, text in enumerate(details if settled else ()):
             T.text_in(painter, QRect(bx, line_y + 22 + 18 * k, w, 16), text, size=11,
                       color=QColor(200, 196, 214, alpha), align=T.ALIGN_CENTER,
                       family="small")
@@ -1509,10 +1514,11 @@ def _prepare_dice_animation(animation, result):
     if companion:
         entries += [dict(e, role="damage") for e in _dice_entries(companion)]
     base = int(animation.get("seed", 0) or 0) or (id(animation) & 0xFFFF)
+    speed = dice3d.roll_speed(base)             # this roll's own pace
     for index, entry in enumerate(entries):
         seed = base * 31 + index * 977 + entry["sides"] * 13 + entry["value"] * 7
-        delay = 0.0 if entry["role"] != "damage" else 0.22
-        visuals.append(dict(entry, motion=dice3d.motion(seed, delay=delay + 0.05 * index)))
+        delay = dice3d.SECOND_DIE_DELAY if entry["role"] == "damage" else 0.0
+        visuals.append(dict(entry, motion=dice3d.motion(seed, delay=delay, speed=speed)))
     animation["dice_visuals"] = visuals
     animation["dice_visuals_for"] = key
     return visuals

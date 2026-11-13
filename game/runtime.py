@@ -360,6 +360,10 @@ FIZZLE_SECONDS = 1.6
 HIT_TEXT = "HIT"
 MISS_TEXT = "MISS"
 ATTACK_FLOAT_SECONDS = 1.0
+#: Anticipation: a result is never told before its die has landed, and then
+#: only after this beat -- HIT / MISS / Crit!, the damage number, the blood,
+#: the shake, the target's health bar (see _present_player_blow).
+REVEAL_PAUSE = 0.12
 #: Over the player when their blow is a critical hit: it replaces HIT, and
 #: any speech bubble, bark or thought over the player gives way to it.
 CRIT_TEXT = "Crit!"
@@ -1400,12 +1404,12 @@ class MiniwindSession(SettlementLaw):
             # The attacker's to-hit roll against the player's Armour Class:
             # HIT / MISS (or Crit! on a natural 20) and its dice over the
             # attacker; a critical against the player shakes the screen.
-            self.attack_outcome(attacker, not res.get("deflected"), crit=bool(res.get("crit")))
-            if res.get("crit"):
-                self.shake(*CRIT_SHAKE)
             if res.get("defence_roll"):
                 self.show_roll_box(attacker, res["defence_roll"],
                                    against=("YOU", "you"))
+            self.attack_outcome(attacker, not res.get("deflected"), crit=bool(res.get("crit")))
+            if res.get("crit"):
+                self.shake(*CRIT_SHAKE)
         # armour training whenever armour is tested -- a deflected blow too
         worn = res["armor_class"]
         if worn == "heavy":
@@ -1911,6 +1915,7 @@ class MiniwindSession(SettlementLaw):
         # through an attribute chain at each of the tens of thousands of asks a
         # settlement tick makes.
         self._sync_head_gear()
+        self._run_reveals()
         self._rebuild_world_index()
         self._wi_cache = None
         self._world_index()
@@ -5181,35 +5186,70 @@ class MiniwindSession(SettlementLaw):
         name = item.name if item is not None else str(item_id).replace("_", " ")
         self.float_text(thing, f"+{int(qty)} {name.lower()}")
 
-    def float_text(self, thing, text, seconds: float = FIZZLE_SECONDS) -> None:
+    def float_text(self, thing, text, seconds: float = FIZZLE_SECONDS,
+                   after: float = 0.0) -> None:
         """Float *text* up from *thing*'s head and let it fade: a word about
-        what just happened to it (an item collected or a fizzled spell).
-        Like :meth:`bark`, only for those near enough to be on screen."""
+        what just happened to it (an item collected or a fizzled spell) --
+        *after* seconds from now, when that is the moment it becomes true
+        (a dice result, once its die has landed). Like :meth:`bark`, only for
+        those near enough to be on screen."""
         if thing is None or not text or getattr(thing, "pos", None) is None:
             return
         ppos = self._player_pos()
         if ppos is not None and self._dist2d(thing.pos, ppos) > BARK_RADIUS:
             return
         import time as _time
+        if after > 0.0:
+            pending = self.__dict__.setdefault("pending_floats", {})
+            pending[id(thing)] = (thing, str(text), _time.monotonic() + float(after),
+                                  float(seconds))
+            return
+        self.__dict__.get("pending_floats", {}).pop(id(thing), None)
         floats = self.__dict__.setdefault("floats", {})
         floats[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds),
                              float(seconds))
 
     def attack_outcome(self, attacker, hit: bool, crit: bool = False) -> None:
         """*attacker*'s to-hit roll landed or missed: HIT or MISS floats over
-        its head, the player's as much as any NPC's or animal's -- or, for the
-        player's critical hit, "Crit!" (see :meth:`shows_crit`)."""
+        its head, the player's as much as any NPC's or animal's -- or, for a
+        critical hit, "Crit!" (see :meth:`shows_crit`). It appears when the
+        to-hit die in the attacker's roll box lands, never before: a result
+        is not told ahead of its dice."""
+        after = self._reveal_delay(attacker)
         if crit and hit:
-            self.float_text(attacker, CRIT_TEXT, CRIT_FLOAT_SECONDS)
+            self.float_text(attacker, CRIT_TEXT, CRIT_FLOAT_SECONDS, after=after)
             return
-        self.float_text(attacker, HIT_TEXT if hit else MISS_TEXT, ATTACK_FLOAT_SECONDS)
+        self.float_text(attacker, HIT_TEXT if hit else MISS_TEXT, ATTACK_FLOAT_SECONDS,
+                        after=after)
+
+    def _reveal_delay(self, actor, every_die: bool = False) -> float:
+        """Seconds until the to-hit die in *actor*'s roll box lands -- or,
+        *every_die*, the last of its dice (the damage die) -- plus
+        REVEAL_PAUSE, the beat before a result is told; 0 with no box on
+        screen."""
+        box = self.dice_animation if actor is self.player_actor else \
+            (self.__dict__.get("roll_boxes") or {}).get(id(actor))
+        if not box or box.get("actor") is not actor:
+            return 0.0
+        try:
+            from .ui import hud
+            visuals = hud._prepare_dice_animation(box, box.get("result") or {})
+            dice = visuals if every_die else visuals[:1]
+            land = max(d["motion"]["delay"] + d["motion"]["duration"] for d in dice)
+            return max(0.0, land + REVEAL_PAUSE - float(box.get("elapsed", 0.0)))
+        except Exception:
+            return 0.0
 
     def shows_crit(self, thing) -> bool:
         """Whether "Crit!" is floating over *thing* now: its speech bubble,
         bark and thought give way to it."""
         import time as _time
+        now = _time.monotonic()
         entry = (self.__dict__.get("floats") or {}).get(id(thing))
-        return bool(entry) and entry[1] == CRIT_TEXT and entry[2] > _time.monotonic()
+        if entry and entry[1] == CRIT_TEXT and entry[2] > now:
+            return True
+        waiting = (self.__dict__.get("pending_floats") or {}).get(id(thing))
+        return bool(waiting) and waiting[1] == CRIT_TEXT
 
     def fizzled(self, thing) -> None:
         """*thing*'s spell fizzled: say so over its head, and let it be heard
@@ -5248,7 +5288,12 @@ class MiniwindSession(SettlementLaw):
         """``[(thing, text, seconds_left, seconds_total)]`` still floating."""
         import time as _time
         now = _time.monotonic()
-        floats = self.__dict__.get("floats") or {}
+        floats = self.__dict__.setdefault("floats", {})
+        pending = self.__dict__.get("pending_floats") or {}
+        for key, (thing, text, start, total) in list(pending.items()):
+            if start <= now:                     # its moment has come
+                del pending[key]
+                floats[key] = (thing, text, start + total, total)
         out = []
         for key, (thing, text, until, total) in list(floats.items()):
             if until <= now or getattr(thing, "pos", None) is None:
@@ -7141,23 +7186,69 @@ class MiniwindSession(SettlementLaw):
         """What a landed (or missed) melee blow does: the number over the
         target, the blood, the target's anger, a kill."""
         _journal(target)     # a kill/gib changes how the target is drawn
+        self._present_player_blow(target, res, heavy=heavy)
+
+    def _present_player_blow(self, target, res, heavy=False) -> None:
+        """What the player's blow does, in the order its dice tell it.
+
+        The rules have already happened (health is down, the target is
+        angry, a kill is a kill). What the player *sees* waits for the dice:
+        HIT / MISS / Crit! when the to-hit die lands; the damage number, the
+        blood, the jolt of the screen and the target panel's bar when the
+        damage die lands too. With dice not shown, all at once."""
+        hit = bool(res.get("hit"))
         self._tell_damage(res)
         self.note_combat(target, True)
-        self.attack_outcome(self.player_actor, bool(res.get("hit")), crit=bool(res.get("crit")))
+        self.attack_outcome(self.player_actor, hit, crit=bool(res.get("crit")))
         if res.get("block_roll"):
             self.show_roll_box(target, res["block_roll"])     # their shield save
-        if res.get("hit"):
-            self._gore_hit(target, res.get("damage", 0.0),
-                           crit=bool(res.get("crit") or heavy), killed=bool(res.get("killed")),
-                           crit_kill=bool(res.get("crit_kill")))
+        told_hit = self._reveal_delay(self.player_actor)
+        told_damage = self._reveal_delay(self.player_actor, every_die=True)
+        if hit:
+            panel = self.__dict__.get("target_panel")
+            if panel is not None and res.get("health_before") is not None:
+                panel.hold(target, float(res["health_before"]), told_damage)
             tag = ("sneak" if res.get("sneak")
                    else "crit" if (res.get("crit") or heavy) else "dmg")
-            self.add_floater(f"-{int(res['damage'])}", kind=tag)
+            damage = res.get("damage", 0.0)
+
+            def tell():
+                self._gore_hit(target, damage, crit=bool(res.get("crit") or heavy),
+                               killed=bool(res.get("killed")),
+                               crit_kill=bool(res.get("crit_kill")))
+                self.add_floater(f"-{int(damage)}", kind=tag)
+            self._after_dice(told_damage, tell)
             self._provoke(target)
             if res.get("killed"):
                 self._on_creature_killed(target)
         else:
-            self.add_floater("miss", kind="miss")
+            self._after_dice(told_hit, lambda: self.add_floater("miss", kind="miss"))
+
+    def _after_dice(self, delay: float, show) -> None:
+        """Run *show* (something the player sees) *delay* seconds from now --
+        when its dice land -- or at once."""
+        if delay <= 0.0:
+            show()
+            return
+        import time as _time
+        self.__dict__.setdefault("_reveals", []).append((_time.monotonic() + delay, show))
+
+    def _run_reveals(self) -> None:
+        """Show what is due (from the game tick)."""
+        reveals = self.__dict__.get("_reveals")
+        if not reveals:
+            return
+        import time as _time
+        now = _time.monotonic()
+        due = [r for r in reveals if r[0] <= now]
+        if not due:
+            return
+        self._reveals = [r for r in reveals if r[0] > now]
+        for _at, show in sorted(due, key=lambda r: r[0]):
+            try:
+                show()
+            except Exception:
+                pass
 
     def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE, hand="main") -> None:
         """Loose a physical arrow the way the player is facing, to fly up to
@@ -7192,23 +7283,7 @@ class MiniwindSession(SettlementLaw):
         def _on_hit(hit_monster):
             res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
             _journal(hit_monster)
-            self._tell_damage(res)
-            self.note_combat(hit_monster, True)
-            self.attack_outcome(self.player_actor, bool(res.get("hit")),
-                                crit=bool(res.get("crit")))
-            if res.get("block_roll"):
-                self.show_roll_box(hit_monster, res["block_roll"])
-            if res.get("hit"):
-                self._gore_hit(hit_monster, res.get("damage", 0.0), crit=bool(res.get("crit")),
-                               killed=bool(res.get("killed")),
-                               crit_kill=bool(res.get("crit_kill")))
-                tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
-                self.add_floater(f"-{int(res['damage'])}", kind=tag)
-                self._provoke(hit_monster)
-                if res.get("killed"):
-                    self._on_creature_killed(hit_monster)
-            else:
-                self.add_floater("miss", kind="miss")
+            self._present_player_blow(hit_monster, res)
 
         # A player-owned arrow: it flies past the archer, stops at its own
         # range, and resolves its RPG damage at the moment it actually hits.

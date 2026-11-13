@@ -366,6 +366,7 @@ class GameState:
                              rng=self.rng, against_player=True))
         res["damage"] = _warded(target_props, res["damage"])
         hp = int(target_props.get("health", 30))
+        res["health_before"] = hp
         hp -= int(round(res["damage"]))
         target_props["health"] = hp
         char.use_skill(res["skill"], res["difficulty"])

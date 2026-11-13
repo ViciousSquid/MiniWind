@@ -200,6 +200,12 @@ def test_the_damage_line_is_the_damage_actually_dealt(qt_app, monkeypatch):
     face = companion["roll_result"]
     assert res["damage_face"] == face                   # the face shown is the face used
     assert companion["detail"].endswith(f"rolled {face} → {int(res['damage'])} damage")
+    # The number over the target waits for the damage die, then matches.
+    assert f"-{int(res['damage'])}" not in floaters
+    import time
+    later = time.monotonic() + 10.0
+    monkeypatch.setattr(time, "monotonic", lambda: later)
+    s._run_reveals()
     assert floaters[-1] == f"-{int(res['damage'])}"     # the same number over the target
 
 
@@ -214,3 +220,66 @@ def test_a_settled_die_shows_exactly_the_rolled_number(qt_app, sides):
         toward = [dice3d._apply(rotation, n)[2] for _idx, n in faces]
         front = max(range(len(faces)), key=toward.__getitem__)
         assert front == value - 1 and dice3d.face_label(sides, front) == str(value)
+
+
+def test_hit_or_miss_waits_for_its_die_to_land(qt_app, monkeypatch):
+    """With a roll box on screen, HIT / MISS / Crit! over the attacker
+    appears only when the to-hit die lands -- never ahead of the dice."""
+    import time
+    from .test_cast_controls import _Logic, _Thing
+    from ..runtime import MiniwindSession, HIT_TEXT
+    wolf = _Thing("Wolf", (100.0, 0.0, 0.0), type="creature", npc_role="wolf")
+    s = MiniwindSession(_Logic([wolf]), cfg={})
+    s._player_pos = lambda: [0.0, 0.0, 0.0]
+    roll = {"label": "Roll to hit", "roll_result": 15, "target": 9, "success": True,
+            "dice_notation": "1d20", "roll_details": [15],
+            "components": [{"notation": "1d20", "roll_details": [15]}]}
+    s.show_roll_box(wolf, roll, kind="npc")
+    s.attack_outcome(wolf, True)
+    wait = s._reveal_delay(wolf)
+    assert wait > 0.5                                     # the die is still tumbling
+    assert all(t is not wolf for t, *_ in s.live_floats())
+    clock = time.monotonic() + wait + 0.05
+    monkeypatch.setattr(time, "monotonic", lambda: clock)
+    floated = {id(t): text for t, text, *_ in s.live_floats()}
+    assert floated[id(wolf)] == HIT_TEXT
+
+
+def test_the_box_tells_each_result_as_its_die_lands(qt_app):
+    """The verdict line waits for the roll's own die; the damage line for
+    the damage die as well."""
+    from PyQt5.QtGui import QImage, QPainter
+    from ..ui import hud
+    box = {"result": {"label": "Roll to hit", "roll_result": 14, "target": 8, "success": True,
+                      "dice_notation": "1d20", "roll_details": [14],
+                      "components": [{"notation": "1d20", "roll_details": [14]}]},
+           "companion": {"dice_notation": "1d12", "roll_result": 9, "roll_details": [9],
+                         "components": [{"notation": "1d12", "roll_details": [9]}],
+                         "detail": "Iron Longsword d12+9.5: rolled 9 → 15 damage"},
+           "elapsed": 0.0, "duration": 6.0, "actor": None, "side": "you", "kind": "party",
+           "seed": 3}
+    layout = hud._roll_box_layout(box, 1200)
+    hit_die, dmg_die = layout["visuals"]
+    told = []
+    orig = hud.T.text_in
+    hud.T.text_in = lambda painter, rect, text, *a, **k: told.append(text)
+    try:
+        def lines_at(t):
+            told.clear()
+            box["elapsed"] = t
+            lay = hud._roll_box_layout(box, 1200)
+            img = QImage(400, 300, QImage.Format_ARGB32)
+            p = QPainter(img)
+            hud._draw_roll_box(p, box, lay, 10, 10, (200, 290), 0)
+            p.end()
+            return [x for x in told if "need" in x or "damage" in x]
+        assert lines_at(0.1) == []                                        # tumbling
+        land = hit_die["motion"]["delay"] + hit_die["motion"]["duration"]
+        dmg_land = dmg_die["motion"]["delay"] + dmg_die["motion"]["duration"]
+        if dmg_land > land + 0.02:
+            mid = (land + dmg_land) / 2
+            assert lines_at(mid) == ["14 (need 8+) — HIT"]               # d20 down only
+        assert lines_at(max(land, dmg_land) + 0.05) == [
+            "14 (need 8+) — HIT", "Iron Longsword d12+9.5: rolled 9 → 15 damage"]
+    finally:
+        hud.T.text_in = orig

@@ -227,16 +227,35 @@ def face_label(sides: int, index: int) -> str:
 
 
 # ------------------------------------------------------------------ motion
-def motion(seed: int, *, delay: float = 0.0) -> Dict:
+# -- timing: quick enough that a roll never becomes a wait (tweak here) --
+#: How long a die tumbles before it settles (seconds, a range).
+TUMBLE_SECONDS = (0.55, 0.80)
+#: A die may start up to this late, so a pair is never thrown in step.
+START_JITTER = 0.06
+#: The second die (damage) is thrown this much after the first (to hit).
+SECOND_DIE_DELAY = 0.12
+#: Every roll as a whole runs this much faster or slower (+/-), so no two
+#: rolls feel the same.
+ROLL_SPEED_VARIANCE = 0.12
+
+
+def roll_speed(seed: int) -> float:
+    """A whole roll's speed factor: about 1.0, +/- ROLL_SPEED_VARIANCE."""
+    return 1.0 + random.Random(seed * 7919 + 17).uniform(-ROLL_SPEED_VARIANCE,
+                                                           ROLL_SPEED_VARIANCE)
+
+
+def motion(seed: int, *, delay: float = 0.0, speed: float = 1.0) -> Dict:
     """One die's own throw: its delay, how long it tumbles, its spin axis and
     turns, where it comes in from and how it bounces. Different for every
-    seed, so dice thrown together never move in step."""
+    seed, so dice thrown together never move in step; *speed* scales the
+    whole of it (a roll's own pace, :func:`roll_speed`)."""
     rng = random.Random(seed)
     return {
-        "delay": delay + rng.uniform(0.0, 0.12),
-        "duration": rng.uniform(0.85, 1.25),
+        "delay": (delay + rng.uniform(0.0, START_JITTER)) * speed,
+        "duration": rng.uniform(*TUMBLE_SECONDS) * speed,
         "axis": _norm((rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-1, 1))),
-        "turns": rng.uniform(2.2, 3.6),
+        "turns": rng.uniform(2.0, 3.2),
         "settle_spin": rng.uniform(-0.6, 0.6),
         "from_x": rng.choice((-1.0, 1.0)) * rng.uniform(0.9, 1.5),
         "bounces": rng.choice((2, 3)),

@@ -97,6 +97,7 @@ class TargetTracker:
         self.killed_at = None
         self._ghost = None          # (from_health, since)
         self._seen_health = None
+        self._held = None           # (thing, health shown, until): see hold()
 
     def note(self, thing, by_player: bool, now: Optional[float] = None) -> None:
         """A blow between the player and *thing* -- *by_player* when the
@@ -123,6 +124,15 @@ class TargetTracker:
             self._ghost = None
             self._seen_health = _health(props)[0]
 
+    def hold(self, thing, health: float, seconds: float, now: Optional[float] = None) -> None:
+        """Show *thing*'s health as *health* for *seconds* more: the blow has
+        landed in the rules, but its dice are still rolling, so the bar (and
+        SLAIN) wait for them."""
+        if seconds <= 0.0:
+            return
+        now = _now() if now is None else now
+        self._held = (thing, float(health), now + float(seconds))
+
     def clear(self) -> None:
         self.__init__()
 
@@ -135,6 +145,12 @@ class TargetTracker:
         props = getattr(self.target, "properties", None) or {}
         hp, top = _health(props)
         slain = _dead(props)
+        held = self._held
+        if held is not None:
+            if held[0] is self.target and now < held[2]:
+                hp, slain = held[1], held[1] <= 0      # still rolling: as it was
+            else:
+                self._held = None
         if self.ended_at is None:
             if slain:
                 if self.killed_at is None:
