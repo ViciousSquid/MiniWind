@@ -1085,8 +1085,8 @@ class MiniwindSession(SettlementLaw):
     GRASS_CATCH_HEAT = 0.35
     #: How often the ground behind the fire is blackened, and how many cells
     #: at a time (each is a stamp into the terrain's paint).
-    SCORCH_EVERY = 0.8
-    SCORCH_BATCH = 24
+    SCORCH_EVERY = 0.25
+    SCORCH_BATCH = 8
     #: The charred-ground stamps (game/tools/make_scorch_art.py).
     SCORCH_ART = tuple(f"assets/sprites/miniwind/scorch/scorch_{i}.png" for i in range(4))
 
