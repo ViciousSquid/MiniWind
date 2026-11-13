@@ -80,6 +80,41 @@ _OVERRIDE_COLOURS = np.array(
 _TRIGGER_ROW, _SELECTED_ROW, _SUBTRACT_ROW = 0, 1, 2
 
 
+#: Pixels beyond the water any copy keeps, for what its ripples bend in.
+WATER_COPY_PAD = 48
+
+
+def water_screen_rect(view_projection, bounds, size, margin_fraction=0.0):
+    """The patch of the viewport ``(x, y, w, h)`` (GL pixels, origin bottom
+    left) that water brushes with *bounds* (``(n, 6)`` centre + half extents)
+    cover on screen, padded by :data:`WATER_COPY_PAD` and *margin_fraction*
+    of the screen; the whole viewport when any corner is behind the camera."""
+    width, height = int(size[0]), int(size[1])
+    full = (0, 0, width, height)
+    b = np.asarray(bounds, dtype=np.float64).reshape(-1, 6)
+    if not len(b) or width <= 0 or height <= 0:
+        return full
+    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)],
+                     dtype=np.float64)
+    corners = (b[:, None, 0:3] + b[:, None, 3:6] * signs[None, :, :]).reshape(-1, 3)
+    m = np.array(view_projection, dtype=np.float64).reshape(4, 4)   # rows, as numpy gives a glm matrix
+    clip = np.c_[corners, np.ones(len(corners))] @ m.T
+    w = clip[:, 3]
+    if np.any(w <= 1e-6):
+        return full
+    ndc = clip[:, :2] / w[:, None]
+    lo, hi = ndc.min(axis=0), ndc.max(axis=0)
+    pad_x = WATER_COPY_PAD + margin_fraction * width
+    pad_y = WATER_COPY_PAD + margin_fraction * height
+    x0 = int(max(0, np.floor((lo[0] + 1) * 0.5 * width - pad_x)))
+    x1 = int(min(width, np.ceil((hi[0] + 1) * 0.5 * width + pad_x)))
+    y0 = int(max(0, np.floor((lo[1] + 1) * 0.5 * height - pad_y)))
+    y1 = int(min(height, np.ceil((hi[1] + 1) * 0.5 * height + pad_y)))
+    if x1 <= x0 or y1 <= y0:
+        return (0, 0, 0, 0)
+    return (x0, y0, x1 - x0, y1 - y0)
+
+
 class PassesMixin:
     """ForwardRenderer's draw passes."""
 
@@ -1984,6 +2019,10 @@ class PassesMixin:
     #: How far across the water an effect's reflection is looked for, as a
     #: multiple of its height above the surface.
     EFFECT_REFLECTION_REACH = 4.0
+    #: High-quality water traces reflections across the copied frame: its
+    #: copy reaches this share of the screen beyond the water on every side.
+    WATER_SSR_MARGIN = 0.2
+
     #: Texture unit of the sky's baked clouds (engine/sky_clouds.py).
     SKY_CLOUD_UNIT = 13
 
@@ -2145,22 +2184,26 @@ class PassesMixin:
         # Water uses the same scene capture as Glass, but captures before any
         # water surface is submitted so transmission never contains the water
         # itself.
-        scene_size = self._capture_glass_scene()
+        # All water is high quality unless the graphics setting says low
+        # ([Renderer] water_quality, r_waterquality): a brush's own flag no
+        # longer lowers it.
+        high_quality = np.full(len(brushes), getattr(self, 'water_quality', 'expensive') == 'expensive')
+        # Copy only the patch of screen the water covers (and a margin for
+        # what it bends or reflects in from beside it), not the whole frame:
+        # a pond in a corner costs a pond's worth of copying.
+        viewport = gl.glGetIntegerv(gl.GL_VIEWPORT)
+        rect = water_screen_rect(
+            projection * view, table.bounds[brushes],
+            (int(viewport[2]), int(viewport[3])),
+            margin_fraction=self.WATER_SSR_MARGIN if bool(high_quality.any()) else 0.0)
+        scene_size = self._capture_glass_scene(rect)
         if scene_size is None:
-            viewport = gl.glGetIntegerv(gl.GL_VIEWPORT)
             scene_size = (
                 max(int(viewport[2]), 1),
                 max(int(viewport[3]), 1),
             )
         scene_width, scene_height = scene_size
-        # Quality is per brush ("High quality" in the property editor). The
-        # depth copy is made once, and only if some brush in the pass wants
-        # it; the renderer's water_quality is a session-only debug cap
-        # (r_waterquality cheap forces every brush cheap).
-        high_quality = table.water_high_quality[brushes]
-        if getattr(self, 'water_quality', 'expensive') != 'expensive':
-            high_quality = np.zeros_like(high_quality)
-        has_depth = bool(high_quality.any()) and self._capture_scene_depth()
+        has_depth = bool(high_quality.any()) and self._capture_scene_depth(rect)
         depth_unit = self._water_depth_texture_unit
         gl.glActiveTexture(gl.GL_TEXTURE0 + depth_unit)
         gl.glBindTexture(gl.GL_TEXTURE_2D,
@@ -2336,12 +2379,14 @@ class PassesMixin:
         gl.glActiveTexture(gl.GL_TEXTURE0)
         return
 
-    def _capture_glass_scene(self):
+    def _capture_glass_scene(self, rect=None):
         """Copy the current framebuffer into the glass transmission texture.
 
         The copy happens once before the glass pass, so every glass surface
         samples the same scene behind it. GL 3.3 supports this without adding
-        another permanent render target to the forward pipeline.
+        another permanent render target to the forward pipeline. *rect*
+        ``(x, y, w, h)`` in viewport pixels copies only that patch (the water
+        pass: :func:`water_screen_rect`); None copies all of it.
         """
         viewport = gl.glGetIntegerv(gl.GL_VIEWPORT)
         if viewport is None or len(viewport) < 4:
@@ -2370,8 +2415,10 @@ class PassesMixin:
                 gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
             self._glass_scene_size = (width, height)
 
-        gl.glCopyTexSubImage2D(
-            gl.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height)
+        rx, ry, rw, rh = rect if rect is not None else (0, 0, width, height)
+        if rw > 0 and rh > 0:
+            gl.glCopyTexSubImage2D(
+                gl.GL_TEXTURE_2D, 0, rx, ry, x + rx, y + ry, rw, rh)
         return width, height
 
     def _read_framebuffer_has_depth(self):
@@ -2412,7 +2459,7 @@ class PassesMixin:
         except Exception:
             return False
 
-    def _capture_scene_depth(self):
+    def _capture_scene_depth(self, rect=None):
         """Copy the current depth buffer into the water depth texture.
 
         Plain GL 3.3 core: one ``glCopyTexSubImage2D`` into a depth texture,
@@ -2442,7 +2489,9 @@ class PassesMixin:
                 gl.GL_TEXTURE_2D, 0, gl.GL_DEPTH_COMPONENT24, width, height, 0,
                 gl.GL_DEPTH_COMPONENT, gl.GL_FLOAT, None)
             self._water_depth_size = (width, height)
-        gl.glCopyTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height)
+        rx, ry, rw, rh = rect if rect is not None else (0, 0, width, height)
+        if rw > 0 and rh > 0:
+            gl.glCopyTexSubImage2D(gl.GL_TEXTURE_2D, 0, rx, ry, x + rx, y + ry, rw, rh)
         return True
 
     @timed_pass('glass')

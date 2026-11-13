@@ -1028,7 +1028,7 @@ class ConsoleCommandHandler:
 <b style="color:orange;">r_renderer</b> [name] — List the registered renderers, or switch to one live<br>
 <b style="color:orange;">r_wireframe</b>{sep}<b style="color:orange;">wireframe</b> [on|off] — Wireframe display (the Display box); off returns to the previous mode<br>
 <b style="color:orange;">r_shadows</b>{sep}<b style="color:orange;">shadows</b> — Toggle shadows<br>
-<b style="color:orange;">r_waterquality</b>{sep}<b style="color:orange;">waterquality</b> [cheap|expensive] — Debug cap: cheap forces all water cheap; expensive lets each brush's High quality decide<br>
+<b style="color:orange;">r_waterquality</b>{sep}<b style="color:orange;">waterquality</b> [cheap|expensive] — Water quality for all water this session (the game's Graphics menu saves it)<br>
 <b style="color:orange;">r_clearcolor</b> r g b — Set background colour<br>
 <b style="color:cyan;">=== View Distance &amp; Far-Plane Fog ===</b><br>
 <i>Fog always reaches full opacity before the clip, so pulling the view
@@ -1194,11 +1194,9 @@ entity to drive them from the I/O system.</i><br>
         debug_log("Info", f"Shadows: {'ON' if renderer.shadows_enabled else 'OFF'}")
 
     def cmd_water_quality(self, args):
-        """Debug cap on water quality: cheap / expensive (no argument toggles).
-
-        Quality is a per-brush property ("High quality" on a water brush);
-        ``cheap`` forces every brush cheap for this session, ``expensive``
-        lets each brush choose. Never saved.
+        """Water quality for all water this session: cheap / expensive (no
+        argument toggles). All water is high quality ('expensive') unless the
+        graphics setting ([Renderer] water_quality) or this says cheap.
         """
         renderer = self._get_renderer()
         if not renderer: return
@@ -1212,7 +1210,7 @@ entity to drive them from the I/O system.</i><br>
             wanted = 'cheap' if current == 'expensive' else 'expensive'
         renderer.water_quality = wanted
         debug_log("Info", "Water quality: " + (
-            "per brush" if wanted == 'expensive' else "cheap (all water)"))
+            "high (all water)" if wanted == 'expensive' else "low (all water)"))
 
     def cmd_render_vsync(self, args):
         config = self.main_window.config

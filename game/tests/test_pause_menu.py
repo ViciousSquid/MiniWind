@@ -376,7 +376,7 @@ def _graphics(menu):
     menu.handle_key(_key(QtCore.Qt.Key_Return))
     assert [r[0] for r in page.rows()] == ["graphics", "record", "advanced_back"]
     menu.handle_key(_key(QtCore.Qt.Key_Return))
-    assert [r[0] for r in page.rows()] == ["grass", "grass_fire", "graphics_back"]
+    assert [r[0] for r in page.rows()] == ["grass", "water", "grass_fire", "graphics_back"]
     return page
 
 
@@ -393,6 +393,19 @@ def test_advanced_graphics_holds_the_grass_and_escape_climbs_back(app):
     assert page.section == "advanced" and menu.page == "options"
     menu.handle_key(_key(QtCore.Qt.Key_Escape))
     assert page.section is None and menu.page == "options"
+
+
+def test_graphics_sets_water_high_or_low(app):
+    menu = _menu()
+    state = {"q": "high"}
+    menu.editor.pause_menu_water_quality = lambda: state["q"]
+    menu.editor.pause_menu_set_water_quality = lambda q: state.update(q=q)
+    page = _graphics(menu)
+    assert dict((k, v) for k, _l, v, _o in page.rows())["water"] == "High"
+    _row(page, "water")
+    menu.handle_key(_key(QtCore.Qt.Key_Return))
+    assert state["q"] == "low"
+    assert dict((k, v) for k, _l, v, _o in page.rows())["water"] == "Low"
 
 
 def test_graphics_turns_grass_fires_on_and_off(app):

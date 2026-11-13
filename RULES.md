@@ -484,6 +484,14 @@ third of a calm surface's colour is sky. The clouds are a texture baked once
 while the game loads (no extra draw calls; a few texture reads per pixel of
 water).
 
+**Water quality** is one graphics setting for all water (Pause → Graphics →
+Water; `[Renderer] water_quality`, high by default): high is depth colour,
+soft shores, caustics and reflections of the world and the sky; low is plain
+water. A water brush's old "High quality" flag no longer lowers it. Only the
+patch of screen around the water in view is copied for it (a small pond
+copies a small patch; reflective water a little more), and with no water in
+view nothing is.
+
 ---
 
 ## 10. Learning from tutors

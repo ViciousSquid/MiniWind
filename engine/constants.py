@@ -110,7 +110,9 @@ def is_water_brush(brush):
 
 
 def water_high_quality(brush):
-    """A water brush's "High quality" flag (``water_high_quality``, default on).
+    """A water brush's old "High quality" flag (``water_high_quality``,
+    default on). Read into the render table but no longer used to draw: all
+    water is high quality unless the graphics setting says low.
 
     High-quality water copies the scene depth for depth-based colour,
     shoreline foam, caustics and screen-space reflections; off, it is the

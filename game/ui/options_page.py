@@ -86,6 +86,13 @@ class OptionsPage:
         except Exception:
             return False
 
+    def _water_quality(self) -> str:
+        reader = getattr(self.menu.actions, "pause_menu_water_quality", None)
+        try:
+            return str(reader()) if reader is not None else "high"
+        except Exception:
+            return "high"
+
     def _grass_fire(self) -> bool:
         reader = getattr(self.menu.actions, "pause_menu_grass_fire", None)
         try:
@@ -149,6 +156,7 @@ class OptionsPage:
             rows = []
             if s is not None:
                 rows.append(("grass", "Grass", launcher.grass_label(s.grass), True))
+            rows.append(("water", "Water", "High" if self._water_quality() == "high" else "Low", True))
             rows.append(("grass_fire", "Grass fires", "On" if self._grass_fire() else "Off", True))
             rows.append(("graphics_back", "Back", "", True))
             return rows
@@ -189,11 +197,14 @@ class OptionsPage:
         if key == "record":
             return ("Keep a record and screenshots of each fight that becomes interesting, "
                     "in saves/encounters.")
+        if key == "water":
+            return ("High: depth, soft shores, caustics and reflections of the world and the sky. "
+                    "Low: plain water, cheaper to draw.")
         if key == "grass_fire":
             return ("Fire spreads through long grass before the wind and scorches the ground. "
                     "Off: a fire burns where it falls.")
         if key == "graphics":
-            return "Grass and grass fires, changed while you play."
+            return "Grass, water and grass fires, changed while you play."
         if key == "volume":
             return "Drag or use ← →.  0% turns the music off."
         if key == "keys":
@@ -250,6 +261,11 @@ class OptionsPage:
             return
         if key == "record":
             self.menu._call_action("pause_menu_set_record_encounters", not self._recording())
+            self.menu.view.update()
+            return
+        if key == "water":
+            self.menu._call_action("pause_menu_set_water_quality",
+                                   "low" if self._water_quality() == "high" else "high")
             self.menu.view.update()
             return
         if key == "grass_fire":

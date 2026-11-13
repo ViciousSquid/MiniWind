@@ -412,6 +412,33 @@ class PauseActions:
         renderer.grass_quality = grass
         self.view.update()
 
+    def pause_menu_water_quality(self):
+        """'high' or 'low': every water surface's quality ([Renderer]
+        water_quality, high by default)."""
+        renderer = getattr(self.view, "renderer", None)
+        if renderer is not None:
+            return "low" if getattr(renderer, "water_quality", "expensive") == "cheap" else "high"
+        return "high"
+
+    def pause_menu_set_water_quality(self, quality):
+        """Water quality now, and in settings.ini for next time."""
+        quality = "low" if str(quality).lower() in ("low", "cheap") else "high"
+        renderer = getattr(self.view, "renderer", None)
+        if renderer is not None:
+            renderer.water_quality = "cheap" if quality == "low" else "expensive"
+        config = getattr(self.window, "config", None)
+        if config is not None:
+            if not config.has_section("Renderer"):
+                config.add_section("Renderer")
+            config.set("Renderer", "water_quality", quality)
+            save = getattr(self.window, "save_config", None)
+            if save is not None:
+                try:
+                    save()
+                except Exception:
+                    pass
+        self.view.update()
+
     # --------------------------------------------------------------- leaving
     def pause_menu_map_data(self):
         """``(world map, features)`` for the MAP page (see game/ui/worldmap)."""
