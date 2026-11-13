@@ -36,16 +36,16 @@ class CharClass:
         # classes get a basic spell so a fresh mage is never empty-handed even
         # if their race / birthsign granted nothing (see character.new_game).
         self.starting_spells = list(starting_spells or [])
-        # Whether the class can work magic at all. A Warrior cannot: no
-        # magicka, no spells, no casting (see can_use_magic).
+        # Whether the class can work magic at all. A Warrior or a Barbarian
+        # cannot: no magicka, no spells, no casting (see can_use_magic).
         self.magic = bool(magic)
         # How hard the class hits with every attack it makes. The Warrior's
-        # is the highest of any class (see WARRIOR_DAMAGE).
+        # and the Barbarian's is the highest of any class (see WARRIOR_DAMAGE).
         self.damage_mult = float(damage_mult)
 
 
-#: The Warrior's multiplier on the damage it deals (not damage taken, which
-#: is the same for every class): no class hits harder.
+#: The Warrior's (and the Barbarian's) multiplier on the damage it deals (not
+#: damage taken, which is the same for every class): no class hits harder.
 WARRIOR_DAMAGE = 1.10
 
 #: What character creation tells a player choosing a class that works no magic.
@@ -69,10 +69,13 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
               [sk.BLADE, sk.BLUNT, sk.HEAVY_ARMOR, sk.BLOCK, sk.SPEECHCRAFT,
                sk.DEFENSIVE, sk.ATHLETICS]),
     CharClass("barbarian", "Barbarian",
-              "A savage brawler who trades armour for raw ferocity and speed.",
+              "A savage brawler who trades armour for raw ferocity and speed. "
+              "Like the Warrior, a Barbarian hits harder than any other class: "
+              "every attack deals +10% damage.",
               sk.COMBAT, [attr.STRENGTH, attr.SPEED],
               [sk.BLUNT, sk.BLADE, sk.LIGHT_ARMOR, sk.BLOCK, sk.ATHLETICS,
-               sk.MARKSMAN, sk.ACROBATICS]),
+               sk.MARKSMAN, sk.ACROBATICS],
+              magic=False, damage_mult=WARRIOR_DAMAGE),
     CharClass("scout", "Scout",
               "A wilderness ranger: bow, blade, light armour and a keen eye.",
               sk.COMBAT, [attr.SPEED, attr.ENDURANCE],
@@ -144,7 +147,7 @@ SPECIALISATION_BONUS = 5   # every skill in your specialisation gets +5
 
 
 def can_use_magic(character) -> bool:
-    """Whether *character*'s class works magic (a Warrior does not)."""
+    """Whether *character*'s class works magic (a Warrior or Barbarian does not)."""
     try:
         return bool(get(getattr(character, "class_id", "")).magic)
     except Exception:
