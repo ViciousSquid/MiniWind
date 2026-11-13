@@ -612,6 +612,26 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 * **Fonts:** MedievalSharp for names and headings; Texturina Light for small
   text, never under 11 px.
 
+## 17. Playing together
+
+* **Up to four players** in a party, on any mix of computers and controllers.
+* **Friend codes.** Host game gives a code such as `7K2QD-M4XA9-0RT3V` (Copy
+  code); a friend pastes it into Join. It holds the host's Internet address,
+  the party's port and a random invitation, with a check character that
+  catches a mistyped letter or two swapped. The address comes from the
+  router (which also opens the port, by UPnP), else a STUN server
+  (`[Multiplayer] stun_server`; empty turns it off), else the computer's own
+  network address (LAN or VPN only). Nothing is sent until you host.
+* **The code is the key.** A joiner from outside the host's own network must
+  show the party's invitation; New code makes a fresh one (friends already
+  in stay in). Eight different wrong codes in a minute close the door to new
+  code joiners for a minute. Players on the host's own network, and members
+  rejoining, need no code. A typed address (`1.2.3.4[:port]`) still works.
+* **Late arrival** (the host's choice in the lobby, on by default): players
+  may join while the adventure is running, while there is room. Off, they
+  join only in the lobby before Start; anyone new afterwards is told "Game
+  has already started and does not allow late arrival".
+
 ---
 
 ## Known gaps

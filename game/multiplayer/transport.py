@@ -90,6 +90,8 @@ class Connection:
         self._stop = threading.Event()
         self.thread = None
         self.closed = False
+        #: The far end's IP address ('' when not known).
+        self.address = ""
 
     def start(self):
         self.sock.setblocking(False)
@@ -301,7 +303,7 @@ class NetworkService:
         try:
             while not self._stop.is_set():
                 try:
-                    sock, _ = listener.accept()
+                    sock, source = listener.accept()
                     with self._lock:
                         if self._stop.is_set():
                             sock.close()
@@ -311,10 +313,18 @@ class NetworkService:
                             sock.close()
                             continue
                         peer = uuid.uuid4().hex
+                        # "connected" is queued before the peer's reader
+                        # starts: a joiner sends hello at once, and its hello
+                        # must never be handled before its connection is.
+                        try:
+                            self.events.put_nowait((peer, {"type": "connected"}))
+                        except queue.Full:
+                            sock.close()    # too busy to take anyone now
+                            continue
                         connection = Connection(sock, self.events, peer)
+                        connection.address = source[0] if source else ""
                         self.connections[peer] = connection
                         connection.start()
-                    self.events.put_nowait((peer, {"type": "connected"}))
                 except TimeoutError:
                     pass
                 if udp is not None and select.select([udp], [], [], 0)[0]:
@@ -376,10 +386,10 @@ class NetworkService:
                             sock.close()
                             return
                         self._pending_socket = None
+                        self.events.put_nowait(("host", {"type": "connected"}))
                         connection = Connection(sock, self.events, "host")
                         self.connections["host"] = connection
                         connection.start()
-                    self.events.put_nowait(("host", {"type": "connected"}))
                     return
                 raise last_error
             except (OSError, ValueError) as exc:
@@ -434,6 +444,11 @@ class NetworkService:
         if self._discovery_thread is not None:
             self._discovery_thread.join(timeout=0.5)
             self._discovery_thread = None
+
+    def peer_address(self, peer) -> str:
+        """The IP address a connected *peer* came from ('' if unknown)."""
+        connection = self.connections.get(peer)
+        return getattr(connection, "address", "") if connection is not None else ""
 
     def disconnect(self, peer):
         with self._lock:

@@ -6,13 +6,15 @@ import hashlib
 import json
 import os
 import secrets
+import threading
 import time
 import uuid
 from pathlib import Path
 
 from . import PROTOCOL_VERSION
+from . import friend_code
 from .compatibility import map_hash
-from .model import Lobby, LobbyError, content_signature, map_path
+from .model import LATE_ARRIVAL_CLOSED, Lobby, LobbyError, content_signature, map_path
 from .transport import GAME_PORT, NetworkService
 
 
@@ -63,6 +65,18 @@ class LobbyController:
         self.resume_path = None
         self.travelling = False
         self.solo_copy = False
+        #: settings.ini, for [Multiplayer] stun_server / upnp (set by the UI).
+        self.config = None
+        # Friend codes (game/multiplayer/friend_code.py): the host's
+        # invitation and code, and the invitation a joiner shows.
+        self.invitation = 0
+        self.code = ""
+        self.code_how = ""          # "router" | "stun" | "local" | "" while finding
+        self.public_ip = ""
+        self.mapping = None
+        self.join_invitation = 0
+        self._wrong_invitations = []    # (time, invitation)
+        self._code_thread = None
 
     def open(self):
         if self.opened:
@@ -86,12 +100,83 @@ class LobbyController:
             raise LobbyError("A party is already open.")
         if not local_only:
             self.network.host(port)
+            self.invitation = friend_code.new_invitation()
         self.local_only = local_only
         self.owner = "host"
         self.lobby = Lobby(signature=self.signature, name=name, map_name=self.map_name)
         self.lobby.map_hash = map_hash(path)
         self.network.stop_browser()
         self._publish()
+
+    # -- friend codes ------------------------------------------------------------
+    def find_code(self, finder=None, wait=False):
+        """Work out where friends can reach this party, and the code for it,
+        on a thread of its own (it asks the router, then a STUN server)."""
+        if self.lobby is None or self.local_only or not self.invitation:
+            return
+        port = int(getattr(self.network, "port", GAME_PORT))
+        finder = finder or (lambda: friend_code.find_public_address(port, self.config))
+        self.code, self.code_how = "", ""
+
+        def work():
+            try:
+                ip, how, mapping = finder()
+            except Exception:
+                ip, how, mapping = friend_code.local_address(), "local", None
+            if self.lobby is None:            # left while it was finding
+                if mapping is not None:
+                    mapping.close()
+                return
+            if self.mapping is not None and self.mapping is not mapping:
+                self.mapping.close()
+            self.mapping = mapping
+            self.public_ip = ip
+            self.code = friend_code.encode(ip, port, self.invitation)
+            self.code_how = how
+
+        self._code_thread = threading.Thread(target=work, name="MiniWind friend code", daemon=True)
+        self._code_thread.start()
+        if wait:
+            self._code_thread.join(10)
+
+    def new_code(self):
+        """A fresh invitation: the old code stops working; friends already
+        in the party stay in."""
+        if self.lobby is None or self.local_only:
+            return
+        self.invitation = friend_code.new_invitation()
+        self._wrong_invitations.clear()
+        if self.public_ip:
+            port = int(getattr(self.network, "port", GAME_PORT))
+            self.code = friend_code.encode(self.public_ip, port, self.invitation)
+
+    def join_code(self, text):
+        """Join the party a friend code (or a typed address) points at."""
+        try:
+            address, port, invitation = friend_code.parse(text)
+        except friend_code.FriendCodeError as exc:
+            raise LobbyError(str(exc)) from exc
+        self.join_invitation = invitation
+        self.join(address, port)
+
+    def _admit(self, peer, owner, invitation):
+        """Whether a joiner may in: anyone on the host's own network; a
+        member already in the party (a reconnect); else only with this
+        party's invitation -- and not while someone is guessing."""
+        if self.local_only or not self.invitation:
+            return
+        address = getattr(self.network, "peer_address", lambda _p: "")(peer)
+        if friend_code.trusted_address(address) or self.lobby.owned(owner):
+            return
+        now = time.monotonic()
+        self._wrong_invitations = [(t, i) for t, i in self._wrong_invitations
+                                   if now - t < friend_code.WRONG_WINDOW]
+        guessing = len({i for _t, i in self._wrong_invitations}) >= friend_code.WRONG_ALLOWED
+        if guessing:
+            raise LobbyError("The party is not taking new players for a minute. Try again shortly.")
+        if invitation != self.invitation:
+            self._wrong_invitations.append((now, invitation))
+            raise LobbyError("That friend code is out of date: ask the host for the new one.")
 
     def resume_campaign(self, path):
         """Load a co-op roster, or explicitly copy a solo save into this party."""
@@ -121,6 +206,7 @@ class LobbyController:
             self.lobby.campaign_id = campaign_id
             self.campaign_state = campaign
             self.lobby.respawn_at_village = bool(campaign.get("respawn_at_village", False))
+            self.lobby.late_arrival = bool(campaign.get("late_arrival", True))
             for member in campaign["members"]:
                 char = campaign["players"][member["player_id"]]["character"]
                 added = self.lobby.add(
@@ -201,6 +287,8 @@ class LobbyController:
             self.lobby.remove(owner, message.get("player_id"))
         elif op == "ready":
             self.lobby.ready(owner, message.get("ready"))
+        elif op == "late_arrival":
+            self.lobby.set_late_arrival(owner, message.get("enabled"))
         elif op == "respawn_at_village":
             self.lobby.set_respawn_at_village(owner, message.get("enabled"))
         elif op == "start":
@@ -241,6 +329,7 @@ class LobbyController:
                             "protocol": PROTOCOL_VERSION,
                             "signature": self.signature,
                             "identity": self.identity,
+                            "invite": int(self.join_invitation or 0),
                         },
                     )
                 else:
@@ -266,12 +355,13 @@ class LobbyController:
                 owner = hashlib.sha256(identity.encode()).hexdigest()
                 if owner in self.peers.values():
                     raise LobbyError("This player is already connected.")
-                if (
-                    self.started
-                    and not self.lobby.owned(owner)
-                    and len(self.lobby.members) >= 4
-                ):
-                    raise LobbyError("The party is full.")
+                invite = message.get("invite", 0)
+                self._admit(peer, owner, invite if isinstance(invite, int) else -1)
+                if self.started and not self.lobby.owned(owner):
+                    if not self.lobby.late_arrival:
+                        raise LobbyError(LATE_ARRIVAL_CLOSED)
+                    if len(self.lobby.members) >= 4:
+                        raise LobbyError("The party is full.")
                 self.peers[peer] = owner
                 self._pending_peers.pop(peer, None)
                 for member in self.lobby.owned(owner):
@@ -380,6 +470,9 @@ class LobbyController:
             self.network.broadcast({"type": "closed"}, peers=self.peers)
         self.network.close()
         self.opened = False
+        if self.mapping is not None:
+            mapping, self.mapping = self.mapping, None
+            threading.Thread(target=mapping.close, name="MiniWind unmap", daemon=True).start()
 
 
 _active = None

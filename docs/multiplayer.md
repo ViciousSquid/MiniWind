@@ -117,7 +117,7 @@ The party travels once every connected, conscious member has joined.
 | --- | --- |
 | Hosting and game traffic | TCP 39745; configurable when hosting |
 | LAN discovery | UDP 39744 |
-| Internet joining | Host IP/hostname and TCP port |
+| Internet joining | A friend code from the host (or a typed host IP[:port]) |
 
 Network services are dormant during launcher construction and ordinary Play.
 Showing Multiplayer starts LAN discovery; hosting starts the TCP listener.
@@ -128,11 +128,33 @@ start, including when the computer has no usable LAN connection.
 
 The operating system may ask for firewall access when Multiplayer is first
 opened or a network game is hosted. MiniWind does not install firewall rules or
-request administrator privileges. Allow the game on the network you use. For
-Internet play, the host must provide a reachable TCP port, usually by forwarding
-it on the router to the host computer, or by using a VPN with reachable peer
-addresses. LAN broadcast search stays on the LAN. This implementation has no
-public Internet directory, relay server, automatic NAT traversal or room codes.
+request administrator privileges. Allow the game on the network you use.
+
+**Friend codes.** Host game shows a code (`XXXXX-XXXXX-XXXXX`, Copy code);
+friends paste it into Join. The code is the address -- the host's public IPv4
+address, the party's TCP port and a random invitation, with a check character
+-- so there is no server to look anything up on. To find the address, hosting
+asks the router by UPnP (which also forwards the port for the party's
+lifetime, and removes it on leaving), then a STUN server (`[Multiplayer]
+stun_server`, default `stun.l.google.com:19302`; empty disables it), then
+falls back to the LAN address. `[Multiplayer] upnp = false` skips the router
+and `[Multiplayer] port` sets the TCP port (default 39745). When the router
+does not forward the port, the host forwards TCP 39745 by hand, or uses a VPN.
+A joiner from outside the host's network must present the code's invitation;
+New code rotates it. There is still no public directory or relay server.
+
+**Late arrival** (host, in the lobby; on by default) lets players join while
+the adventure runs. Off, a newcomer after Start is refused with "Game has
+already started and does not allow late arrival".
+
+**Testing with real instances.** `game/tools/mp_instances.py` runs a host and
+up to three clients as separate game processes on one machine: they join by
+friend code, make characters, ready up, play and walk, and each writes what it
+saw (every member's position) and a screenshot. `--late-client` adds a
+player after Start, `--no-late-arrival` closes the party at Start (that player
+must be refused), `--bad-code` tries a stale code first:
+
+    xvfb-run -a python -m game.tools.mp_instances --out /tmp/mp --clients 2 --bad-code --late-client
 
 All players need matching gameplay code, quest/data content and installed
 destination maps; procedural level-generation exits are unavailable in co-op.

@@ -1602,6 +1602,7 @@ class CoopSession:
             "version": 1,
             "campaign_id": self.lobby.state["campaign_id"],
             "respawn_at_village": self.respawn_at_village,
+            "late_arrival": bool((self.lobby.state or {}).get("late_arrival", True)),
             "world": {
                 **copy.deepcopy(self.party_quests.store.all()),
                 "_clock_hour": str(self.root.clock.hour),
