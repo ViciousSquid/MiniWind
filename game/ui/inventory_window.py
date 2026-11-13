@@ -38,7 +38,7 @@ from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetrics, QLinearGradient,
 
 from engine.floating_windows import FloatingWindow
 
-from . import drag, hits
+from . import drag, hits, spell_lock
 from . import theme as T
 
 # -- palette: dressed stone and old gilt ------------------------------------
@@ -59,17 +59,39 @@ _OFF_HAND_FILL = QColor(44, 70, 86)
 
 #: The worn slots around the paperdoll: (slot id, label, x, y) with x, y the
 #: slot's centre as fractions of the paperdoll panel.
+#: The paperdoll's two hand slots, by the physical hand.
+HAND_LEFT = "left_hand"
+HAND_RIGHT = "right_hand"
+
+
+def _hand_slot(character, slot):
+    """The equipment slot behind a paperdoll *slot*: a hand slot is the main
+    hand's weapon slot or the other hand's slot, by the character's
+    handedness (a right-hander's right hand is the main hand); any other
+    slot is itself."""
+    if slot not in (HAND_LEFT, HAND_RIGHT):
+        return slot
+    handed = getattr(character, "handed", "right") if character is not None else "right"
+    physical = "left" if slot == HAND_LEFT else "right"
+    return "weapon" if physical == handed else "shield"
+
+
 PAPERDOLL = (
+    # The two hands sit mid-height on either side: the left hand on the
+    # left, the right hand on the right, each its own slot with its own mouse
+    # button. Which equipment slot backs each depends on handedness
+    # (_hand_slot): the main hand is the weapon slot, the other hand the one
+    # that takes a shield, a second weapon or a spell.
     ("head", "Head", 0.14, 0.10),
-    ("chest", "Chest", 0.14, 0.33),
-    ("hands", "Hands", 0.14, 0.56),
-    ("legs", "Legs", 0.14, 0.79),
+    ("chest", "Chest", 0.14, 0.30),
+    (HAND_LEFT, "Left hand", 0.14, 0.50),
+    ("hands", "Hands", 0.14, 0.70),
+    ("legs", "Legs", 0.14, 0.90),
     ("amulet", "Amulet", 0.86, 0.10),
-    ("ring", "Ring", 0.86, 0.33),
-    ("shield", "Shield", 0.86, 0.56),
-    ("light", "Torch", 0.86, 0.79),
-    ("weapon", "Weapon", 0.30, 0.93),
-    ("feet", "Feet", 0.70, 0.93),
+    ("ring", "Ring", 0.86, 0.30),
+    (HAND_RIGHT, "Right hand", 0.86, 0.50),
+    ("light", "Torch", 0.86, 0.70),
+    ("feet", "Feet", 0.86, 0.90),
 )
 
 #: Pack tabs: (label, categories shown; None = everything).
@@ -335,6 +357,8 @@ class InventoryWindow(FloatingWindow):
         """Equipment, pack and sheet within the supplied body rectangle."""
         self._cells, self._targets, self._buttons = [], [], []
         self.hover = None
+        # Worn metal armour greys every spell out (game/ui/spell_lock.py).
+        self._spell_locked = spell_lock.locked(self._character())
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
         painter.fillRect(QRect(x, y, w, h), _STONE_DARK)
@@ -357,6 +381,7 @@ class InventoryWindow(FloatingWindow):
         # screen too (game/ui/drag.py).
         drag.set_zones(self, self._targets)
         self._draw_pad_focus(painter)
+        spell_lock.flush(painter)          # a greyed spell's tooltip, on top
         painter.restore()
 
     def _draw_view_tabs(self, painter, x, y, w, h):
@@ -552,6 +577,7 @@ class InventoryWindow(FloatingWindow):
         for slot, label, fx, fy in PAPERDOLL:
             r = QRect(int(doll.x() + fx * doll.width() - s / 2),
                       int(doll.y() + fy * doll.height() - s / 2), s, s)
+            slot = _hand_slot(c, slot)
             iid = worn.get(slot)
             import game.rpg.equipment as eq
             spell = eq.hand_spell(c, "off" if slot == "shield" else "main") \
@@ -656,9 +682,13 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(QPen(_GOLD if sid == active else _SLOT_EDGE, 2 if sid == active else 1))
             painter.drawRoundedRect(r, 4, 4)
             if not self._draw_spell_art(painter, r.adjusted(4, 4, -4, -4), sid):
+                col = spell_lock.colour(sp.color, self._spell_locked)
                 painter.setBrush(QBrush(col))
                 painter.setPen(QPen(col.darker(160), 1))
                 painter.drawEllipse(r.adjusted(9, 9, -9, -9))
+            if self._spell_locked:
+                spell_lock.veil(painter, r)
+                spell_lock.note(r, True)
             if hits.hovered(r):
                 self.hover = ("spell", sid)
             self._cells.append((QRect(r), ("spell", None, sid)))
@@ -673,18 +703,23 @@ class InventoryWindow(FloatingWindow):
             pm = None
         if pm is None or pm.isNull():
             return False
+        pm = spell_lock.grey(pm, getattr(self, "_spell_locked", False))
         painter.drawPixmap(rect.x() + (rect.width() - pm.width()) // 2,
                            rect.y() + (rect.height() - pm.height()) // 2, pm)
         return True
 
     def _draw_spell_slot(self, painter, rect, spell, source):
         painter.fillRect(rect.adjusted(2, 2, -2, -2), _SLOT)
+        locked = getattr(self, "_spell_locked", False)
         if not self._draw_spell_art(painter, rect.adjusted(6, 3, -6, -19), spell.id):
-            painter.setBrush(QColor(*spell.color))
+            painter.setBrush(spell_lock.colour(spell.color, locked))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(rect.adjusted(12, 5, -12, -19))
+        if locked:
+            spell_lock.veil(painter, rect)
+            spell_lock.note(rect, True)
         painter.setFont(self.f_small)
-        painter.setPen(_INK)
+        painter.setPen(spell_lock.GREY if locked else _INK)
         _fit(painter, rect.adjusted(3, rect.height() - 18, -3, -2),
              Qt.AlignCenter, spell.name)
         self._cells.append((QRect(rect), source))
@@ -770,7 +805,7 @@ class InventoryWindow(FloatingWindow):
                                 2 if (chosen or sid == active) else 1.4))
             painter.drawRoundedRect(r, 4, 4)
             if not self._draw_spell_art(painter, r.adjusted(6, 6, -6, -6), sid):
-                col_ = QColor(*sp.color)
+                col_ = spell_lock.colour(sp.color, self._spell_locked)
                 glow = QColor(col_)
                 glow.setAlpha(70)
                 painter.setBrush(glow)
@@ -787,6 +822,9 @@ class InventoryWindow(FloatingWindow):
             painter.setFont(self.f_count)
             painter.setPen(QColor(150, 190, 255))
             painter.drawText(r.adjusted(0, 0, -4, -2), Qt.AlignRight | Qt.AlignBottom, str(cost))
+            if self._spell_locked:
+                spell_lock.veil(painter, r, 4)
+                spell_lock.note(r, True)
             if hits.hovered(r):
                 painter.fillRect(r.adjusted(2, 2, -2, -2), QColor(255, 230, 170, 26))
                 self.hover = ("spell", sid)
@@ -830,6 +868,7 @@ class InventoryWindow(FloatingWindow):
             lines.append(f"{str(e.get('kind', '')).replace('_', ' ').title()} {mag}")
         for k, line in enumerate(lines[:6]):
             painter.drawText(inner.x(), desc.bottom() + 22 + k * 18, line)
+
 
     def _draw_details(self, painter, rect):
         inner = self._panel(painter, rect, "Details")
@@ -1114,6 +1153,8 @@ class InventoryWindow(FloatingWindow):
         def act():
             def run(session):
                 c = session.game.character
+                if spell_lock.refuse(session, c):
+                    return          # metal armour: greyed out, not selectable
                 c.active_spell = sid
                 try:
                     import game.rpg.equipment as eq
@@ -1235,6 +1276,10 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(QPen(_GOLD, 3))
             painter.drawRoundedRect(node["rect"].adjusted(-2, -2, 2, 2), 4, 4)
             painter.restore()
+            source = node.get("source")
+            if source and source[0] in ("spell", "spell_hand"):
+                # Focus can rest on a greyed spell; it says why it is grey.
+                spell_lock.focus(node["rect"], getattr(self, "_spell_locked", False))
 
     def _at(self, rects, p):
         for r, what in reversed(rects):

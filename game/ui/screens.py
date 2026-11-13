@@ -14,7 +14,7 @@ from __future__ import annotations
 from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
-from . import drag, fonts, hits, trade_anim
+from . import drag, fonts, hits, spell_lock, trade_anim
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
@@ -1100,6 +1100,8 @@ def _ready_spell(session, spell_id):
         return
     _spellbook_selection(session, spells)["row"] = index
     c = session.game.character
+    if spell_lock.refuse(session, c):
+        return                  # highlighted, but metal armour stops selecting it
     c.active_spell = spell_id
     eq._refresh_weapon_kind(c)
     session.notify(f"Selected {spells[index].name}", 1.5)
@@ -1132,6 +1134,9 @@ def _draw_spells(painter, session, w, h):
     first = page * page_size
     pages = max(1, (len(spells) + page_size - 1) // page_size)
     fm = QFontMetrics(T.font(11, family="Segoe UI"))
+    # Worn metal armour greys every spell out: a row still highlights, but
+    # cannot be selected, and its tooltip says why (game/ui/spell_lock.py).
+    locked = spell_lock.locked(c)
     for i in range(first, min(first + page_size, len(spells))):
         spell = spells[i]
         ry = top + (i - first) * 24
@@ -1140,6 +1145,11 @@ def _draw_spells(painter, session, w, h):
             painter.fillRect(row_rect, T.SELECT)
         active = c.active_spell == spell.id
         col = T.GOLD_BRIGHT if i == st["row"] else (T.MAGICKA.lighter(150) if active else T.INK)
+        if locked:
+            col = spell_lock.GREY.lighter(130) if i == st["row"] else spell_lock.GREY
+            spell_lock.note(row_rect, True)
+            if i == st["row"] and controls.gamepad():
+                spell_lock.focus(row_rect, True)
         cost = rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell)
         painter.fillRect(QRect(inner.x() + 2, ry + 3, 3, 14), _rarity_color(spell.rarity))
         label = fm.elidedText(("✦ " if active else "") + spell.name,
@@ -1223,6 +1233,7 @@ def _draw_spells(painter, session, w, h):
                f"Drag a spell to the shortcut bar, or press 1-9 · {K_SPELLS.upper()}/Esc close"),
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+    spell_lock.flush(painter)          # a greyed spell's tooltip, on top
 
 
 #: Rarity colours for spells, commonest first (game.rpg.magic.RARITIES).
@@ -1289,10 +1300,15 @@ def _draw_spell_hands(painter, session, area, selected):
         T.text_in(painter, rect.adjusted(6, 4, -6, -48),
                   f"{physical.title()} hand · {mouse}", size=11, color=T.GOLD_BRIGHT,
                   align=T.ALIGN_CENTER)
+        locked = spell is not None and spell_lock.locked(c)
         T.text_in(painter, rect.adjusted(6, 30, -6, -6),
                   spell.name if spell else item.name if item else "Empty",
-                  size=10, color=QColor(*spell.color) if spell else T.INK,
+                  size=10, color=(spell_lock.GREY if locked else
+                                  QColor(*spell.color) if spell else T.INK),
                   align=int(Qt.AlignCenter | Qt.TextWordWrap))
+        if locked:
+            spell_lock.veil(painter, rect, 5)
+            spell_lock.note(rect, True)
         painter.restore()
     slot = _strip_slot_of(session, selected)
     note = (f"On the shortcut bar as {slot + 1}: press {slot + 1} for the left hand, "

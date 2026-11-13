@@ -8265,6 +8265,12 @@ class MiniwindSession(SettlementLaw):
             held = eq.hand_spell(c, source[1])
             if held is None or held.id != spell_id:
                 return False
+        if source is None or source[0] != "spell_hand":
+            # Worn metal armour greys spells out: they cannot be readied
+            # (moving one already in hand to the other hand is not readying).
+            import game.ui.spell_lock as spell_lock
+            if spell_lock.refuse(self, c):
+                return False
         worn = dict(c.equipment)
         spells = dict(c.hand_spells)
         active, kind = c.active_spell, c.active_weapon_kind

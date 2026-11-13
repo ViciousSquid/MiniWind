@@ -423,8 +423,10 @@ def deflect_chance(character) -> float:
 
 #: Armour materials that are metal. Metal interferes with magic: nobody can
 #: cast a spell (or channel a staff) while wearing a piece of it. Leather --
-#: studded leather included -- hide, fur, cloth, wood and elven work do not.
-#: An item can say otherwise with an explicit ``"metal": true/false``.
+#: studded leather included -- hide, fur, cloth, wood and elven work do not,
+#: and a shield never does, whatever it is made of: one hand can hold a
+#: shield while the other casts. An item can say otherwise with an explicit
+#: ``"metal": true/false``.
 METAL_MATERIALS = frozenset({"iron", "steel", "chain", "scale", "plate", "mithril"})
 
 
@@ -439,9 +441,12 @@ def is_metal(item_def) -> bool:
 
 
 def metal_worn(character):
-    """The first metal armour piece *character* wears (head to shield), or
-    None. Any one piece is enough to stop a spell."""
+    """The first metal armour piece *character* wears (head to feet), or
+    None. Any one piece is enough to stop a spell; a shield, metal or not,
+    never stops one."""
     for slot in items.ARMOUR_SLOTS:
+        if slot == items.SLOT_SHIELD:
+            continue
         d = equipped_def(character, slot)
         if is_metal(d):
             return d

@@ -17,6 +17,7 @@ from PyQt5.QtCore import QPoint, QPointF
 from .. import controls, fio
 from ..diceroll import check_target, describe_roll
 from . import hud_layout as layout
+from . import spell_lock
 from . import theme as T
 from ..rpg import equipment as eq
 from ..rpg import items as rpg_items
@@ -742,6 +743,8 @@ def _draw_active(painter, session, c, width, height):
     y = ACTIVE_TOP
     rect = QRect(x, y, ACTIVE_W, ACTIVE_H)
     T.panel(painter, x, y, ACTIVE_W, ACTIVE_H, radius=8, shadow=False)
+    # Worn metal armour stops every spell: a spell in hand is greyed out.
+    locked = spell_lock.locked(c)
     for i, (physical, mouse) in enumerate((("left", "LMB"), ("right", "RMB"))):
         hand = eq.relative_hand(c, physical)
         spell = eq.hand_spell(c, hand)
@@ -753,12 +756,13 @@ def _draw_active(painter, session, c, width, height):
         top = y + 5 + i * 27
         tx = x + 14
         if spell is not None:
-            icon = _spell_icon_pixmap(spell, 22)
+            icon = spell_lock.grey(_spell_icon_pixmap(spell, 22), locked)
             if icon is not None and not icon.isNull():
                 painter.drawPixmap(x + 12, top, icon)
             else:
-                painter.setBrush(QColor(*spell.color))
-                painter.setPen(QPen(QColor(*spell.color).darker(160), 1))
+                orb = spell_lock.colour(spell.color, locked)
+                painter.setBrush(orb)
+                painter.setPen(QPen(orb.darker(160), 1))
                 painter.drawEllipse(x + 14, top + 2, 16, 16)
             tx = x + 40
         else:
@@ -773,7 +777,8 @@ def _draw_active(painter, session, c, width, height):
                 import game.rpg.inventory as inv
                 label += f" ({inv.quantity(c.inventory, ammo.id)})"
         T.text_in(painter, QRect(tx, top, x + ACTIVE_W - 52 - tx, 21), label, size=10,
-                  color=T.GOLD_BRIGHT if spell or item else T.DIM,
+                  color=(spell_lock.GREY if spell is not None and locked
+                         else T.GOLD_BRIGHT if spell or item else T.DIM),
                   family="Segoe UI", align=int(Qt.AlignLeft | Qt.AlignVCenter))
         T.text(painter, x + ACTIVE_W - 38, top + 16, mouse, size=8, color=T.DIM, family="Segoe UI")
     return rect
