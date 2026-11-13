@@ -60,6 +60,9 @@ def font(size, bold=False, italic=False, family="MedievalSharp"):
     if f is None:
         f = QFont(fonts.game_family(family), size,
                   QFont.Bold if bold else QFont.Normal, italic)
+        if str(family).lower() == "small":
+            # Small text is sized in pixels, never under the floor.
+            f.setPixelSize(max(fonts.SMALL_MIN_PX, int(size)))
         if fonts._families is not _font_cache_families:
             return f             # the font set changed while resolving
         _FONT_CACHE[key] = f

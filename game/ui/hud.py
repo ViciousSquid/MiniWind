@@ -418,6 +418,7 @@ def _draw_bang(painter, x, baseline, height, colour):
 #: How a roll box's dice are drawn, and how far above the head its bottom
 #: stands: room for "*fizzled*", HIT or MISS to rise between them.
 ROLL_BOX_DIE = 40
+ROLL_BOX_TITLE_H = 24
 ROLL_BOX_GAP_PX = FLOAT_RISE_PX + 24.0
 #: Who is rolling, or rolled against, by side: you, an ally, a foe.
 ROLL_SIDE_INK = {"you": (255, 206, 96), "ally": (120, 214, 130), "foe": (238, 104, 88)}
@@ -635,14 +636,15 @@ def _roll_box_layout(box, width):
         if "critical" in str(extra.get("label", "")).lower() and extra.get("success"):
             details.append("CRITICAL HIT")
     die = ROLL_BOX_DIE
-    title_font = T.font(7, bold=True, family="Segoe UI")
+    # Small text in the small-text face (Texturina Light), never under 11px.
+    title_font = T.font(12, bold=True, family="small")
     fm = QFontMetrics(title_font)
     title_w = sum(fm.horizontalAdvance(t) for t, _c in parts)
-    detail_font = T.font(7, family="Segoe UI")
+    detail_font = T.font(11, family="small")
     dm = QFontMetrics(detail_font)
     detail_w = max((dm.horizontalAdvance(t) for t in details), default=0)
     w = int(max(150, title_w + 20, detail_w + 20, len(visuals) * (die + 14) + 26))
-    h = int(22 + die + 12 + 16 + 13 * len(details) + 6)
+    h = int(ROLL_BOX_TITLE_H + die + 14 + 18 + 15 * len(details) + 6)
     return {"visuals": visuals, "elapsed": elapsed, "alpha": alpha, "side": side,
             "parts": parts, "details": details, "title_font": title_font, "fm": fm,
             "title_w": title_w, "w": w, "h": h, "result": result}
@@ -679,12 +681,12 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
     x = bx + (w - layout["title_w"]) / 2.0
     for text, ink in parts:
         painter.setPen(QColor(*ink, alpha))
-        painter.drawText(QPointF(x, by + 15), text)
+        painter.drawText(QPointF(x, by + 17), text)
         x += fm.horizontalAdvance(text)
     settled = True
     for index, d in enumerate(visuals):
         cx = bx + w / 2.0 + (index - (count - 1) / 2.0) * (die + 14)
-        cy = by + 22 + die / 2.0
+        cy = by + ROLL_BOX_TITLE_H + die / 2.0
         m = d["motion"]
         if elapsed < m["delay"]:
             settled = False
@@ -699,11 +701,11 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
                         body=body, ink=ink,
                         tumbling=not done, flicker=int(local * 18.0) + index * 5)
         if d.get("role"):
-            T.text_in(painter, QRect(int(cx - 34), int(cy + die / 2 - 1), 68, 11),
-                      "TO HIT" if d["role"] == "hit" else "DAMAGE", size=6,
+            T.text_in(painter, QRect(int(cx - 36), int(cy + die / 2 - 1), 72, 13),
+                      "TO HIT" if d["role"] == "hit" else "DAMAGE", size=11,
                       color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
-                      bold=True, family="Segoe UI")
-    line_y = by + 22 + die + 12
+                      bold=True, family="small")
+    line_y = by + ROLL_BOX_TITLE_H + die + 14
     if settled:
         verdict, passed = _box_verdict(result)
         ink = (_verdict_color(passed, alpha) if passed is not None
@@ -711,16 +713,16 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         if passed is not None and box.get("against") and box["against"][1] == "you" \
                 and side != "you":
             ink = _verdict_color(not passed, alpha)       # their hit is bad news
-        T.text_in(painter, QRect(bx, line_y, w, 15), verdict, size=8, color=ink,
-                  align=T.ALIGN_CENTER, bold=True, family="Segoe UI")
+        T.text_in(painter, QRect(bx, line_y, w, 18), verdict, size=13, color=ink,
+                  align=T.ALIGN_CENTER, bold=True, family="small")
         for k, text in enumerate(details):
-            T.text_in(painter, QRect(bx, line_y + 15 + 13 * k, w, 13), text, size=7,
+            T.text_in(painter, QRect(bx, line_y + 18 + 15 * k, w, 15), text, size=11,
                       color=QColor(200, 196, 214, alpha), align=T.ALIGN_CENTER,
-                      family="Segoe UI")
+                      family="small")
     else:
-        T.text_in(painter, QRect(bx, line_y, w, 15), "rolling…", size=7,
+        T.text_in(painter, QRect(bx, line_y, w, 18), "rolling…", size=11,
                   color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
-                  italic=True, family="Segoe UI")
+                  italic=True, family="small")
 
 
 #: "Block" over the player's head while the block is held: its ink, and how

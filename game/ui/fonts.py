@@ -12,6 +12,10 @@ by its family name.
   Georgia if its file is missing).
 * :func:`game_family`: the readable MedievalSharp face for all game UI text,
   including older callers that still request Georgia or a sans face.
+* :func:`small_font`: small text -- roll boxes, the target panel, labels --
+  in **Texturina Light** (SIL Open Font License, ``Texturina-OFL.txt``; a
+  light weight cut from Google Fonts' Texturina), medieval but thin enough
+  to read small, and never smaller than :data:`SMALL_MIN_PX`.
 """
 
 from __future__ import annotations
@@ -29,6 +33,10 @@ FALLBACK_FAMILY = "Georgia"
 #: The conversation typeface, and the face used while it is not installed.
 DIALOGUE_FAMILY = "MedievalSharp"
 DIALOGUE_FALLBACK = "Georgia"
+
+#: Small text's typeface, and never smaller than this many pixels.
+SMALL_FAMILY = "Texturina"
+SMALL_MIN_PX = 11
 
 _families = None
 
@@ -106,8 +114,25 @@ def dialogue_font_px(pixels):
 
 
 def game_family(family: str) -> str:
-    """Use the game's reading face, regardless of a legacy family request.
+    """Use the game's reading face, regardless of a legacy family request --
+    or, asked for "small", the small-text face (:func:`small_family`).
 
     Debug tools choose their fonts separately and never use this helper.
     """
+    if str(family).lower() == "small":
+        return small_family()
     return dialogue_family()
+
+
+def small_family() -> str:
+    """Small text's family: Texturina if installed, else the reading face."""
+    return _family(SMALL_FAMILY, dialogue_family())
+
+
+def small_font(pixels, bold=False):
+    """Small text at *pixels* tall (never under :data:`SMALL_MIN_PX`)."""
+    from PyQt5.QtGui import QFont
+    f = QFont(small_family())
+    f.setPixelSize(max(SMALL_MIN_PX, int(pixels)))
+    f.setBold(bool(bold))
+    return f

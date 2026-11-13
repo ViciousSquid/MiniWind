@@ -45,6 +45,8 @@ BAR_SPACING = 12             # gap between it and the shortcut bar
 SCREEN_EDGE = 16             # the shortcut bar never pushed closer than this
 HEALTH_BAR_HEIGHT = 6
 PORTRAIT = 42
+NAME_PX = 15                 # the enemy's name (MedievalSharp)
+INFO_PX = 12                 # AC and chance to hit (Texturina Light, never under 11)
 # -- the bar --
 ARMOUR_PER_AC = 0.03         # blue: share of the bar per AC point above 10 ...
 ARMOUR_MAX_SHARE = 0.30      # ... up to this much
@@ -312,13 +314,10 @@ def draw(painter, session, width, height, bar_rect=None, now=None) -> None:
     except Exception:
         ac = 10
     odds = "" if v["slain"] else odds_text(session.game.character, props)
-    small = QFont("Segoe UI")
-    small.setPixelSize(10)
-    small.setBold(True)
+    from . import fonts
+    small = fonts.small_font(INFO_PX, bold=True)      # Texturina Light, >= 11px
     if not compact:
-        name = QFont("Segoe UI")
-        name.setPixelSize(13)
-        name.setBold(True)
+        name = fonts.dialogue_font_px(NAME_PX)        # names in MedievalSharp
         painter.setFont(small)
         info = "SLAIN" if v["slain"] else f"AC {ac}"
         info_w = painter.fontMetrics().horizontalAdvance(info) + 6
@@ -363,6 +362,6 @@ def draw(painter, session, width, height, bar_rect=None, now=None) -> None:
         painter.setPen(QColor(*INFO_INK))
         text = ("SLAIN" if v["slain"] else
                 (f"AC {ac}  ·  {odds}" if compact else odds))
-        painter.drawText(QRectF(tx, by + bh + 3, tw, 14),
+        painter.drawText(QRectF(tx, by + bh + 2, tw, 16),
                          int(Qt.AlignLeft | Qt.AlignVCenter), text)
     painter.restore()
