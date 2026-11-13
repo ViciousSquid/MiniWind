@@ -189,3 +189,32 @@ def test_bounty_hunters_count_as_sent_for_the_player():
     assert rec.current.reasons.get("sent") == 6
     assert rec.current.events[0]["from"] == \
         "Garet the Hunter, of a band of bounty hunters on the road from Ashby to Thornfield."
+
+
+def test_an_encounter_is_named_for_the_place_it_happens():
+    """Places came from the road board only: its towns, not the camps,
+    shrines and cave mouths among the map's location markers, and the
+    nearest town however far off. Inside a cave there is no board, and every
+    cave fight was "At the roadside"."""
+    from types import SimpleNamespace as NS
+    from ..provenance import _place
+    mouth = NS(pos=[0.0, 0.0, 0.0], properties={
+        "type": "marker", "marker_kind": "location", "place_name": "Wolfmaw Cave",
+        "discover_radius": 700.0})
+    world = _session([mouth])
+    assert _place(world, (900.0, 0.0, 0.0)) == "Wolfmaw Cave"
+    assert _place(world, (9000.0, 0.0, 0.0)) == ""
+    cave = _session([])
+    cave.underground, cave.region_name = True, "The Bonepit"
+    cave.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    rec, clock = _recorder(cave)
+    for i in range(3):
+        rec.engage(entities.Creature(pos=[0, 0, 0], properties={
+            "npc_role": "skeleton", "display_name": f"Bone Lord {i}"}))
+    rec.health(0.1)
+    clock.t += 20
+    rec.tick()
+    (record,) = rec.chronicle
+    assert record["place"] == "The Bonepit"
+    assert record["summary"].startswith("At The Bonepit: ")
+    assert record["provenance"][0] == "Bone Lord 0, who belongs at The Bonepit."

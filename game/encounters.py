@@ -99,7 +99,8 @@ class Encounter:
     def summary(self) -> str:
         names = ", ".join(sorted({f["who"] for f in self.foes.values()})) or "no one"
         how = "fell" if self.fell else f"won, down to {int(self.lowest * 100)}% health"
-        return f"At {self.place or 'the roadside'}: {names}. The player {how}."
+        where = f"At {self.place}" if self.place else "In the wilds"
+        return f"{where}: {names}. The player {how}."
 
     def record(self) -> Dict:
         return {"place": self.place, "when": self.when, "score": self.score,
@@ -175,7 +176,7 @@ class EncounterRecorder:
         if self.current is None:
             s = self.session
             ppos = s._player_pos() if hasattr(s, "_player_pos") else None
-            place = provenance._place(s, ppos) if ppos is not None else ""
+            place = provenance._place(s, ppos)
             self.current = Encounter(now, place, s.clock.hour, s.clock.day)
         self.current.last = now
         return self.current

@@ -22,6 +22,7 @@ record the provenance of everyone in a fight, so a remembered fight says
 
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional
 
 
@@ -29,10 +30,38 @@ def _name(props) -> str:
     return str(props.get("display_name") or props.get("name") or "someone")
 
 
+#: A location marker names the ground within this many of its discovery
+#: radii (and at least :data:`PLACE_MIN_REACH`); further out is the wilds.
+PLACE_REACH = 2.0
+PLACE_MIN_REACH = 1500.0
+
+
 def _place(session, pos) -> str:
+    """The named place *pos* is at: in a cave, the cave (its map's region
+    name); else the nearest of the map's location markers whose ground it
+    is on -- every camp, shrine and cave mouth, not only the road board's
+    towns; else nowhere (""). A map without location markers asks the road
+    board instead."""
+    if getattr(session, "underground", False):
+        return str(getattr(session, "region_name", "") or "")
+    if pos is None:
+        return ""
+    things_of_type = getattr(session, "_things_of_type", None)
+    markers = [m for m in (things_of_type("marker") if things_of_type is not None else ())
+               if str(m.properties.get("marker_kind", "")).lower() == "location"
+               and m.properties.get("place_name")]
+    if markers:
+        best, best_d = "", None
+        for m in markers:
+            d = math.hypot(float(pos[0]) - m.pos[0], float(pos[2]) - m.pos[2])
+            reach = max(PLACE_MIN_REACH,
+                        PLACE_REACH * float(m.properties.get("discover_radius", 0) or 0))
+            if d <= reach and (best_d is None or d < best_d):
+                best, best_d = str(m.properties["place_name"]), d
+        return best
     living = getattr(session, "living", None)
     board = getattr(living, "board", None)
-    if board is None or pos is None:
+    if board is None:
         return ""
     try:
         key = board.nearest_place(float(pos[0]), float(pos[2]))
