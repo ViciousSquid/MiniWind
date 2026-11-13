@@ -298,9 +298,16 @@ class EncounterRecorder:
         folder = self._ensure_folder()
         if folder is None:
             return
-        path = os.path.join(folder, f"{len(self.current.shots) + 1:02d}-{why}.png")
-        self.current.shots.append(os.path.basename(path))
-        self.capture_due = (path, why)
+        shots = self.current.shots
+        # One picture of the lowest moment, taken again at each new low (every
+        # blow can be one): not a numbered file per blow, most of which the
+        # single pending capture would never get to before the next replaced it.
+        lowest = next((n for n in shots if n.endswith("-lowest.png")), None) \
+            if why == "lowest" else None
+        if lowest is None:
+            lowest = f"{len(shots) + 1:02d}-{why}.png"
+            shots.append(lowest)
+        self.capture_due = (os.path.join(folder, lowest), why)
 
     def _ensure_folder(self):
         if self._folder is None and self.current is not None:
@@ -308,7 +315,7 @@ class EncounterRecorder:
             if root is None:
                 return None
             stamp = time.strftime("%Y%m%d-%H%M%S")
-            place = re.sub(r"[^A-Za-z0-9]+", "-", self.current.place or "road").strip("-")
+            place = re.sub(r"[^A-Za-z0-9]+", "-", self.current.place or "wilds").strip("-")
             self._folder = os.path.join(root, "encounters", f"{stamp}-{place}")
             try:
                 os.makedirs(self._folder, exist_ok=True)

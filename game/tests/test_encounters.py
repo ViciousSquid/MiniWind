@@ -226,3 +226,23 @@ def test_an_encounter_is_named_for_the_place_it_happens():
     assert record["place"] == "The Bonepit"
     assert record["summary"].startswith("At The Bonepit: ")
     assert record["provenance"][0] == "Bone Lord 0, who belongs at The Bonepit."
+
+
+def test_one_picture_of_the_lowest_moment(tmp_path):
+    """Each new low asked for a new numbered screenshot: a long fight listed
+    02-lowest ... 07-lowest, most never taken (one capture is pending at a
+    time). The lowest moment is one file, taken again at each new low."""
+    session = _session([])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    rec, clock = _recorder(session, recording=True, root=str(tmp_path))
+    for i in range(3):
+        rec.engage(entities.Creature(pos=[0, 0, 0], properties={
+            "npc_role": "bandit_chief", "display_name": f"Boss {i}"}))
+    assert rec.capture_due[1] == "interesting"
+    for health in (0.8, 0.6, 0.4, 0.2):
+        rec.health(health)
+        assert rec.capture_due[0].endswith("02-lowest.png")
+    clock.t += 20
+    rec.tick()
+    (record,) = rec.chronicle
+    assert record["screenshots"] == ["01-interesting.png", "02-lowest.png", "03-end.png"]
