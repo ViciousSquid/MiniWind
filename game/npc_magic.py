@@ -485,13 +485,18 @@ class NpcMagic:
                               why=f"d20 {bonus:+d} vs Armour Class {target_ac}",
                               context={"npc": True, "quiet": True})
             hit = bool(roll["success"])
+            # It landed: the attacker rolls for a critical hit, as the
+            # player does (from its Luck).
+            crit = hit and ac_rules.roll_crit(attacker, rng=getattr(self.session, "rng", None))
+            if crit:
+                damage = damage * ac_rules.CRIT_DAMAGE
             outcome = getattr(self.session, "attack_outcome", None)
             show = getattr(self.session, "show_roll_box", None)
             side = getattr(self.session, "side_of", None)
             if _attacker is not None:
                 try:
                     if outcome is not None:
-                        outcome(_attacker, hit)     # HIT / MISS over the attacker
+                        outcome(_attacker, hit, crit)   # HIT / MISS / Crit! over the attacker
                     if show is not None:
                         name = str(props.get("display_name") or props.get("name") or "")
                         show(_attacker, roll, kind="npc",

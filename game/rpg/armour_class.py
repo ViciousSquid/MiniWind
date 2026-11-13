@@ -70,6 +70,14 @@ WINDED_BELOW = 0.75          # stamina share below which you are winded
 WINDED_PENALTY = 2
 DUAL_WIELD_PENALTY = 2
 
+#: Everyone rolls for a critical hit the same way, after a hit lands: a d20
+#: check at CRIT_BASE + Luck x CRIT_PER_LUCK (11% at Luck 40), for
+#: CRIT_DAMAGE times the damage -- the player (game.rpg.combat.critical_chance)
+#: and every NPC and animal alike (:func:`crit_chance`).
+CRIT_BASE = 0.05
+CRIT_PER_LUCK = 0.0015
+CRIT_DAMAGE = 1.5
+
 #: Each point of AC above BASE_AC adds this to a block's saving throw.
 BLOCK_PER_AC = 0.025
 
@@ -159,6 +167,29 @@ def player_attack_bonus(character, skill: int, *, melee: bool,
     if dual:
         bonus -= DUAL_WIELD_PENALTY
     return int(bonus)
+
+
+def crit_chance(props: Optional[Dict]) -> float:
+    """The chance a landed blow by anyone but the player is a critical hit:
+    the player's rule, from its Luck (authored ``luck``, else 40)."""
+    luck = 40
+    if isinstance(props, dict):
+        luck = _int(props.get("luck"), 40)
+        luck = 40 if luck is None else max(0, min(100, luck))
+    return CRIT_BASE + luck * CRIT_PER_LUCK
+
+
+def roll_crit(props, dice=None, rng=None, name: str = "") -> bool:
+    """Roll whether a landed blow by *props* is a critical hit (a d20 check,
+    on *dice* when given -- shown nowhere: an NPC's roll)."""
+    from ..diceroll import DiceRoller, roll_check
+    chance = crit_chance(props)
+    roller = DiceRoller(rng=rng) if dice is None else dice
+    roll = roll_check(roller, chance, f"{name}: roll for a critical hit".strip(": "),
+                      source="combat.npc_critical",
+                      why=f"Luck: {chance * 100:.0f}% chance of x{CRIT_DAMAGE:g} damage",
+                      context={"quiet": True, "npc": True})
+    return bool(roll["success"])
 
 
 def block_bonus(armour_class: float) -> float:

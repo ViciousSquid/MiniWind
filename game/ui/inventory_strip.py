@@ -82,6 +82,14 @@ def layout(n, view_w, view_h):
     cell = int(max(MIN_CELL, min(CELL, (room + GAP) // n - GAP)))
     total = n * cell + (n - 1) * GAP
     x0 = (view_w - total) // 2
+    # The target panel shares the bottom row: on a small screen it narrows
+    # first, and only when even its narrowest will not fit does the bar move
+    # left to make room (game/ui/target_panel.py).
+    try:
+        from .target_panel import bar_nudge
+        x0 -= bar_nudge(view_w, x0 - PAD, total + 2 * PAD)
+    except Exception:
+        pass
     y = view_h - cell - BOTTOM - PAD - NUMBERS
     return [QRect(x0 + i * (cell + GAP), y, cell, cell) for i in range(n)]
 

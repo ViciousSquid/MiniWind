@@ -82,7 +82,7 @@ def draw(painter, session, width, height):
         panel("quest", lambda: _draw_quest_tracker(painter, session, width))
         _draw_quest_arrow(painter, session, width, height)
         panel("compass", lambda: _draw_compass(painter, session, width, height))
-        panel("target", lambda: _draw_target(painter, session, width, height))
+        _draw_target_panel(painter, session, width, height)
     panel("status", lambda: _draw_status_flags(painter, session, c, width, height))
     # Dice rolls float in small boxes over whoever rolls (draw_roll_boxes),
     # not in a corner panel.
@@ -231,13 +231,16 @@ def _world_to_screen(glm, proj, view, x, y, z, width, height):
 
 
 def _has_roll_box(session, thing) -> bool:
-    """Whether *thing* has a roll box over its head: its speech bubble, bark
-    and thought give way to it."""
-    has = getattr(session, "has_roll_box", None)
-    try:
-        return bool(has(thing)) if has is not None else False
-    except Exception:
-        return False
+    """Whether *thing* has a roll box -- or a "Crit!" -- over its head: its
+    speech bubble, bark and thought give way to it."""
+    for ask in ("has_roll_box", "shows_crit"):
+        has = getattr(session, ask, None)
+        try:
+            if has is not None and has(thing):
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def draw_bubbles(painter, session, viewport, width, height):
@@ -307,6 +310,10 @@ def draw_barks(painter, session, viewport, width, height):
 
 #: A float (an item collected or a fizzled spell) rises this far as it fades.
 FLOAT_RISE_PX = 26.0
+#: "Crit!" over whoever lands a critical hit: larger, and white.
+CRIT_FLOAT_TEXT = "Crit!"
+CRIT_FLOAT_SIZE = 18
+CRIT_FLOAT_INK = (255, 255, 255)
 _FLOAT_INK = (214, 200, 255)
 
 
@@ -343,13 +350,67 @@ def draw_floats(painter, session, viewport, width, height):
             continue
         age = max(0.0, min(1.0, 1.0 - left / max(0.01, total)))
         alpha = int(255 * max(0.0, min(1.0, left / 0.5)))
-        w = fm.horizontalAdvance(text) + 8
-        rect = QRect(int(sp[0] - w / 2), int(sp[1] - FLOAT_RISE_PX * age - fm.height()),
-                     w, fm.height())
+        crit = text == CRIT_FLOAT_TEXT
+        if crit:
+            # "Crit!": bigger and white, popping in a touch over-size. The
+            # word in the game's font; the "!" drawn as a shape (the font's
+            # own reads like an "l").
+            pop = 1.0 + 0.35 * max(0.0, 1.0 - age / 0.15)
+            cf = fonts.dialogue_font(int(round(CRIT_FLOAT_SIZE * pop)))
+            cf.setItalic(True)
+            cf.setBold(True)
+            painter.setFont(cf)
+            cm = QFontMetrics(cf)
+            word = text.rstrip("!")
+            # The font's own cap height is unreliable (it reports 2px): measure a capital.
+            cap = float(cm.tightBoundingRect("C").height())
+            bang_w = cap * 0.42
+            ww = cm.horizontalAdvance(word)
+            w, fh = ww + bang_w + 10, cm.height()
+            left = sp[0] - w / 2 + 5
+            base = sp[1] - FLOAT_RISE_PX * age - cm.descent()
+            ink = QColor(*CRIT_FLOAT_INK, alpha)
+            for dx, dy, colour in ((2, 2, QColor(0, 0, 0, int(alpha * 0.8))),
+                                   (1, 1, QColor(0, 0, 0, int(alpha * 0.8))), (0, 0, ink)):
+                painter.setPen(colour)
+                painter.drawText(QPointF(left + dx, base + dy), word)
+                _draw_bang(painter, left + ww + bang_w * 0.25 + dx, base + dy, cap, colour)
+            continue
+        else:
+            painter.setFont(font)
+            w, fh = fm.horizontalAdvance(text) + 8, fm.height()
+        rect = QRect(int(sp[0] - w / 2), int(sp[1] - FLOAT_RISE_PX * age - fh), w, fh)
         painter.setPen(QColor(0, 0, 0, int(alpha * 0.8)))
         painter.drawText(rect.translated(1, 1), int(Qt.AlignCenter), text)
-        painter.setPen(QColor(*_FLOAT_INK, alpha))
+        if crit:
+            painter.drawText(rect.translated(2, 2), int(Qt.AlignCenter), text)
+        painter.setPen(QColor(*(CRIT_FLOAT_INK if crit else _FLOAT_INK), alpha))
         painter.drawText(rect, int(Qt.AlignCenter), text)
+    painter.restore()
+
+
+def _draw_bang(painter, x, baseline, height, colour):
+    """A bold exclamation mark standing on *baseline* at *x*, *height* tall:
+    a wedge tapering down to a point, and a round dot under it, slanted to
+    sit with italic text."""
+    from PyQt5.QtGui import QPainterPath, QTransform
+    w = height * 0.30
+    path = QPainterPath()
+    path.moveTo(0.0, -height)
+    path.lineTo(w, -height)
+    path.lineTo(w * 0.62, -height * 0.30)
+    path.lineTo(w * 0.38, -height * 0.30)
+    path.closeSubpath()
+    d = w * 0.78
+    path.addEllipse(QRectF(w / 2 - d / 2, -d, d, d))
+    slant = QTransform(1, 0, -0.18, 1, 0, 0)          # lean like italic
+    path = slant.map(path)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.translate(x, baseline)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(colour)
+    painter.drawPath(path)
     painter.restore()
 
 
@@ -567,7 +628,9 @@ def _roll_box_layout(box, width):
     details = []
     companion = box.get("companion")
     if companion:
-        details.append(str(companion.get("detail") or describe_roll(companion)))
+        details.append(str(companion.get("detail") or
+                           f"{companion.get('dice_notation', 'die')}: rolled "
+                           f"{companion.get('roll_result', '?')}"))
     for extra in box.get("followups", ()) or ():
         if "critical" in str(extra.get("label", "")).lower() and extra.get("success"):
             details.append("CRITICAL HIT")
@@ -1344,37 +1407,13 @@ def _wrap(a):
     return a
 
 
-def _draw_target(painter, session, width, height):
-    """Nameplate + health bar for the creature under the crosshair."""
-    import game.runtime as rt
-    c = session.game.character
-    reach = rt.BOW_REACH if c.active_weapon_kind in ("bow", "spell", "staff") else rt.MELEE_REACH * 1.6
-    try:
-        target = session._acquire_target(reach)
-    except Exception:
-        target = None
-    if target is None:
-        return
-    tp = target.properties
-    name = tp.get("display_name", tp.get("name", "Foe"))
-    try:
-        hp = int(tp.get("health", 0))
-    except (TypeError, ValueError):
-        hp = 0
-    maxhp = int(tp.get("_max_health", 0)) or max(hp, 1)
-    if hp > maxhp:
-        tp["_max_health"] = hp
-        maxhp = hp
-    cx = width // 2
-    y = 44
-    T.text_in(painter, QRect(cx - 150, y, 300, 18), name, size=12,
-              color=T.GOLD_BRIGHT, align=T.ALIGN_CENTER, bold=True)
-    T.bar(painter, cx - 110, y + 20, 220, 10, hp / maxhp if maxhp else 0, T.HEALTH)
-    odds = _target_odds(c, tp)
-    if odds:
-        T.text_in(painter, QRect(cx - 220, y + 33, 440, 16), odds, size=9,
-                  color=QColor(255, 214, 130), align=T.ALIGN_CENTER, family="Segoe UI")
-    return QRect(cx - 220, y, 440, 50 if odds else 32)
+def _draw_target_panel(painter, session, width, height):
+    """Who the player is fighting, bottom right, beside the shortcut bar
+    (game/ui/target_panel.py) -- name, Armour Class, chance to hit and the
+    health / armour bar. It replaced the crosshair plate at the top."""
+    from . import target_panel
+    bar = None if layout.collapsed("strip") else layout.screen_rect("strip", width, height)
+    target_panel.draw(painter, session, width, height, bar_rect=bar)
 
 
 def _target_odds(c, target_props):

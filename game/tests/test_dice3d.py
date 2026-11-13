@@ -171,3 +171,46 @@ def test_a_roll_box_sits_over_its_roller_and_hushes_its_speech(qt_app):
     assert s.has_roll_box(wolf) and box in s.live_roll_boxes()
     s._tick_dice_animation(box["duration"] + 0.1)
     assert not s.has_roll_box(wolf)
+
+
+# ------------------------------------------- a roll box never shows a false result
+def test_the_damage_line_is_the_damage_actually_dealt(qt_app, monkeypatch):
+    """The box's damage line names the die's real face and the final damage --
+    the very number that floats over the target -- never an earlier figure."""
+    from .test_cast_controls import _Logic, _Thing
+    from ..runtime import MiniwindSession
+    from ..rpg import equipment as eq, inventory as inv
+    bandit = _Thing("Bandit", (0.0, 0.0, 60.0), type="npc", health=500, max_health=500,
+                    npc_role="bandit")
+    s = MiniwindSession(_Logic([bandit]), cfg={})
+    monkeypatch.setattr(s, "_visualise_dice_rolls_enabled", lambda: True)
+    c = s.game.character
+    inv.add_item(c.inventory, items.make("iron_longsword"))
+    eq.equip(c, "iron_longsword")
+    floaters = []
+    monkeypatch.setattr(s, "add_floater", lambda text, kind="dmg", y=0.0: floaters.append(text))
+    for _ in range(40):
+        s.dice_animation = None
+        res = s.game.attack_creature(bandit.properties)
+        s._land_player_hit(bandit, res)
+        if res["hit"]:
+            break
+    assert res["hit"]
+    companion = s.dice_animation["companion"]
+    face = companion["roll_result"]
+    assert res["damage_face"] == face                   # the face shown is the face used
+    assert companion["detail"].endswith(f"rolled {face} → {int(res['damage'])} damage")
+    assert floaters[-1] == f"-{int(res['damage'])}"     # the same number over the target
+
+
+@pytest.mark.parametrize("sides", [6, 12, 20])
+def test_a_settled_die_shows_exactly_the_rolled_number(qt_app, sides):
+    """Settled, the face turned to the player is the rolled one, and it is
+    labelled with the rolled number."""
+    for value in (1, sides // 2, sides):
+        rotation, _dx, _dy, settled = dice3d.pose(sides, value, dice3d.motion(9), 99.0)
+        assert settled
+        _verts, faces = dice3d.solid(sides)
+        toward = [dice3d._apply(rotation, n)[2] for _idx, n in faces]
+        front = max(range(len(faces)), key=toward.__getitem__)
+        assert front == value - 1 and dice3d.face_label(sides, front) == str(value)

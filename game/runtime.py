@@ -322,12 +322,19 @@ BARK_RADIUS = 1800.0
 #: at or below this Charisma, and this much per point above it.
 CHARISMA_LEAD_FROM = 40
 CHARISMA_LEAD_PER_POINT = 0.006
-#: Screen shake (a fraction of the camera's height, seconds) for the player's
-#: critical hits, killing blows and gibs, and for a heavy blow taken -- which
-#: starts at this share of the player's health and peaks at half of it.
-CRIT_SHAKE = (0.010, 0.22)
-KILL_SHAKE = (0.016, 0.32)
-GIB_SHAKE = (0.028, 0.45)
+# ------------------------------------------------------------ screen shake
+#: How hits shake the screen, in the manner of the Infinity Engine games: a
+#: choppy rattle (the view jumps to a new random spot SHAKE_STEPS_PER_SECOND
+#: times a second) rather than a smooth wobble, the hardest jump first,
+#: dying away -- and only the world shakes, never the HUD (host.HUD_SHAKE).
+#: Each is (how far, as a fraction of the camera's height; seconds).
+SHAKE_STEPS_PER_SECOND = 28.0
+CRIT_SHAKE = (0.024, 0.40)        # your critical hit
+KILL_SHAKE = (0.018, 0.32)        # your killing blow
+GIB_SHAKE = (0.032, 0.48)         # your overkill: the body blown apart
+CRIT_KILL_SHAKE = (0.044, 0.60)   # your critical killing blow: the hardest of all
+#: A heavy blow taken: starts at HURT_SHAKE_FROM of the player's health and
+#: peaks at half of it.
 HURT_SHAKE = 0.012
 HURT_SHAKE_FROM = 0.2
 #: How near the terrain's surface the ground under blood must be for it to be
@@ -353,6 +360,10 @@ FIZZLE_SECONDS = 1.6
 HIT_TEXT = "HIT"
 MISS_TEXT = "MISS"
 ATTACK_FLOAT_SECONDS = 1.0
+#: Over the player when their blow is a critical hit: it replaces HIT, and
+#: any speech bubble, bark or thought over the player gives way to it.
+CRIT_TEXT = "Crit!"
+CRIT_FLOAT_SECONDS = 1.4
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
 #: ordinary bark: it says more), how close they must be to pass the time of
 #: day, how long before either does so again (s), and the chance per decision
@@ -898,6 +909,10 @@ class MiniwindSession(SettlementLaw):
         #: draw_roll_boxes): ``{id(actor): box}``; the player's own roll is
         #: :attr:`dice_animation`, drawn over the player.
         self.roll_boxes: Dict[int, Dict] = {}
+        #: The target panel, bottom right (game/ui/target_panel.py): who the
+        #: player is fighting, told of every blow by note_combat().
+        from .ui.target_panel import TargetTracker
+        self.target_panel = TargetTracker()
         #: Recent explained rolls ("Roll to hit: 7 (need 14+) — FAILED"),
         #: newest last, for the HUD's roll log; "success" is whether the roll
         #: went the player's way.
@@ -1109,6 +1124,34 @@ class MiniwindSession(SettlementLaw):
         self.__dict__.setdefault("roll_boxes", {})[id(actor)] = box
         return box
 
+    def _tell_damage(self, res) -> None:
+        """Put the damage actually dealt under the player's roll box -- the
+        die's real face and the final number, the same one that floats over
+        the target ("Iron Longsword d12+10: rolled 9 → 23 damage"). Never an
+        earlier or estimated figure: a roll box shows only what happened."""
+        anim = self.dice_animation
+        companion = anim.get("companion") if anim else None
+        if not companion or res.get("damage_face") is None:
+            return
+        face = int(companion.get("roll_result", res["damage_face"]))
+        flat = round(float(res.get("damage_flat", 0.0)), 1)
+        bonus = f"{flat:+g}" if flat else ""          # exact, not rounded off
+        line = f"{res.get('damage_name', 'Weapon')} d{res.get('damage_die')}{bonus}: rolled {face}"
+        if res.get("hit"):
+            line += f" → {int(res.get('damage', 0))} damage"
+        companion["detail"] = line
+
+    def note_combat(self, foe, by_player: bool) -> None:
+        """A blow between the player and *foe* (by_player: the player struck
+        or swung at it; else it struck the player): the target panel shows it."""
+        panel = self.__dict__.get("target_panel")
+        if panel is None or foe is None or foe is self.player_actor:
+            return
+        try:
+            panel.note(foe, by_player)
+        except Exception:
+            pass
+
     def has_roll_box(self, thing) -> bool:
         """Whether *thing* has a roll box over its head right now (its speech
         bubbles give way to it)."""
@@ -1319,12 +1362,19 @@ class MiniwindSession(SettlementLaw):
                                           attacker=self._attacker_name(),
                                           attack_bonus=rpg_ac.npc_attack_bonus(
                                               attacker.properties) if attacker is not None
-                                          else None)
+                                          else None,
+                                          attacker_props=attacker.properties
+                                          if attacker is not None else None)
         final = res["final"]
+        if attacker is not None:
+            self.note_combat(attacker, False)
         if attacker is not None and "ac" in res:
             # The attacker's to-hit roll against the player's Armour Class:
-            # HIT / MISS and its dice over the attacker.
-            self.attack_outcome(attacker, not res.get("deflected"))
+            # HIT / MISS (or Crit! on a natural 20) and its dice over the
+            # attacker; a critical against the player shakes the screen.
+            self.attack_outcome(attacker, not res.get("deflected"), crit=bool(res.get("crit")))
+            if res.get("crit"):
+                self.shake(*CRIT_SHAKE)
             if res.get("defence_roll"):
                 self.show_roll_box(attacker, res["defence_roll"],
                                    against=("YOU", "you"))
@@ -1385,7 +1435,7 @@ class MiniwindSession(SettlementLaw):
         return [float(thing.pos[0]), float(thing.pos[1]) - half, float(thing.pos[2])]
 
     def _gore_hit(self, target, damage, *, crit=False, killed=False, magical=False,
-                  source=None, by_player=True) -> None:
+                  source=None, by_player=True, crit_kill=False) -> None:
         """Blood for a blow that landed on *target*, and -- for the player's
         killing blows and criticals -- a jolt of the screen and a red flash.
         Flung away from *source* (the player, unless said)."""
@@ -1406,12 +1456,18 @@ class MiniwindSession(SettlementLaw):
                 float(p.get("_max_health", 0) or 0), _gore.max_health(p), float(damage))
             if gibbed and not magical:
                 self.gore.gib(feet, damage, away)
+                if crit_kill:
+                    # A critical killing blow: blown apart, and then some.
+                    self.gore.gib(feet, damage, away)
+                    self.gore.wound(feet, damage, top, away, crit=True)
+                    self.gore.kill(feet, top * 1.6)
             elif not (gibbed and magical):      # a disintegration leaves nothing
                 self.gore.wound(feet, damage, top, away, crit=crit)
                 if killed:
                     self.gore.kill(feet, top)
         if by_player and (killed or crit):
-            strength, seconds = ((GIB_SHAKE if gibbed else KILL_SHAKE) if killed
+            strength, seconds = ((CRIT_KILL_SHAKE if crit_kill else
+                                  GIB_SHAKE if gibbed else KILL_SHAKE) if killed
                                  else CRIT_SHAKE)
             self.shake(strength, seconds)
             self.gore.flash_red(0.55 if killed else 0.35)
@@ -1482,7 +1538,10 @@ class MiniwindSession(SettlementLaw):
         cam = fio.camera(self.logic)
         jolt = getattr(cam, "shake", None)
         if jolt is not None:
-            jolt(strength, seconds)
+            try:
+                jolt(strength, seconds, SHAKE_STEPS_PER_SECOND)
+            except TypeError:               # an older camera: a smooth shake
+                jolt(strength, seconds)
 
     def _attacker(self):
         """Who dealt the blow the player is taking, as the engine recorded
@@ -2172,7 +2231,8 @@ class MiniwindSession(SettlementLaw):
 
     # ------------------------------------------------------------- the reaper
     def _maybe_send_the_reaper(self, body) -> None:
-        """One death in four is attended: Death comes to collect it.
+        """One death in four is attended: Death comes to collect it -- never a
+        body blown apart (gibbed), as there is nothing left to collect.
 
         Called once per NPC death (see :meth:`_reap_dead`), so a townsperson cut
         down by a wolf is as likely to be visited as one the player kills. He is
@@ -2180,6 +2240,9 @@ class MiniwindSession(SettlementLaw):
         attacked or spoken to, the combat AI never sees him (``disabled``), and
         when he is finished he takes himself out of the scene again.
         """
+        props = getattr(body, "properties", None) or {}
+        if props.get("gibbed"):
+            return              # blown apart: there is nothing left to collect
         if self.rng.random() >= REAPER_CHANCE:
             return
         if len(self._reapers) >= REAPER_MAX:
@@ -5103,10 +5166,21 @@ class MiniwindSession(SettlementLaw):
         floats[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds),
                              float(seconds))
 
-    def attack_outcome(self, attacker, hit: bool) -> None:
+    def attack_outcome(self, attacker, hit: bool, crit: bool = False) -> None:
         """*attacker*'s to-hit roll landed or missed: HIT or MISS floats over
-        its head, the player's as much as any NPC's or animal's."""
+        its head, the player's as much as any NPC's or animal's -- or, for the
+        player's critical hit, "Crit!" (see :meth:`shows_crit`)."""
+        if crit and hit:
+            self.float_text(attacker, CRIT_TEXT, CRIT_FLOAT_SECONDS)
+            return
         self.float_text(attacker, HIT_TEXT if hit else MISS_TEXT, ATTACK_FLOAT_SECONDS)
+
+    def shows_crit(self, thing) -> bool:
+        """Whether "Crit!" is floating over *thing* now: its speech bubble,
+        bark and thought give way to it."""
+        import time as _time
+        entry = (self.__dict__.get("floats") or {}).get(id(thing))
+        return bool(entry) and entry[1] == CRIT_TEXT and entry[2] > _time.monotonic()
 
     def fizzled(self, thing) -> None:
         """*thing*'s spell fizzled: say so over its head, and let it be heard
@@ -7038,12 +7112,15 @@ class MiniwindSession(SettlementLaw):
         """What a landed (or missed) melee blow does: the number over the
         target, the blood, the target's anger, a kill."""
         _journal(target)     # a kill/gib changes how the target is drawn
-        self.attack_outcome(self.player_actor, bool(res.get("hit")))
+        self._tell_damage(res)
+        self.note_combat(target, True)
+        self.attack_outcome(self.player_actor, bool(res.get("hit")), crit=bool(res.get("crit")))
         if res.get("block_roll"):
             self.show_roll_box(target, res["block_roll"])     # their shield save
         if res.get("hit"):
             self._gore_hit(target, res.get("damage", 0.0),
-                           crit=bool(res.get("crit") or heavy), killed=bool(res.get("killed")))
+                           crit=bool(res.get("crit") or heavy), killed=bool(res.get("killed")),
+                           crit_kill=bool(res.get("crit_kill")))
             tag = ("sneak" if res.get("sneak")
                    else "crit" if (res.get("crit") or heavy) else "dmg")
             self.add_floater(f"-{int(res['damage'])}", kind=tag)
@@ -7086,12 +7163,16 @@ class MiniwindSession(SettlementLaw):
         def _on_hit(hit_monster):
             res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
             _journal(hit_monster)
-            self.attack_outcome(self.player_actor, bool(res.get("hit")))
+            self._tell_damage(res)
+            self.note_combat(hit_monster, True)
+            self.attack_outcome(self.player_actor, bool(res.get("hit")),
+                                crit=bool(res.get("crit")))
             if res.get("block_roll"):
                 self.show_roll_box(hit_monster, res["block_roll"])
             if res.get("hit"):
                 self._gore_hit(hit_monster, res.get("damage", 0.0), crit=bool(res.get("crit")),
-                               killed=bool(res.get("killed")))
+                               killed=bool(res.get("killed")),
+                               crit_kill=bool(res.get("crit_kill")))
                 tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
                 self.add_floater(f"-{int(res['damage'])}", kind=tag)
                 self._provoke(hit_monster)
@@ -7340,6 +7421,7 @@ class MiniwindSession(SettlementLaw):
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
             _journal(target)
+            self.note_combat(target, True)
             self._gore_hit(target, r.get("damage", 0.0), killed=bool(r.get("killed")),
                            magical=True)
             self.add_floater(f"-{int(r['damage'])}", kind="fire")
@@ -7514,6 +7596,7 @@ class MiniwindSession(SettlementLaw):
             if target is not None:
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
                 _journal(target)
+                self.note_combat(target, True)
                 if r.get("damage"):
                     self._gore_hit(target, r["damage"], killed=bool(r.get("killed")),
                                    magical=True)

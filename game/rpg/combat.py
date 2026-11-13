@@ -74,8 +74,9 @@ def strength_factor(strength: int) -> float:
 
 
 def critical_chance(character) -> float:
-    """Probability a landed blow is a critical (x1.5 damage), from Luck."""
-    return 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
+    """Probability a landed blow is a critical (x1.5 damage), from Luck --
+    the same rule every NPC rolls by (armour_class.crit_chance)."""
+    return ac_rules.CRIT_BASE + character.attrs.get(attr.LUCK, 40) * ac_rules.CRIT_PER_LUCK
 
 
 def attack_odds(character, target_props: Dict, hand: str = "main",
@@ -146,9 +147,6 @@ def roll_damage(base: float, weapon=None, *, dice=None, rng=None,
                                    context={"label": label, "damage_die": True,
                                             "target": target_name})
         face = int(result.get("roll_result", 1))
-        # What the roll box says under the hit: "Iron Longsword d12+10 → 19".
-        bonus = f"{flat:+.0f}" if round(flat) else ""
-        result["detail"] = f"{name} d{sides}{bonus} → {int(round(max(1.0, face + flat)))}"
     else:
         roll = getattr(rng, "randint", None) or random.randint
         face = int(roll(1, sides))
@@ -248,7 +246,9 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     # --- the weapon's damage die: base becomes the die + its flat amount ---
     rolled = roll_damage(base, w, dice=dice, rng=rng,
                          target_name=str(target_props.get("name", "")))
-    result.update(damage_face=rolled["face"], damage_die=rolled["sides"])
+    result.update(damage_face=rolled["face"], damage_die=rolled["sides"],
+                  damage_flat=rolled["flat"],
+                  damage_name=(w.name if w is not None else "Unarmed"))
     base = rolled["base"]
 
     # --- base scaling by skill (0.4x at 0 skill → ~1.3x at 100) ---
@@ -290,7 +290,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     else:
         is_critical = rng.random() < crit_chance
     if is_critical:
-        dmg *= 1.5
+        dmg *= ac_rules.CRIT_DAMAGE
         result["crit"] = True
 
     # tougher targets train the skill more
@@ -305,7 +305,8 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
 def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physical",
                      blocking: bool = False, rng: Optional[random.Random] = None,
                      dice: Optional[DiceRoller] = None, attacker: str = "",
-                     attack_bonus: Optional[int] = None) -> Dict:
+                     attack_bonus: Optional[int] = None,
+                     attacker_props: Optional[Dict] = None) -> Dict:
     """Apply armour, shield, block and resistance to *raw_damage*.
 
     Returns ``{"final", "blocked", "armor", "resisted", "armor_class"}``. Does
@@ -348,6 +349,12 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
             result["deflected"] = True
             result["final"] = 0.0
             return result
+        # It landed: the attacker rolls for a critical hit, as the player
+        # does (armour_class.crit_chance, from its Luck).
+        if ac_rules.roll_crit(attacker_props, rng=rng, name=attacker):
+            result["crit"] = True
+            dmg *= ac_rules.CRIT_DAMAGE
+            result["final"] = dmg
 
     # A held block is an attempted saving throw, not guaranteed mitigation.
     if blocking and damage_kind == "physical" and dmg > 0 and character.stamina > 0:

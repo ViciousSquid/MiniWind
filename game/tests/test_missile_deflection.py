@@ -46,6 +46,7 @@ def test_npc_missile_ricochets_without_impact_then_can_hit_the_shooter(dense, sp
     # The returned arrow is a hit (an NPC damage filter left installed rolls
     # it against the shooter's Armour Class otherwise).
     monkeypatch.setattr(armour_class, "to_hit", lambda *a: 1.0)
+    monkeypatch.setattr(armour_class, "crit_chance", lambda *a: 0.0)   # and not a critical
     shooter = make_thing(Monster, "Shooter", (0, 0, 200), team="red")
     defender = make_thing(Monster, "Lucky guard", (0, 0, 0), team="blue")
     defender.properties.update(luck=100, offhand_weapon="iron_shield",

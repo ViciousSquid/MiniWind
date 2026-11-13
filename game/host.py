@@ -232,15 +232,23 @@ def _miniwind_inspection(entity, logic):
 
 
 
+#: How much of a screen shake the HUD takes (0: none -- as in the Infinity
+#: Engine games, the interface stays put while the world rattles, which makes
+#: the shake read harder).
+HUD_SHAKE = 0.0
+
+
 def _hud_jolt(session, height):
     """The HUD's share of a screen shake, in pixels (0, 0 when still)."""
+    if HUD_SHAKE <= 0.0:
+        return 0.0, 0.0
     cam = fio.camera(getattr(session, "logic", None))
     level = getattr(cam, "shake_level", None)
     strength = level() if callable(level) else 0.0
     if strength <= 0.0:
         return 0.0, 0.0
     now = time.perf_counter()
-    amp = strength * height * 0.6
+    amp = strength * height * 0.6 * HUD_SHAKE
     return (amp * math.sin(now * 67.0), amp * math.cos(now * 53.0))
 
 
@@ -1365,7 +1373,7 @@ class MiniwindGame:
                 if now - getattr(session, "_worldmap_checked_at", -1e9) >= 1.0:
                     session._worldmap_checked_at = now
                     worldmap.ensure_for(logic, viewport)
-                # The HUD jolts with the screen (game/runtime.py shake()).
+                # The HUD takes HUD_SHAKE of a screen shake (none, by default).
                 jolt = _hud_jolt(session, h)
                 painter.translate(*jolt)
                 hud.draw(painter, session, w, h)

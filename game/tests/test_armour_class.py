@@ -131,7 +131,7 @@ def test_npcs_roll_against_each_others_armour_class_and_say_so():
         game = SimpleNamespace(dice=None)
         rng = Faces(*([10] * 6))                # every d20 lands a 10
 
-        def attack_outcome(self, who, hit):
+        def attack_outcome(self, who, hit, crit=False):
             floated.append((who, hit))
 
         def show_roll_box(self, who, result, **kw):

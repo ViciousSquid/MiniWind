@@ -379,8 +379,15 @@ class GameState:
             target_props["health"] = 0
             target_props["dead"] = True
             # A physical overkill (melee / arrow) blows the body apart into a
-            # blood stain (hp here is the pre-clamp negative health).
-            _mark_gibbed(target_props, res["damage"], hp, magical=False)
+            # blood stain (hp here is the pre-clamp negative health) -- and so
+            # does any critical killing blow.
+            if res.get("crit") and _gore is not None:
+                res["crit_kill"] = True
+                _mark_gibbed(target_props, max(float(res["damage"]),
+                                               _gore.GIB_DAMAGE_FRACTION * _gore.max_health(
+                                                   target_props) + 1.0), hp, magical=False)
+            else:
+                _mark_gibbed(target_props, res["damage"], hp, magical=False)
             self.on_kill(target_props)
         return res
 
