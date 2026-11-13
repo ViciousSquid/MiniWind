@@ -6901,10 +6901,33 @@ class MiniwindSession(SettlementLaw):
         target = min(target, self._zoom_ceiling())
         height = float(getattr(cam, "overhead_height", target) or target)
         if abs(target - height) < 0.5:
-            cam.overhead_height = target
-            return
-        blend = 1.0 - math.exp(-max(0.0, float(delta)) / ZOOM_EASE_SECONDS)
-        cam.overhead_height = height + (target - height) * blend
+            nxt = target
+        else:
+            blend = 1.0 - math.exp(-max(0.0, float(delta)) / ZOOM_EASE_SECONDS)
+            nxt = height + (target - height) * blend
+        if nxt > height and not self._ground_ready_for(nxt):
+            return      # rise only as far as the ground is built: never the void
+        cam.overhead_height = nxt
+
+    def _ground_ready_for(self, height) -> bool:
+        """Whether the terrain the camera would see from *height* is built.
+        Zooming out widens the view onto chunks that stream in over a few
+        frames; until they are built the edges of the screen showed the void."""
+        import time as _time
+        terrain = fio.terrain(self.logic)
+        ppos = self._player_pos()
+        if terrain is None or ppos is None or not hasattr(terrain, "view_ready"):
+            return True
+        radius = float(height) * ARRIVAL_VIEW_SCALE
+        streaming = bool(getattr(terrain, "streaming", False))
+        if streaming and radius > float(getattr(terrain, "stream_radius", radius)):
+            # Big World widens the stream for the zoom on its next update;
+            # until then the outer ring is not even asked for. Never wait
+            # for good on a map that cannot stream that far.
+            since = self.__dict__.setdefault("_zoom_wait_since", _time.monotonic())
+            return _time.monotonic() - since > 2.0
+        self.__dict__.pop("_zoom_wait_since", None)
+        return terrain.view_ready(ppos[0], ppos[2], radius)
 
     def _fit_bigworld_reach(self, cam, height) -> None:
         """Size Big World's resident area for the camera at *height*: the
