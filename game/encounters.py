@@ -66,8 +66,9 @@ STORE_KEY = "encounters.chronicle"
 #: Roles that are a fight in themselves.
 BOSS_ROLES = ("bandit_chief", "wraith", "dragon", "yeti", "warboss", "giant_spider_queen",
               "necromancer", "bear")
-#: Journey kinds that came *for* the player.
-SENT_KINDS = ("vendetta", "reckoning", "hunter", "faction_raid", "raid")
+#: Journey kinds that came *for* the player (game/living/journeys.KINDS):
+#: bounty hunters, and a faction's raid (which always carries its cause).
+SENT_KINDS = ("hunters", "faction_raid")
 
 WEIGHTS = {"foe": 1, "named": 2, "boss": 4, "sent": 6, "half": 2, "quarter": 4,
            "fell": 8, "crit": 1, "fate": 3, "kill": 1, "long": 1, "longer": 2}

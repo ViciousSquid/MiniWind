@@ -151,3 +151,41 @@ def test_a_killing_blow_closes_the_encounter_as_a_fall(monkeypatch):
     (record,) = rec.chronicle
     assert record["fell"] and record["lowest_health"] == 0.0
     assert record["provenance"][0].startswith("Hal Corbin")
+
+
+def test_provenance_reads_as_a_sentence():
+    """It said "of a bandits", "of a faction_raid" and "from Spawn_wolf_571"."""
+    gang = {"who": "Nils the Brigand", "kind": "journey", "journey_kind": "bandits",
+            "origin": "Ashby", "destination": "Thornfield"}
+    assert sentence(gang) == "Nils the Brigand, of a bandit gang on the road from Ashby to Thornfield."
+    pack = {"who": "Wolf", "kind": "journey", "journey_kind": "wolves"}
+    assert sentence(pack) == "Wolf, of a wolf pack."
+    assert sentence({"who": "Odd", "kind": "journey", "journey_kind": "night_watch"}) \
+        == "Odd, of a night watch party."
+    from types import SimpleNamespace as NS
+    den = NS(pos=[0, 0, 0], properties={"type": "creaturespawn", "name": "Spawn_wolf_571",
+                                         "id": "sp-9", "creature_role": "wolf"})
+    session = _session([den])
+    wolf = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "wolf", "name": "Wolf",
+                                                         "_spawner": "sp-9", "_spawn_slot": 0})
+    assert sentence(of(session, wolf)) == "Wolf, from the wolf lair."
+    den.properties["display_name"] = "Greywood's wolf den"
+    assert sentence(of(session, wolf)) == "Wolf, from Greywood's wolf den."
+
+
+def test_bounty_hunters_count_as_sent_for_the_player():
+    """SENT_KINDS named "hunter"; the journey kind is "hunters", so a band
+    sent for the player's bounty never scored as sent."""
+    from types import SimpleNamespace as NS
+    session = _session([])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    journey = NS(kind="hunters", origin="ashby", dest="thornfield", cause=None)
+    session.living = NS(board=NS(journeys={"j7": journey}, nearest_place=lambda x, z: "ashby"),
+                        places={"ashby": {"name": "Ashby"}, "thornfield": {"name": "Thornfield"}})
+    rec, _clock = _recorder(session)
+    hunter = entities.Creature(pos=[0, 0, 0], properties={
+        "npc_role": "bounty_hunter", "display_name": "Garet the Hunter", "_journey": "j7"})
+    rec.engage(hunter)
+    assert rec.current.reasons.get("sent") == 6
+    assert rec.current.events[0]["from"] == \
+        "Garet the Hunter, of a band of bounty hunters on the road from Ashby to Thornfield."

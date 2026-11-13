@@ -103,12 +103,40 @@ def of(session, thing) -> Dict:
 
 
 def _spawner_name(session, spawner_id) -> str:
+    """The spawn point as a reader would put it: its own ``display_name`` if
+    the map gives one, else the lair of what it spawns ("the wolf lair"),
+    with the nearest place. Never the editor's name ("Spawn_wolf_571")."""
     for t in getattr(session, "_things_of_type", lambda _k: ())("creaturespawn"):
         p = t.properties
         if str(p.get("id") or p.get("name") or "") == str(spawner_id):
             near = _place(session, getattr(t, "pos", None))
-            return f"{p.get('name', 'a spawn point')}" + (f" near {near}" if near else "")
-    return str(spawner_id)
+            what = str(p.get("display_name") or "") or _lair(p.get("creature_role"))
+            return what + (f" near {near}" if near else "")
+    return "a lair"
+
+
+def _lair(role) -> str:
+    try:
+        from .rpg import bestiary
+        tmpl = bestiary.get(str(role or ""))
+    except Exception:
+        tmpl = None
+    return f"the {tmpl.name.lower()} lair" if tmpl is not None else "a lair"
+
+
+#: Each journey kind (game/living/journeys.KINDS) as the party it makes.
+PARTIES = {"trader": "a trading party", "caravan": "a caravan",
+           "pilgrims": "a band of pilgrims", "adventurers": "a band of adventurers",
+           "patrol": "a patrol", "courier": "a courier's run",
+           "minstrel": "a minstrel's tour", "bandits": "a bandit gang",
+           "wolves": "a wolf pack", "greenskins": "a greenskin warband",
+           "hunters": "a band of bounty hunters", "market": "a market trip",
+           "faction_raid": "a raid"}
+
+
+def _party(kind: str) -> str:
+    kind = str(kind or "")
+    return PARTIES.get(kind) or (f"a {kind.replace('_', ' ')} party" if kind else "a party")
 
 
 def sentence(prov: Dict) -> str:
@@ -116,16 +144,16 @@ def sentence(prov: Dict) -> str:
     who = prov.get("who", "Someone")
     kind = prov.get("kind")
     if kind == "journey":
-        what = prov.get("journey_kind") or "party"
+        what = _party(prov.get("journey_kind"))
         route = ""
         if prov.get("origin") and prov.get("destination"):
             route = f" on the road from {prov['origin']} to {prov['destination']}"
         why = prov.get("why") or ""
         cause = (prov.get("cause") or {}).get("reason")
         tail = f": {cause}" if cause else (f" ({why})" if why and why != "Ordinary authored destination sampling." else "")
-        return f"{who}, of a {what}{route}{tail}."
+        return f"{who}, of {what}{route}{tail}."
     if kind == "spawn":
-        return f"{who}, from {prov.get('spawner', 'a spawn point')}."
+        return f"{who}, from {prov.get('spawner') or 'a lair'}."
     if kind == "resident":
         home = prov.get("home") or prov.get("place")
         return f"{who}, who lives at {home}." if home else f"{who}, a resident."
