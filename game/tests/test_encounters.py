@@ -151,6 +151,14 @@ def test_a_killing_blow_closes_the_encounter_as_a_fall(monkeypatch):
     (record,) = rec.chronicle
     assert record["fell"] and record["lowest_health"] == 0.0
     assert record["provenance"][0].startswith("Hal Corbin")
+    # The rest of the gang strikes the fallen in the same pass: that is the
+    # fight that just ended, and it was once recorded again as a second fall.
+    archer = entities.Creature(pos=[0, 0, 0], properties={
+        "npc_role": "bandit_archer", "display_name": "Wil the Brigand"})
+    fio.player_runtime(session.logic).last_damage = (archer, "attack", "physical")
+    session._mitigate_incoming(9999)
+    rec.crit(False)
+    assert rec.current is None and len(rec.chronicle) == 1
 
 
 def test_provenance_reads_as_a_sentence():

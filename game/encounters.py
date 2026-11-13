@@ -171,6 +171,10 @@ class EncounterRecorder:
         return int(self._option("encounter_threshold", THRESHOLD))
 
     # -- what happened ------------------------------------------------------
+    def _player_down(self) -> bool:
+        c = getattr(getattr(self.session, "game", None), "character", None)
+        return bool(getattr(c, "is_dead", False))
+
     def _open(self) -> Encounter:
         now = self._clock()
         if self.current is None:
@@ -184,6 +188,10 @@ class EncounterRecorder:
     def engage(self, foe) -> None:
         """A blow between the player and *foe*, either way."""
         if foe is None or getattr(foe, "properties", None) is None:
+            return
+        if self._player_down():
+            # Blows landing on the fallen (the rest of the pack, the same
+            # monster pass) are the fight that just ended, not a new one.
             return
         enc = self._open()
         key = str(foe.properties.get("id") or id(foe))
@@ -204,6 +212,8 @@ class EncounterRecorder:
         self._check()
 
     def crit(self, by_player: bool) -> None:
+        if self._player_down():
+            return
         enc = self._open()
         if enc.crits < 4:
             enc.add("crit")
@@ -213,6 +223,8 @@ class EncounterRecorder:
         self._check()
 
     def fate(self, word: str) -> None:
+        if self._player_down():
+            return
         enc = self._open()
         enc.add("fate")
         enc.events.append({"t": round(enc.last - enc.started, 2), "what": str(word)})
