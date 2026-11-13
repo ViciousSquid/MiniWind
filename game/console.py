@@ -369,8 +369,9 @@ def cmd_pause(ctx, args):
 
 
 def cmd_weather(ctx, args):
-    """weather [clear|overcast|rain|storm] [hours] -- what the sky is doing
-    (game/weather.py); with a kind, make it so now, for a spell or *hours*."""
+    """weather [sunny|overcast|rain|storm] [hours] -- what the sky is doing
+    (game/weather.py); with a kind, the sky turns to it -- fading in as
+    weather does -- for a spell or *hours*. ``sunny`` is clear sky."""
     session = getattr(ctx.logic_thread, "_miniwind", None)
     weather = getattr(session, "weather", None)
     if weather is None:
@@ -389,7 +390,7 @@ def cmd_weather(ctx, args):
         except ValueError:
             hours = None
     if not weather.set(parts[0].lower(), hours):
-        debug_log("Error", "weather: clear, overcast, rain or storm.")
+        debug_log("Error", "weather: sunny, overcast, rain or storm.")
         return None
     msg = f"Weather: {parts[0].lower()}."
     debug_log("Info", msg)
@@ -710,7 +711,7 @@ COMMANDS = (
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("weather",), cmd_weather,
-     "[clear|overcast|rain|storm] [hours] — What the sky is doing; make it so now (Play Mode)"),
+     "[sunny|overcast|rain|storm] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
      "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,

@@ -23,6 +23,9 @@ import random
 
 CLEAR, OVERCAST, RAIN, STORM = "clear", "overcast", "rain", "storm"
 KINDS = (CLEAR, OVERCAST, RAIN, STORM)
+#: Other words for them (the console's ``weather sunny``).
+ALIASES = {"sunny": CLEAR, "sun": CLEAR, "fair": CLEAR, "cloudy": OVERCAST, "cloud": OVERCAST,
+           "rainy": RAIN, "raining": RAIN, "thunder": STORM, "stormy": STORM}
 #: How hard it rains in each, 0..1, and how long a spell of each lasts
 #: (game hours, min..max).
 RAIN_OF = {CLEAR: 0.0, OVERCAST: 0.0, RAIN: 0.55, STORM: 1.0}
@@ -57,13 +60,18 @@ class Weather:
         lo, hi = SPELL_HOURS[kind]
         return self.rng.uniform(lo, hi)
 
-    def set(self, kind, hours=None) -> bool:
-        """Make it *kind* now, for *hours* (or a spell of the usual length)."""
+    def set(self, kind, hours=None, at_once=False) -> bool:
+        """Turn the sky to *kind* (or one of its :data:`ALIASES`) for *hours*
+        (or a spell of the usual length). It fades in as weather does;
+        *at_once* skips that (tests and tools only)."""
+        kind = ALIASES.get(str(kind).lower(), str(kind).lower())
         if kind not in KINDS:
             return False
         self.kind = kind
         self.left = float(hours) if hours else self._spell(kind)
         self.forced = True
+        if at_once:
+            self.rain, self.gloom = RAIN_OF[kind], GLOOM_OF[kind]
         return True
 
     def update(self, hours: float) -> None:

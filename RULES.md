@@ -453,8 +453,9 @@ Graphics; on by default):
   grows on scorched or bare ground.
 * Burns are kept with the save, per map.
 
-**Weather** (Settings › Game › *Weather*, on by default; `weather` in the
-console):
+**Weather** (Settings › Game › *Weather*, on by default; in the console,
+`weather sunny`, `weather overcast`, `weather rain` or `weather storm` turns
+the sky, fading in as weather does):
 
 * The sky turns by itself: spells of clear sky (6–20 hours), cloud (2–6),
   rain (1–5) and now and then a storm (½–2), each easing into the next. Rain

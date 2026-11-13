@@ -103,11 +103,13 @@ def test_pause_toggles_a_world_freeze_without_a_menu():
 
 def test_storyteller_dispatch_opens_the_live_view(monkeypatch):
     from types import SimpleNamespace
-    from .. import ui
+    # Patch the real module's opener: replacing the module on the package
+    # only works if something imported it first (the command imports it).
+    from ..ui import storyteller_window
 
     opened = []
-    panel = SimpleNamespace(open_storyteller=lambda view: opened.append(view) or object())
-    monkeypatch.setattr(ui, "storyteller_window", panel, raising=False)
+    monkeypatch.setattr(storyteller_window, "open_storyteller",
+                        lambda view: opened.append(view) or object())
     view = object()
     logic = SimpleNamespace(_miniwind=SimpleNamespace(storyteller=object()))
     handled, _ = _manager().dispatch_console_command(
@@ -118,7 +120,7 @@ def test_storyteller_dispatch_opens_the_live_view(monkeypatch):
 
 def test_storyteller_reports_missing_play_session_and_view(monkeypatch):
     from types import SimpleNamespace
-    from .. import ui
+    from ..ui import storyteller_window
 
     messages = []
     monkeypatch.setattr(console, "debug_log", lambda _category, message: messages.append(message))
@@ -126,7 +128,28 @@ def test_storyteller_reports_missing_play_session_and_view(monkeypatch):
     assert "Play Mode only" in messages[-1]
     console.cmd_storyteller(console.ConsoleContext(play_mode=True), "")
     assert "no active MiniWind storyteller" in messages[-1]
-    monkeypatch.setattr(ui, "storyteller_window", SimpleNamespace(open_storyteller=lambda view: None), raising=False)
+    monkeypatch.setattr(storyteller_window, "open_storyteller", lambda view: None)
     logic = SimpleNamespace(_miniwind=SimpleNamespace(storyteller=object()))
     console.cmd_storyteller(console.ConsoleContext(logic_thread=logic, play_mode=True), "")
     assert "no game view" in messages[-1]
+
+
+def test_weather_rain_makes_it_rain_and_weather_sunny_makes_it_sunny():
+    import random
+    from types import SimpleNamespace
+    from ..weather import Weather
+    session = SimpleNamespace(weather=Weather(random.Random(1), kind="clear"))
+    logic = SimpleNamespace(_miniwind=session)
+    window = _Window()
+    mgr = _manager()
+    handled, _ = mgr.dispatch_console_command("weather", "rain", logic, main_window=window,
+                                              play_mode=True)
+    assert handled and session.weather.kind == "rain"
+    assert not session.weather.raining()                 # it fades in, as weather does
+    session.weather.update(0.5)                          # half an hour (30 real seconds)
+    assert session.weather.raining()
+    mgr.dispatch_console_command("weather", "sunny", logic, main_window=window, play_mode=True)
+    assert session.weather.kind == "clear" and session.weather.raining()   # still easing off
+    session.weather.update(1.0)
+    assert not session.weather.raining()
+    assert window.toasts[-1] == "Weather: sunny."
