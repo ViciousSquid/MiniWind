@@ -683,6 +683,8 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         x += fm.horizontalAdvance(text)
     settled = True
     first_done = False           # the roll's own (first) die has landed
+    # The player's dice in colour, anyone else's greyscale; never two alike.
+    finish = dice3d.finishes(count, side == "you", visuals[0].get("shade", 0) if visuals else 0)
     for index, d in enumerate(visuals):
         cx = bx + w / 2.0 + (index - (count - 1) / 2.0) * (die + 14)
         cy = by + ROLL_BOX_TITLE_H + die / 2.0
@@ -695,8 +697,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         settled = settled and done
         if index == 0:
             first_done = done
-        # The player's dice are in colour; anyone else's in a random greyscale finish.
-        body, ink = dice3d.colours(d["sides"], side == "you", d.get("shade", 0))
+        body, ink = finish[index]
         dice3d.draw_die(painter, d["sides"], d["value"], cx + dx * die * 0.5,
                         cy + dy * die * 0.45, die, rotation, alpha=alpha,
                         body=body, ink=ink,
@@ -1521,7 +1522,7 @@ def _prepare_dice_animation(animation, result):
         delay = dice3d.SECOND_DIE_DELAY if entry["role"] == "damage" else 0.0
         visuals.append(dict(entry, motion=dice3d.motion(seed, delay=delay, speed=speed,
                                                         rattle=long_roll),
-                            shade=dice3d.pick_shade(seed)))
+                            shade=dice3d.pick_shade(base)))      # the roll's finishes
     animation["dice_visuals"] = visuals
     animation["dice_visuals_for"] = key
     return visuals

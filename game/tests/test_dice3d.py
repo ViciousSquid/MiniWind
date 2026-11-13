@@ -146,17 +146,31 @@ def test_stack_dialogs_is_a_game_setting_on_by_default():
 
 
 def test_only_the_players_dice_are_in_colour():
-    assert dice3d.colours(20, True)[0] == dice3d.D20_BODY
-    shades = {dice3d.pick_shade(seed) for seed in range(200)}
-    assert shades == set(range(len(dice3d.GREYSCALE)))      # every finish turns up
-    for sides in (20, 8):
-        for shade in shades:
-            body, ink = dice3d.colours(sides, False, shade)
-            for colour in (body, ink):
-                rgb = (colour.red(), colour.green(), colour.blue())
-                assert max(rgb) - min(rgb) <= 6                       # greyscale
+    def name(pair):
+        return tuple(c.name() for c in pair)
+
+    def grey(colour):
+        rgb = (colour.red(), colour.green(), colour.blue())
+        return max(rgb) - min(rgb) <= 6
+
+    shades = [dice3d.pick_shade(seed) for seed in range(400)]
+    mine = {name(f) for s in shades for f in dice3d.finishes(2, True, s)}
+    theirs = {name(f) for s in shades for f in dice3d.finishes(2, False, s)}
+    assert mine == {name(p) for p in dice3d.PLAYER_COLOURS}          # every finish turns up
+    assert theirs == {name(p) for p in dice3d.GREYSCALE}
+    assert name((dice3d.D20_BODY, dice3d.D20_INK)) in mine           # red, on any die
+    assert not (mine & theirs)
+    assert not any(grey(body) and grey(ink) for body, ink in dice3d.PLAYER_COLOURS)
+    assert all(grey(body) and grey(ink) for body, ink in dice3d.GREYSCALE)
     black, white_ink = dice3d.GREYSCALE[0]
     assert black.lightness() < 30 and white_ink.lightness() > 230    # black dice, white numbers
+
+
+@pytest.mark.parametrize("player", [True, False])
+def test_never_two_dice_of_a_roll_the_same_colour(player):
+    for seed in range(500):
+        bodies = [body.name() for body, _ in dice3d.finishes(2, player, dice3d.pick_shade(seed))]
+        assert bodies[0] != bodies[1]
 
 
 def test_a_roll_box_sits_over_its_roller_and_hushes_its_speech(qt_app):

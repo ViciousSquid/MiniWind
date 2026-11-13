@@ -26,9 +26,13 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
   corner panel): their name in their side's colour (gold you, green an ally,
   red a foe), what the roll is for, the real dice tumbling, the verdict, and —
   for a hit — the damage. Fights between NPCs alone use a blue-slate box. Your
-  dice are in colour (a red d20); everyone else's are always greyscale, each
-  die a random finish — black with white numbers, charcoal, slate, light grey,
-  or white with black numbers. Boxes that
+  dice are always in colour, shuffled: each die a random finish of whites
+  (white with navy or orange numbers, ivory), blues (blue with orange or pale
+  orange numbers), oranges (pale orange with blue numbers, ember with ice-blue
+  numbers) or red with gold numbers — any die, any finish. Everyone else's
+  dice are never in colour: always greyscale, each die a random finish —
+  black with white numbers, charcoal, slate, light grey, or white with black
+  numbers. The two dice of a roll are never the same colour. Boxes that
   overlap more than slightly lock into one stack, the attacker's roll on top
   (Settings › Game › *Stack dialogs*, on by default). A character with a roll
   box over its head says nothing (speech bubbles, barks and thoughts wait).
