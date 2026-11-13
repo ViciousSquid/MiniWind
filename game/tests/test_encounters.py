@@ -85,3 +85,25 @@ def test_recording_writes_the_record_and_asks_for_screenshots(tmp_path):
         record = json.load(fh)
     assert record["fell"] and len(record["foes"]) == 4
     assert rec.capture_due and rec.capture_due[1] == "end"
+
+
+def test_only_a_name_of_its_own_counts_as_named():
+    """Four "Smuggler"s, a raid of "Greenskin Raider"s or a "Giant Spider"
+    are kinds, not names: before, each scored as a named foe, so any pack of
+    renamed monsters made a fight "interesting" by itself."""
+    def foe(role, name):
+        return entities.Creature(pos=[0, 0, 0], properties={
+            "npc_role": role, "name": name, "display_name": name})
+    smugglers = [foe("bandit", "Smuggler") for _ in range(3)]
+    raiders = [foe("greenskin", "Greenskin Raider") for _ in range(2)]
+    spiders = [foe("monster", "Giant Spider") for _ in range(2)]
+    wrexa = foe("bandit_chief", "Smuggler Captain Wrexa")
+    session = _session(smugglers + raiders + spiders + [wrexa])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    rec, _clock = _recorder(session)
+    for actor in smugglers + raiders + spiders[:1]:
+        rec.engage(actor)
+    assert "named" not in rec.current.reasons
+    assert rec.current.score == 6 and rec.current.interesting_at is None
+    rec.engage(wrexa)
+    assert rec.current.reasons["named"] == 2

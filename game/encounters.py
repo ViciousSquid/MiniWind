@@ -19,6 +19,11 @@ Each kill                                +1
 Lasting 30 s / 90 s                      +1 / +2
 =====================================  ======
 
+A foe is *named* when it goes by a name of its own ("Smuggler Captain
+Wrexa", "Nils the Brigand"): never a kind's name from the bestiary, and never
+one another actor in the world answers to -- four "Smuggler"s or a raid of
+"Greenskin Raider"s are what they are, not who.
+
 Once the score reaches the threshold (``[GAME] encounter_threshold``,
 default :data:`THRESHOLD`) the encounter is *interesting*: it joins the
 session's chronicle -- what happened, who was there and the
@@ -158,8 +163,7 @@ class EncounterRecorder:
         prov = provenance.of(self.session, foe)
         enc.foes[key] = prov
         enc.add("foe")
-        kind_name = _kind_name(prov.get("role"))
-        if prov["who"] and kind_name and prov["who"] != kind_name:
+        if _named(self.session, foe, prov["who"]):
             enc.add("named")
         if prov.get("role") in BOSS_ROLES:
             enc.add("boss")
@@ -295,10 +299,22 @@ class EncounterRecorder:
             self.capture_due = (end_shot, "end")
 
 
-def _kind_name(role: str) -> str:
+def _named(session, foe, who: str) -> bool:
+    """Whether *who* is *foe*'s own name rather than what it is (see the
+    module's note): checked once per foe per encounter, so a scan is fine."""
+    if not who:
+        return False
     try:
         from .rpg import bestiary
-        tmpl = bestiary.get(str(role or ""))
-        return tmpl.name if tmpl is not None else ""
+        if any(tmpl.name == who for tmpl in bestiary.BESTIARY.values()):
+            return False
     except Exception:
-        return ""
+        pass
+    things_of_type = getattr(session, "_things_of_type", None)
+    if things_of_type is not None:
+        for kind in ("creature", "npc"):
+            for other in things_of_type(kind):
+                if other is not foe and provenance._name(
+                        getattr(other, "properties", {}) or {}) == who:
+                    return False
+    return True
