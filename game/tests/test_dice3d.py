@@ -129,9 +129,28 @@ def test_close_roll_boxes_stack_with_the_attacker_on_top():
 def test_slightly_overlapping_boxes_stay_over_their_rollers():
     from ..ui import hud
     a = ((400.0, 400.0), _box("Roll to hit"), _layout())
-    b = ((400.0 + 180 * 0.8, 400.0), _box("Roll to hit"), _layout())    # 20% overlap
+    b = ((400.0 + 180 * 0.95, 400.0), _box("Roll to hit"), _layout())   # margins touch
     groups = hud._stack_roll_boxes([a, b], 1200, 800)
     assert len(groups) == 2
+
+
+def _rect(entry):
+    x, y, _sp, _box, layout, _pointer = entry
+    return x, y, layout["w"], layout["h"]
+
+
+def test_a_box_never_hides_the_words_of_another():
+    """A quarter across and fully level covers the start of a roller's name
+    (seen at Smugglers' Cove): it stacks instead, and nothing overlaps."""
+    from ..ui import hud
+    entries = [((600.0, 500.0 - 121 * k), _box("Roll to hit"), _layout(280, 120)) for k in range(4)]
+    entries.append(((600.0 - 280 * 0.75, 500.0), _box("Roll to hit"), _layout(280, 120)))
+    rects = [_rect(e) for g in hud._stack_roll_boxes(entries, 1280, 720) for e in g]
+    for i, (x, y, w, h) in enumerate(rects):
+        for (x2, y2, w2, h2) in rects[i + 1:]:
+            across = min(x + w, x2 + w2) - max(x, x2)
+            down = min(y + h, y2 + h2) - max(y, y2)
+            assert across <= w * hud.ROLL_BOX_OVERLAP_OK or down <= h * hud.ROLL_BOX_OVERLAP_OK
 
 
 def test_with_stacking_off_close_boxes_stay_apart():

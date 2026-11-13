@@ -558,8 +558,9 @@ def draw_roll_boxes(painter, session, viewport, width, height):
 
 
 #: Boxes may overlap this much (a share of the smaller box, across or down)
-#: and stay over their rollers; any closer and they become one stack.
-ROLL_BOX_OVERLAP_OK = 0.3
+#: and stay over their rollers -- their 10 px margins, never their words;
+#: any closer and they become one stack (or move clear of one).
+ROLL_BOX_OVERLAP_OK = 0.06
 ROLL_BOX_STACK_GAP = 1      # stacked boxes sit locked together
 
 
@@ -640,7 +641,7 @@ def _stack_roll_boxes(anchored, width, height, stack=True):
                 chosen = (centre, top)
                 break
         if chosen is None:
-            chosen = (above[0], max(4, above[1]))
+            chosen = _clear_spot(above, widest, total, width, height, heavy)
         centre, y = chosen
         group = []
         for k, i in enumerate(members):
@@ -652,6 +653,28 @@ def _stack_roll_boxes(anchored, width, height, stack=True):
         placed.append((int(centre - widest / 2), int(chosen[1]), int(widest), int(total)))
         groups.append(group)
     return groups
+
+
+def _clear_spot(above, w, h, width, height, heavy):
+    """The nearest place to *above* (a centre and top) where a *w* x *h*
+    stack fits on screen without covering one already placed; *above* itself
+    (kept on screen) when the screen has no such place."""
+    best = None
+    for k in range(-6, 7):
+        for j in range(-4, 5):
+            centre = above[0] + j * (w + 8)
+            top = above[1] + k * (h / 2 + 4)
+            left = centre - w / 2
+            if top < 4 or left < 4 or left + w > width - 4 or top + h > height - 4:
+                continue
+            if heavy(left, top, w, h):
+                continue
+            cost = abs(j) * (w + 8) + abs(k) * (h / 2 + 4)
+            if best is None or cost < best[0]:
+                best = (cost, centre, top)
+    if best is not None:
+        return best[1], best[2]
+    return above[0], max(4, min(height - h - 4, above[1]))
 
 
 def _roll_box_layout(box, width):

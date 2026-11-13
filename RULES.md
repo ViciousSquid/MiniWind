@@ -27,8 +27,10 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
   red a foe), what the roll is for, the real dice tumbling, the verdict, and —
   for a hit — the damage. Your own rolls sit on a black box; everyone else's
   (allies, foes, fights between NPCs) on a blue-slate one.
-  Boxes that overlap more than slightly lock into one stack, the attacker's
-  roll on top (Settings › Game › *Stack dialogs*, on by default). A character
+  Boxes that overlap more than their margins lock into one stack, the
+  attacker's roll on top (Settings › Game › *Stack dialogs*, on by default);
+  a stack that would cover another moves to the nearest clear place on
+  screen, so no box ever hides another's words. A character
   with a roll box over its head says nothing (speech bubbles, barks and
   thoughts wait).
 * **Who rolls where it can be seen.** Only actors in the NEAR simulation tier
