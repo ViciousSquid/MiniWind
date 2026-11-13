@@ -72,6 +72,12 @@ DRINK_SIZE = 180.0
 DRINK_LENS = 0.4
 DRINK_SECONDS = 0.7
 DRINK_IN = 0.08
+#: A spell cast: for a blink a bubble in the cast ring's colour swells out of
+#: the caster from a dot, bending the world through it like a ward, and fades.
+CAST_PULSE_SIZE = 190.0
+CAST_PULSE_LENS = 0.5
+CAST_PULSE_SECONDS = 0.34
+CAST_PULSE_OUT = 0.14
 #: The colours of fire, from the white-gold heart to the deep orange tips.
 FLAME_HOT = (1.0, 0.86, 0.42)
 FLAME_DEEP = (1.0, 0.36, 0.06)
@@ -92,6 +98,18 @@ def _rgb(colour):
     if max(c) > 1.0:
         c = [v / 255.0 for v in c]
     return tuple(min(1.0, max(0.0, v)) for v in c)
+
+
+def cast_pulse(age):
+    """``(size, envelope)`` of a cast pulse *age* seconds old, or None once
+    it is gone: out of a dot to full size in :data:`CAST_PULSE_OUT` (fast,
+    easing off), then fading over the rest of :data:`CAST_PULSE_SECONDS`."""
+    if age < 0.0 or age >= CAST_PULSE_SECONDS:
+        return None
+    t = min(1.0, age / CAST_PULSE_OUT)
+    size = 6.0 + (CAST_PULSE_SIZE - 6.0) * (1.0 - (1.0 - t) ** 3)
+    fade = max(0.0, age - CAST_PULSE_OUT) / (CAST_PULSE_SECONDS - CAST_PULSE_OUT)
+    return size, (1.0 - fade) ** 2
 
 
 def drink_colour(item_def) -> tuple:
@@ -216,6 +234,7 @@ class MagicFX:
         self._tints = []
         #: [x, y, z, start, (r, g, b)]: potions being drunk (the shimmer).
         self._drinks = []
+        self._pulses = []
         #: ``wards() -> [(feet, colour, kind)]`` read every frame: who wears a
         #: ward (shield, flame cloak, ...), drawn as a fresnel bubble.
         self.wards = None
@@ -291,6 +310,11 @@ class MagicFX:
         foot, body = _lift(feet, GROUND_LIFT), _lift(feet, BODY_LIFT)
         rows = [self._row(foot, RUNES, 0.9, 130.0, 150.0, c, 0.95, flat=True, now=now),
                 self._row(body, FLASH, 0.25, 70.0, 110.0, _mix(c, (1, 1, 1), 0.5), 0.8, now=now)]
+        # The cast pulse: a bubble in the ring's colour, out of a dot and gone.
+        with self._lock:
+            self._pulses.append([float(feet[0]), float(feet[1]), float(feet[2]), now, tuple(c)])
+            if len(self._pulses) > MAX_LENSES:
+                self._pulses = self._pulses[-MAX_LENSES:]
         r = self._rng
         for i in range(12):
             a = i / 12.0 * math.tau
@@ -516,6 +540,7 @@ class MagicFX:
             self._lenses = []
             self._tints = []
             self._drinks = []
+            self._pulses = []
 
     # -- what is alive now ----------------------------------------------------
     def frame(self, now=None):
@@ -542,6 +567,8 @@ class MagicFX:
             tints = [list(t) for t in self._tints]
             self._drinks = [d for d in self._drinks if now - d[3] < DRINK_SECONDS]
             drinks = [list(d) for d in self._drinks]
+            self._pulses = [q for q in self._pulses if now - q[3] < CAST_PULSE_SECONDS]
+            pulses = [list(q) for q in self._pulses]
         sprites = self._particles_now(p, now)
         extra = []
         for look, pos, vel, seen in bolts:
@@ -589,6 +616,15 @@ class MagicFX:
             ward_lenses.append((x, y + BODY_LIFT, z, DRINK_LENS * env, size * 0.5,
                                 WARD_RIM, green, WARD_SHIMMER))
             extra.append([x, y + BODY_LIFT, z, size, *green, 0.85 * env, BUBBLE,
+                          (now * 0.6) % 1.0, 0.0, 0.0])
+        for x, y, z, start, c in pulses:
+            pulse = cast_pulse(now - start)
+            if pulse is None:
+                continue
+            size, env = pulse
+            ward_lenses.append((x, y + BODY_LIFT, z, CAST_PULSE_LENS * env, size * 0.5,
+                                WARD_RIM, c, WARD_SHIMMER))
+            extra.append([x, y + BODY_LIFT, z, size, *c, 0.9 * env, BUBBLE,
                           (now * 0.6) % 1.0, 0.0, 0.0])
         if extra:
             sprites = np.concatenate((sprites, np.asarray(extra, dtype=np.float32)))
