@@ -30,6 +30,7 @@ out by the tick, in order with the keys, exactly as a screen's buttons are.
 from __future__ import annotations
 
 import math
+import os
 import time
 
 from PyQt5.QtCore import QPoint, QRect, QRectF, Qt
@@ -129,20 +130,63 @@ def _hand_path(side):
     return path
 
 
-def _draw_hand_ghost(painter, rect, side):
-    """The faint *side* hand an empty hand slot shows, fitted into *rect*."""
-    size = min(rect.width(), rect.height())
-    x = rect.x() + (rect.width() - size) / 2.0
-    y = rect.y() + (rect.height() - size) / 2.0
+#: The hand an empty hand slot shows: an ink drawing on yellowed paper
+#: (assets/sprites/ui/hand.png, the thumb on the left), mirrored for the
+#: left hand so both thumbs point in toward the head.
+_HAND_ART = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "assets", "sprites", "ui", "hand.png")
+#: How strongly the paper shows: a little subdued, so it stays a background.
+_HAND_ART_OPACITY = 0.8
+#: The L / R label's ink on the paper.
+_HAND_INK = QColor(70, 50, 30)
+_hand_art = {}
+
+
+def _hand_pixmap(side, size, ratio=1.0):
+    """The paper hand for *side* at *size* logical pixels, sharp at the
+    screen's pixel *ratio* (cached), or None when the picture is missing."""
+    key = (side, int(size), round(float(ratio), 2))
+    if key in _hand_art:
+        return _hand_art[key]
+    pm = QPixmap(_HAND_ART)
+    if pm.isNull():
+        _hand_art[key] = None
+        return None
+    px = max(1, int(round(size * ratio)))
+    pm = pm.scaled(px, px, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    if side == "left":
+        pm = pm.transformed(QTransform().scale(-1, 1))
+    pm.setDevicePixelRatio(ratio)
+    _hand_art[key] = pm
+    return pm
+
+
+def _draw_hand_ghost(painter, rect, side) -> bool:
+    """The paper hand an empty *side* hand slot shows, filling *rect* inside
+    the slot's rounded edge. Returns False (having drawn a plain outline hand
+    instead) when the picture is missing."""
+    pm = _hand_pixmap(side, min(rect.width(), rect.height()), T.device_ratio(painter))
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
-    painter.translate(x, y)
+    if pm is not None:
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(rect), 3, 3)
+        painter.setClipPath(clip)
+        painter.setOpacity(_HAND_ART_OPACITY)
+        side_px = int(round(pm.width() / pm.devicePixelRatio()))
+        painter.drawPixmap(rect.x() + (rect.width() - side_px) // 2,
+                           rect.y() + (rect.height() - side_px) // 2, pm)
+        painter.restore()
+        return True
+    size = min(rect.width(), rect.height()) - 16
+    x = rect.x() + (rect.width() - size) / 2.0
+    painter.translate(x, rect.y() + 3)
     painter.scale(size, size)
     painter.setBrush(_HAND_GHOST)
-    pen = QPen(_HAND_GHOST_EDGE, 1.0 / max(1.0, size))
-    painter.setPen(pen)
+    painter.setPen(QPen(_HAND_GHOST_EDGE, 1.0 / max(1.0, size)))
     painter.drawPath(_hand_path(side))
     painter.restore()
+    return False
 
 
 PAPERDOLL = (
@@ -565,12 +609,14 @@ class InventoryWindow(FloatingWindow):
                 except Exception:
                     pass
         elif hand and not iid:
-            _draw_hand_ghost(painter, rect.adjusted(5, 3, -5, -14), hand)
+            paper = _draw_hand_ghost(painter, rect.adjusted(2, 2, -2, -2), hand)
             if label:
+                # In the outer bottom corner, on bare paper clear of the wrist.
                 painter.setFont(self.f_small)
-                painter.setPen(QColor(120, 112, 98))
-                _fit(painter, rect.adjusted(1, rect.height() - 15, -1, -1),
-                     Qt.AlignCenter, label)
+                painter.setPen(_HAND_INK if paper else QColor(120, 112, 98))
+                corner = Qt.AlignLeft if hand == "left" else Qt.AlignRight
+                _fit(painter, rect.adjusted(6, rect.height() - 17, -6, -3),
+                     corner | Qt.AlignVCenter, label)
         elif label and not iid:
             painter.setFont(self.f_small)
             painter.setPen(QColor(120, 112, 98))

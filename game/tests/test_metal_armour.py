@@ -365,3 +365,17 @@ def test_grey_keeps_transparency(qt_app):
     clear, solid = QColor.fromRgba(img.pixel(0, 0)), QColor.fromRgba(img.pixel(3, 3))
     assert clear.alpha() == 0
     assert solid.alpha() == 200 and solid.red() == solid.green() == solid.blue()
+
+
+def test_an_empty_hand_slot_shows_the_paper_hand_mirrored_for_the_left(qt_app):
+    from PyQt5.QtGui import QColor
+    from ..ui import inventory_window as iw
+    right = iw._hand_pixmap("right", 64)
+    left = iw._hand_pixmap("left", 64)
+    assert right is not None and left is not None        # the picture ships
+    a, b = right.toImage(), left.toImage()
+    w = a.width()
+    for x, y in ((10, 30), (20, 40), (40, 20), (50, 50)):
+        assert a.pixel(x, y) == b.pixel(w - 1 - x, y)
+    paper = QColor.fromRgb(a.pixel(1, 1))
+    assert paper.red() > paper.blue() + 30               # yellowed, not white
