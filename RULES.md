@@ -647,6 +647,10 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 * **Small on the wire.** The world goes to each player 20 times a second as
   only what changed since a frame they hold (a 770 KB world frame becomes
   about 1 KB), over UDP and TCP alike.
+* **A bad packet never disconnects anyone.** Every UDP packet carries a
+  CRC-32; a damaged one is dropped and recovered like a lost one (resent,
+  or replaced by the next frame), and a message that will not decode is
+  skipped.
 * **Late arrival** (the host's choice in the lobby, on by default): players
   may join while the adventure is running, while there is room. Off, they
   join only in the lobby before Start; anyone new afterwards is told "Game

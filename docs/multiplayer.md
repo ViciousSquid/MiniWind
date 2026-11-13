@@ -166,7 +166,12 @@ channel; patches go unreliably and a lost one is replaced by the next.
 The UDP channel: one socket per computer; lobby messages, input and actions are
 reliable and in order (numbered pieces of at most 1150 bytes, resent until
 acknowledged, delivered exactly once); pings measure the round trip; 20 s of
-silence ends a connection. Standard library only, so it behaves the same on
+silence ends a connection. Every packet ends in a CRC-32: one damaged on the way
+(that the link and UDP checksums missed) is dropped and recovered like a lost
+one -- resent, or replaced by the next frame. A message that still will not
+decode is skipped, and a frame that will not rebuild asks for a whole one: a
+bad packet never disconnects a player. Only breaking the rules does (oversized
+messages, flooding), besides silence and leaving. Standard library only, so it behaves the same on
 Windows (where the socket's ICMP "connection reset" reports are turned off),
 macOS and Linux, and in Nuitka builds.
 

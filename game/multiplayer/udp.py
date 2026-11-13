@@ -53,7 +53,8 @@ from .delta import FrameReceiver, FrameSender, PatchCache
 from . import friend_code
 
 MAGIC = b"MW"
-VERSION = 1
+#: 2: every packet ends in a CRC-32 (packets of another version are ignored).
+VERSION = 2
 CONNECT, ACCEPT, DATA, ACK, FRAME, FRAME_ACK, PING, PONG, CLOSE, PUNCH, REFUSE = range(1, 12)
 _HEADER = struct.Struct("!2sBBI")          # magic, version, kind, connection id
 _DATA = struct.Struct("!IB")               # sequence, flags (1 = last piece)
@@ -61,6 +62,7 @@ _ACK = struct.Struct("!IQ")                # next expected sequence, bitmap afte
 _FRAME = struct.Struct("!IIHH")            # frame id, baseline id, piece, pieces
 _FRAME_ACK = struct.Struct("!I")
 _PING = struct.Struct("!d")
+_CRC = struct.Struct("!I")
 #: Payload bytes per packet: safely under any path's MTU with all headers.
 CHUNK = 1150
 #: Unacknowledged reliable pieces in flight per peer, at most.
@@ -81,6 +83,26 @@ COMPRESS_OVER = 200
 #: A FRAME_ACK of this id asks the sender for a whole frame (the receiver
 #: lost the baseline a patch was made against).
 RESEND_WHOLE = 0xFFFFFFFF
+
+
+class PeerAbuse(Exception):
+    """A peer breaking the rules (oversized messages, flooding): the one
+    kind of trouble that ends a connection. A damaged or undecodable packet
+    never does -- it is dropped and recovered like a lost one."""
+
+
+def _seal(data: bytes) -> bytes:
+    """*data* with its CRC-32 appended: a packet damaged on the way -- one
+    the link and UDP checksums let through -- is recognised and dropped."""
+    return data + _CRC.pack(zlib.crc32(data))
+
+
+def _unseal(data: bytes):
+    """The packet without its CRC, or None when it does not match."""
+    if len(data) < _HEADER.size + _CRC.size:
+        return None
+    body, crc = data[:-_CRC.size], _CRC.unpack_from(data, len(data) - _CRC.size)[0]
+    return body if zlib.crc32(body) == crc else None
 
 
 def _encode(message) -> bytes:
@@ -152,7 +174,8 @@ class UdpPeer:
         self.heard = now
         self.pinged = 0.0
         self.srtt = 0.2
-        self.stats = {"sent": 0, "received": 0, "frames": 0, "frame_bytes": 0, "resent": 0}
+        self.stats = {"sent": 0, "received": 0, "frames": 0, "frame_bytes": 0, "resent": 0,
+                      "bad": 0}
 
     # -- the Connection surface ------------------------------------------------
     def send(self, message, *, replace=False):
@@ -204,13 +227,20 @@ class UdpPeer:
             self.expected = (self.expected + 1) & 0xFFFFFFFF or 1
             self.assembling += p
             if len(self.assembling) > MAX_MESSAGE + 1:
-                raise ValueError("Peer exceeded the message size limit.")
+                raise PeerAbuse("Peer exceeded the message size limit.")
             if f & 1:
                 data, self.assembling = bytes(self.assembling), bytearray()
-                message = _decode(data)
+                try:
+                    message = _decode(data)
+                    frame = None
+                    if message.get("type") == "_frame":
+                        # A whole frame, sent reliably: the baseline for patches.
+                        frame, _fid = self.frames_in.take(message)
+                except (ValueError, TypeError, UnicodeError, zlib.error, RecursionError):
+                    # Never a reason to drop the player: skip this message.
+                    self.stats["bad"] += 1
+                    continue
                 if message.get("type") == "_frame":
-                    # A whole frame, sent reliably: the baseline for patches.
-                    frame, _fid = self.frames_in.take(message)
                     if frame is not None:
                         self.endpoint.deliver(self, frame)
                 else:
@@ -245,12 +275,19 @@ class UdpPeer:
         entry[2][index] = payload
         if len(entry[2]) == count:
             del self.incoming[fid]
-            packet = _decode(b"".join(entry[2][i] for i in range(count)))
-            base_id = packet.get("base", 0)
-            if base_id and base_id not in self.frames_in.frames and fid > self.frames_in.newest:
+            try:
+                packet = _decode(b"".join(entry[2][i] for i in range(count)))
+                base_id = packet.get("base", 0)
+                if base_id and base_id not in self.frames_in.frames and fid > self.frames_in.newest:
+                    self.endpoint.send_raw(self, FRAME_ACK, _FRAME_ACK.pack(RESEND_WHOLE))
+                    return
+                frame, got = self.frames_in.take(packet)
+            except (ValueError, TypeError, AttributeError, UnicodeError, zlib.error, RecursionError):
+                # A frame that will not rebuild: skip it and ask for a whole
+                # one -- never drop the player for it.
+                self.stats["bad"] += 1
                 self.endpoint.send_raw(self, FRAME_ACK, _FRAME_ACK.pack(RESEND_WHOLE))
                 return
-            frame, got = self.frames_in.take(packet)
             if frame is not None:
                 self.endpoint.send_raw(self, FRAME_ACK, _FRAME_ACK.pack(got))
                 self.endpoint.deliver(self, frame)
@@ -297,11 +334,12 @@ class UdpPeer:
             with self._lock:
                 if self.latest is latest:
                     self.latest = None
-            packet = self.frames_out.make(latest)
-            data = _encode(packet)
+            packet, data = self._frame_bytes(latest)
+            if packet is None:
+                return self._keepalive(ep, now)
             last = self._enqueue(data)
             if last is None:
-                raise ValueError("The connection could not keep up.")
+                raise PeerAbuse("The connection could not keep up.")
             self.key_pending = (packet["id"], last)
             self.stats["frames"] += 1
             self.stats["frame_bytes"] += len(data)
@@ -309,8 +347,12 @@ class UdpPeer:
         if latest is not None:
             self.tokens = min(float(BURST), self.tokens + (now - self.tokens_at) * RATE)
             self.tokens_at = now
-            packet = self.frames_out.make(latest)
-            data = _encode(packet)
+            packet, data = self._frame_bytes(latest)
+            if packet is None:
+                with self._lock:
+                    if self.latest is latest:
+                        self.latest = None
+                return self._keepalive(ep, now)
             if len(data) <= self.tokens or self.tokens >= BURST:
                 with self._lock:
                     if self.latest is latest:
@@ -326,6 +368,22 @@ class UdpPeer:
             else:
                 self.frames_out.next_id -= 1                 # not sent: reuse the id
                 self.frames_out.sent.pop(packet["id"], None)
+        self._keepalive(ep, now)
+
+    def _frame_bytes(self, frame):
+        """``(packet, bytes)`` for a frame, or ``(None, None)`` when it will
+        not encode: then it is skipped (the next one follows), never fatal."""
+        packet = self.frames_out.make(frame)
+        try:
+            return packet, _encode(packet)
+        except (ValueError, TypeError, RecursionError):
+            self.frames_out.sent.pop(packet["id"], None)
+            self.stats["bad"] += 1
+            return None, None
+
+    def _keepalive(self, ep, now):
+        """Send what is queued on the reliable channel, ping, and notice a
+        silent peer."""
         with self._lock:
             while self.queue and len(self.unacked) < WINDOW:
                 seq, flags, payload = self.queue.popleft()
@@ -354,6 +412,8 @@ class UdpEndpoint:
         self._stop = threading.Event()
         self._punches = deque()            # (due, addr)
         self._stun = {}                    # transaction -> [event, result]
+        #: Packets dropped because their CRC did not match.
+        self.corrupt = 0
         #: Test hooks: return True to drop a packet (in: (data, addr); out: (data, addr)).
         self.drop_in = None
         self.drop_out = None
@@ -440,7 +500,7 @@ class UdpEndpoint:
                 pass
 
     def packet(self, peer, kind, body=b""):
-        return _HEADER.pack(MAGIC, VERSION, kind, peer.conn) + body
+        return _seal(_HEADER.pack(MAGIC, VERSION, kind, peer.conn) + body)
 
     def send_packet(self, peer, packet):
         peer.stats["sent"] += len(packet)
@@ -463,7 +523,7 @@ class UdpEndpoint:
         try:
             self.events.put_nowait((peer.peer, message))
         except queue.Full:
-            raise ValueError("Peer exceeded the incoming message limit.")
+            raise PeerAbuse("Peer exceeded the incoming message limit.")
 
     def drop(self, peer, reason, tell):
         with self._lock:
@@ -494,6 +554,10 @@ class UdpEndpoint:
             return
         magic, version, kind, conn = _HEADER.unpack_from(data)
         if magic != MAGIC or version != VERSION:
+            return
+        data = _unseal(data)
+        if data is None:
+            self.corrupt += 1               # damaged on the way: as if lost
             return
         body = data[_HEADER.size:]
         with self._lock:
@@ -535,9 +599,11 @@ class UdpEndpoint:
             elif kind == REFUSE and not self.is_host:
                 peer.closed = True
                 self.drop(peer, "The party is not taking connections.", tell=False)
-        except (ValueError, UnicodeError, zlib.error, RecursionError) as exc:
+        except PeerAbuse as exc:
             peer.closed = True
             self.drop(peer, exc, tell=True)
+        except (ValueError, TypeError, UnicodeError, zlib.error, RecursionError):
+            peer.stats["bad"] += 1          # one bad packet: ignored, never fatal
 
     def _accept(self, addr, conn):
         if self._stop.is_set():
@@ -545,7 +611,7 @@ class UdpEndpoint:
         with self._lock:
             live = sum(1 for p in self.peers.values() if not p.closed)
         if live >= MAX_PEERS or not self.admit():
-            self._sendto(_HEADER.pack(MAGIC, VERSION, REFUSE, conn), addr)
+            self._sendto(_seal(_HEADER.pack(MAGIC, VERSION, REFUSE, conn)), addr)
             return
         peer = UdpPeer(self, uuid.uuid4().hex, addr, conn)
         peer.accepted = True
@@ -591,7 +657,7 @@ class UdpEndpoint:
                 while self._punches and self._punches[0][0] <= now:
                     punches.append(self._punches.popleft()[1])
             for addr in punches:
-                self._sendto(_HEADER.pack(MAGIC, VERSION, PUNCH, 0), addr)
+                self._sendto(_seal(_HEADER.pack(MAGIC, VERSION, PUNCH, 0)), addr)
             for peer in peers:
                 if peer.closed:
                     continue
@@ -606,9 +672,11 @@ class UdpEndpoint:
                     continue
                 try:
                     peer.service(now)
-                except (ValueError, TypeError) as exc:
+                except PeerAbuse as exc:
                     peer.closed = True
                     self.drop(peer, exc, tell=True)
+                except (ValueError, TypeError):
+                    peer.stats["bad"] += 1      # e.g. a frame that would not encode: skipped
 
     def close(self):
         if self._stop.is_set():

@@ -265,7 +265,8 @@ def test_garbage_and_other_programs_packets_are_ignored(pair):
     import socket
     stray = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        for junk in (b"", b"x", b"MW", b"MW\x01\x03" + b"\x00" * 3, b"\x01\x01" + b"\x00" * 30,
+        for junk in (b"", b"x", b"MW", b"MW\x02\x03" + b"\x00" * 3, b"\x01\x01" + b"\x00" * 30,
+                     udp._HEADER.pack(b"MW", udp.VERSION, udp.DATA, 1) + b"\x00" * 9,   # no valid CRC
                      udp._HEADER.pack(b"MW", 99, udp.DATA, 1) + b"zz"):
             stray.sendto(junk, ("127.0.0.1", host.port))
         peer.send({"type": "lobby_request", "n": 1})
@@ -418,3 +419,97 @@ def LobbyControllerFor(identity="d" * 64):
     client.opened = True
     client.signature = "matching-build"
     return client
+
+
+class BitFlips(Chaos):
+    """The bad wire, and now and then a packet with a flipped bit -- the kind
+    a faulty router lets through."""
+
+    def __init__(self, endpoint, seed=1, flip=0.12, **kw):
+        super().__init__(endpoint, seed=seed, **kw)
+        self.flip, self.flipped = flip, 0
+
+    def __call__(self, data, addr):
+        if getattr(self.inside, "on", False):
+            return False
+        if data[:2] == b"MW" and self.rng.random() < self.flip:
+            damaged = bytearray(data)
+            bit = self.rng.randrange(len(damaged) * 8)
+            damaged[bit // 8] ^= 1 << (bit % 8)
+            self.flipped += 1
+            self._reinject((bytes(damaged), addr))
+            return True
+        return super().__call__(data, addr)
+
+
+def test_damaged_packets_are_dropped_and_nobody_is_disconnected(pair):
+    host, client, peer, host_peer, host_events, client_events = pair
+    host.drop_in = host_wire = BitFlips(host, seed=11, loss=0.1, dup=0.05, hold=0.05)
+    client.drop_in = client_wire = BitFlips(client, seed=12, loss=0.1, dup=0.05, hold=0.05)
+    rng = random.Random(13)
+    sent = []
+    for i in range(200):
+        message = {"type": "lobby_request", "n": i,
+                   "blob": "".join(rng.choice("abcdef") for _ in range(rng.choice([20, 900, 4000])))}
+        sent.append(message)
+        peer.send(message)
+    world = {"type": "world", "sequence": 0,
+             "entities": [{"id": f"e{i}", "pos": [float(i), 0.0, 0.0]} for i in range(800)]}
+    frames = {}
+    for n in range(1, 41):
+        world = json.loads(json.dumps(world))
+        world["sequence"] = n
+        world["entities"][n]["pos"][0] += 1.0
+        frames[n] = world
+        host_peer.send(world, replace=True)
+        time.sleep(0.01)
+    got_host, got_client = [], []
+
+    def done():
+        _drain(host_events, got_host)
+        _drain(client_events, got_client)
+        if not any(e[1].get("sequence") == 40 for e in got_client):
+            host_peer.send(frames[40], replace=True)
+            time.sleep(0.02)
+        return (len([e for e in got_host if e[1]["type"] == "lobby_request"]) >= 200
+                and any(e[1].get("sequence") == 40 for e in got_client))
+
+    assert _wait(done, timeout=30)
+    assert [e[1] for e in got_host if e[1]["type"] == "lobby_request"] == sent   # all, in order, intact
+    rebuilt = [e[1] for e in got_client if e[1].get("type") == "world"]
+    assert all(f == frames[f["sequence"]] for f in rebuilt)                    # every frame exact
+    everything = got_host + got_client
+    assert not any(e[1]["type"] in ("disconnected", "connection_error") for e in everything)
+    assert host_wire.flipped and client_wire.flipped
+    assert host.corrupt + client.corrupt > 0                                   # caught by the CRC
+
+
+def test_a_message_that_will_not_decode_is_skipped_not_fatal(pair, monkeypatch):
+    host, client, peer, host_peer, host_events, client_events = pair
+    real = udp._decode
+    broken = {"n": 0}
+
+    def decode(data):
+        message = real(data)
+        if message.get("n") == 2 and not broken["n"]:
+            broken["n"] += 1
+            raise ValueError("garbled")
+        return message
+
+    monkeypatch.setattr(udp, "_decode", decode)
+    for i in range(1, 5):
+        peer.send({"type": "lobby_request", "n": i})
+    got = []
+    assert _wait(lambda: any(e[1].get("n") == 4 for e in _drain(host_events, got)))
+    assert [e[1]["n"] for e in got if e[1]["type"] == "lobby_request"] == [1, 3, 4]
+    assert not any(e[1]["type"] == "disconnected" for e in got)
+    assert host_peer.stats["bad"] == 1
+
+
+def test_every_packet_carries_a_crc():
+    sealed = udp._seal(udp._HEADER.pack(udp.MAGIC, udp.VERSION, udp.PING, 7) + b"12345678")
+    assert udp._unseal(sealed) is not None
+    damaged = bytearray(sealed)
+    damaged[9] ^= 0x10
+    assert udp._unseal(bytes(damaged)) is None
+    assert udp._unseal(sealed[:-1]) is None
