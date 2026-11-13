@@ -10,6 +10,8 @@ import pytest
 
 pytest.importorskip("PyQt5")
 
+pytestmark = pytest.mark.qt
+
 from ..diceroll import DiceRoller, roll_check
 from ..rpg import combat, items
 from ..ui import dice3d
