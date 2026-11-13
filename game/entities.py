@@ -30,6 +30,8 @@ as a MiniWind RPG map and configures the clock + starting scenario.
 
 from __future__ import annotations
 
+import re
+
 import os
 
 try:
@@ -168,6 +170,10 @@ def _actor_2d_pixmap(actor, icon=False):
     return pix
 
 
+#: The editor's automatic names ("Creature_21", "NPC_3", "Monster_7").
+_AUTO_NAME = re.compile(r"(?:Creature|NPC|Monster|Npc)_\d+")
+
+
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
     """Fill the properties both actor entities share, from the bestiary template.
 
@@ -189,7 +195,14 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     tmpl = bestiary.get(role)
 
     # identity / faction
-    p.setdefault("display_name", p.get("name", tmpl.name if tmpl else default_role.title()))
+    kind_name = tmpl.name if tmpl else default_role.title()
+    name = p.get("name")
+    if not name or _AUTO_NAME.fullmatch(str(name)):
+        # An actor nobody named (one a spawn point made, say) has only the
+        # editor's counter for a name, "Creature_21": what it is says more,
+        # and that is what its roll boxes, barks and the player read.
+        name = kind_name
+    p.setdefault("display_name", name)
     faction = tmpl.faction if tmpl else default_faction
     p.setdefault("faction", faction)
     if not p.get("team"):
