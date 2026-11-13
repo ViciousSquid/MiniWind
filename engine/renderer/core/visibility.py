@@ -22,8 +22,6 @@ from engine.portal_transform import (
     contains_point as _portal_contains_point,
     mirror_point as _portal_mirror_point,
 )
-
-
 from .light_stream import ACTIVE_LIGHT_RANGE, LightStream   # noqa: F401  (re-exported)
 
 
@@ -189,10 +187,17 @@ class VisibilityMixin:
         local = np.full(len(slots), np.inf, dtype=np.float64)
         known = (recipe_ids >= 0) & (recipe_ids < len(recipe_radii))
         local[known] = recipe_radii[recipe_ids[known]]
-        basis = table.model_base_matrix[slots].astype(np.float64)
-        axes = np.stack([basis[:, 0:3], basis[:, 4:7], basis[:, 8:11]], axis=1)
-        scale = np.sqrt((axes ** 2).sum(axis=2)).max(axis=1)
+        scale = self._model_axis_scale(table.model_base_matrix[slots])
         return local * scale
+
+    @staticmethod
+    def _model_axis_scale(matrices):
+        """Longest model axis, without repacking the table's padded columns."""
+        basis = np.asarray(matrices, dtype=np.float64)
+        # The table already stores the three padded columns contiguously.
+        # A strided view avoids stacking/copying them on every cull.
+        axes = basis[:, :12].reshape(-1, 3, 4)[:, :, :3]
+        return np.sqrt((axes ** 2).sum(axis=2)).max(axis=1)
 
     def _cull_entity_rows(self, table, slots, planes, models=False):
         """Keep the entity rows whose bounding sphere meets the frustum.
@@ -216,6 +221,7 @@ class VisibilityMixin:
         """Six normalized frustum planes (a,b,c,d) from a view-projection matrix
         ``m`` (column-major, m[col][row]).  A point is inside when
         a*x+b*y+c*z+d >= 0 for every plane."""
+        m = tuple(tuple(m[col]) for col in range(4))
         def norm(a, b, c, d):
             l = math.sqrt(a * a + b * b + c * c)
             if l < 1e-8:
@@ -343,6 +349,7 @@ class VisibilityMixin:
         bits = table.class_bits[:table.count]
         mask = (
             ((bits & entity_projection.ENT_SKIP) == 0)
+            & ((bits & entity_projection.ENT_EDITOR_MODEL) == 0)
             & ((bits & entity_projection.ENT_ALWAYS_SPRITE) == 0)
             & ((bits & entity_projection.ENT_HAS_MODEL) != 0)
             & ((bits & entity_projection.ENT_MODE_MODEL) != 0)
@@ -373,7 +380,7 @@ class VisibilityMixin:
         if not len(slots):
             return slots, ()
         recipe_ids = table.model_recipe_id[slots]
-        positions = table.pos[slots]
+        positions = positions[indices]
         transforms = table.model_base_matrix[slots]
         signature = (
             slots.tobytes(),
@@ -395,9 +402,40 @@ class VisibilityMixin:
         # the visual aperture is still being rendered.
         keep = (target >= 0) & (table.portal_active[slots] | (table.portal_fade[slots] > 0.01))
         if camera_pos is not None:
+            # Each portal's own "Fade Distance": beyond it the view has faded
+            # out completely (_portal_distance_fade) and is not rendered.
             delta = table.pos[slots] - np.asarray((float(camera_pos.x), float(camera_pos.y), float(camera_pos.z)), dtype=np.float64)
-            keep &= np.einsum('ij,ij->i', delta, delta) <= (self.PORTAL_RENDER_DISTANCE * self.PORTAL_RENDER_DISTANCE)
+            reach = self._portal_reach(table, slots)
+            keep &= np.einsum('ij,ij->i', delta, delta) < reach * reach
         return slots[keep]
+
+    def _portal_reach(self, table, slots):
+        """Each portal's fade distance (PORTAL_RENDER_DISTANCE for a table
+        without the column, or a row that has none)."""
+        column = getattr(table, 'portal_fade_distance', None)
+        if column is None:
+            return np.full(len(slots), self.PORTAL_RENDER_DISTANCE)
+        reach = column[slots].astype(np.float64)
+        return np.where(reach > 0.0, reach, self.PORTAL_RENDER_DISTANCE)
+
+    #: The share of a portal's fade distance its view takes to fade out.
+    PORTAL_FADE_BAND = 0.25
+
+    def _portal_distance_fade(self, table, slot, camera_pos):
+        """1 near a portal, 0 at its fade distance: the opacity of its view
+        from *camera_pos*, over the last PORTAL_FADE_BAND of the distance."""
+        if camera_pos is None:
+            return 1.0
+        reach = float(self._portal_reach(table, np.array([int(slot)]))[0])
+        p = table.pos[int(slot)]
+        distance = math.sqrt((float(camera_pos.x) - p[0]) ** 2
+                             + (float(camera_pos.y) - p[1]) ** 2
+                             + (float(camera_pos.z) - p[2]) ** 2)
+        start = reach * (1.0 - self.PORTAL_FADE_BAND)
+        if distance <= start:
+            return 1.0
+        t = min(1.0, (distance - start) / max(reach - start, 1e-6))
+        return 1.0 - t * t * (3.0 - 2.0 * t)        # smoothstep, falling
 
     @staticmethod
     def _portal_slot_basis(table, slot):
@@ -581,7 +619,10 @@ class VisibilityMixin:
             cy = float(frame_camera_pos[1])
             cz = float(frame_camera_pos[2])
             best = self.PORTAL_SELF_GLASSES_RADIUS ** 2
+            self_candidates = cfg.get('player_glasses_self_candidates', ())
             for i, pos in enumerate(positions):
+                if i < len(self_candidates) and not self_candidates[i]:
+                    continue
                 dx = float(pos[0]) - cx
                 dy = float(pos[1]) - cy
                 dz = float(pos[2]) - cz
@@ -599,4 +640,3 @@ class VisibilityMixin:
                 table.pos[clip], self._portal_slot_basis(table, clip),
                 positions[self_index]), sprites[self_index]))
         return tuple(others)
-

@@ -126,3 +126,19 @@ def test_a_fitted_pass_keeps_nothing_past_stop():
     ai.forget_monsters()
     assert ai._tick_monsters is None and ai._offscreen_accum == 0.0
     assert ai._owed == {}
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_an_eased_turn_rate_matches_the_per_monster_path(seed, monkeypatch):
+    """With a turn rate set (the game sets one), each chasing row turns by its
+    own delta: the dense pass hands ``face_direction`` that row's number, not
+    the whole per-row column."""
+    from engine import monster_facing
+
+    monkeypatch.setattr(monster_facing, "TURN_RATE", 8.0)
+    dense_ai, dense_logic = _world(seed, dense=True)
+    ref_ai, ref_logic = _world(seed, dense=False)
+    for tick in range(int(4 * MONSTER_SHOOT_INTERVAL / TICK)):
+        dense_ai.update(TICK)
+        ref_ai.update(TICK)
+        assert _snapshot(dense_ai, dense_logic) == _snapshot(ref_ai, ref_logic), tick

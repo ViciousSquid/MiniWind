@@ -36,6 +36,9 @@ def test_repeated_play_sessions_leak_no_threads_or_memory(fio_session):
     session = fio_session(MAP)
     for _ in range(3):                      # warm caches, textures, imports
         _play_once(session)
+    # The one-off background sound decode (once per process, not per Play).
+    from engine.view_audio import wait_for_background_decode
+    assert wait_for_background_decode(60.0)
     gc.collect()
     threads = {t.name for t in threading.enumerate()}
     tracemalloc.start(1)

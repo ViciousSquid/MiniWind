@@ -8,7 +8,7 @@ pytest.importorskip("PyQt5", reason="QtGameView requires PyQt5")
 
 pytestmark = pytest.mark.qt
 
-from engine.qt_game_view import _window_wants_cursor
+from engine.view_pointer import window_wants_cursor as _window_wants_cursor
 from game.ui import hits
 
 

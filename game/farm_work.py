@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from typing import Dict, List, Optional
+from .facing import face_heading
 
 #: Roles that farm.
 FARM_ROLES = ("farmer", "farmhand", "peasant")
@@ -155,8 +156,8 @@ class FarmWork:
         return self._tend(session, npc, task)
 
     def _deliver(self, session, npc, now) -> bool:
-        from . import windmills
-        from .rpg import inventory
+        import game.windmills as windmills
+        import game.rpg.inventory as inventory
 
         p = npc.properties
         quantity = windmills.wheat_stock(npc)
@@ -200,7 +201,7 @@ class FarmWork:
         anchor = self._work_spot(session, npc)
         rows = p.get("_farm_rows")
         if rows is None:
-            from . import fio
+            import game.fio as fio
             rows = field_rows(fio.terrain(session.logic), anchor)
             p["_farm_rows"] = rows
         animal = self._nearest_animal(session, anchor)
@@ -274,7 +275,7 @@ class FarmWork:
                           npc.pos[2] + (animal.pos[2] - npc.pos[2]) * k]
         else:
             p.pop("_dest", None)
-            p["_facing"] = math.atan2(animal.pos[0] - npc.pos[0], animal.pos[2] - npc.pos[2])
+            face_heading(npc, animal.pos[0] - npc.pos[0], animal.pos[2] - npc.pos[2])
             if str(animal.properties.get("npc_role", "")).lower() == "cow":
                 session.collect_produce(npc, animal, "milk")
         return True
@@ -311,7 +312,8 @@ class FarmWork:
         weights = terrain.biome_weights_batch([npc.pos[0]], [npc.pos[2]])
         if weights[0, tb.WHEAT] * tb.bare_keep(weights)[0] < FIELD_WHEAT:
             return
-        from .rpg import inventory, items
+        import game.rpg.inventory as inventory
+        import game.rpg.items as items
         inventory.add_item(inventory.get_inventory(npc), items.make("wheat"))
         if self._on_collect is not None:
             self._on_collect(npc, "wheat", 1)

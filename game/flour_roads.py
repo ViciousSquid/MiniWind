@@ -72,6 +72,8 @@ class FlourRoads:
         p['_flour_abstract'] = True
         x, z = m.get('flour_pos', j.route[-1])
         real.pos = [x, float(m.get('flour_y', real.pos[1])), z]
+        from engine.change_journal import touch
+        touch(real)       # its kit, health and perhaps death were just restored
         return real
 
     def _route(self, j, actor, destination):

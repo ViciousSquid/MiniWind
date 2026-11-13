@@ -44,6 +44,9 @@ if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
     # PyOpenGL defaults to GLX, but the editor Qt tier intentionally runs without X11.
     # Use EGL for context-free imports in that tier; the actual GL tier runs under Xvfb.
     os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+# Seal the render table's transform columns (engine/render_table.py): a write
+# that bypasses the change log raises. A test-time check; play does not pay it.
+os.environ.setdefault("FIO_SEAL_COLUMNS", "1")
 # Qt writes its runtime files here; without it every Qt test prints a warning.
 os.environ.setdefault("XDG_RUNTIME_DIR", os.path.join("/tmp", "fio-test-runtime"))
 try:
@@ -68,7 +71,22 @@ def pytest_addoption(parser):
              "excluded from the normal suite)")
 
 
+#: Where MiniWind's own tests live: the game layer's, and the engine seams'
+#: (tests/miniwind/). Everything under them is in the ``miniwind`` tier, so
+#: ``-m "not miniwind"`` runs Fio's suite as Fio ships it (the engine still
+#: meeting upstream's contract) and ``-m miniwind`` the game's.
+_MINIWIND_TEST_ROOTS = tuple(
+    os.path.join(_ROOT, *rel.split("/")) + os.sep
+    for rel in ("game/tests", "tests/miniwind"))
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
+    # First, so ``-m miniwind`` / ``-m "not miniwind"`` select on it.
+    miniwind = pytest.mark.miniwind
+    for item in items:
+        if str(item.fspath).startswith(_MINIWIND_TEST_ROOTS):
+            item.add_marker(miniwind)
     if config.getoption("--run-benchmarks"):
         return
     skip = pytest.mark.skip(reason="benchmark tier: pass --run-benchmarks to run it")
@@ -81,28 +99,41 @@ def pytest_collection_modifyitems(config, items):
 # Collection isolation
 # ---------------------------------------------------------------------------
 
+def _module_marked_qt_or_gl(tree):
+    """True when a module-level ``pytestmark`` applies the ``qt`` or ``gl`` tier."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in targets):
+            continue
+        for sub in ast.walk(node.value):
+            if (isinstance(sub, ast.Attribute) and sub.attr in ("qt", "gl")
+                    and isinstance(sub.value, ast.Attribute)
+                    and sub.value.attr == "mark"):
+                return True
+    return False
+
+
 def pytest_ignore_collect(collection_path, config):
     """Do not import Qt/GL test modules in the dependency-light CI tier."""
     if not os.environ.get("FIO_HEADLESS_TIER"):
-        return False
+        return None
     try:
         if not collection_path.is_file() or collection_path.suffix != ".py":
-            return False
+            return None
         tree = ast.parse(collection_path.read_text(encoding="utf-8"),
                          filename=str(collection_path))
     except (OSError, UnicodeDecodeError, SyntaxError):
-        return False
-    # A desktop test may reach Qt/OpenGL indirectly (renderer.core imports
-    # its GL base; game entities import editor.things). Honour module-level
-    # tier declarations before importing those modules at all.
-    for node in tree.body:
-        if (isinstance(node, ast.Assign)
-                and any(isinstance(t, ast.Name) and t.id == "pytestmark"
-                        for t in node.targets)):
-            if any(isinstance(mark, ast.Attribute) and mark.attr in ("qt", "gl")
-                   and isinstance(mark.value, ast.Attribute) and mark.value.attr == "mark"
-                   for mark in ast.walk(node.value)):
-                return True
+        return None
+    # A module marked ``pytestmark = pytest.mark.qt`` (or ``gl``) as a whole has
+    # no test this tier would select, but it may still reach Qt transitively at
+    # import time (``editor.things`` imports PyQt5), so do not import it at all.
+    if _module_marked_qt_or_gl(tree):
+        return True
     nodes = ast.walk(tree)
     for node in nodes:
         if isinstance(node, ast.Import):
@@ -113,7 +144,27 @@ def pytest_ignore_collect(collection_path, config):
             continue
         if "PyQt5" in roots or "OpenGL" in roots:
             return True
-    return False
+    # Let pytest's own hook apply --ignore and norecursedirs. Returning False
+    # here stops this first-result hook before pytest can check those rules.
+    return None
+
+
+# ---------------------------------------------------------------------------
+# M4's change records
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _no_missed_change_record():
+    """With the oracle recording (``FIO_RENDER_ORACLE=record``), a test that
+    leaves a missed change record behind fails: a writer it exercised did not
+    report what it wrote (engine/change_detection.py)."""
+    from engine import change_detection
+    del change_detection.MISSES[:]
+    yield
+    misses = list(change_detection.MISSES)
+    del change_detection.MISSES[:]
+    if misses:
+        pytest.fail("missed change records (%d): %s" % (len(misses), misses[:3]))
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +247,8 @@ def _isolate_process_singletons(_plugins_loaded_before_isolation):
     if things is not None:
         counters = dict(things.Thing._counters)
     plugin_state = _snapshot_plugin_state()
+    from engine import monster_facing as _monster_facing
+    turn_rate = _monster_facing.TURN_RATE
     # The editor sets the application font from settings.ini when a window is
     # built (MainWindow.update_global_font). It is process-wide: left changed,
     # it changes how the next test's windows lay out.
@@ -207,6 +260,7 @@ def _isolate_process_singletons(_plugins_loaded_before_isolation):
         from PyQt5.QtWidgets import QApplication
         QApplication.setFont(app_font)
     _restore_plugin_state(plugin_state)
+    _monster_facing.TURN_RATE = turn_rate
 
     io_system = sys.modules.get("editor.io_system")
     if io_system is not None:
@@ -283,13 +337,19 @@ def _snapshot_plugin_state():
             # "bigworld" and "savegame.restore") are process-wide too: a test
             # that starts a session without stopping it would otherwise hand
             # its stale session to every later save/restore.
-            dict(getattr(manager, "services", {})))
+            dict(getattr(manager, "services", {})),
+            # A built-in game (MiniWind's own layer) a test registered would
+            # otherwise take over Play in every later test of the process --
+            # Fio's stock weapons then never fire, since the game owns the
+            # player's shots.
+            list(getattr(manager, "_builtin_games", [])))
 
 
 def _restore_plugin_state(snapshot):
     if snapshot is None:
         return
-    manager, enabled, auto_enabled, io_registrations, services = snapshot
+    (manager, enabled, auto_enabled, io_registrations, services,
+     builtin_games) = snapshot
     for plugin, was_enabled in enabled.items():
         plugin.enabled = was_enabled
     # Written directly, so the manager's caches keyed on the enabled set (the
@@ -303,6 +363,8 @@ def _restore_plugin_state(snapshot):
     if hasattr(manager, "services"):
         manager.services.clear()
         manager.services.update(services)
+    if hasattr(manager, "_builtin_games"):
+        manager._builtin_games[:] = builtin_games
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +441,51 @@ def pytest_configure(config):
     _install_modal_guard()
 
 
+def pytest_runtest_setup(item):
+    """Give the Qt tier the editor's style before its first widget exists.
+
+    Several modules create the QApplication themselves; installing the style
+    later, over widgets an earlier module left alive, restyles them in place.
+    The OpenGL tier sets its surface format first, so it is left alone.
+    """
+    if item.get_closest_marker("qt") is None or item.get_closest_marker("gl") is not None:
+        return
+    try:
+        from PyQt5.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    if app is not None and getattr(app, "_fio_editor_style_installed", False):
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from editor.desktop_style import install_editor_style, prepare_qt
+    prepare_qt()
+    global _STYLED_QT_APP
+    # Held for the session: an unreferenced QApplication is destroyed.
+    _STYLED_QT_APP = app or QApplication([])
+    install_editor_style(_STYLED_QT_APP)
+
+
+_STYLED_QT_APP = None
+
+
+@pytest.fixture(autouse=True)
+def _no_runtime_transform_outlives_its_test():
+    """A brush's runtime transform (unified brush model, Stage 2b) lives in a
+    process-wide runtime source -- the editor's mover preview, the tests'
+    :mod:`tests.helpers.runtime` -- not in the brush; clear them so a moved or
+    spinning brush never leaks into the next test."""
+    yield
+    from engine import brush_placement
+    brush_placement.PREVIEW.clear()
+    try:
+        from tests.helpers import runtime
+    except ImportError:
+        return
+    runtime.release()
+
+
 @pytest.fixture(autouse=True)
 def _qt_callback_errors_fail_the_test():
     """Fail the test during which an exception escaped a Qt callback."""
@@ -426,8 +533,30 @@ def _fail_on_a_held_modifier():
 _SETTINGS_INI = os.path.join(_ROOT, "settings.ini")
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _restore_repo_settings_ini_at_exit():
+    """The same, once more when the session ends: a window deleted after its
+    test (deferred deletion, a session-scoped fixture) still saved into the
+    tracked file -- a [History] section was left behind by whole-suite runs."""
+    try:
+        with open(_SETTINGS_INI, "rb") as fh:
+            before = fh.read()
+    except OSError:
+        before = None
+    yield
+    if before is not None:
+        try:
+            with open(_SETTINGS_INI, "rb") as fh:
+                if fh.read() == before:
+                    return
+            with open(_SETTINGS_INI, "wb") as fh:
+                fh.write(before)
+        except OSError:  # pragma: no cover - read-only checkout
+            pass
+
+
 @pytest.fixture(autouse=True)
-def _restore_repo_settings_ini():
+def _restore_repo_settings_ini(_restore_repo_settings_ini_at_exit):
     """Put the tracked settings.ini back after a test that wrote to it.
 
     MainWindow resolves ``settings.ini`` against the working directory, and

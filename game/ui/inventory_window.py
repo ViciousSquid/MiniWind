@@ -120,7 +120,7 @@ def _fit(painter, rect, flags, text, min_px=8):
 
 def _item(iid):
     try:
-        from ..rpg import items
+        import game.rpg.items as items
         return items.get(iid)
     except Exception:
         return None
@@ -154,7 +154,7 @@ def fits(target, item_def) -> bool:
     if kind == "equip":
         if key == "shield" and item_def.category == "weapon":
             # The off hand: a second one-handed weapon is dual wielding.
-            from ..rpg import equipment
+            import game.rpg.equipment as equipment
             return equipment.can_dual_wield(item_def)
         return slot_of(item_def) == key
     return False
@@ -167,7 +167,7 @@ def why_not(target, item_def) -> str:
         return f"{name} isn't a weapon: only weapons go in a quick slot."
     if kind == "equip" and key == "shield" and item_def is not None \
             and item_def.category == "weapon":
-        from ..rpg import equipment
+        import game.rpg.equipment as equipment
         if equipment.is_two_handed(item_def):
             return f"{name} needs both hands."
         return f"{name} can't be held in the off hand."
@@ -237,7 +237,7 @@ class InventoryWindow(FloatingWindow):
         self._pad_point = None
         self._icons = {}
         self._doll = {}
-        from . import fonts
+        import game.ui.fonts as fonts
         # One typeface throughout, the conversation's own (MedievalSharp,
         # game/ui/fonts.py): it has a single upright weight, so nothing here
         # asks it for bold or italic.
@@ -295,7 +295,7 @@ class InventoryWindow(FloatingWindow):
     def _known_spells(self):
         c = self._character()
         try:
-            from ..rpg import magic
+            import game.rpg.magic as magic
         except Exception:
             return []
         return [(sid, magic.get(sid)) for sid in (getattr(c, "known_spells", []) or [])
@@ -317,7 +317,7 @@ class InventoryWindow(FloatingWindow):
         if key not in self._icons:
             pm = None
             try:
-                from .. import item_icons
+                import game.item_icons as item_icons
                 pm = item_icons.icon_pixmap(iid, self._stack(iid), size)
             except Exception:
                 pm = None
@@ -462,7 +462,7 @@ class InventoryWindow(FloatingWindow):
             rarity = (stack or {}).get("rarity")
             if rarity and rarity != "common":
                 try:
-                    from ..rpg import items
+                    import game.rpg.items as items
                     rgb = items.RARITY_INFO[items.rarity_of(stack)]["rgb"]
                     painter.setPen(QPen(QColor(*rgb), 2))
                     painter.setBrush(Qt.NoBrush)
@@ -505,8 +505,8 @@ class InventoryWindow(FloatingWindow):
         # The eyes follow the pointer where the head's eyes can be found
         # (game/ui/eye_rig.py); otherwise the head is drawn as it is.
         try:
-            from ..rpg import heads
-            from . import eye_rig
+            import game.rpg.heads as heads
+            import game.ui.eye_rig as eye_rig
             import os
             root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             rig = eye_rig.rig_for(os.path.join(root, heads.any_head_path(head)), size)
@@ -519,7 +519,7 @@ class InventoryWindow(FloatingWindow):
         pm = self._doll.get(head)
         if pm is None:
             try:
-                from ..rpg import heads
+                import game.rpg.heads as heads
                 import os
                 path = heads.any_head_path(head)
                 root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -537,7 +537,7 @@ class InventoryWindow(FloatingWindow):
         inner = self._panel(painter, rect, getattr(c, "name", "Adventurer") if c else "Adventurer")
         if c is not None:
             try:
-                from ..rpg import classes
+                import game.rpg.classes as classes
                 sub = f"Level {c.level} {classes.get(c.class_id).label}"
             except Exception:
                 sub = f"Level {getattr(c, 'level', 1)}"
@@ -553,7 +553,7 @@ class InventoryWindow(FloatingWindow):
             r = QRect(int(doll.x() + fx * doll.width() - s / 2),
                       int(doll.y() + fy * doll.height() - s / 2), s, s)
             iid = worn.get(slot)
-            from ..rpg import equipment as eq
+            import game.rpg.equipment as eq
             spell = eq.hand_spell(c, "off" if slot == "shield" else "main") \
                 if c is not None and slot in ("weapon", "shield") else None
             self._slot_box(painter, r, iid, target=("equip", slot),
@@ -588,7 +588,8 @@ class InventoryWindow(FloatingWindow):
         self._draw_spells(painter, inner.x(), y2 + 8, inner.width())
         # Footer: armour, gold, load.
         try:
-            from ..rpg import equipment as eq, inventory as inv
+            import game.rpg.equipment as eq
+            import game.rpg.inventory as inv
             ar = int(eq.armour_class(c))
             weight = eq.armor_class_worn(c)
             load = inv.total_weight(c.inventory)
@@ -636,7 +637,7 @@ class InventoryWindow(FloatingWindow):
     def _draw_spells(self, painter, x, y, w):
         c = self._character()
         try:
-            from ..rpg import magic
+            import game.rpg.magic as magic
             spells = [(sid, magic.get(sid)) for sid in (getattr(c, "known_spells", []) or [])]
         except Exception:
             spells = []
@@ -666,7 +667,7 @@ class InventoryWindow(FloatingWindow):
         """The spell's picture (assets/sprites/spells) centred in *rect*;
         False when it has none, for the caller to draw its orb."""
         try:
-            from .. import item_icons
+            import game.item_icons as item_icons
             pm = item_icons.spell_pixmap(spell_id, min(rect.width(), rect.height()))
         except Exception:
             pm = None
@@ -779,7 +780,7 @@ class InventoryWindow(FloatingWindow):
                 painter.setPen(QPen(col_.darker(160), 1))
                 painter.drawEllipse(r.adjusted(15, 15, -15, -15))
             try:
-                from ..rpg import magic
+                import game.rpg.magic as magic
                 cost = int(round(magic.cast_cost(c, sp)))
             except Exception:
                 cost = int(getattr(sp, "base_cost", 0) or 0)
@@ -796,7 +797,7 @@ class InventoryWindow(FloatingWindow):
                          Qt.AlignCenter, "Drag a spell to a hand to equip it  ·  mouse buttons use each hand")
 
     def _draw_spell_details(self, painter, inner, sid):
-        from ..rpg import magic
+        import game.rpg.magic as magic
         sp = magic.get(sid)
         c = self._character()
         painter.setFont(self.f_name)
@@ -865,7 +866,7 @@ class InventoryWindow(FloatingWindow):
         else:
             stack = self._stack(iid) or {}
             try:
-                from ..rpg import items
+                import game.rpg.items as items
                 rgb = items.RARITY_INFO[items.rarity_of(stack)]["rgb"]
                 prefix = items.RARITY_INFO[items.rarity_of(stack)]["prefix"]
             except Exception:
@@ -968,8 +969,12 @@ class InventoryWindow(FloatingWindow):
         if c is None:
             return
         try:
-            from ..rpg import attributes as attr, birthsigns, classes, equipment as eq
-            from ..rpg import races, skills as sk
+            import game.rpg.attributes as attr
+            import game.rpg.birthsigns as birthsigns
+            import game.rpg.classes as classes
+            import game.rpg.equipment as eq
+            import game.rpg.races as races
+            import game.rpg.skills as sk
         except Exception:
             return
         x, y, w = inner.x(), inner.y(), inner.width()
@@ -988,7 +993,7 @@ class InventoryWindow(FloatingWindow):
         yy = y + 40
         if rolls:
             try:
-                from ..rpg import bios
+                import game.rpg.bios as bios
                 bio = bios.bio_for(rolls.get("strength", 10), rolls.get("endurance", 10),
                                    rolls.get("personality", 10))
                 painter.setPen(_GOLD)
@@ -1033,7 +1038,7 @@ class InventoryWindow(FloatingWindow):
         yy += 54
         # Experience: what is earned toward the next level, and what is left.
         # Either track fills a level: experience, or ten major-skill rises.
-        from ..rpg import character as rpg_character
+        import game.rpg.character as rpg_character
         xp = int(getattr(c, "xp", 0) or 0)
         need = int(getattr(c, "xp_needed", 0) or rpg_character.xp_to_next(c.level))
         bar = QRect(x, yy, w, 10)
@@ -1111,7 +1116,8 @@ class InventoryWindow(FloatingWindow):
                 c = session.game.character
                 c.active_spell = sid
                 try:
-                    from ..rpg import equipment as eq, magic
+                    import game.rpg.equipment as eq
+                    import game.rpg.magic as magic
                     eq._refresh_weapon_kind(c)
                     session.notify(f"Selected {magic.get(sid).name}", 1.5)
                 except Exception:
@@ -1213,7 +1219,7 @@ class InventoryWindow(FloatingWindow):
         return True
 
     def _draw_pad_focus(self, painter):
-        from .. import controls
+        import game.controls as controls
         if not controls.gamepad():
             return
         node = self._pad_node(self._pad_nodes())

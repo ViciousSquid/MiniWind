@@ -220,7 +220,7 @@ def build(settlement: dict, base: dict) -> dict:
 
 def _resolve_inventory(entries):
     """Expand ``[{"id","qty"}]`` shorthand into full item stacks from the item DB."""
-    from ..rpg import items as rpg_items
+    import game.rpg.items as rpg_items
     out = []
     for e in entries:
         stack = rpg_items.make(e["id"], e.get("qty", 1))

@@ -972,7 +972,10 @@ class PluginManager:
         method; skipping those means an idle hook costs nothing, and a map whose
         active plugins don't tick pays no per-frame dispatch at all.
         """
-        return getattr(type(plugin), hook, None) is not getattr(FioPlugin, hook, None)
+        # A built-in game layer is duck-typed, not a FioPlugin: a hook it does
+        # not define at all is not overridden either.
+        own = getattr(type(plugin), hook, None)
+        return own is not None and own is not getattr(FioPlugin, hook, None)
 
     def _active_for(self, hook: str) -> List[FioPlugin]:
         """Cached list of enabled plugins that override *hook*.

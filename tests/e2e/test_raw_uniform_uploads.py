@@ -4,9 +4,9 @@
 ``glUniformMatrix4fv`` / ``glUniformMatrix3fv`` / ``glUniform3fv`` in the
 brush passes' per-row loops (6.3 -> 0.9 us a call).  These tests hold it to
 two things: the values GL ends up holding are exactly the wrappers', and a
-real frame of a full level (``tests.helpers.scenes.showcase``) -- lit,
-textured angled, glow, water, glass and fog brushes -- sends none of those
-rows through the wrappers any more, and draws the same pixels either way.
+real frame of Fio's showcase map (``tests/fixtures/maps/_SHOWCASE.json``) --
+lit, textured angled, glow, water, glass and fog brushes -- sends none of
+those rows through the wrappers any more, and draws the same pixels either way.
 """
 
 import ctypes
@@ -192,9 +192,9 @@ def test_an_unresolvable_entry_point_is_never_called(monkeypatch):
 
 
 # The child runs main.py's own start-up decision (it imports main before
-# OpenGL), plays 20 ticks of a full level (tests.helpers.scenes.showcase) on
-# a stepped clock, and paints one frame: reports which path the uploads took
-# and saves the pixels.
+# OpenGL), plays 20 ticks of Fio's showcase map (a test fixture) on a stepped
+# clock, and paints one frame: reports which path the uploads took and saves
+# the pixels.
 _CHILD = r"""
 import json, os, random, sys, time, types
 sys.path.insert(0, os.getcwd())
@@ -207,8 +207,7 @@ app = QApplication([])
 from tests.helpers.session import FioTestSession
 from engine.renderer.core import uniform_rows as ur
 random.seed(5); np.random.seed(5)
-from tests.helpers import scenes
-session = FioTestSession(app, scenes.showcase())
+session = FioTestSession(app, "tests/fixtures/maps/_SHOWCASE.json")
 session.view.sysmon.set_active(False)
 session.view.editor.config.set("Display", "show_fps", "False")
 # One clock for both processes: the effect clock's origin plus whole ticks
@@ -293,9 +292,11 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
     import OpenGL.GL as gl
     from engine.renderer.core import uniform_rows as ur
 
-    from tests.helpers import scenes
-
-    session = fio_session(scenes.showcase())
+    session = fio_session("tests/fixtures/maps/_SHOWCASE.json")
+    # The repository's settings.ini shows SysMon at launch; its live figures
+    # (the last frame's draws, VRAM) differ from one paint to the next, so it
+    # made this pixel comparison flaky. The renderer is what is compared.
+    session.view.sysmon.set_active(False)
     session.start_play()
     session.step(20)
     session.publish()

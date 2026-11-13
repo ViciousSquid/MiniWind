@@ -61,6 +61,7 @@ class ConsoleCommandHandler:
             'kill_monster': self.cmd_monster_kill,
             'monster_revive':     self.cmd_monster_revive,
             'monster_revive_all': self.cmd_monster_revive_all,
+            'monsterdebug': self.cmd_monsterdebug,
 
             'ent': self.cmd_info,
             'info': self.cmd_info,
@@ -188,6 +189,9 @@ class ConsoleCommandHandler:
             # Debug
             'notarget': self.cmd_notarget,
             'sg': self.cmd_spatial_grid,
+            'hitboxes': self.cmd_hitboxes,
+            'reflections': self.cmd_reflections,
+            'decalfade': self.cmd_decalfade,
             'showcollision': self.cmd_show_collision,
             'collisionvis': self.cmd_show_collision,
             'collision': self.cmd_show_collision,
@@ -210,7 +214,20 @@ class ConsoleCommandHandler:
     #: plugin code), like a key binding.  ``vsync`` / ``r_vsync`` do nothing
     #: but flip the stored preference in settings.ini.  ``quit`` closes Fio
     #: without asking, so a map could throw away the user's unsaved work.
-    USER_ONLY_COMMANDS = frozenset({'bind', 'r_renderer', 'vsync', 'r_vsync', 'quit'})
+    USER_ONLY_COMMANDS = frozenset({'bind', 'r_renderer', 'vsync', 'r_vsync', 'quit',
+                                    'monsterdebug'})
+
+    def cmd_monsterdebug(self, args):
+        """monsterdebug [on|off] — the floating Monster Debug window (F7 in play)."""
+        arg = args.strip().lower()
+        if arg not in ('', 'on', 'off', '1', '0'):
+            debug_log('Error', 'Usage: monsterdebug [on|off]')
+            return
+        from editor.monster_debug import hide_monster_debug, show_monster_debug
+        if arg in ('off', '0'):
+            hide_monster_debug(self.main_window)
+        else:
+            show_monster_debug(self.main_window)
 
     def handle_command(self, cmd_string, *, from_map=False):
         """Run one console command line.
@@ -285,9 +302,17 @@ class ConsoleCommandHandler:
             debug_log("Error", "Usage: bind <key> <command>")
             return
         key_str, command = parts
-        # Store binding in main_window
-        self.main_window.set_key_binding(key_str, command)
-        debug_log("Info", f"Bound '{key_str}' to '{command}'")
+        # A key press is looked up by Qt's own name for it ("F5", "Ctrl+K"):
+        # a binding stored as typed ("f5") would never fire.
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QKeySequence
+        sequence = QKeySequence(key_str)
+        if sequence.count() != 1 or sequence[0] == Qt.Key_unknown or not sequence.toString():
+            debug_log("Error", f"bind: '{key_str}' is not a key (try F5, K or Ctrl+K)")
+            return
+        key_str = sequence.toString()
+        if self.main_window.set_key_binding(key_str, command):
+            debug_log("Info", f"Bound '{key_str}' to '{command}'")
 
     def _open_bind_dialog(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QKeySequenceEdit, QLineEdit, QDialogButtonBox
@@ -747,9 +772,10 @@ class ConsoleCommandHandler:
         """
         view_3d = self.main_window.view_3d
         
-        arg = args.strip().lower() if args else 'toggle'
-        
-        if arg == 'on':
+        arg = args.strip().lower() or 'toggle'
+        current = getattr(view_3d, '_collision_vis_mode', 'off')
+
+        if arg in ('on', 'all'):
             view_3d._collision_vis_mode = 'all'
         elif arg == 'off':
             view_3d._collision_vis_mode = 'off'
@@ -759,7 +785,7 @@ class ConsoleCommandHandler:
             view_3d._collision_vis_mode = 'aabb'
         elif arg == 'toggle':
             modes = ['off', 'all', 'mesh', 'aabb']
-            current_idx = modes.index(view_3d._collision_vis_mode) if view_3d._collision_vis_mode in modes else 0
+            current_idx = modes.index(current) if current in modes else 0
             view_3d._collision_vis_mode = modes[(current_idx + 1) % len(modes)]
         else:
             debug_log("Error", "Usage: showcollision [on|off|mesh|aabb|all|toggle]")
@@ -988,6 +1014,7 @@ class ConsoleCommandHandler:
 <b style="color:orange;">connect</b> &lt;src&gt; &lt;out&gt; &lt;tgt&gt; &lt;in&gt; [delay]<br>
 <b style="color:orange;">disconnect</b> &lt;src&gt; &lt;out&gt; &lt;tgt&gt; &lt;in&gt;<br>
 <b style="color:cyan;">=== Monsters ===</b><br>
+<b style="color:orange;">monsterdebug</b> [on|off] — Floating Monster Debug window: overview, inspector, perception, combat, patrol (F7 in play)<br>
 <b style="color:orange;">monster_kill</b> &lt;name&gt; — Instantly kill a named monster<br>
 <b style="color:orange;">monster_revive</b> &lt;name&gt; — Restore a named monster to full health<br>
 <b style="color:orange;">monster_revive_all</b> — Restore every monster in the level<br>
@@ -1037,6 +1064,9 @@ entity to drive them from the I/O system.</i><br>
 <b style="color:orange;">portal_delete</b> &lt;name&gt; [and_pair] — Remove portal(s)<br>
 <b style="color:cyan;">=== Debug ===</b><br>
 <b style="color:orange;">sg</b> — Toggle spatial grid visualisation<br>
+<b style="color:orange;">hitboxes</b> [1|0] — Outline monsters' actual hit spheres (pink)<br>
+<b style="color:orange;">reflections</b> [1|0] — All screen-space reflections (water, wet decals) on or off<br>
+<b style="color:orange;">decalfade</b> [distance] — How far wet decals reflect (default 1536; 0 = never)<br>
 <b style="color:orange;">god</b> — Toggle invincibility<br>
 <b style="color:orange;">buddha</b> — Toggle buddha mode (health cannot go below 2)<br>
 <b style="color:orange;">noclip</b> — Toggle noclip<br>
@@ -1045,13 +1075,13 @@ entity to drive them from the I/O system.</i><br>
         # Append any console commands plugins registered (API 1.4.0).
         try:
             mgr = self._plugin_manager()
-            cmds = mgr.console_commands() if mgr is not None else []
+            cmds = mgr.console_commands() if mgr is not None else {}
         except Exception:
-            cmds = []
+            cmds = {}
         if cmds:
             help_text += '<b style="color:cyan;">=== Plugin Commands ===</b><br>'
-            for name, metadata in cmds.items():
-                chelp = metadata.get("help", "")
+            for name, entry in sorted(cmds.items()):
+                chelp = entry.get("help", "")
                 suffix = f" — {chelp}" if chelp else ""
                 help_text += f'<b style="color:orange;">{name}</b>{suffix}<br>'
         debug_log("Info", help_text)
@@ -2207,6 +2237,77 @@ entity to drive them from the I/O system.</i><br>
         state = "ON" if view_3d.show_spatial_grid else "OFF"
         self.main_window.show_toast(f"Spatial Grid: {state}")
         debug_log("Info", f"Spatial grid display set to {state}")
+
+    def cmd_hitboxes(self, args):
+        """hitboxes [1|0|on|off|toggle] — Outline every shootable monster's
+        actual hit sphere (what player shots and melee test) in bright pink."""
+        if not self._require_play_mode("hitboxes"):
+            return
+        combat = self.main_window.view_3d.logic_thread.combat_runtime
+        arg = args.strip().lower() if args else "toggle"
+        if arg in ("on", "1", "true"):
+            combat.show_hitboxes = True
+        elif arg in ("off", "0", "false"):
+            combat.show_hitboxes = False
+        elif arg == "toggle":
+            combat.show_hitboxes = not combat.show_hitboxes
+        else:
+            debug_log("Error", "Usage: hitboxes [1|0]")
+            return
+        state = "ON" if combat.show_hitboxes else "OFF"
+        self.main_window.show_toast(f"Monster hitboxes: {state}")
+        debug_log("Info", f"Monster hitboxes set to {state}")
+        self.main_window.view_3d.update()
+
+    def cmd_reflections(self, args):
+        """reflections [1|0|on|off|toggle] — every screen-space reflection
+        (water, wet decals) on or off. On, they still fade out with distance."""
+        renderer = getattr(self.main_window.view_3d, 'renderer', None)
+        if renderer is None:
+            debug_log("Error", "reflections: no renderer yet")
+            return
+        arg = args.strip().lower() if args else "toggle"
+        current = bool(getattr(renderer, 'reflections_enabled', True))
+        if arg in ("on", "1", "true"):
+            value = True
+        elif arg in ("off", "0", "false"):
+            value = False
+        elif arg == "toggle":
+            value = not current
+        else:
+            debug_log("Error", "Usage: reflections [1|0]")
+            return
+        renderer.reflections_enabled = value
+        state = "ON" if value else "OFF"
+        self.main_window.show_toast(f"Reflections: {state}")
+        debug_log("Info", f"Screen-space reflections set to {state}")
+        self.main_window.view_3d.update()
+
+    def cmd_decalfade(self, args):
+        """decalfade [distance] — how far from the camera wet decals reflect:
+        full to two thirds of it, fading to none at it, not traced beyond.
+        0 turns decal reflections off. No argument: says the current one."""
+        renderer = getattr(self.main_window.view_3d, 'renderer', None)
+        if renderer is None:
+            debug_log("Error", "decalfade: no renderer yet")
+            return
+        arg = args.strip()
+        if not arg:
+            debug_log("Info", f"Decal reflection fade: "
+                              f"{float(renderer.decal_reflection_fade):g} units")
+            return
+        try:
+            distance = float(arg)
+        except ValueError:
+            distance = float('nan')
+        if not (distance >= 0.0) or distance == float('inf'):
+            debug_log("Error", "Usage: decalfade <distance>  (0 = no decal reflections)")
+            return
+        renderer.decal_reflection_fade = distance
+        text = "off" if distance == 0 else f"{distance:g} units"
+        self.main_window.show_toast(f"Decal reflections fade: {text}")
+        debug_log("Info", f"Decal reflection fade set to {text}")
+        self.main_window.view_3d.update()
 
     def cmd_physics(self, args):
         if not self._require_play_mode("physics"):

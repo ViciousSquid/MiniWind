@@ -209,7 +209,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         dmg *= 0.7 + character.skill(sk.OFFENSIVE) / 100.0
 
     # --- class: a Warrior hits harder than anyone (classes.WARRIOR_DAMAGE) ---
-    from . import classes as _classes
+    import game.rpg.classes as _classes
     dmg *= _classes.damage_mult(character)
 
     # --- sneak attack ---
@@ -262,7 +262,7 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     A held block then makes its own d20 saving throw; only a success reduces
     the damage. The player's saving throw may animate like other player rolls.
     """
-    from . import races
+    import game.rpg.races as races
     rng = rng or random
     dmg = max(0.0, float(raw_damage))
     result = {"final": dmg, "blocked": 0.0, "armor": 0.0, "resisted": 0.0,

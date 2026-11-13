@@ -118,8 +118,20 @@ def test_live_door_movement_and_grid_rebuild_reach_the_navigation_cache():
     session.logic = SimpleNamespace(
         monster_ai=SimpleNamespace(_grid=grid),
         mover_runtime=SimpleNamespace(_mover_table=table))
-    nav = Navigator(lambda x, y, z: abs(x - door["pos"][0]) < 24
-                    and abs(z - door["pos"][2]) < 24,
+    # Fio 3.5 keeps a moving door's position in the mover table, not in the
+    # brush: ask where it is now, as the engine's own collision does.
+    from engine import brush_placement
+
+    def centre():
+        return brush_placement.placement(door).centre
+
+    walls = []
+
+    def blocked(x, y, z):
+        return any(abs(x - c[0]) < 24 and abs(z - c[2]) < 24
+                   for c in [centre()] + walls)
+
+    nav = Navigator(blocked,
                     Clock(), revision=session._navigation_revision)
     assert not nav.line_clear(24, 24, 168, 24, 0)
     table.doors._write_positions(np.array([0]), np.array([[72, 0, 240]]), None)
@@ -128,7 +140,7 @@ def test_live_door_movement_and_grid_rebuild_reach_the_navigation_cache():
     table.doors._write_positions(np.array([0]), np.array([[72, 0, 240]]), None)
     assert table.doors.position_revision == revision
     # Static geometry can change without moving a door.
-    door["pos"] = [72, 0, 24]
+    walls.append([72, 0, 24])
     grid.navigation_revision += 1
     assert not nav.line_clear(24, 24, 168, 24, 0)
 

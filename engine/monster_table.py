@@ -44,6 +44,7 @@ def engagement_range(props):
     except (TypeError, ValueError, OverflowError):
         return float(MONSTER_SIGHT_RANGE)
     return distance if math.isfinite(distance) and distance > MONSTER_SIGHT_RANGE else float(MONSTER_SIGHT_RANGE)
+from engine.monster_constants import MONSTER_BODY_RISE
 
 #: What each row did this tick (``mode`` column; Debug Tables names them).
 MODE_SKIPPED = 0      # hidden or disabled
@@ -92,8 +93,10 @@ _COLUMNS = (
 class MonsterTable:
     """Dense columns over the live monster list, rebuilt as it changes."""
 
-    # The crossover is measured by test_crossfire_threshold_benchmark.py.
-    CROSSFIRE_SCALAR_MAX_ROWS = 16
+    # Dense hits cross over around 32 rows; sparse/filtered rows cross later.
+    # See CHANGES.md and the opt-in crossfire crossover benchmark. Population
+    # includes excluded rows: the scalar walk must visit those too.
+    CROSSFIRE_NUMPY_MIN = 32
 
     __slots__ = tuple(name for name, *_ in _COLUMNS) + (
         'count', 'generation', 'monsters', 'props', 'row_of', 'slot_of_id',
@@ -232,8 +235,9 @@ class MonsterTable:
     def crossfire(self, shooter, ray_start, ray_end, radius=80.0):
         """The first monster a shot from *shooter* at *ray_end* passes through.
 
-        The per-monster walk this replaces, as one expression over the rows:
-        same sphere (radius 80, 64 above the monster's origin), same
+        A scalar walk below CROSSFIRE_NUMPY_MIN, otherwise a NumPy row query:
+        same sphere (radius 80, on the middle of the body: feet + 0.45 H,
+        engine.monster_constants.monster_body_rise), same
         exclusions (the shooter, dead or hidden monsters, the shooter's team)
         and the same answer -- the nearest entry point, the earliest row on a
         tie.
@@ -248,8 +252,30 @@ class MonsterTable:
         tick.)
         """
         n = self.count
-        if n <= self.CROSSFIRE_SCALAR_MAX_ROWS:
-            return self._crossfire_scalar(shooter, ray_start, ray_end, radius)
+        if n < self.CROSSFIRE_NUMPY_MIN:
+            # Avoid NumPy even for ray preparation and the first-shot cache.
+            start = tuple(map(float, ray_start))
+            end = tuple(map(float, ray_end))
+            dx, dy, dz = (end[i] - start[i] for i in range(3))
+            length = math.sqrt(dx * dx + dy * dy + dz * dz)
+            # The original dot product can round across the one-unit cutoff.
+            if not math.isfinite(length) or abs(length - 1.0) <= 1e-12:
+                return self._crossfire_numpy_ray(shooter, start, end, radius)
+            if length < 1.0 or not n:
+                return None
+            direction = (dx / length, dy / length, dz / length)
+            live = self._live
+            if live is None:
+                live = self._live = [
+                    not (p.get('dead', False) or p.get('hidden', False))
+                    for p in self.props]
+            return self._crossfire_scalar(shooter, start, direction, length,
+                                          radius, live, end)
+        return self._crossfire_numpy_ray(shooter, ray_start, ray_end, radius)
+
+    def _crossfire_numpy_ray(self, shooter, ray_start, ray_end, radius):
+        """Original ray normalization, including for ambiguous scalar hits."""
+        n = self.count
         start = np.asarray(ray_start, dtype=np.float64)
         direction = np.asarray(ray_end, dtype=np.float64) - start
         length = float(np.sqrt(direction @ direction))
@@ -262,7 +288,85 @@ class MonsterTable:
             live = self._live = np.fromiter(
                 (not (p.get('dead', False) or p.get('hidden', False)) for p in props),
                 dtype=bool, count=n)
-        candidates = live.copy()
+        return self._crossfire_numpy(shooter, start, direction, length, radius, live)
+
+    def _crossfire_scalar(self, shooter, start, direction, length, radius, live, ray_end):
+        """Small-population walk in Python floats, without per-row ufuncs.
+
+        Retain intersections for the rare stale-target fallback, but select
+        the nearest without sorting. Only encountered stale targets leave the
+        live cache; a farther hidden target might be shown again this tick.
+        """
+        sx, sy, sz = start
+        dx, dy, dz = direction
+        shooter_team = int(self.team[shooter])
+        radius_sq = radius * radius
+        best = length
+        best_edge = 0.0
+        victim = -1
+        best_offset = None
+        hits = []
+        for row in range(self.count):
+            if not live[row] or row == shooter:
+                continue
+            if shooter_team >= 0 and self.team[row] == shooter_team:
+                continue
+            x, y, z = self.pos[row].tolist()
+            y += MONSTER_BODY_RISE * float(self.sprite_height[row])
+            x, y, z = sx - x, sy - y, sz - z
+            b = 2.0 * (x * dx + y * dy + z * dz)
+            c = (x * x + y * y + z * z) - radius_sq
+            disc = b * b - 4.0 * c
+            # BLAS/einsum may sum three terms differently from Python.
+            # Near tangents, segment boundaries or ties, use the original
+            # NumPy arithmetic rather than imposing a tolerance on hits.
+            if abs(disc) <= 1e-12 * (b * b + abs(4.0 * c)):
+                return self._crossfire_numpy_ray(shooter, start, ray_end, radius)
+            if disc < 0.0:
+                continue
+            t = (-b - math.sqrt(disc)) / 2.0
+            edge = 1e-12 * max(1.0, length, abs(b))
+            if abs(t) <= edge or abs(t - length) <= edge:
+                return self._crossfire_numpy_ray(shooter, start, ray_end, radius)
+            if not 0.0 < t < length:
+                continue
+            if (victim >= 0 and abs(t - best) <= max(edge, best_edge)
+                    and (x, y, z) != best_offset):
+                return self._crossfire_numpy_ray(shooter, start, ray_end, radius)
+            hits.append((t, row, edge))
+            if t < best:
+                best, victim = t, row
+                best_edge = edge
+                best_offset = (x, y, z)
+        if victim < 0:
+            return None
+        p = self.props[victim]
+        if not (p.get('dead', False) or p.get('hidden', False)):
+            return self.monsters[victim]
+        # Sorting is bounded by the small-population threshold and only
+        # needed when a cached target died or became hidden after caching.
+        ordered = sorted(hits)
+        # The winner can be stale while two *farther* hits are numerically
+        # tied. Resolve their ordering before evicting any cached rows, too.
+        for (ta, ra, ea), (tb, rb, eb) in zip(ordered, ordered[1:]):
+            if (tb - ta <= max(ea, eb)
+                    and self.pos[ra].tolist() != self.pos[rb].tolist()):
+                return self._crossfire_numpy_ray(shooter, start, ray_end, radius)
+        for _, row, _ in ordered:
+            p = self.props[row]
+            if p.get('dead', False) or p.get('hidden', False):
+                live[row] = False
+                continue
+            return self.monsters[row]
+        return None
+
+    def _crossfire_numpy(self, shooter, start, direction, length, radius, live):
+        """Dense sphere query; sort only when the nearest cached hit is stale."""
+        n = self.count
+        props = self.props
+        # Small queries keep a Python cache; numerical fallback may reuse it.
+        candidates = (live.copy() if isinstance(live, np.ndarray)
+                      else np.array(live, dtype=bool))
         candidates[shooter] = False
         shooter_team = self.team[shooter]
         if shooter_team >= 0:
@@ -270,77 +374,39 @@ class MonsterTable:
         rows = np.flatnonzero(candidates)
         if not len(rows):
             return None
-        centre = self.pos[rows]   # advanced indexing already makes a copy
-        centre[:, 1] += 64.0
-        oc = start - centre
+        # Fancy indexing already owns its data; reuse it for the offsets too.
+        centre = self.pos[rows]
+        centre[:, 1] += MONSTER_BODY_RISE * self.sprite_height[rows]
+        oc = np.subtract(start, centre, out=centre)
         b = 2.0 * (oc @ direction)
         c = np.einsum('ij,ij->i', oc, oc) - radius * radius
         disc = b * b - 4.0 * c
-        t = np.full(len(rows), np.inf)
         hit = disc >= 0.0
-        t[hit] = (-b[hit] - np.sqrt(disc[hit])) / 2.0
-        t[~((t > 0.0) & (t < length))] = np.inf
-        # Only the nearest entry is needed, not a sorted list of every hit.
-        # rows is ascending, so argmin also preserves the earliest-row tie.
-        # Re-select only when a prior shot killed or hid the cached candidate.
-        i = int(np.argmin(t))
-        if not np.isfinite(t[i]):
+        # Reuse the discriminant for the roots/distances, avoiding a filled
+        # distance array and three fancy-indexed temporaries for real roots.
+        np.sqrt(disc, out=disc, where=hit)
+        np.negative(b, out=b)
+        t = np.subtract(b, disc, out=disc)
+        t *= 0.5
+        valid = hit
+        valid &= t > 0.0
+        valid &= t < length
+        t[~valid] = np.inf
+        nearest = int(np.argmin(t))
+        if not valid[nearest]:
             return None
-        row = int(rows[i])
+        row = int(rows[nearest])
         p = props[row]
         if not (p.get('dead', False) or p.get('hidden', False)):
             return self.monsters[row]
-        # A stale live mask is unusual. Sort once in that case rather than
-        # repeatedly scanning the distances when many rows died this tick.
-        for i in np.argsort(t, kind='stable'):
-            if not np.isfinite(t[i]):
-                break
+        live[row] = False
+        # Rare stale-target fallback: distance then row order, exactly as the
+        # original sorted query. argmin above also chooses the earliest tie.
+        valid[nearest] = False
+        entered = np.flatnonzero(valid)
+        for i in entered[np.lexsort((rows[entered], t[entered]))]:
             row = int(rows[i])
             p = props[row]
-            if p.get('dead', False) or p.get('hidden', False):
-                live[row] = False
-                continue
-            return self.monsters[row]
-        return None
-
-    def _crossfire_scalar(self, shooter, ray_start, ray_end, radius):
-        """Avoid NumPy dispatch and temporary arrays for a handful of rows."""
-        sx, sy, sz = map(float, ray_start)
-        dx = float(ray_end[0]) - sx
-        dy = float(ray_end[1]) - sy
-        dz = float(ray_end[2]) - sz
-        length = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if length < 1.0 or not self.count:
-            return None
-        dx, dy, dz = dx / length, dy / length, dz / length
-        live = self._live
-        if live is None:
-            live = self._live = np.fromiter(
-                (not (p.get('dead', False) or p.get('hidden', False))
-                 for p in self.props), dtype=bool, count=self.count)
-        team = self.team
-        shooter_team = int(team[shooter])
-        hits = []
-        for row in range(self.count):
-            if row == shooter or not live[row]:
-                continue
-            if shooter_team >= 0 and team[row] == shooter_team:
-                continue
-            centre = self.pos[row]
-            x = sx - float(centre[0])
-            y = sy - (float(centre[1]) + 64.0)
-            z = sz - float(centre[2])
-            b = 2.0 * (x * dx + y * dy + z * dz)
-            c = x * x + y * y + z * z - radius * radius
-            disc = b * b - 4.0 * c
-            if disc >= 0.0:
-                t = (-b - math.sqrt(disc)) / 2.0
-                if 0.0 < t < length:
-                    hits.append((t, row))
-        # At most a handful of hits; tuple order also settles ties by row.
-        hits.sort()
-        for _, row in hits:
-            p = self.props[row]
             if p.get('dead', False) or p.get('hidden', False):
                 live[row] = False
                 continue

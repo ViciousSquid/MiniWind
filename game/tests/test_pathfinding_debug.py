@@ -125,7 +125,7 @@ def test_panel_controls_and_overlay_render_without_requesting_routes(qt_app):
     import glm
     from PyQt5.QtGui import QImage, QPainter
     from engine.floating_windows import WindowManager
-    from engine.qt_game_view import _window_wants_cursor
+    from engine.view_pointer import window_wants_cursor as _window_wants_cursor
     from ..ui.path_debug import draw, open_panel
 
     world, actor, _ = session()

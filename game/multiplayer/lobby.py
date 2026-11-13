@@ -138,7 +138,7 @@ class LobbyController:
             if not raw:
                 raise LobbyError("This save does not contain a MiniWind character.")
             char = json.loads(raw) if isinstance(raw, str) else raw
-            from ..rpg import heads
+            import game.rpg.heads as heads
 
             profile = dict(
                 name=char.get("name", "Adventurer"),
@@ -151,7 +151,8 @@ class LobbyController:
                 device="keyboard",
             )
             added = self.lobby.add(self.owner, profile, character=char)
-            from ..rpg import quest_files, quests
+            import game.rpg.quest_files as quest_files
+            import game.rpg.quests as quests
             from .quests import PlayerStore
 
             quests.load_definitions(quest_files.load_quest_defs(str(self.root)))

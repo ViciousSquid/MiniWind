@@ -82,7 +82,7 @@ def relative_hand(character, hand: str) -> str:
 
 def hand_spell(character, hand="main"):
     """The learned spell equipped in a hand, or None."""
-    from . import magic
+    import game.rpg.magic as magic
     sid = getattr(character, "hand_spells", {}).get(relative_hand(character, hand))
     return magic.get(sid) if sid in getattr(character, "known_spells", ()) else None
 
@@ -95,7 +95,7 @@ def spell_equipped(character, spell_id) -> bool:
 
 def equip_spell(character, spell_id, hand="main") -> bool:
     """Fill one hand with a learned spell, putting its held items away."""
-    from . import magic
+    import game.rpg.magic as magic
     hand = relative_hand(character, hand)
     if spell_id not in character.known_spells or magic.get(spell_id) is None:
         return False
@@ -398,7 +398,7 @@ def armour_class(character) -> int:
     ``ac_bonus``. Shown on the inventory and character sheet, and rolled
     against every physical blow (:func:`deflect_chance`).
     """
-    from . import attributes as attr
+    import game.rpg.attributes as attr
     armour = sum(max(1, int(round(r / RATING_PER_AC)))
                  for r in piece_ratings(character).values() if r > 0)
     hardy = max(0, (int(character.attrs.get(attr.ENDURANCE, 40)) - 40) // 10)

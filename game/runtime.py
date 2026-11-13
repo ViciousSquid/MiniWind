@@ -32,7 +32,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from . import controls, fio
-from .facing import face_heading
+from .facing import face_heading, heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
@@ -653,6 +653,9 @@ class MiniwindSession(SettlementLaw):
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
         self.logic = logic
         cfg = cfg or {}
+        # Per-frame item classifications are memoised for a session's life.
+        MiniwindSession.overhead_weapon_kind.cache_clear()
+        held_weapons.two_handed.cache_clear()
         mins_per_day = (float(cfg.get("minutes_per_day", DEFAULT_MINUTES_PER_DAY))
                         or DEFAULT_MINUTES_PER_DAY)
         self.clock = GameClock(
@@ -688,8 +691,8 @@ class MiniwindSession(SettlementLaw):
         # in the project's quests/ folder (game.rpg.quest_files); any list still
         # authored on an old GameSettings entity is honoured first for backward
         # compatibility, then the folder overrides it.
-        from .rpg import quests as _quests
-        from .rpg import quest_files
+        import game.rpg.quests as _quests
+        import game.rpg.quest_files as quest_files
         map_quests = cfg.get("quests")
         if isinstance(map_quests, list):
             _quests.load_definitions(map_quests)
@@ -818,7 +821,7 @@ class MiniwindSession(SettlementLaw):
         #: Every NPC / creature archer mid-draw: they draw a bow by the
         #: player's own rules (game/npc_archery.py).
         self.archery = npc_archery.NpcArchery(self)
-        from . import npc_magic
+        import game.npc_magic as npc_magic
         self.npc_magic = npc_magic.NpcMagic(self)
         # What magic looks like: casts, bolts, impacts, wards (game/magic_fx.py),
         # drawn by game/ui/magic_gl.py and game/ui/magic_overlay.py.
@@ -1129,7 +1132,7 @@ class MiniwindSession(SettlementLaw):
         # who hunts the player (game/faction_ai.py), so wild animals stay
         # neutral to villagers while bandits are hostile to both, instead of
         # "every different team is an enemy, everyone hunts the player".
-        from . import faction_ai
+        import game.faction_ai as faction_ai
         faction_ai.install(logic)
         # Archers draw their bows over time, as the player does, rather than
         # the engine's instant hit-scan (game/npc_archery.py).
@@ -1205,7 +1208,7 @@ class MiniwindSession(SettlementLaw):
         except Exception:
             pass
         self.arrows_in_flight = ()
-        from . import faction_ai
+        import game.faction_ai as faction_ai
         faction_ai.uninstall(self.logic)
         from engine.monster_ai import MonsterAI
         MonsterAI.clear_shot_hook(self.archery.shot_hook)
@@ -1307,7 +1310,7 @@ class MiniwindSession(SettlementLaw):
         gibbed = bool(p.get("gibbed"))
         role = str(p.get("npc_role") or p.get("creature_role") or "").lower()
         if self.gore_enabled() and role not in self.BLOODLESS_ROLES:
-            from .rpg import gore as _gore
+            import game.rpg.gore as _gore
             feet = self._feet(target)
             top = _gore.max_health(p) if not killed else max(
                 float(p.get("_max_health", 0) or 0), _gore.max_health(p), float(damage))
@@ -1341,7 +1344,7 @@ class MiniwindSession(SettlementLaw):
         ground = fio.ground_height(self.logic, x, z, below=y + 60.0)
         if ground is None or abs(float(ground) - float(surface)) > STAMP_GROUND_TOLERANCE:
             return False                     # standing on something built
-        from . import gore_fx
+        import game.gore_fx as gore_fx
         path = gore_fx.stamp_image(splat["kind"], splat.get("seed", 0.0))
         if path is None:
             return False
@@ -1486,7 +1489,7 @@ class MiniwindSession(SettlementLaw):
         saves are repaired deterministically and assignments are persisted.
         Animal and monster species sprites remain independent of NPC identity.
         """
-        from .rpg import heads
+        import game.rpg.heads as heads
         from .rpg.head_registry import member_identity
         from .living.world import ACTOR_ROLES
         player_head = str(getattr(self.game.character, "head", "") or "")
@@ -1612,7 +1615,7 @@ class MiniwindSession(SettlementLaw):
         about a quarter either way). Beasts and the undead have no such
         numbers.
         """
-        from .rpg import bios
+        import game.rpg.bios as bios
         for t in fio.things(self.logic):
             p = getattr(t, "properties", None)
             if not isinstance(p, dict):
@@ -1685,7 +1688,7 @@ class MiniwindSession(SettlementLaw):
     def _apply_player_head(self, head_id) -> None:
         """Force the player's overhead sprite to the chosen head image."""
         try:
-            from .rpg import heads
+            import game.rpg.heads as heads
             path = heads.head_path(head_id)
             # The viewport reads this to point its overhead sprite renderer at
             # the head (a single static frame, no animation).
@@ -1924,6 +1927,9 @@ class MiniwindSession(SettlementLaw):
         # age transient UI
         self._age_lists(delta)
 
+        # What everyone near holds, finished for the viewport's next frames.
+        self.held.publish()
+
     # ------------------------------------------------------------------ wisp
     def _spawn_wisp(self, spell) -> None:
         """Conjure a fairy-light companion that flits about the player. Only one
@@ -2139,7 +2145,8 @@ class MiniwindSession(SettlementLaw):
                 "max_health": 1,
                 "_reaper": True,
                 "_opacity": 0.0,
-                "_facing": bearing + math.pi,   # already looking at the body
+                # Already looking at the body (degrees, game.facing's heading).
+                "angle": math.degrees(bearing + math.pi) % 360.0,
             })
         except Exception:
             return None
@@ -2251,7 +2258,7 @@ class MiniwindSession(SettlementLaw):
 
     def _reaper_face_body(self, visit) -> None:
         reaper, body = visit["thing"], visit["body"]
-        face_heading(reaper.properties,
+        face_heading(reaper,
                      float(body.pos[0]) - float(reaper.pos[0]),
                      float(body.pos[2]) - float(reaper.pos[2]))
 
@@ -2274,7 +2281,7 @@ class MiniwindSession(SettlementLaw):
         reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
                       float(body.pos[1]),
                       float(reaper.pos[2]) + dz / distance * step]
-        face_heading(reaper.properties, dx, dz)
+        face_heading(reaper, dx, dz)
         return distance - step <= REAPER_REACH
 
     def _reaper_walk_off(self, visit, delta: float) -> None:
@@ -2287,7 +2294,7 @@ class MiniwindSession(SettlementLaw):
         reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
                       float(reaper.pos[1]),
                       float(reaper.pos[2]) + dz / distance * step]
-        face_heading(reaper.properties, dx, dz)
+        face_heading(reaper, dx, dz)
 
     def _despawn_reaper(self, visit) -> None:
         """Take one reaper out of the scene."""
@@ -2424,7 +2431,7 @@ class MiniwindSession(SettlementLaw):
         Cheap and allocation-light: one pass builds the set of holders that
         should have a lit torch right now (the player if a torch is equipped,
         plus any NPC whose flags say so, or who carries one after dark),
-        existing lights are repositioned in place onto their holder, new ones
+        existing lights are moved onto their holder, new ones
         are spawned and vanished ones removed, and the engine caches are
         rebuilt only when the light set actually changes (a spawn/despawn),
         never on a mere reposition. Each flame flickers, and with GAME →
@@ -2482,10 +2489,12 @@ class MiniwindSession(SettlementLaw):
                 self._torch_lights[key] = light
                 changed = True
             else:
+                # Assigned, not edited in place: assigning pos is what journals
+                # the move (an in-place edit leaves every table's copy stale).
+                at = (float(pos[0]), float(pos[1]) + TORCH_LIGHT_HEIGHT, float(pos[2]))
                 lp = light.pos
-                lp[0] = pos[0]
-                lp[1] = pos[1] + TORCH_LIGHT_HEIGHT
-                lp[2] = pos[2]
+                if (lp[0], lp[1], lp[2]) != at:
+                    light.pos = list(at)
             lprops = light.properties
             lprops["casts_shadows"] = bool(cast)
             phase = lprops.get("_torch_phase")
@@ -2831,7 +2840,7 @@ class MiniwindSession(SettlementLaw):
         already offers a quest is untouched), so an author who *did* wire
         dialogue by hand keeps their version.
         """
-        from .rpg import quests as _quests
+        import game.rpg.quests as _quests
         # Two lookups: by slugged name/display/role, and by exact entity id.
         givers_by_key: Dict[str, list] = {}
         givers_by_id: Dict[str, list] = {}
@@ -3264,7 +3273,7 @@ class MiniwindSession(SettlementLaw):
             plural = name if count == 1 else self._pluralise(name)
             return (f"Defeat {count} {plural}", f"{min(have, count)} / {count}")
         if kind == _quests.COND_FETCH:
-            from .rpg import inventory as inv
+            import game.rpg.inventory as inv
             have = inv.quantity(self.game.character.inventory, target)
             return (f"Gather {count}× {name}", f"{min(have, count)} / {count}")
         if kind == _quests.COND_TALK:
@@ -3297,7 +3306,7 @@ class MiniwindSession(SettlementLaw):
                 if self._slug(nm) == tslug:
                     return nm
         if kind == _quests.COND_FETCH:
-            from .rpg import items as rpg_items
+            import game.rpg.items as rpg_items
             item = rpg_items.get(str(raw).strip())
             if item is not None and item.name:
                 return item.name
@@ -3592,7 +3601,7 @@ class MiniwindSession(SettlementLaw):
         raised = pop()
         if not raised:
             return
-        from .rpg import skills as _sk
+        import game.rpg.skills as _sk
         for skill_id, value in raised[-3:]:
             sd = _sk.SKILLS.get(skill_id)
             label = sd.label if sd is not None else str(skill_id).replace("_", " ").title()
@@ -3636,7 +3645,7 @@ class MiniwindSession(SettlementLaw):
         green or a magicka potion's blue) where it stands, and is not done again for
         :data:`NPC_DRINK_SECONDS`. True if it drank."""
         import time as _time
-        from . import npc_magic
+        import game.npc_magic as npc_magic
         p = npc.properties
         carried = p.get("inventory")
         if p.get("dead") or not isinstance(carried, list) or not carried:
@@ -3976,12 +3985,12 @@ class MiniwindSession(SettlementLaw):
         candidates = []
         radius2 = BOUNTY_NOTICE_RADIUS * BOUNTY_NOTICE_RADIUS
         for candidate in self.npcs():
-            if not self._is_arrest_guard(candidate):
-                continue
+            # Distance first: it rules out nearly everyone for two subtractions,
+            # before the guard test reads five properties.
             dx = candidate.pos[0] - player_pos[0]
             dz = candidate.pos[2] - player_pos[2]
             d = dx * dx + dz * dz
-            if d > radius2:
+            if d > radius2 or not self._is_arrest_guard(candidate):
                 continue
             if (self._law_region(candidate.pos, candidate) != region
                     or not self._guard_knows_writ(candidate, region)
@@ -5109,6 +5118,7 @@ class MiniwindSession(SettlementLaw):
         p["combatant"] = True
         p["triggered"] = False
         p["awake"] = True
+        _journal(npc)        # who is a guard, and whose side it is on, changed
         name = p.get("display_name") or p.get("name") or "Someone"
         self.bark(npc, "No more pretending.")
         ppos = self._player_pos()
@@ -5138,7 +5148,7 @@ class MiniwindSession(SettlementLaw):
         believe the worst of the repulsive."""
         if fact.get("actor") != self.player_key:
             return None
-        from .sim import events as sim_events
+        import game.sim.events as sim_events
         mult = rpg_fortune.RUMOUR_CHARM.get(
             rpg_cha.tier(rpg_cha.charisma_of(self.game.character)), 1.0)
         tags = sim_events.kind_spec(fact.get("kind", ""))["tags"]
@@ -6289,13 +6299,9 @@ class MiniwindSession(SettlementLaw):
                 p["_blocked_ticks"] = 0
             return
         p["_blocked_ticks"] = 0
-        # Turn to face the way it is walking. This has to go through
-        # engine.facing: the renderer reads an actor's heading from the
-        # transient '_facing' property (that is what Monster.get_render_state
-        # snapshots for the head billboard, the overhead ground sprite and the
-        # weapon overlay), so writing a bare 'angle' here left schedule-driven
-        # NPCs sliding around the world without ever rotating.
-        face_heading(p, dx, dz, delta)
+        # Turn to face the way it is walking (game.facing: the one heading
+        # the head billboard, the weapon overlay and the 2D map all read).
+        face_heading(npc, dx, dz, delta)
 
     # ================================================================ roads
     def _refresh_roads(self, force=False) -> None:
@@ -6931,7 +6937,7 @@ class MiniwindSession(SettlementLaw):
         sprite = arrow_sprite(shot.id if shot is not None else
                               eq.equipped_id(c, "ammo"))
 
-        start = [ppos[0], ppos[1] + 48.0, ppos[2]]
+        start = [ppos[0], ppos[1] + fio.projectile_body_lift(), ppos[2]]
         aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
@@ -7096,7 +7102,7 @@ class MiniwindSession(SettlementLaw):
         """The spells fighting NPCs hold ready, glowing in their hands as the
         player's do (game/npc_magic.py)."""
         from engine.overhead_sprite import WEAPON_RIGHT_OFFSET
-        from . import npc_magic
+        import game.npc_magic as npc_magic
         out = []
         r2 = self.NPC_HAND_GLOW_RADIUS ** 2
         for t in self._actors or ():
@@ -7108,7 +7114,7 @@ class MiniwindSession(SettlementLaw):
             glows = npc_magic.hand_glows(p)
             if not glows:
                 continue
-            facing = float(p.get("_facing", 0.0) or 0.0)
+            facing = heading(t)
             forward = (math.sin(facing), math.cos(facing))
             handed = str(p.get("handed", "right") or "right")
             for hand, spell in glows:
@@ -7523,7 +7529,7 @@ class MiniwindSession(SettlementLaw):
                 p.pop(field, None)
                 disarmed = True
         p.pop("_active_weapon", None)
-        from . import npc_magic
+        import game.npc_magic as npc_magic
         if disarmed and not any(p.get(f"hand_spell_{h}") for h in npc_magic.HANDS):
             p.pop("hand_spells", None)   # readied again for the hands now free
 
@@ -7605,7 +7611,7 @@ class MiniwindSession(SettlementLaw):
         from engine.monster_constants import (
             MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST)
 
-        start = [ppos[0], ppos[1] + 48.0, ppos[2]]
+        start = [ppos[0], ppos[1] + fio.projectile_body_lift(), ppos[2]]
         aim = self._cast_point(aim, start, MONSTER_PROJECTILE_MAX_DIST) \
             or self._projectile_aim_point(start)
 
@@ -7785,10 +7791,12 @@ class MiniwindSession(SettlementLaw):
         return held
 
     @staticmethod
+    @functools.lru_cache(maxsize=1024)
     def overhead_weapon_kind(weapon_id) -> str:
         """``"melee"``, ``"bow"`` or ``"staff"``: how the viewport animates a
-        held weapon's attack, from the item database's own classification."""
-        from . import combat_loadout
+        held weapon's attack, from the item database's own classification
+        (asked per weapon per frame; cleared when a session starts)."""
+        import game.combat_loadout as combat_loadout
         style = combat_loadout._item_style(weapon_id)
         if style == combat_loadout.MAGIC:
             return "staff"
@@ -7859,7 +7867,7 @@ class MiniwindSession(SettlementLaw):
             return None, False, 0.0
 
         # Resolve the first weapon
-        from .rpg import items as rpg_items
+        import game.rpg.items as rpg_items
         import os
 
         for stack in inv:
@@ -7906,6 +7914,7 @@ class MiniwindSession(SettlementLaw):
             elif k == "command":
                 target.properties["team"] = "player"
                 target.properties["faction"] = "player"
+                _journal(target)
 
     def _provoke(self, target):
         """Record the assault and act on the victim's own fight-or-flight intent.
@@ -8190,7 +8199,7 @@ class MiniwindSession(SettlementLaw):
         d = rpg_items.get(item_id)
         if d is None or not inv.has_item(c.inventory, item_id, 1):
             return False
-        from .ui import inventory_window as iw
+        import game.ui.inventory_window as iw
         kind, key = target[0], target[1]
         if not iw.fits((kind, key), d):
             self.notify(iw.why_not((kind, key), d), 2.5)
@@ -8312,7 +8321,7 @@ class MiniwindSession(SettlementLaw):
     def open_book(self, item_id) -> bool:
         """Open a book item to read it (game/ui/book_window.py), from
         whatever screen the player was on, which comes back when it closes."""
-        from . import books as lib
+        import game.books as lib
         book = lib.book_of_item(item_id)
         if book is None:
             self.notify("The pages are blank", 2.0)
@@ -9489,10 +9498,37 @@ class MiniwindSession(SettlementLaw):
         return _chain(self._things_of_type("container"), self.windmills.bodies())
 
     def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
-        """The nearest usable container within its own use radius."""
+        """The nearest usable container within its own use radius.
+
+        Asked nearly every tick (the use prompt), over every container in the
+        map: the stock containers are tested as one array -- positions
+        gathered in one pass, their authored use radii read once per
+        container set -- and the few mill bodies after them, as before."""
         best, best_d = None, None
         px, pz = player_pos[0], player_pos[2]
-        for c in self._container_things():
+        stock = self._things_of_type("container")
+        n = len(stock)
+        if n:
+            cached = getattr(self, "_container_radii", None)
+            # Held, not keyed by id(): a rebuilt bucket can reuse a freed id.
+            if cached is None or cached[0] is not stock or cached[2] != n:
+                cached = self._container_radii = (stock, np.array(
+                    [float(c.properties.get("use_radius", math.nan)) for c in stock],
+                    dtype=np.float64), n)
+            try:
+                xyz = np.fromiter(_chain.from_iterable([c.pos for c in stock]),
+                                  dtype=np.float64, count=3 * n).reshape(n, 3)
+            except ValueError:         # a position that is not exactly (x, y, z)
+                xyz = np.array([(c.pos[0], c.pos[1], c.pos[2]) for c in stock],
+                               dtype=np.float64).reshape(n, 3)
+            r = cached[1]
+            r = np.where(np.isnan(r), float(radius), r)
+            d = (px - xyz[:, 0]) ** 2 + (pz - xyz[:, 2]) ** 2
+            ok = np.flatnonzero((r >= 0.0) & (d <= r * r))
+            if len(ok):
+                i = int(ok[np.argmin(d[ok])])        # first of equals, as the loop
+                best, best_d = stock[i], float(d[i])
+        for c in self.windmills.bodies():
             r = float(c.properties.get("use_radius", radius))
             pos = c.pos
             dx = px - pos[0]
@@ -9700,7 +9736,7 @@ class MiniwindSession(SettlementLaw):
         An absent owner never learns magically. Witnesses use ordinary crime
         knowledge/reporting; sleeping people and people behind walls see none.
         """
-        from .sim import perception
+        import game.sim.perception as perception
         p = thing.properties
         if not sim_own.is_theft(p, self.player_key, "player"):
             return False
@@ -10050,7 +10086,7 @@ class MiniwindSession(SettlementLaw):
             self._death_message = None
             return None
         if self._death_message is None:
-            from . import death_causes
+            import game.death_causes as death_causes
             source, cause, kind = (getattr(c, "_last_harm", None) or (None, None, None))
             thing, trap = None, ""
             if isinstance(source, dict):
@@ -10131,3 +10167,12 @@ class MiniwindSession(SettlementLaw):
             self._ensure_player_head()
             self._assign_npc_heads()
 
+
+def _watch_items():
+    """Item classes are memoised per weapon id; a registry change forgets them."""
+    forget = MiniwindSession.overhead_weapon_kind.cache_clear
+    if forget not in rpg_items.ON_CHANGE:
+        rpg_items.ON_CHANGE.append(forget)
+
+
+_watch_items()

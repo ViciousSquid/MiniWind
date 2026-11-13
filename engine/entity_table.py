@@ -71,6 +71,7 @@ head-less test -- still imports this module.
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from itertools import chain
@@ -78,10 +79,12 @@ from itertools import chain
 import glm
 import numpy as np
 
+from . import change_detection
 from .change_journal import (JOURNAL, FACING, MOVED, OVERFLOW, STATE,
                              VISIBILITY, is_tracked)
 from .portal_transform import basis_from_rotation
 from .render_table import _can_adopt
+from .entity_models import model_path, model_rotation, model_scale
 
 # Defensive, as everywhere else in engine/: editor.things pulls in PyQt5, and
 # the standalone player tier does not have it.  A tier without the classes
@@ -120,6 +123,8 @@ ENT_MODE_MODEL      = 1 << 3
 ENT_MODE_BILLBOARD  = 1 << 4
 #: Carries a ``sprite_path``.
 ENT_HAS_SPRITE      = 1 << 5
+#: Private editor model, visible under the same policy as editor sprites.
+ENT_EDITOR_MODEL    = 1 << 6
 #: Monster / LogicGate / LogicRelay / LogicTimer / LevelChanger -- the classes
 #: ``_thing_render_kind`` calls ``entity_sprite``.
 ENT_ENTITY_SPRITE   = 1 << 7
@@ -156,6 +161,7 @@ BIT_NAMES = (
     (ENT_SKIP, 'SKIP'), (ENT_ALWAYS_SPRITE, 'ALWAYS_SPRITE'),
     (ENT_HAS_MODEL, 'HAS_MODEL'), (ENT_MODE_MODEL, 'MODE_MODEL'),
     (ENT_MODE_BILLBOARD, 'MODE_BILLBOARD'), (ENT_HAS_SPRITE, 'HAS_SPRITE'),
+    (ENT_EDITOR_MODEL, 'EDITOR_MODEL'),
     (ENT_ENTITY_SPRITE, 'ENTITY_SPRITE'),
     (ENT_PROP, 'PROP'), (ENT_LIGHT, 'LIGHT'), (ENT_MONSTER, 'MONSTER'),
     (ENT_PORTAL, 'PORTAL'), (ENT_EFFECT, 'EFFECT'),
@@ -256,6 +262,8 @@ def sprite_candidates(thing):
     and class texture recipe before the renderer reaches OpenGL.  Returns ``None`` for a row the
     sprite pass draws nothing for.
     """
+    if getattr(thing, 'editor_model_path', None):
+        return None
     if isinstance(thing, dict):
         return None                # a raw dict row is never drawn
     if Portal is not None and isinstance(thing, Portal):
@@ -271,7 +279,7 @@ def sprite_candidates(thing):
         out.append(('logic_%s' % ltype, 'logic_%s.png' % ltype, 'sprites', True))
     elif Prop is not None and isinstance(thing, Prop):
         if str(props.get('render_mode', 'model')).lower() == 'billboard':
-            path = str(props.get('sprite_path', '') or '')
+            path = str(thing.get_sprite_path() or '')
             if path:
                 key = 'propsprite__%s' % path.replace('/', '__').replace('.', '_')
                 filename, subfolder = _split_asset_path(path)
@@ -291,6 +299,9 @@ def sprite_candidates(thing):
         out.append(('LogicCamera', 'logic_camera.png', 'sprites', True))
     elif props.get('sprite_path'):
         filename, subfolder = _split_asset_path(props.get('sprite_path'))
+        out.append((class_name, filename, subfolder, True))
+    elif getattr(type(thing), 'editor_sprite_path', None):
+        filename, subfolder = _split_asset_path(type(thing).editor_sprite_path)
         out.append((class_name, filename, subfolder, True))
     else:
         out.append((class_name,) + _LOOKUP_ONLY[:2] + (False,))
@@ -344,11 +355,15 @@ def _entity_class_bits(thing) -> int:
     if not isinstance(props, dict):
         props = {}
 
-    if props.get('model_path'):
+    if model_path(thing):
         bits |= ENT_HAS_MODEL
+    if getattr(thing, 'editor_model_path', None):
+        bits |= ENT_EDITOR_MODEL
     if props.get('sprite_path'):
         bits |= ENT_HAS_SPRITE
     render_mode = str(props.get('render_mode', 'model')).lower()
+    if bits & ENT_EDITOR_MODEL:
+        render_mode = 'model'
     if render_mode == 'model':
         bits |= ENT_MODE_MODEL
     elif render_mode == 'billboard':
@@ -368,29 +383,52 @@ def _entity_class_bits(thing) -> int:
     return bits
 
 
-def _model_recipe(thing):
-    """Return the cold model draw recipe for one entity, or ``None``."""
-    props = _props_of(thing)
-    model_path = props.get('model_path')
-    if not model_path:
+def _model_tint(props):
+    """A Prop's ``tint`` as 0..1 floats, or None for no tint (or white).
+
+    Stored as 0..1 floats; a colour with any component above 1 is read as
+    0..255.
+    """
+    tint = props.get('tint')
+    try:
+        rgb = [float(tint[0]), float(tint[1]), float(tint[2])]
+    except (TypeError, ValueError, IndexError):
         return None
-    model_path = str(model_path)
+    if any(c > 1.0 for c in rgb):
+        rgb = [c / 255.0 for c in rgb]
+    rgb = tuple(min(1.0, max(0.0, c)) for c in rgb)
+    return None if rgb == (1.0, 1.0, 1.0) else rgb
+
+
+def _model_recipe(thing):
+    """Return the cold model draw recipe for one entity, or ``None``.
+
+    ``(model_path, manual_texture, colour, tint)``: *colour* is the manual
+    texture's flat-shaded fallback, *tint* multiplies whatever is drawn.
+    """
+    props = _props_of(thing)
+    path = model_path(thing)
+    if not path:
+        return None
+    path = str(path)
+    if getattr(thing, 'editor_model_path', None):
+        return (path, None, None, None)
+    tint = _model_tint(props)
     manual_texture = props.get('texture')
     if not manual_texture:
-        return (model_path, None, None)
+        return (path, None, None, tint)
     colour = props.get('color', [0.8, 0.8, 0.8])
     try:
         colour = (float(colour[0]), float(colour[1]), float(colour[2]))
     except (TypeError, ValueError, IndexError):
         colour = (0.8, 0.8, 0.8)
-    return (model_path, str(manual_texture), colour)
+    return (path, str(manual_texture), colour, tint)
 
 
 def _model_transform_columns(thing):
     """Resolve a model's cold rotation/scale matrices with zero translation."""
-    props = _props_of(thing)
-    rot = props.get('rotation', [0.0, 0.0, 0.0])
-    scale = props.get('scale', 1.0)
+    rot = model_rotation(thing)
+    scale = model_scale(thing)
     scale_vec = (scale, scale, scale) if isinstance(scale, (int, float)) else scale
     try:
         mat = glm.rotate(glm.mat4(1.0), glm.radians(float(rot[1])), glm.vec3(0, 1, 0))
@@ -550,20 +588,17 @@ def _is_head_art(props) -> bool:
 
 
 def _sprite_spin(thing):
-    """``(heading, 1)`` for a living head actor with a heading, else no spin.
+    """``(heading, 1)`` for a living head actor, else no spin.
 
-    The heading is the transient ``_facing`` every system that turns an actor
-    writes (radians, forward ``(sin a, 0, cos a)``); the sprite shader turns
-    the billboard so the art's front points along it when seen from above.
+    The heading is the actor's ``angle`` (degrees; written only by
+    :mod:`engine.monster_facing`), passed on in radians: the sprite shader
+    turns the billboard so the art's front points along it seen from above.
     """
     props = _props_of(thing)
     if props.get('dead') or not _is_head_art(props):
         return _NO_SPIN
-    facing = props.get('_facing')
-    if facing is None:
-        return _NO_SPIN
     try:
-        return (float(facing), 1.0)
+        return (math.radians(float(props.get('angle', 0.0) or 0.0)), 1.0)
     except (TypeError, ValueError):
         return _NO_SPIN
 
@@ -603,6 +638,8 @@ _COLUMNS = (
     ('portal_width_height', (2,), np.float32, 0.0),
     ('portal_basis', (3, 3), np.float64, 0.0),
     ('portal_fade', (), np.float32, 0.0),
+    #: How far from the camera the portal's view is drawn ("Fade Distance").
+    ('portal_fade_distance', (), np.float32, 0.0),
     ('portal_color', (3,), np.float32, 1.0),
     ('portal_show_rim', (), bool, False),
     #: The portal's "Glasses" property: looking into it shows your own
@@ -639,6 +676,10 @@ _COLUMNS = (
     ('render_alpha', (), np.float32, 1.0),
     #: Persistent RGB multiplier for a sprite (1 leaves a channel unchanged).
     ('sprite_tint', (3,), np.float32, 1.0),
+    # Blood on the sprite: 2 * (steps + 16 * pattern), steps 0..15 from the
+    # entity's '_wounds', pattern 0..15 its own. Even, so the sprite pass adds
+    # it to render_alpha (0..1) and the shader takes the two apart.
+    ('sprite_wound', (), np.float32, 0.0),
     #: Locked world-facing yaw for a carried billboard; -10000 means an
     #: ordinary camera-facing billboard.
     ('sprite_fixed_yaw', (), np.float32, -10000.0),
@@ -646,8 +687,12 @@ _COLUMNS = (
     #: billboard turns so the art's front points along the heading. ``on`` 0
     #: leaves an ordinary camera-up billboard.
     ('sprite_spin', (2,), np.float32, 0.0),
+    #: Carried icons sort just after a coplanar body, while retaining world
+    #: depth testing and the normal order relative to other actors.
+    ('sprite_overlay', (), bool, False),
     #: Interned sprite recipe id; :data:`SPRITE_NONE` for a row that draws none.
     ('sprite_key_id', (), np.int32, SPRITE_NONE),
+    #: Camera-relative recipes, chosen independently for each viewport.
     #: Interned model recipe id; -1 means no model.
     ('model_recipe_id', (), np.int32, -1),
     #: Model transform, a flattened mat4, and its normal matrix padded to 12.
@@ -675,7 +720,8 @@ class EntityTable:
         'effect_slots',
         '_sprite_ids', '_sprite_recipes', '_model_ids', '_model_recipes',
         '_effect_custom_ids', '_effect_custom_paths',
-        '_epoch', '_slot_of_obj', '_poll_slots', '_row_tuple', 'rows_read',
+        '_epoch', '_slot_of_obj', '_poll_slots', '_row_tuple', '_row_list',
+        '_row_list_version', 'rows_read',
         '_effect_published', '_effect_static',
         '__weakref__'))
 
@@ -721,6 +767,10 @@ class EntityTable:
         self._epoch = None
         #: The row set as a tuple, for :meth:`needs_reconcile`.
         self._row_tuple = ()
+        #: The live RowList the rows were last taken from and its version
+        #: (see RenderTable._row_list, M4).
+        self._row_list = None
+        self._row_list_version = None
         #: Rows whose entity the last :meth:`begin_frame` read (Debug Tables).
         self.rows_read = 0
         #: ``(effect store, its generation)`` the Effect rows' static columns
@@ -838,13 +888,34 @@ class EntityTable:
         # The logic thread normally hands us EditorState.things, a live list
         # the editor thread can also append to. Freeze it at the frame
         # boundary so every step below sees the same rows.
-        things = tuple(things)
-        n = len(things)
+        started = change_detection.now()
+        version = getattr(things, 'row_version', None)
+        if (version is not None and things is self._row_list
+                and version == self._row_list_version
+                and epoch is not None and epoch == self._epoch):
+            # The same RowList at the same version: the same rows (M4).
+            if change_detection.ORACLE and tuple(things) != self._row_tuple:
+                change_detection.missed(
+                    "the entity list changed without moving its version")
+            things = self._row_tuple
+            n = len(things)
+            reconcile = False
+            examined = 0
+        else:
+            live = things
+            things = tuple(things)
+            n = len(things)
+            reconcile = self.needs_reconcile(things, epoch)
+            examined = n
+            self._row_list = live if version is not None else None
+            self._row_list_version = version
+        change_detection.DETECT.add('entity_table.rows', examined,
+                                    change_detection.now() - started)
         changes = JOURNAL.drain(self)
         changed_positions = JOURNAL.drain_positions(self)
         self.rows_read = 0
         resolved_all = False
-        if self.needs_reconcile(things, epoch):
+        if reconcile:
             if self._refresh_in_place(
                     things, epoch, dirty_objects, effect_store=effect_store):
                 pass
@@ -897,6 +968,7 @@ class EntityTable:
         self._effect_custom_paths = list(peer._effect_custom_paths)
         self._epoch = peer._epoch
         self._row_tuple = peer._row_tuple
+        self._row_list = None               # compared once, next frame
         self._slot_of_obj = dict(peer._slot_of_obj)
         self._effect_published = None
         self.generation += 1
@@ -1190,6 +1262,7 @@ class EntityTable:
         anything preparing a pass outside the frame loop.
         """
         before = self.generation
+        self._row_list = None               # rows taken as given, next frame compares
         if self.needs_reconcile(things, epoch):
             self._reconcile(things, dirty_objects=dirty_objects)
             self._epoch = epoch
@@ -1317,10 +1390,14 @@ class EntityTable:
                 and np.all(np.isfinite(tint)) else 1.0
         except (TypeError, ValueError):
             self.sprite_tint[slot] = 1.0
+        wounds = int(props.get('_wounds', 0) or 0)
+        self.sprite_wound[slot] = (
+            2.0 * (min(15, wounds) + 16 * ((id(thing) >> 4) % 16)) if wounds > 0 else 0.0)
         carry_yaw = _carry_sprite_yaw(thing)
         self.sprite_fixed_yaw[slot] = carry_yaw
         self.sprite_spin[slot] = (_sprite_spin(thing) if self.class_bits[slot] & ENT_MONSTER
                                   else _NO_SPIN)
+        self.sprite_overlay[slot] = bool(props.get('_sprite_overlay', False))
         self.sprite_key_id[slot] = self.intern_sprite(sprite_candidates(thing))
 
         if self.class_bits[slot] & ENT_EFFECT:
@@ -1515,6 +1592,8 @@ class EntityTable:
                 props.get('active', True), True)
             self.portal_fade[slot] = max(0.0, min(1.0, _float_property(
                 getattr(thing, '_fade_alpha', 1.0), 1.0)))
+            self.portal_fade_distance[slot] = max(64.0, _float_property(
+                props.get('fade_distance', 2048.0), 2048.0))
             self.portal_direction[slot] = self._portal_direction_code(
                 props.get('portal_direction', 'both'))
             self.portal_width_height[slot] = (
@@ -1540,6 +1619,7 @@ class EntityTable:
         else:
             self.portal_active[slot] = False
             self.portal_fade[slot] = 0.0
+            self.portal_fade_distance[slot] = 0.0
             self.portal_direction[slot] = 0
             self.portal_width_height[slot] = 0.0
             self.portal_color[slot] = 1.0
@@ -1603,42 +1683,20 @@ def _pos_of(thing):
     return (0.0, 0.0, 0.0)
 
 
-def classify_slots(table, slots, hidden, is_play, show_sprites):
-    """Split entity slots into the model pass and the sprite pass, numerically.
+# Only these authored bits decide the draw kind. Other uint16 flags (lights,
+# portal cull exemptions, etc.) do not enlarge the lookup domain.
+_CLASSIFY_BITS = (ENT_SKIP | ENT_EFFECT | ENT_ALWAYS_SPRITE | ENT_HAS_MODEL |
+                  ENT_MODE_MODEL | ENT_MODE_BILLBOARD | ENT_HAS_SPRITE |
+                  ENT_ENTITY_SPRITE | ENT_PROP | ENT_EDITOR_MODEL)
 
-    The array form of ``_sort_objects``' Thing half.  That loop asked every
-    visible entity what it was, once per frame, to reach a verdict that only
-    changes when the entity is edited; the projection resolved the inputs into
-    :attr:`EntityTable.class_bits`, so the same split is a handful of masks.
 
-    *hidden* is the live flag, indexed by slot -- not gathered for *slots*,
-    because the caller holds the whole-table mask :meth:`EntityTable.begin_frame`
-    returned.
-
-    The chain being reproduced, in its original order:
-
-    1. a PathNode, or a non-Thing, is skipped;
-    2. a Portal, monster snapshot or LevelChanger is a sprite;
-    3. a visible model (``model_path``, ``render_mode == 'model'``, not hidden)
-       goes to the model pass;
-    4. otherwise the entity's *kind* decides -- the
-       entity-sprite classes, then billboard-with-a-sprite, then ordinary --
-       with a Prop drawn only as a billboard, a model-but-hidden entity drawn
-       nowhere, and an ordinary entity drawn only while editing or with
-       show-sprites on.
-
-    Returns ``(model_slots, sprite_slots)`` as slot arrays.  No entity is
-    materialised here.
-    """
-    if not len(slots):
-        return slots, slots
-
-    bits = table.class_bits[slots]
-    is_hidden = np.asarray(hidden)[slots]
+def _render_kind_words(bits, is_hidden, show_ordinary):
+    """Cold construction of the original classification truth table."""
+    is_hidden = np.bool_(is_hidden)
 
     skip = (bits & ENT_SKIP) != 0
     effect = (bits & ENT_EFFECT) != 0
-    skip = skip | effect
+    skip = skip | effect | (((bits & ENT_EDITOR_MODEL) != 0) & ~np.bool_(show_ordinary))
     always_sprite = (bits & ENT_ALWAYS_SPRITE) != 0
 
     has_model = (bits & ENT_HAS_MODEL) != 0
@@ -1665,6 +1723,69 @@ def classify_slots(table, slots, hidden, is_play, show_sprites):
         # `elif model_path and render_mode == 'model'` draws nothing: that is
         # the hidden model, already excluded from `model` above.
         | (others & ~entity_sprite & ~(has_model & mode_model)
-           & (kind_sprite | (not is_play or show_sprites)))
+           & (kind_sprite | (show_ordinary)))
     )
-    return slots[model], slots[sprite | (~skip & always_sprite)]
+    return model.astype(np.uint8) | ((sprite | (~skip & always_sprite)).astype(np.uint8) << 1)
+
+
+# 64 KiB: ordinary-sprite policy x live hidden flag x classification word.
+# One native lookup replaces the per-frame chain of temporary mask arrays.
+_CLASSIFY_WORDS = np.arange(1 << _CLASSIFY_BITS.bit_length(), dtype=np.uint16)
+_RENDER_KIND = np.stack([
+    np.stack([_render_kind_words(_CLASSIFY_WORDS, hidden, show)
+              for hidden in (False, True)])
+    for show in (False, True)])
+_RENDER_KIND.flags.writeable = False
+del _CLASSIFY_WORDS
+
+
+def classify_slots(table, slots, hidden, is_play, show_sprites):
+    """Split entity slots into the model pass and the sprite pass, numerically.
+
+    The array form of ``_sort_objects``' Thing half.  That loop asked every
+    visible entity what it was, once per frame, to reach a verdict that only
+    changes when the entity is edited; the projection resolved the inputs into
+    :attr:`EntityTable.class_bits`, so the same split is a handful of masks.
+
+    *hidden* is the live flag, indexed by slot -- not gathered for *slots*,
+    because the caller holds the whole-table mask :meth:`EntityTable.begin_frame`
+    returned.
+
+    The chain being reproduced, in its original order:
+
+    1. a PathNode, or a non-Thing, is skipped;
+    2. a Portal, monster snapshot or LevelChanger is a sprite;
+    3. a visible model (``model_path``, ``render_mode == 'model'``, not hidden)
+       goes to the model pass;
+    4. otherwise the entity's *kind* decides -- the
+       entity-sprite classes, then billboard-with-a-sprite, then ordinary --
+       with a Prop drawn only as a billboard, a model-but-hidden entity drawn
+       nowhere, and an ordinary entity drawn only while editing or with
+       show-sprites on.
+
+    Returns ``(model_slots, sprite_slots)`` as slot arrays. No entity is
+    materialised here. At large N a read-only numeric truth table resolves
+    the classification in one gather; up to eight rows use scalar lookup.
+    """
+    if not len(slots):
+        return slots, slots
+
+    policy = int(bool(not is_play or show_sprites))
+    if len(slots) <= 8:
+        # Measured crossover: scalar lookup avoids the fixed array setup at
+        # small N (1.8 us at N=1; 5.3 us at N=8, versus 6-9 us batched).
+        models, sprites = [], []
+        for slot in slots:
+            kind = int(_RENDER_KIND[policy, int(hidden[slot]),
+                                   int(table.class_bits[slot]) & _CLASSIFY_BITS])
+            if kind & 1:
+                models.append(slot)
+            if kind & 2:
+                sprites.append(slot)
+        return (np.asarray(models, dtype=slots.dtype),
+                np.asarray(sprites, dtype=slots.dtype))
+
+    bits = table.class_bits[slots] & _CLASSIFY_BITS
+    kinds = _RENDER_KIND[policy,
+                         np.asarray(hidden)[slots].astype(np.uint8), bits]
+    return slots[(kinds & 1) != 0], slots[(kinds & 2) != 0]

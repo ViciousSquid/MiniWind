@@ -130,7 +130,7 @@ def note_paper(w, h, newsprint=False):
 def paginate_note(book, fonts, width, height):
     """A note laid out in sheets, as :func:`paginate` lays out pages, but
     line by line as it was written: each written line wraps on its own."""
-    from .. import books as lib
+    import game.books as lib
     f_title, f_author, f_body = fonts
     mt, ma, mb = QFontMetrics(f_title), QFontMetrics(f_author), QFontMetrics(f_body)
     line_h = mb.lineSpacing()
@@ -216,7 +216,7 @@ def paginate(book, fonts, width, height, cap=0):
     With *cap* (pixels), the text opens with an illuminated initial that
     size: a ``("dropcap", letter, y)`` entry (y its top) and the first lines
     of the paragraph beside it as ``"indent"``."""
-    from .. import books as lib
+    import game.books as lib
     f_title, f_author, f_body = fonts
     mt, ma, mb = QFontMetrics(f_title), QFontMetrics(f_author), QFontMetrics(f_body)
     line_h = mb.lineSpacing()
@@ -279,7 +279,7 @@ class BookWindow(FloatingWindow):
         self._pages = []
         self._page_rects = (QRect(), QRect())
         self._close_rect = QRect()
-        from . import fonts
+        import game.ui.fonts as fonts
         self.fonts = (fonts.dialogue_font(26), fonts.dialogue_font(14),
                       fonts.dialogue_font(15))
         self.f_small = fonts.dialogue_font(11)
@@ -317,7 +317,7 @@ class BookWindow(FloatingWindow):
         return getattr(self.session, "reading", None) or {}
 
     def _book(self):
-        from .. import books as lib
+        import game.books as lib
         return lib.get(self._reading().get("book", ""))
 
     def _style(self):
@@ -345,7 +345,7 @@ class BookWindow(FloatingWindow):
 
     def _draw_note(self, painter, book, rect):
         """A note: one loose sheet, lines as written (module docstring)."""
-        from . import page_art
+        import game.ui.page_art as page_art
         style = self._style()
         newsprint = style == page_art.NEWSPRINT
         if style == page_art.TORN:
@@ -444,7 +444,7 @@ class BookWindow(FloatingWindow):
         spread = max(0, min(int(r.get("spread", 0)), spreads - 1))
         r["spread"] = spread
         cap = self._cap()
-        from . import page_art
+        import game.ui.page_art as page_art
         for side, area in enumerate((left, right)):
             index = spread * 2 + side
             if index >= len(pages):
@@ -489,7 +489,7 @@ class BookWindow(FloatingWindow):
     def _cap_font(self, cap):
         """The illuminated initial's face, sized to its box (cached)."""
         if getattr(self, "_cap_font_for", None) != cap:
-            from . import fonts
+            import game.ui.fonts as fonts
             self._cap_font_for = cap
             self._cap_font_face = fonts.dialogue_font_px(int(cap * 0.78))
         return self._cap_font_face

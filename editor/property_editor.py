@@ -1,3 +1,4 @@
+from engine.asset_qt import load_icon
 import json
 import os
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
@@ -10,7 +11,8 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5 import sip
 from engine.items import ITEM_IDS
-from engine.prop_entity import normalise_collect_type
+from engine.prop_entity import (MODEL_PRESETS, model_preset_name, model_settings,
+                                 normalise_collect_type)
 from editor.things import (Thing, Light, Effect, Prop, Monster, Speaker,
                            LogicGate, PathNode, LogicCamera, LogicSpawner, Portal,
                            LogicState, PlayerStart, LevelChanger)
@@ -559,6 +561,10 @@ class PropertyEditor(QWidget):
     #: pure waste.
     _SIGNATURE_IGNORED = frozenset({
         'pos', 'size', 'geometry', '_flash_until', 'original_pos',
+        # Face material: the Surface Inspector shows it, not this panel, and it
+        # moves between the per-tag dicts and the planes when a box becomes an
+        # angled brush (engine.brush_faces).
+        'textures', 'uv_scale', 'uv_shift', 'uv_angle', 'uv_natural',
     # Derived-geometry bookkeeping the geometry layer writes onto brushes. None
     # of it is displayed, and it changes on every drag, rotate and clip, so a
     # panel that folded it in would rebuild itself for edits it does not show.
@@ -963,19 +969,19 @@ class PropertyEditor(QWidget):
         self.tab_widget.addTab(self._create_general_tab(brush), "General")
 
         self.trigger_tab = self._create_trigger_tab(brush)
-        self.trigger_tab_index = self.tab_widget.addTab(self.trigger_tab, QIcon("assets/ui/controls/target.svg"), "Trigger")
+        self.trigger_tab_index = self.tab_widget.addTab(self.trigger_tab, load_icon("assets/ui/controls/target.svg"), "Trigger")
         self.tab_widget.setTabVisible(self.trigger_tab_index, is_trigger)
 
         self.mover_tab = self._create_mover_tab(brush)
-        self.mover_tab_index = self.tab_widget.addTab(self.mover_tab, QIcon("assets/ui/controls/move.svg"), "Mover")
+        self.mover_tab_index = self.tab_widget.addTab(self.mover_tab, load_icon("assets/ui/controls/move.svg"), "Mover")
         self.tab_widget.setTabVisible(self.mover_tab_index, is_mover)
 
         self.door_tab = self._create_door_tab(brush)
-        self.door_tab_index = self.tab_widget.addTab(self.door_tab, QIcon("assets/ui/controls/door.svg"), "Door")
+        self.door_tab_index = self.tab_widget.addTab(self.door_tab, load_icon("assets/ui/controls/door.svg"), "Door")
         self.tab_widget.setTabVisible(self.door_tab_index, is_door)
 
         self.shader_tab = self._create_shader_tab(brush)
-        self.shader_tab_index = self.tab_widget.addTab(self.shader_tab, QIcon("assets/ui/controls/shader.svg"), "Shader")
+        self.shader_tab_index = self.tab_widget.addTab(self.shader_tab, load_icon("assets/ui/controls/shader.svg"), "Shader")
         self.tab_widget.setTabVisible(self.shader_tab_index, shader_type not in ('<<None>', None, ''))
 
         self.tab_widget.addTab(self._create_appearance_tab(brush), "Appearance")
@@ -984,7 +990,7 @@ class PropertyEditor(QWidget):
         self.io_tab = None
         if IO_AVAILABLE and (is_trigger or is_mover or is_door):
             self.io_tab = self._create_io_tab_for_brush(brush)
-            self.io_tab_index = self.tab_widget.addTab(self.io_tab, QIcon("assets/ui/controls/links.svg"), "I/O")
+            self.io_tab_index = self.tab_widget.addTab(self.io_tab, load_icon("assets/ui/controls/links.svg"), "I/O")
 
         layout.addWidget(self.tab_widget)
 
@@ -1004,7 +1010,7 @@ class PropertyEditor(QWidget):
         """
         placeholder = QWidget(self.tab_widget)
         QVBoxLayout(placeholder).setContentsMargins(0, 0, 0, 0)
-        index = self.tab_widget.addTab(placeholder, QIcon("assets/ui/controls/links.svg"), "I/O")
+        index = self.tab_widget.addTab(placeholder, load_icon("assets/ui/controls/links.svg"), "I/O")
         tabs = self.tab_widget
 
         def fill(current, _tabs=tabs, _index=index, _holder=placeholder):
@@ -1846,6 +1852,15 @@ class PropertyEditor(QWidget):
         wave_layout.addRow("Wave Height:", _hbox(slider, label, stretch=False))
         self._widgets['water_wave_h_slider'] = slider
 
+        spread = min(max(float(brush.get('water_wave_spread', 1.0)), 0.0), 1.0)
+        slider, label = _make_slider(
+            self, spread, 0, 100,
+            callback=lambda v: self.update_object_prop('water_wave_spread', v),
+            tooltip="How far apart the waves are. Left: tight, choppy water "
+                    "(the earlier look). Right: a broad, calm swell.")
+        wave_layout.addRow("Wave Spacing:", _hbox(slider, label, stretch=False))
+        self._widgets['water_wave_spread_slider'] = slider
+
         layout.addWidget(wave_group)
 
         return group
@@ -2049,6 +2064,8 @@ class PropertyEditor(QWidget):
             self.add_vector3_widget(form, thing, 'scale')
             rotation_before = form.rowCount()
             self.add_vector3_widget(form, thing, 'rotation')
+            tint_before = form.rowCount()
+            self._add_tint_widget(form, thing)
 
             if is_prop:
                 sprite_widget = QWidget(w)
@@ -2111,6 +2128,7 @@ class PropertyEditor(QWidget):
                 model_path_row = form.getWidgetPosition(model_path_widget)[0]
                 scale_row = scale_before
                 rotation_row = rotation_before
+                tint_row = tint_before
                 sprite_path_row = form.getWidgetPosition(sprite_widget)[0]
                 sprite_size_row = form.getWidgetPosition(sprite_size_widget)[0]
                 self._prop_render_form = form
@@ -2135,9 +2153,6 @@ class PropertyEditor(QWidget):
                             type(thing), 'DEFAULT_MODEL_PATH', '')
                         if not thing.properties.get('model_path') and default_model:
                             self.update_object_prop('model_path', default_model)
-                            model_path_edit = model_path_widget.findChild(QLineEdit)
-                            if model_path_edit is not None:
-                                model_path_edit.setText(default_model)
                     else:
                         # Restore the Prop's resolved visual asset rather than a
                         # generic placeholder: weapon -> gun1, key -> its key,
@@ -2156,13 +2171,13 @@ class PropertyEditor(QWidget):
                             spin.blockSignals(True)
                             spin.setValue(value)
                             spin.blockSignals(False)
-                    for row in (model_path_row, scale_row, rotation_row):
+                    for row in (model_path_row, scale_row, rotation_row, tint_row):
                         self._set_form_row_visible(form, row, is_model)
                     for row in (sprite_path_row, sprite_size_row):
                         self._set_form_row_visible(form, row, not is_model)
 
                 mode_combo.currentTextChanged.connect(set_representation)
-                for row in (model_path_row, scale_row, rotation_row):
+                for row in (model_path_row, scale_row, rotation_row, tint_row):
                     self._set_form_row_visible(form, row, model_mode)
                 for row in (sprite_path_row, sprite_size_row):
                     self._set_form_row_visible(form, row, not model_mode)
@@ -2366,7 +2381,9 @@ class PropertyEditor(QWidget):
         mass_spin.setSingleStep(0.1)
         mass_spin.setValue(mass)
         mass_spin.setToolTip(
-            "Mass used by pushing and other Prop physics. Higher values are harder to move."
+            "Mass used by pushing and other Prop physics. Higher values are harder "
+            "to move and bounce lower. From mass 10 the player cannot push it: "
+            "it pushes the player, and crushes a player it pins to a wall."
         )
         mass_spin.valueChanged.connect(
             lambda value: self.update_object_prop('mass', value)
@@ -2437,6 +2454,35 @@ class PropertyEditor(QWidget):
         physics_form.addRow("Friction:", friction_spin)
         self._widgets['prop_friction_spin'] = friction_spin
 
+        rolls_cb = _make_checkbox(
+            "Rolls like a ball",
+            bool(thing.properties.get('rolls', False)),
+            lambda checked: self.update_object_prop('rolls', bool(checked)),
+            _Style.CHECKBOX,
+        )
+        rolls_cb.setToolTip(
+            "Turn as a ball rolling along the ground, losing far less speed "
+            "to friction than a sliding prop. Collision stays the AABB."
+        )
+        physics_form.addRow("", rolls_cb)
+        self._widgets['prop_rolls_cb'] = rolls_cb
+
+        bounciness = min(1.0, max(0.0, float(thing.properties.get('bounciness', 0.0) or 0.0)))
+        bounciness_spin = QDoubleSpinBox()
+        bounciness_spin.setRange(0.0, 1.0)
+        bounciness_spin.setDecimals(2)
+        bounciness_spin.setSingleStep(0.05)
+        bounciness_spin.setValue(bounciness)
+        bounciness_spin.setToolTip(
+            "Share of its speed the prop keeps when it hits the floor or a "
+            "wall. Mass takes it away: from mass 10 it does not bounce at all."
+        )
+        bounciness_spin.valueChanged.connect(
+            lambda value: self.update_object_prop('bounciness', float(value))
+        )
+        physics_form.addRow("Bounciness:", bounciness_spin)
+        self._widgets['prop_bounciness_spin'] = bounciness_spin
+
         shape_mode = str(thing.properties.get('collision_shape', 'auto')).lower()
         shape_labels = {
             'auto': 'Automatic',
@@ -2479,7 +2525,7 @@ class PropertyEditor(QWidget):
         section = CollapsibleSection(
             "Physics",
             expanded=True,
-            count=9,
+            count=11,
         )
         section.addLayout(physics_form)
         parent_layout.addWidget(section)
@@ -3794,7 +3840,7 @@ class PropertyEditor(QWidget):
         radius_spin = _make_spin(thing.properties.get('radius', 256.0), 1.0, 99999.0,
                                  suffix=" u", decimals=1, step=16.0)
         show_btn = QToolButton()
-        show_btn.setIcon(QIcon("assets/ui/controls/target.svg"))
+        show_btn.setIcon(load_icon("assets/ui/controls/target.svg"))
         show_btn.setCheckable(True)
         show_btn.setChecked(bool(thing.properties.get('show_radius', False)))
         show_btn.setStyleSheet("""
@@ -4169,7 +4215,7 @@ class PropertyEditor(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
 
         refresh_btn = QPushButton("Refresh Live Values")
-        refresh_btn.setIcon(QIcon("assets/ui/controls/refresh.svg"))
+        refresh_btn.setIcon(load_icon("assets/ui/controls/refresh.svg"))
         refresh_btn.setStyleSheet("""
             QPushButton { background-color: #2a5a5a; color: white; border: 1px solid #26A69A;
                           border-radius: 3px; padding: 4px 8px; }
@@ -4299,9 +4345,9 @@ class PropertyEditor(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
         add_btn = QPushButton("Add Key")
-        add_btn.setIcon(QIcon("assets/ui/controls/plus.svg"))
+        add_btn.setIcon(load_icon("assets/ui/controls/plus.svg"))
         rem_btn = QPushButton("Remove Selected")
-        rem_btn.setIcon(QIcon("assets/ui/controls/minus.svg"))
+        rem_btn.setIcon(load_icon("assets/ui/controls/minus.svg"))
         for b in (add_btn, rem_btn):
             b.setStyleSheet("""
                 QPushButton { background-color: #2a5a5a; color: white; border: 1px solid #26A69A;
@@ -4418,7 +4464,7 @@ class PropertyEditor(QWidget):
         sight_spin = _make_spin(thing.properties.get('sight', 512), 0, 9999, suffix=" u")
         sight_spin.setToolTip("Distance at which this monster detects the player")
         sight_btn = QToolButton()
-        sight_btn.setIcon(QIcon("assets/ui/controls/eye.svg"))
+        sight_btn.setIcon(load_icon("assets/ui/controls/eye.svg"))
         sight_btn.setCheckable(True)
         sight_btn.setChecked(getattr(self.editor, '_sight_preview_thing', None) is thing)
         sight_btn.setStyleSheet("""
@@ -4607,7 +4653,7 @@ class PropertyEditor(QWidget):
 
         # Customise button
         cust_btn = QPushButton("Customise Sprites…")
-        cust_btn.setIcon(QIcon("assets/ui/controls/palette.svg"))
+        cust_btn.setIcon(load_icon("assets/ui/controls/palette.svg"))
         cust_btn.setFixedWidth(350)
         cust_btn.setToolTip("Assign custom idle / shoot / dead PNGs and billboard size")
         cust_btn.setStyleSheet("""
@@ -4760,7 +4806,7 @@ class PropertyEditor(QWidget):
             shader_keys = ('glass_color', 'glass_opacity', 'glass_distortion', 'glass_refraction',
                            'glass_roughness', 'glass_fresnel', 'glow_color', 'glow_intensity',
                            'water_tint', 'water_opacity', 'water_reflectivity', 'water_wave_enabled',
-                           'water_wave_height', 'water_plane', 'water_high_quality', 'water_reflections',
+                           'water_wave_height', 'water_wave_spread', 'water_plane', 'water_high_quality', 'water_reflections',
                            'water_distortion', 'water_refraction', 'water_roughness', 'water_fresnel',
                            'fog_color', 'fog_density')
             for key in shader_keys:
@@ -4795,6 +4841,8 @@ class PropertyEditor(QWidget):
                 self.current_object['water_wave_enabled'] = True
             if 'water_wave_height' not in self.current_object:
                 self.current_object['water_wave_height'] = 0.5
+            if 'water_wave_spread' not in self.current_object:
+                self.current_object['water_wave_spread'] = 1.0
             if 'water_distortion' not in self.current_object:
                 self.current_object['water_distortion'] = 0.5
             if 'water_refraction' not in self.current_object:
@@ -4839,9 +4887,13 @@ class PropertyEditor(QWidget):
             self.current_object.setdefault('trigger_type', 'Once')
             self.current_object.setdefault('trigger_filters', ['player'])
             self.current_object.setdefault('trigger_poll_interval', 1.0)
-            self.current_object.setdefault('textures', {})
-            for face in ['top', 'bottom', 'north', 'south', 'east', 'west']:
-                self.current_object['textures'][face] = 'trigger.jpg'
+            from engine import brush_faces
+            # Every face takes the trigger texture through its one record --
+            # a box's six sides (the bottom one included: the old list named
+            # it 'bottom', which no face is called), an angled brush's planes.
+            for face in brush_faces.face_keys(self.current_object):
+                brush_faces.set_face_material(self.current_object, face,
+                                              texture='trigger.jpg')
         if hasattr(self, 'trigger_tab_index'):
             self.tab_widget.setTabVisible(self.trigger_tab_index, is_trigger)
             if is_trigger:
@@ -5163,17 +5215,47 @@ class PropertyEditor(QWidget):
         self.editor.mark_as_modified()
 
     def add_model_path_widget(self, layout, thing):
+        """Presets: the built-in models by name, and Browse... for any other.
+
+        A model that brings settings with it (``engine.prop_entity``'s
+        :func:`model_settings` -- the Ball, the numbered Ball, the Oil Barrel)
+        applies them when chosen either way, and the panel is rebuilt to show
+        them. Another model is listed by its file name.
+        """
         widget = QWidget()
         h = QHBoxLayout(widget)
         h.setContentsMargins(0, 0, 0, 0)
-        path_edit = QLineEdit(thing.properties.get('model_path', ''))
-        path_edit.setReadOnly(True)
-        btn = QPushButton("...")
-        btn.setFixedWidth(30)
+        combo = QComboBox()
+        combo.addItems(list(MODEL_PRESETS))
+        current = thing.properties.get('model_path', '') or ''
+        preset = model_preset_name(current) if current else 'Oil Barrel'
+        if preset is None:
+            combo.addItem(os.path.basename(current.replace('\\', '/')))
+            combo.setCurrentIndex(combo.count() - 1)
+        else:
+            combo.setCurrentText(preset)
+        combo.setToolTip(current or MODEL_PRESETS['Oil Barrel']['model_path'])
+        btn = QPushButton("Browse...")
+        btn.setToolTip("Load another model (.obj or .glb)")
 
-        def pick():
+        def choose(model_path):
+            settings = model_settings(model_path) or {'model_path': model_path}
+            settings['model_path'] = model_path
+            for key, value in settings.items():
+                self.update_object_prop(key, value)
+            # Scale, physics and the rest may have changed with the model:
+            # rebuild once this signal has returned.
+            QTimer.singleShot(0, lambda: self.current_object is thing
+                              and self.set_object(thing, force=True))
+
+        def on_preset(index):
+            name = combo.itemText(index)
+            if name in MODEL_PRESETS:
+                choose(MODEL_PRESETS[name]['model_path'])
+
+        def browse():
             fp, _ = QFileDialog.getOpenFileName(
-                self, "Select OBJ Model", "assets/models", "Model Files (*.obj *.glb)"
+                self, "Select Model", "assets/models", "Model Files (*.obj *.glb)"
             )
             if fp:
                 try:
@@ -5182,13 +5264,15 @@ class PropertyEditor(QWidget):
                     rel = fp
                 if not rel.startswith(".."):
                     rel = os.path.join("assets", rel) if not rel.startswith("assets") else rel
-                self.update_object_prop('model_path', rel)
-                path_edit.setText(rel)
+                choose(rel.replace("\\", "/"))
 
-        btn.clicked.connect(pick)
-        h.addWidget(path_edit)
+        combo.activated.connect(on_preset)
+        btn.clicked.connect(browse)
+        h.addWidget(combo, 1)
         h.addWidget(btn)
-        layout.addRow("Model Path:", widget)
+        layout.addRow("Presets:", widget)
+        self._widgets['prop_model_preset_combo'] = combo
+        self._widgets['prop_model_browse_button'] = btn
         return widget
 
     def add_vector3_widget(self, layout, thing, key):
@@ -5280,6 +5364,46 @@ class PropertyEditor(QWidget):
         update_swatch()
         h.addWidget(swatch)
         form_layout.addRow(label, widget)
+
+    def _add_tint_widget(self, form_layout, thing):
+        """A model's Tint: a swatch that multiplies the model's colour.
+
+        Stored as 0..1 floats; white (the default) leaves the model as it is.
+        """
+        widget = QWidget()
+        h = QHBoxLayout(widget)
+        h.setContentsMargins(0, 0, 0, 0)
+
+        def current():
+            tint = thing.properties.get('tint') or [1.0, 1.0, 1.0]
+            try:
+                rgb = [float(tint[0]), float(tint[1]), float(tint[2])]
+            except (TypeError, ValueError, IndexError):
+                return [1.0, 1.0, 1.0]
+            if any(c > 1.0 for c in rgb):
+                rgb = [c / 255.0 for c in rgb]
+            return rgb
+
+        def set_tint(rgb):
+            self.update_object_prop('tint', rgb)
+            self._update_color_button(swatch, rgb)
+
+        def pick():
+            r, g, b = (int(round(c * 255)) for c in current())
+            color = QColorDialog.getColor(QColor(r, g, b), self, "Choose Tint")
+            if color.isValid():
+                set_tint([color.redF(), color.greenF(), color.blueF()])
+
+        swatch = self._color_button(current(), pick, size=(140, 28))
+        swatch.setToolTip("Multiplies the model's colour. White leaves it as it is.")
+        reset = QPushButton("Reset")
+        reset.setToolTip("No tint (white)")
+        reset.clicked.connect(lambda: set_tint([1.0, 1.0, 1.0]))
+        h.addWidget(swatch)
+        h.addWidget(reset)
+        h.addStretch()
+        form_layout.addRow("Tint:", widget)
+        self._widgets['prop_tint_button'] = swatch
 
     def _on_prop_sprite_size_changed(self, thing, index, value):
         size = thing.properties.get('sprite_size', [32.0, 32.0])

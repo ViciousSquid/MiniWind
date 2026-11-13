@@ -30,7 +30,7 @@ import math
 import time
 from types import SimpleNamespace
 
-from PyQt5.QtCore import QPointF, QRectF, Qt
+from PyQt5.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import (QBrush, QColor, QConicalGradient, QImage, QLinearGradient,
                          QPainter, QPainterPath, QPen, QPixmap, QRadialGradient)
 
@@ -266,20 +266,28 @@ def _magical(c):
 
 
 def _draw_bars(p, f, c):
+    # Each fill from its whole-pixel width (:func:`_fill_px`), the value the
+    # frame's cache is keyed on, so a cached frame is the one a fresh paint gives.
     rects = dict(f.bars)
-    _bar(p, rects["health"], c.health / c.max_health if c.max_health else 0.0,
+
+    def shown(name, value, maximum):
+        rect = rects[name]
+        return _fill_px(rect, value, maximum) / rect.width() if rect.width() else 0.0
+
+    _bar(p, rects["health"], shown("health", c.health, c.max_health),
          _FILLS["health"], value=f"{int(c.health)} / {int(c.max_health)}")
     _stamina_line(p, rects["stamina"], rects["health"],
-                  c.stamina / c.max_stamina if c.max_stamina else 0.0)
+                  shown("stamina", c.stamina, c.max_stamina))
     if "magicka" in rects:
         # Too slim for numbers; the fill says it.
-        _bar(p, rects["magicka"], c.magicka / c.max_magicka if c.max_magicka else 0.0,
+        _bar(p, rects["magicka"], shown("magicka", c.magicka, c.max_magicka),
              _FILLS["magicka"])
 
 
 def _draw_identity(p, f, c):
     """Level, race and class, gold, and the level-up prompt, under the bars."""
-    from ..rpg import classes, races
+    import game.rpg.classes as classes
+    import game.rpg.races as races
     y = f.text_y
     # Clear of the ring at this height: without a magicka bar the text sits
     # higher, where the ring reaches further right.
@@ -298,30 +306,67 @@ def _draw_identity(p, f, c):
 
 # ------------------------------------------------------------------- entry
 
+#: The frame's two cached pictures (game/ui/paint_cache.py): what lies under
+#: the minimap (the fins, the bars, the map's well) and what lies over it (the
+#: ring, the identity text). Only the map and the north marker are live.
+_UNDER = None
+_OVER = None
+
+
+def _fill_px(rect, value, maximum):
+    """A bar's fill as it shows: whole pixels of its width."""
+    frac = value / maximum if maximum else 0.0
+    return int(round(max(0.0, min(1.0, frac)) * rect.width()))
+
+
 def draw(painter, session, c, width, height):
     """Paint the whole frame, the minimap inside its ring included."""
+    global _UNDER, _OVER
+    from .paint_cache import PaintCache
+    if _UNDER is None:
+        _UNDER, _OVER = PaintCache(), PaintCache()
     f = layout(width, height, magical=_magical(c))
     device = painter.device()
     dpr = float(device.devicePixelRatioF()) if device is not None else 1.0
-    back, ring = _layers(f, dpr)
-    painter.save()
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-    painter.drawPixmap(0, 0, back)
-    _draw_bars(painter, f, c)
-    # The well the map sits in. The bars run in behind the ring, so this is
-    # what keeps their ends out of the circle when there is no map to cover
-    # them (outside Play, or before the map picture is ready).
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(14, 18, 16))
-    painter.drawEllipse(QPointF(f.cx, f.cy), f.r + 1.0, f.r + 1.0)
-    painter.restore()
+    rects = dict(f.bars)
+    # Room for the fins and ring, the bars, and the identity lines beside
+    # the ring (level, race and class, gold, the level-up prompt).
+    right = max([f.cx + 2.0 * f.R] + [r.right() for r in rects.values()])
+    region = QRect(0, 0, int(math.ceil(right)) + 280,
+                   int(math.ceil(max(f.cy + 1.7 * f.R, f.text_y + 48.0))) + 4)
+    under_key = (round(f.R, 1), "magicka" in rects,
+                 _fill_px(rects["health"], c.health, c.max_health),
+                 int(c.health), int(c.max_health),
+                 _fill_px(rects["stamina"], c.stamina, c.max_stamina),
+                 _fill_px(rects["magicka"], c.magicka, c.max_magicka)
+                 if "magicka" in rects else None)
 
-    from . import worldmap
+    def paint_under(p):
+        back, _ring = _layers(f, dpr)
+        p.drawPixmap(0, 0, back)
+        _draw_bars(p, f, c)
+        # The well the map sits in. The bars run in behind the ring, so this
+        # is what keeps their ends out of the circle when there is no map to
+        # cover them (outside Play, or before the map picture is ready).
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(14, 18, 16))
+        p.drawEllipse(QPointF(f.cx, f.cy), f.r + 1.0, f.r + 1.0)
+
+    _UNDER.draw(painter, under_key, region, paint_under)
+
+    import game.ui.worldmap as worldmap
     worldmap.draw_minimap(painter, session, None, width, height)
 
+    over_key = (round(f.R, 1), "magicka" in rects, c.level, c.race_id, c.class_id,
+                c.gold, bool(c.can_level_up))
+
+    def paint_over(p):
+        _back, ring = _layers(f, dpr)
+        p.drawPixmap(0, 0, ring)
+        _draw_identity(p, f, c)
+
+    _OVER.draw(painter, over_key, region, paint_over)
     painter.save()
-    painter.drawPixmap(0, 0, ring)
+    painter.setRenderHint(QPainter.Antialiasing, True)
     _paint_north(painter, f, _north_rotation(session, worldmap.minimap_rotation(session)))
-    _draw_identity(painter, f, c)
     painter.restore()

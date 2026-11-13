@@ -6,6 +6,7 @@ its subfolders. Double-clicking a sound gives it to the selected Speakers.
 """
 
 import os
+import zipfile
 
 import pytest
 
@@ -138,14 +139,153 @@ def test_the_game_view_loads_a_speakers_music(main_window, project, monkeypatch)
     view = main_window.view_3d
     loaded = {}
     monkeypatch.chdir(project)
-    monkeypatch.setattr(view, "_ensure_pygame_mixer", lambda: True)
+    monkeypatch.setattr(view.audio, "_ensure_pygame_mixer", lambda: True)
 
     def load(name, path):
         loaded[name] = path
-        view.sound_pool[name] = object()
+        view.audio.sound_pool[name] = object()
         return True
 
-    monkeypatch.setattr(view, "_load_sound_to_cache", load)
-    assert view._get_sound_instance("assets/music/act1/boss.mp3") is not None
+    monkeypatch.setattr(view.audio, "_load_sound_to_cache", load)
+    assert view.audio._get_sound_instance("assets/music/act1/boss.mp3") is not None
     assert loaded == {"assets/music/act1/boss.mp3":
                       os.path.realpath(project / "assets" / "music" / "act1" / "boss.mp3")}
+
+
+
+def test_audio_tab_lists_fiopak_members_and_keeps_project_relative_paths(
+        browser, project):
+    with zipfile.ZipFile(project / "assets" / "sounds.fiopak", "w") as archive:
+        archive.writestr("assets/sounds/beep.wav", b"wave")
+        archive.writestr("assets/sounds/ui/click.ogg", b"ogg")
+        archive.writestr("assets/music/theme.mp3", b"wrong archive root")
+
+    tab = browser.tab_audio
+    tab.load_directory(str(project / "assets" / "sounds"))
+
+    assert _names(tab) == ["beep.wav", "ui/click.ogg"]
+    assert not tab.tree_toggle_btn.isEnabled()
+    nested = next(item for item in tab.items if item.name_text == "ui/click.ogg")
+    tab.select_item(nested)
+    assert tab.selected_speaker_sound() == "assets/sounds/ui/click.ogg"
+
+
+def test_the_game_view_loads_a_speaker_music_member_from_music_fiopak(
+        main_window, project, monkeypatch):
+    view = main_window.view_3d
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(view.audio, "_ensure_pygame_mixer", lambda: True)
+    view.audio.sound_pool.clear()
+    loaded = {}
+
+    def load_bytes(names, data):
+        loaded[names[0]] = data
+        for name in names:
+            view.audio.sound_pool[name] = object()
+        return True
+
+    monkeypatch.setattr(view.audio, "_load_sound_bytes_to_cache", load_bytes)
+    with zipfile.ZipFile(project / "assets" / "music.fiopak", "w") as archive:
+        archive.writestr("assets/music/act1/boss.mp3", b"archive-music")
+        archive.writestr("assets/sounds/effect.wav", b"wrong archive root")
+
+    assert view.audio._get_sound_instance("assets/music/act1/boss.mp3") is not None
+    assert loaded == {"assets/music/act1/boss.mp3": b"archive-music"}
+
+
+def test_the_game_view_loads_a_sound_effect_from_sounds_fiopak(
+        main_window, project, monkeypatch):
+    view = main_window.view_3d
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(view.audio, "_ensure_pygame_mixer", lambda: True)
+    view.audio.sound_pool.clear()
+    loaded = {}
+
+    def load_bytes(names, data):
+        loaded.update({name: data for name in names})
+        for name in names:
+            view.audio.sound_pool[name] = object()
+        return True
+
+    monkeypatch.setattr(view.audio, "_load_sound_bytes_to_cache", load_bytes)
+    with zipfile.ZipFile(project / "assets" / "sounds.fiopak", "w") as archive:
+        archive.writestr("assets/sounds/shot.wav", b"archive-sound")
+        archive.writestr("assets/music/theme.mp3", b"wrong archive root")
+
+    assert view.audio._get_sound_instance("shot.wav") is not None
+    assert loaded == {
+        "shot.wav": b"archive-sound",
+        "assets/sounds/shot.wav": b"archive-sound",
+    }
+
+
+def test_preload_reuses_archive_skips_bad_sound_and_preserves_aliases(
+        main_window, project, monkeypatch):
+    from engine import audio_archives
+
+    view = main_window.view_3d
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(view.audio, '_ensure_pygame_mixer', lambda: True)
+    monkeypatch.setattr(audio_archives, 'MAX_AUDIO_BYTES', 8)
+    path = project / 'assets/sounds.fiopak'
+    with zipfile.ZipFile(path, 'w') as archive:
+        archive.writestr('assets/sounds/a-too-large.wav', b'x' * 9)
+        archive.writestr('assets/sounds/shot.wav', b'shot')
+        archive.writestr('assets/sounds/ui/click.ogg', b'click')
+        archive.writestr('assets/music/wrong.wav', b'wrong')
+    loaded = {}
+    opened = []
+    original = zipfile.ZipFile
+
+    def track(*args, **kwargs):
+        archive = original(*args, **kwargs)
+        opened.append(archive)
+        return archive
+
+    def load_bytes(names, data):
+        loaded.update({name: data for name in names})
+        return True
+
+    monkeypatch.setattr(audio_archives.zipfile, 'ZipFile', track)
+    monkeypatch.setattr(view.audio, '_load_sound_bytes_to_cache', load_bytes)
+    view.audio.preload_sounds()
+    assert loaded == {
+        'assets/sounds/shot.wav': b'shot', 'shot.wav': b'shot',
+        'assets/sounds/ui/click.ogg': b'click',
+    }
+    assert len(opened) == 1 and opened[0].fp is None
+
+
+def test_starting_the_view_decodes_only_large_sounds_and_those_in_the_background(
+        main_window, project, monkeypatch):
+    view = main_window.view_3d
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(view.audio, '_ensure_pygame_mixer', lambda: True)
+    monkeypatch.setattr(type(view.audio), 'BACKGROUND_DECODE_BYTES', 6)
+    with zipfile.ZipFile(project / 'assets/sounds.fiopak', 'w') as archive:
+        archive.writestr('assets/sounds/shot.wav', b'shot')
+        archive.writestr('assets/sounds/ambience.mp3', b'ambience')
+    from engine import view_audio
+    started = []
+    monkeypatch.setattr(view_audio, '_SHARED_SOUNDS', {})
+    monkeypatch.setattr(view_audio, '_DECODER', None)
+    monkeypatch.setattr('engine.view_audio.threading.Thread',
+                        lambda target, args, **kw: type('T', (), {
+                            'start': lambda self: started.append((target, args)),
+                            'is_alive': lambda self: False})())
+    view.audio.sound_pool.clear()
+    view.audio._init_sound_system()
+    assert view.audio.sound_pool == {}                     # nothing decoded here
+    (target, ((shared, pool), archive, only)), = started
+    assert pool is view.audio.sound_pool and only == {'assets/sounds/ambience.mp3'}
+    assert view not in (shared, pool, archive, only)       # nothing holds the view
+    monkeypatch.setattr(view_audio.pygame.mixer, 'get_init', lambda: True)
+    monkeypatch.setattr(view_audio.pygame.mixer, 'Sound', lambda file: ('sound', file.read()))
+    target((shared, pool), archive, only)                  # the background decode
+    want = {'assets/sounds/ambience.mp3': ('sound', b'ambience'),
+            'ambience.mp3': ('sound', b'ambience')}
+    assert pool == want and shared == want
+    # A later view takes the shared result and starts no second decode.
+    view.audio.sound_pool.clear()
+    view.audio._init_sound_system()
+    assert view.audio.sound_pool == want and len(started) == 1

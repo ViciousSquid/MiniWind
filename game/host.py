@@ -111,7 +111,7 @@ def _miniwind_kv_suggestions(store=None):
          "Session pacing snapshot and Studio lever edits. Use the storyteller console Studio to edit numeric levers; sensors and actor decisions remain simulation-owned."),
     ]
     try:
-        from . import data
+        import game.data as data
         quests = data.load("quests") or {}
         for qid in sorted(quests.keys()):
             out.append((f"Quest '{qid}' state", f"quest.{qid}.state", "active",
@@ -212,7 +212,7 @@ def _miniwind_inspection(entity, logic):
     turns its prioritised task list into a section of bars, the active task
     marked. Returns None on failure so Fio falls back to the property view."""
     try:
-        from . import mental_state
+        import game.mental_state as mental_state
         session = getattr(logic, "_miniwind", None)
         states = getattr(getattr(logic, "monster_ai", None), "monster_states", None)
         monster_state = states.get(id(entity), {}) if isinstance(states, dict) else {}
@@ -273,7 +273,7 @@ class MiniwindGame:
     def reset_progress(self, main_window) -> None:
         """Clear MiniWind's persisted progress (called by the editor's generic
         reset, e.g. the pause menu's New Game) and reset any live session."""
-        from . import integration as _integration
+        import game.integration as _integration
         _integration._clear_miniwind_progress(main_window)
 
     def register(self, api):
@@ -281,10 +281,10 @@ class MiniwindGame:
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
                                MiniwindTrigger, Spellbook,
                                SPELLBOOK_COVERS, Container, CONTAINER_KINDS)
-        from .rpg import bestiary
-        from .rpg import items as rpg_items
-        from .rpg import magic as rpg_magic
-        from .rpg import skills as sk
+        import game.rpg.bestiary as bestiary
+        import game.rpg.items as rpg_items
+        import game.rpg.magic as rpg_magic
+        import game.rpg.skills as sk
         api.register_entity(NPC, menu_label="NPC")
         api.register_entity(Creature, menu_label="Monster / Creature")
         api.register_entity(ItemPickup, menu_label="Item")
@@ -306,7 +306,7 @@ class MiniwindGame:
                             if item_def.category == rpg_items.WEAPON)
         light_ids = sorted(item_id for item_id, item_def in rpg_items.ITEMS.items()
                            if rpg_items.is_light_source(item_def))
-        from .rpg import magic as rpg_magic
+        import game.rpg.magic as rpg_magic
         spell_ids = sorted(rpg_magic.SPELLS)
         # The spells an actor holds in its hands (game/npc_magic.py): left
         # empty, it readies its own from the spells it knows.
@@ -659,7 +659,7 @@ class MiniwindGame:
         api.register_io("creature", **npc_io)
 
         try:
-            from . import editor_ui
+            import game.editor_ui as editor_ui
             # Appearance is a handful of fields about *this entity*, not a
             # workspace — it belongs with the rest of the properties rather
             # than costing a tab. Collapsed by default: it is set once and
@@ -675,7 +675,7 @@ class MiniwindGame:
             api.register_property_tab("Ties & Patrol", editor_ui.make_ties_tab, entity_type="npc")
             # The reactive simulation, exposed per entity: what this actor
             # knows, what it intends and *why* — live and editable during Play.
-            from . import sim_editor
+            import game.sim_editor as sim_editor
             api.register_property_tab("Simulation", sim_editor.make_simulation_tab,
                                       entity_type="npc")
             api.register_property_tab("Simulation", sim_editor.make_simulation_tab,
@@ -723,14 +723,14 @@ class MiniwindGame:
         # Console commands (diceroll / quest / sim) go through Fio's console
         # command surface rather than living in editor.console_commands.
         try:
-            from . import console as _console
+            import game.console as _console
             _console.register(api)
         except Exception as exc:
             print(f"[MiniWind] console command registration failed: {exc}")
 
     # --------------------------------------------------------- runtime I/O
     def register_runtime(self, api):
-        from .rpg import inventory as inv
+        import game.rpg.inventory as inv
 
         def _start_dialogue(entity, param, logic):
             session = getattr(logic, "_miniwind", None)
@@ -744,7 +744,7 @@ class MiniwindGame:
             item_id = parts[0].strip()
             qty = int(parts[1]) if len(parts) > 1 and parts[1].strip().isdigit() else 1
             if item_id:
-                from .rpg import items as rpg_items
+                import game.rpg.items as rpg_items
                 stack = rpg_items.make(item_id, qty) or inv.make_item(item_id, qty=qty)
                 inv.add_item(inv.get_inventory(entity), stack)
 
@@ -783,6 +783,8 @@ class MiniwindGame:
             if team:
                 entity.properties["faction"] = team
                 entity.properties["team"] = team
+                from engine.change_journal import touch
+                touch(entity)
 
         def _start_quest(entity, param, logic):
             session = getattr(logic, "_miniwind", None)
@@ -832,9 +834,9 @@ class MiniwindGame:
         gore = getattr(session, "gore", None)
         if (gore is not None and not getattr(session, "needs_char_creation", False)
                 and getattr(session, "open_screen", None) != "charcreate"):
-            from .ui import blood_gl
+            import game.ui.blood_gl as blood_gl
             blood_gl.draw_decals(projection, view, gore.floor_decals())
-        from .ui import world_objects
+        import game.ui.world_objects as world_objects
         world_objects.draw(projection, view, world_objects.visible(session))
 
     def _on_post_scene(self, ev):
@@ -851,14 +853,14 @@ class MiniwindGame:
         fx = getattr(session, "magic_fx", None)
         lenses = ()
         if fx is not None:
-            from .ui import magic_gl
+            import game.ui.magic_gl as magic_gl
             coop=getattr(session,"coop",None)
             sprites, lenses, session._fx_tints = (getattr(coop,"remote_fx",None) or fx.frame()) if coop is not None and not coop.authority else fx.frame()
             magic_gl.draw_sprites(projection, view, sprites)
         arrows = getattr(session, "arrows_in_flight", ())
         paths = getattr(session, "arrow_paths", ())
         if arrows or paths:
-            from .ui import arrows as arrow_art
+            import game.ui.arrows as arrow_art
             if paths:
                 # Each loosed arrow's flight, a dark red dotted line fading out.
                 arrow_art.draw_paths(projection, view, paths)
@@ -881,6 +883,8 @@ class MiniwindGame:
         host = getattr(self, "_host", None)
         globals_store = host.globals if host is not None else None
         fio.set_camera_mode(logic, PLAY_CAMERA)
+        from . import meadow
+        meadow.apply(fio.terrain(logic))      # the odd tuft about the land
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
         if party_lobby is not None:
@@ -898,13 +902,14 @@ class MiniwindGame:
             fio.set_world_paused(logic, SCREEN_PAUSE, True)
         logic._miniwind = session
         logic.game_session = session
-        from .ui import magic_overlay
+        import game.ui.magic_overlay as magic_overlay
         magic_overlay.prepare()
         # The player's own key bindings (pause menu -> Options -> Key bindings).
-        from . import keybinds, runtime
+        import game.keybinds as keybinds
+        import game.runtime as runtime
         keybinds.apply(runtime._editor_config)
         self._prev_keys = frozenset()
-        from . import music
+        import game.music as music
         # A cave has its own music (game/music.py).
         music.PLAYER.set_place(music.CAVE if session.underground else music.WORLD)
         if music.PLAYER.configured:
@@ -918,7 +923,7 @@ class MiniwindGame:
 
 
     def on_play_stop(self, logic):
-        from . import music
+        import game.music as music
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
@@ -946,10 +951,10 @@ class MiniwindGame:
         if coop is not None:
             coop.tick(ctx)
             return
-        from . import music
+        import game.music as music
         music.PLAYER.poll()
         # Walking brings a camera an inspector link sent away back home.
-        from .ui import inspector
+        import game.ui.inspector as inspector
         inspector.cancel_focus_on_move(logic, ctx)
 
         just = self._just_pressed(ctx)
@@ -991,7 +996,7 @@ class MiniwindGame:
                 session.persist()
                 return
             # Clicks on the open menu, queued by the UI thread (game/ui/hits).
-            from .ui import hits
+            import game.ui.hits as hits
             hits.run_clicks(session)
             menu_just = just
             if getattr(self, "_suppress_interact", False):
@@ -1014,7 +1019,7 @@ class MiniwindGame:
         moving = moving or getattr(fio.player_runtime(logic), "pad_moving", False)
         session.sprint_held = bool(down) and down("shift") and moving
         session.tick(ctx.delta)
-        from .ui import hits
+        import game.ui.hits as hits
         hits.run_clicks(session)
         if was_lockpicking or session.open_screen == "lockpicking":
             if session.open_screen == "lockpicking":
@@ -1113,7 +1118,7 @@ class MiniwindGame:
             session.open_screen = "levelup"
 
     def _handle_screen_input(self, session, just, ctx):
-        from .ui import screens
+        import game.ui.screens as screens
         if session.open_screen in screens.STATISTICS_SCREENS:
             # Select another tab without replacing the window. Pressing the
             # current tab's shortcut again closes it, as before.
@@ -1155,7 +1160,7 @@ class MiniwindGame:
     def _handle_interaction(self, logic, ctx, session, just=frozenset()):
         session.interact_prompt = ""
         if getattr(session, "spell_aiming", False):
-            from .rpg import magic as rpg_magic
+            import game.rpg.magic as rpg_magic
             spell = rpg_magic.get(session.game.character.active_spell or "")
             name = spell.name if spell is not None else "the spell"
             session.interact_prompt = (f"{controls.label('click')} to cast {name}  ·  "
@@ -1255,7 +1260,7 @@ class MiniwindGame:
                     "duration": DICE_DISPLAY_DURATION,
                 }
                 try:
-                    from .ui import hud
+                    import game.ui.hud as hud
                     hud.draw_dice_preview(
                         painter, animation, ev.get("width", 0), ev.get("height", 0))
                 except Exception:
@@ -1271,7 +1276,7 @@ class MiniwindGame:
                         pass
             return
         session = getattr(logic, "_miniwind", None)
-        from .ui import hits
+        import game.ui.hits as hits
         if session is None:
             hits.clear()
             return
@@ -1290,7 +1295,7 @@ class MiniwindGame:
                             window.active=False
                             manager.remove(window)
                             setattr(previous,name,None)
-                from .ui import drag
+                import game.ui.drag as drag
                 drag.unpick()
             coop._painted_ui=session
         painter = ev.get("painter")
@@ -1307,7 +1312,9 @@ class MiniwindGame:
                 pass
         w, h = ev.get("width", 0), ev.get("height", 0)
         try:
-            from .ui import hud, dialogue_ui, screens
+            import game.ui.hud as hud
+            import game.ui.dialogue_ui as dialogue_ui
+            import game.ui.screens as screens
             # Present dialogue and menu screens as draggable,
             # collapsible, closable floating windows.
             # floating windows through the viewport's WindowManager (same chrome
@@ -1336,19 +1343,21 @@ class MiniwindGame:
                 hud.draw_time_tint(painter, session, w, h, viewport)
                 # Magic's screen washes (a resurrection's dark red, a frost
                 # hit's rime) over the world, under the HUD.
-                from .ui import magic_overlay
+                import game.ui.magic_overlay as magic_overlay
                 magic_overlay.draw(painter, getattr(session, "_fx_tints", ()), w, h,
                                    time.perf_counter())
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
-                from .ui import inspector, nav_debug, path_debug
+                import game.ui.inspector as inspector
+                import game.ui.nav_debug as nav_debug
+                import game.ui.path_debug as path_debug
                 inspector.draw_world_lines(painter, viewport, w, h)
                 path_debug.draw(painter, session, viewport, w, h)   # console 'paths'
                 nav_debug.draw(painter, session, viewport, w, h)    # console 'shownav'
                 # The world's map picture for the minimap, which the HUD's
                 # status frame draws (painted once, in the background, then
                 # cached per map).
-                from .ui import worldmap
+                import game.ui.worldmap as worldmap
                 # World/terrain changes and map reloads must invalidate the
                 # same artwork used by the minimap and the pause menu map.
                 # Do not stat the large world file on every paint frame.
@@ -1362,7 +1371,7 @@ class MiniwindGame:
                 hud.draw(painter, session, w, h)
                 painter.translate(-jolt[0], -jolt[1])
                 if getattr(session, "spell_aiming", False):
-                    from .rpg import magic as rpg_magic
+                    import game.rpg.magic as rpg_magic
                     spell = rpg_magic.get(session.game.character.active_spell or "")
                     magic_overlay.draw_aim(painter, hits.pointer,
                                            spell.color if spell else (200, 200, 255),
@@ -1393,14 +1402,14 @@ class MiniwindGame:
                 if session.open_screen is not None:
                     screens.draw(painter, session, w, h)
             if session.game.character.is_dead and getattr(session, "coop", None) is None:
-                from .ui import death_screen
+                import game.ui.death_screen as death_screen
                 death_screen.draw(painter, viewport, w, h)
             # The fade-to-black transition (e.g. paying off a bounty) sits on
             # top of everything else, including dialogue and the death screen.
             hud.draw_fade(painter, session, w, h)
             # Keep painting while something on a menu is moving (the view
             # otherwise repaints only for new world frames).
-            from .ui import trade_anim
+            import game.ui.trade_anim as trade_anim
             if viewport is not None and session.open_screen == "trade" \
                     and trade_anim.active():
                 viewport.update()
@@ -1429,7 +1438,7 @@ class MiniwindGame:
             # not dismiss a failed commit as if a valid player existed: the
             # original window will be removed by the window manager, so clear
             # its cached reference to allow a fresh window on the next paint.
-            from .ui import screens as _screens
+            import game.ui.screens as _screens
             try:
                 _screens._finish_charcreate(session)
             except Exception:
@@ -1438,7 +1447,7 @@ class MiniwindGame:
                 raise
             return
         if screen == "trade":
-            from .ui import screens as _screens
+            import game.ui.screens as _screens
             _screens.close_trade(session)
             return
         if screen == "container":
@@ -1527,7 +1536,7 @@ class MiniwindGame:
             return
         try:
             from .ui.inventory_strip import InventoryStrip
-            from .ui import drag
+            import game.ui.drag as drag
         except Exception:
             return
         for existing in list(wm.windows):
@@ -1558,7 +1567,7 @@ class MiniwindGame:
         """The HUD's ▼ / ▲ buttons and rearrange mode (game/ui/hud_layout.py):
         a window over all the others in free play, holding the world paused
         while the player rearranges."""
-        from .ui import hud_layout
+        import game.ui.hud_layout as hud_layout
         if not getattr(session, "_hud_seen", False):
             session._hud_seen = True
             hud_layout.arranging = False       # a new session never opens rearranging
@@ -1603,7 +1612,9 @@ class MiniwindGame:
             return False
         try:
             from engine.floating_windows import CallbackWindow
-            from .ui import dialogue_ui, hits, screens
+            import game.ui.dialogue_ui as dialogue_ui
+            import game.ui.hits as hits
+            import game.ui.screens as screens
         except Exception:
             return False
 
@@ -1624,7 +1635,7 @@ class MiniwindGame:
         # Tear down when nothing should show or the popup changed identity.
         if cur is not None and (key is None or key != cur_key):
             cur.active = False
-            from .ui import drag
+            import game.ui.drag as drag
             drag.forget(cur)
             try:
                 wm.remove(cur)
@@ -1714,7 +1725,7 @@ class MiniwindGame:
                 win.session = session
             # The title bar in the game's medieval face, not the chrome's Arial.
             try:
-                from .ui import fonts as _fonts
+                import game.ui.fonts as _fonts
                 win.title_font = _fonts.dialogue_font_px(13)
             except Exception:
                 pass

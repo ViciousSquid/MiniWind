@@ -54,17 +54,22 @@ def install() -> None:
     here must never stop the editor from starting.
     """
     global _installed
-    if _installed:
-        return
-    _installed = True
+    import game.facing as _facing
+    _facing.install()            # MiniWind's actors swing round, never snap
+    # Registration is the manager's (idempotent, and undone between tests by
+    # the suite): made whenever it is missing. The editor integration below
+    # patches classes, so it is applied once.
     try:
         from plugins.manager import get_manager
         get_manager().register_builtin_game(_game_host())
     except Exception as exc:  # pragma: no cover - defensive
         print(f"[MiniWind] game host registration skipped: {exc}")
         return
+    if _installed:
+        return
+    _installed = True
     try:
-        from . import integration as _integration
+        import game.integration as _integration
         _integration.apply()
     except Exception as exc:  # pragma: no cover - editor/PyQt may be absent
         print(f"[MiniWind] editor integration skipped: {exc}")

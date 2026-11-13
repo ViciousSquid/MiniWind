@@ -476,7 +476,7 @@ class DungeonDesigner(QDialog):
 
 def _monster_roles():
     try:
-        from ..rpg import bestiary
+        import game.rpg.bestiary as bestiary
         roles = [r for r in bestiary.roles_of_kind("creature")
                  if getattr(bestiary.get(r), "aggression", "") == "hostile"]
         if roles:

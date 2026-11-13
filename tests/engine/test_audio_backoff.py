@@ -35,10 +35,13 @@ def test_a_failed_mixer_is_not_reprobed_on_every_sound(main_window, qt_app, monk
     clock = [100.0]
     # Patching the shared time module also rewinds the real logic thread's
     # scheduler and can leave it sleeping past Stop. Only the view uses this clock.
-    monkeypatch.setattr(qt_game_view, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
+    # The mixer probe lives in engine.view_audio (Fio 3.5 split it out of the
+    # view): swap that module's clock, not the shared time module.
+    from engine import view_audio
+    monkeypatch.setattr(view_audio, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
     view = qt_game_view.QtGameView(main_window)
     try:
-        ensure = view._ensure_pygame_mixer
+        ensure = view.audio._ensure_pygame_mixer
 
         # Construction performs the first real mixer probe. Repeated sound
         # requests must not probe again until the retry window expires.
@@ -51,7 +54,7 @@ def test_a_failed_mixer_is_not_reprobed_on_every_sound(main_window, qt_app, monk
             assert ensure() is False
         assert mixer.attempts == 2
 
-        clock[0] += view.MIXER_RETRY_SECONDS
+        clock[0] += view.audio.MIXER_RETRY_SECONDS
         assert ensure() is False
         assert mixer.attempts == 3, "a device connected later would never be found"
     finally:

@@ -51,7 +51,7 @@ class LoadoutWindow(FloatingWindow):
         self.tab = "inventory"          # 'inventory' | 'spells'
         self._tab_rects = []            # [(QRect, tab_name)]
         self._row_rects = []            # [(QRect, kind, id)]
-        from . import fonts
+        import game.ui.fonts as fonts
         self.body_font = fonts.dialogue_font(10)
         self.small_font = fonts.dialogue_font(9)
         self.title_font = fonts.dialogue_font(11)
@@ -83,7 +83,7 @@ class LoadoutWindow(FloatingWindow):
         if c is None:
             return []
         try:
-            from ..rpg import magic
+            import game.rpg.magic as magic
         except Exception:
             return []
         out = []
@@ -98,7 +98,7 @@ class LoadoutWindow(FloatingWindow):
         if c is None:
             return None
         try:
-            from ..rpg import equipment as eq
+            import game.rpg.equipment as eq
             return eq.equipped_id(c, "weapon")
         except Exception:
             return None
@@ -113,7 +113,7 @@ class LoadoutWindow(FloatingWindow):
             return self._icon_cache[iid]
         pm = None
         try:
-            from .. import item_icons
+            import game.item_icons as item_icons
             pm = item_icons.icon_pixmap(iid, stack, self.ICON)
         except Exception:
             pm = None
@@ -185,7 +185,7 @@ class LoadoutWindow(FloatingWindow):
             dmg = stack.get("damage")
             if dmg is None:
                 try:
-                    from ..rpg import items as itemdb
+                    import game.rpg.items as itemdb
                     d = itemdb.get(iid)
                     dmg = d.get("damage") if d else None
                 except Exception:
@@ -256,7 +256,7 @@ class LoadoutWindow(FloatingWindow):
         if c is None:
             return
         try:
-            from ..rpg import equipment as eq
+            import game.rpg.equipment as eq
             if eq.equipped_id(c, "weapon") == item_id:
                 eq.unequip(c, "weapon")            # toggle off -> unarmed
                 self.session.notify("Unarmed")
@@ -272,7 +272,7 @@ class LoadoutWindow(FloatingWindow):
             return
         c.active_spell = spell_id
         try:
-            from ..rpg import equipment as eq
+            import game.rpg.equipment as eq
             eq._refresh_weapon_kind(c)
         except Exception:
             pass
@@ -283,7 +283,7 @@ class LoadoutWindow(FloatingWindow):
 
     def _name_of(self, item_id):
         try:
-            from ..rpg import items as itemdb
+            import game.rpg.items as itemdb
             d = itemdb.get(item_id)
             return d.name if d else item_id
         except Exception:
@@ -291,7 +291,7 @@ class LoadoutWindow(FloatingWindow):
 
     def _name_of_spell(self, spell_id):
         try:
-            from ..rpg import magic
+            import game.rpg.magic as magic
             sp = magic.get(spell_id)
             return sp.name if sp else spell_id
         except Exception:

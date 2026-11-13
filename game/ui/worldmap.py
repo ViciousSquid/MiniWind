@@ -400,13 +400,19 @@ def minimap_rect(width, height):
 
 
 def _relation_colour(session, thing):
-    from PyQt5.QtGui import QColor
     props = getattr(thing, "properties", {}) or {}
-    if str(props.get("aggression", "")).lower() == "hostile":
+    return _team_colour(str(props.get("aggression", "")).lower() == "hostile",
+                        props.get("team") or props.get("faction") or "")
+
+
+def _team_colour(aggressive, team):
+    """A minimap dot's colour from what decides it: an actor's aggression and
+    its team's standing with the player."""
+    from PyQt5.QtGui import QColor
+    if aggressive:
         return QColor(225, 70, 60)
     try:
-        from ..rpg import factions
-        team = props.get("team") or props.get("faction") or ""
+        import game.rpg.factions as factions
         if factions.is_hostile("player", team):
             return QColor(225, 70, 60)
         if factions.is_friendly("player", team):
@@ -425,20 +431,102 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     """Paint the round minimap (see the module docstring).
 
     Only the disc: the ring round it, and its north mark, belong to the frame,
-    which draws them over the map's edge."""
-    from PyQt5.QtCore import QPointF, QRectF, Qt
-    from PyQt5.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
-    from . import theme as T
-
+    which draws them over the map's edge. Painted again only when what it
+    shows moves by a pixel or changes (game/ui/paint_cache.py): standing
+    still, or paused, it is one cached picture."""
+    from PyQt5.QtCore import QRect
     world = world or WORLD
     logic = getattr(session, "logic", None)
     player = fio.player(logic)
     if player is None:
         return
     x0, y0, size = minimap_rect(width, height)
+    scale = size / MINIMAP_SPAN
+    px, pz = float(player.pos[0]), float(player.pos[2])
+    import game.ui.daylight as daylight
+    inputs = dict(
+        world=world, player=player, width=width, height=height,
+        rotation=minimap_rotation(session),
+        night=daylight.map_night(session),
+        status=session.law_status() if hasattr(session, "law_status") else None,
+        witnesses=session.witness_markers() if hasattr(session, "witness_markers") else [],
+        here=session.waypoint() if hasattr(session, "waypoint") else None)
+    try:
+        inputs["actors"] = session._live_actors()
+    except Exception:
+        inputs["actors"] = []
+    try:
+        inputs["targets"] = session.quest_arrow_targets()
+    except Exception:
+        inputs["targets"] = []
+    reach2 = (MINIMAP_SPAN / 2.0) ** 2
+    dots = []
+    for thing in inputs["actors"]:
+        props = getattr(thing, "properties", {}) or {}
+        if props.get("dead") or props.get("hidden"):
+            continue
+        p = thing.pos
+        dx, dz = p[0] - px, p[2] - pz
+        if dx * dx + dz * dz > reach2:
+            continue
+        # In whole pixels on the same grid as the terrain (see below).
+        dots.append((round(p[0] * scale) - round(px * scale),
+                     round(p[2] * scale) - round(pz * scale), props.get("aggression"),
+                     props.get("team") or props.get("faction") or ""))
+    # The picture is painted from the same quantised values the key holds
+    # (whole screen pixels, quarter degrees), so a cached disc is exactly
+    # the disc a fresh paint would give.
+    qx, qz = round(px * scale), round(pz * scale)
+    qrot = round(math.degrees(inputs["rotation"]) * 4.0)
+    qangle = round(math.degrees(float(getattr(player, "angle", 0.0))))
+    night = inputs["night"]
+    if night is not None:
+        night = dict(night, hour=round(night["hour"], 2))
+    targets = [((round(t[0][0] * scale) / scale, 0.0, round(t[0][2] * scale) / scale),) + tuple(t[1:])
+               for t in inputs["targets"][:3]]
+    inputs.update(px=qx / scale, pz=qz / scale, rotation=math.radians(qrot / 4.0),
+                  angle=math.radians(qangle), dots=dots, night=night, targets=targets)
+    image = world.image() if world.ready else None
+    key = (width, height, qx, qz, qrot,
+           image.cacheKey() if image is not None else None, repr(world.bounds), world.cell,
+           bool(world.error), tuple(dots),
+           None if night is None else (night["hour"], repr(night["lights"])),
+           repr(inputs["status"]), repr(inputs["witnesses"]),
+           repr([(t[0][0], t[0][2]) for t in targets]), repr(inputs["here"]), qangle)
+    global _MINIMAP_CACHE
+    if _MINIMAP_CACHE is None:
+        from .paint_cache import PaintCache
+        _MINIMAP_CACHE = PaintCache()
+    region = QRect(int(x0) - 2, int(y0) - 2, int(math.ceil(size)) + 4, int(math.ceil(size)) + 4)
+    _MINIMAP_CACHE.draw(painter, key, region, lambda p: _paint_minimap(p, session, inputs),
+                        interval=(1.0 / MINIMAP_HZ) if MINIMAP_HZ else None,
+                        # Turning, or a new map picture, shows at once: the
+                        # north marker beside it is drawn live.
+                        urgent=(qrot, key[5], key[6], width, height))
+
+
+#: The minimap's cached picture (see draw_minimap).
+_MINIMAP_CACHE = None
+#: At most this many minimap repaints a second while what it shows changes
+#: (None: whenever it changes, up to every frame) -- walking and the dots;
+#: turning always repaints at once. Measured: a repaint is
+#: ~0.85 ms of the UI thread, and walking repaints it every frame; 30 halves
+#: that at 60 fps and does not show (docs/MIGRATION_FIO_3.5.md).
+MINIMAP_HZ = 30
+
+
+def _paint_minimap(painter, session, inputs):
+    """The minimap's disc, from *inputs* gathered by :func:`draw_minimap`."""
+    from PyQt5.QtCore import QPointF, QRectF, Qt
+    from PyQt5.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
+    import game.ui.theme as T
+
+    world = inputs["world"]
+    width, height = inputs["width"], inputs["height"]
+    x0, y0, size = minimap_rect(width, height)
     centre = QPointF(x0 + size / 2.0, y0 + size / 2.0)
     radius = size / 2.0
-    px, pz = float(player.pos[0]), float(player.pos[2])
+    px, pz = inputs["px"], inputs["pz"]    # snapped to the pixel grid
     scale = size / MINIMAP_SPAN            # screen px per world unit
 
     painter.save()
@@ -452,7 +540,7 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     # One transform rotates terrain, night lighting, actors, objectives,
     # waypoints and the player arrow together with the world camera.
     painter.translate(centre)
-    painter.rotate(math.degrees(minimap_rotation(session)))
+    painter.rotate(math.degrees(inputs["rotation"]))
     painter.translate(-centre)
 
     image = world.image() if world.ready else None
@@ -472,42 +560,38 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
 
     # Dark at night, like the world: the lamps glow through (game/ui/daylight).
     if image is not None:
-        from . import daylight
-        daylight.draw_map_night(painter, frame, daylight.map_night(session), to_screen,
+        import game.ui.daylight as daylight
+        daylight.draw_map_night(painter, frame, inputs["night"], to_screen,
                                 scale, player=(px, pz), key="minimap")
 
     # People and creatures nearby.
-    from . import law_marks
-    status = session.law_status() if hasattr(session, "law_status") else None
+    import game.ui.law_marks as law_marks
+    status = inputs["status"]
     law_marks.draw_search(painter, status, to_screen, scale)
-    reach2 = (MINIMAP_SPAN / 2.0) ** 2
-    try:
-        actors = session._live_actors()
-    except Exception:
-        actors = []
     painter.setPen(QPen(QColor(0, 0, 0, 160), 1))
-    for thing in actors:
-        props = getattr(thing, "properties", {}) or {}
-        if props.get("dead") or props.get("hidden"):
-            continue
-        dx, dz = thing.pos[0] - px, thing.pos[2] - pz
-        if dx * dx + dz * dz > reach2:
-            continue
-        painter.setBrush(QBrush(_relation_colour(session, thing)))
-        painter.drawEllipse(to_screen(thing.pos[0], thing.pos[2]), 3.2, 3.2)
+    # A dot's colour depends only on (aggression, team): decided once per
+    # pair this frame, not with two faction lookups per actor.
+    brushes = {}
+    current = None
+    for ox, oz, aggression, team in inputs["dots"]:
+        key = (aggression == "hostile" or str(aggression or "").lower() == "hostile", team)
+        brush = brushes.get(key)
+        if brush is None:
+            brush = brushes[key] = QBrush(_team_colour(*key))
+        if brush is not current:
+            painter.setBrush(brush)
+            current = brush
+        painter.drawEllipse(QPointF(centre.x() + ox, centre.y() + oz), 3.2, 3.2)
 
     # Actual living witnesses, derived from the same facts that drive reports.
-    witnesses = session.witness_markers() if hasattr(session, "witness_markers") else []
+    witnesses = inputs["witnesses"]
     for witness in witnesses:
         point = to_screen(witness["x"], witness["z"])
         if math.hypot(point.x() - centre.x(), point.y() - centre.y()) < radius - 10:
             law_marks.draw_witness(painter, point, witness, radius=5.0)
 
     # The tracked quest's target: a yellow diamond, held on the edge if far.
-    try:
-        targets = session.quest_arrow_targets()
-    except Exception:
-        targets = []
+    targets = inputs["targets"]
     for pos, _qid, _name in targets[:3]:
         p = to_screen(pos[0], pos[2])
         dx, dy = p.x() - centre.x(), p.y() - centre.y()
@@ -523,7 +607,7 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
         painter.drawPolygon(diamond)
 
     # The player's own waypoint (set on the map): an orange pin, likewise.
-    here = session.waypoint() if hasattr(session, "waypoint") else None
+    here = inputs["here"]
     if here is not None:
         p = to_screen(here[0], here[1])
         dx, dy = p.x() - centre.x(), p.y() - centre.y()
@@ -536,7 +620,7 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
         painter.drawEllipse(p, 5.5, 5.5)
 
     # The player: an arrow pointing the way they face, at the centre.
-    angle = float(getattr(player, "angle", 0.0))
+    angle = inputs["angle"]
     fx, fz = math.sin(angle), math.cos(angle)
     # Overhead north-up: screen x follows world x, screen y follows world z.
     tip = QPointF(centre.x() + fx * 9, centre.y() + fz * 9)
@@ -571,7 +655,7 @@ def map_features(session):
     if hasattr(session, "law_status"):
         out["law"] = session.law_status()
     try:
-        from . import daylight
+        import game.ui.daylight as daylight
         out["night"] = daylight.map_night(session)
     except Exception:
         out["night"] = None

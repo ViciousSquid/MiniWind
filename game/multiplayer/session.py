@@ -430,7 +430,6 @@ class CoopSession:
             dead=c.is_dead,
             hidden=not context.connected,
             inventory=[],
-            _facing=context.physics.angle,
             equipped_weapon=equipment.equipped_id(c, "weapon"),
             offhand_weapon=equipment.equipped_id(c, "shield"),
             handed=c.handed,
@@ -439,6 +438,8 @@ class CoopSession:
             _attack_anim=context.session._attack_anim_time,
             _offhand_anim=context.session._offhand_anim_time,
         )
+        from ..facing import set_heading
+        set_heading(actor, context.physics.angle)
         actor.pos = [
             float(context.physics.pos[0]),
             float(context.physics.pos[1]) + 64.0,
@@ -477,7 +478,7 @@ class CoopSession:
             self.input_queue.append((player_id, frame, tuple(actions)))
 
     def _keyboard(self, ctx):
-        from .. import keybinds
+        import game.keybinds as keybinds
 
         keyboard = next(
             (p for p in self.local_players if p.profile["device"] == "keyboard"), None
@@ -1023,7 +1024,7 @@ class CoopSession:
             else:
                 for player in self.players.values():
                     player.session.tick_ui(delta)
-            from ..ui import hits
+            import game.ui.hits as hits
 
             hits.run_clicks(self.ui_session)
             if self.lobby.errors:
@@ -1347,7 +1348,7 @@ class CoopSession:
             elif key in ("escape", "esc"):
                 session.open_screen = None
             else:
-                from ..ui import screens
+                import game.ui.screens as screens
 
                 screens.handle_key(session, key)
         elif action == "revive":
@@ -1769,7 +1770,7 @@ class CoopSession:
         ]
         if self._world_bindings is not None:
             self._world_bindings.close()
-        from ..ui import hits
+        import game.ui.hits as hits
 
         hits.clear()
         if not getattr(self.lobby, "travelling", False):

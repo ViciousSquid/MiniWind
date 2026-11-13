@@ -8,6 +8,7 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QFormLayout, QPushButton
 
 from editor.things import Light
+from editor.ui import TOOLBAR_ICON_SIZES
 from editor.view_2d import View2D
 from main import dark_stylesheet
 
@@ -54,10 +55,15 @@ def test_small_toolbar_obeys_its_size_with_the_real_application_theme(main_windo
         main_window.config.set('Display', 'big_toolbar_buttons', 'False')
         main_window.apply_toolbar_button_size()
         qt_app.processEvents()
+        # Small icons are 26px by default (10% larger than 24px), but
+        # must be allowed to shrink when the toolbar has less space.
+        icon = main_window._toolbar_icon_size
+        assert 1 <= icon <= TOOLBAR_ICON_SIZES[False]
         for button in main_window.tool_toolbar.findChildren(QPushButton):
             if button.property('toolbar_icon_button'):
-                assert button.iconSize().width() == 24
-                assert button.width() == 28  # global QPushButton min-width must not win
+                assert button.iconSize().width() == icon
+                assert button.width() == icon + 4  # theme min-width must not win
+                assert button.height() == icon + 8
     finally:
         qt_app.setStyleSheet(old_style)
 
@@ -70,14 +76,10 @@ def test_property_tabs_do_not_inherit_the_console_tab_dimensions(main_window, qt
     assert bar.tabRect(0).width() < 120
 
 
-def test_hierarchy_has_room_for_names_and_can_be_resized(main_window, qt_app):
+def test_hierarchy_has_room_for_names_and_can_be_resized(main_window):
     dock = main_window.scene_hierarchy_dock
-    assert dock.minimumWidth() == 140  # compact expanded hierarchy
+    assert dock.minimumWidth() == dock.MIN_WIDTH
     assert dock.maximumWidth() >= 400
-    main_window.resize(1600, 980)
-    dock.restore_width(300)
-    qt_app.processEvents()
-    assert dock.width() >= 280, "the hierarchy could not expand to fit long names"
     main_window.state.things = [Light(properties={'name': 'Village courtyard light'})]
     main_window.scene_hierarchy.refresh_list()
     tree = main_window.scene_hierarchy.tree

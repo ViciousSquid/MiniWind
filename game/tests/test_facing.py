@@ -1,25 +1,24 @@
 """
-Tests for the shared actor-heading module (:mod:`engine.facing`).
+Tests for MiniWind's actor heading (:mod:`game.facing`).
 
-Every system that moves an actor writes its heading through here, because the
-renderer reads exactly one property (``_facing``) to decide which way a head
-billboard, an overhead ground sprite and an equipped weapon point. These tests
-pin the convention (forward is ``(sin a, 0, cos a)``), the easing, the
-hold-your-heading rule for a stationary actor, and — the bug that started this —
-that the RPG runtime's NPC mover actually writes the property the renderer reads.
-
-Run:  python -m pytest engine/tests/test_facing.py -q
+An actor has one heading, its ``angle`` (degrees), written only through
+:mod:`engine.monster_facing`; the head billboard, the overhead weapon and the
+2D map all read it. These tests pin the convention (forward is
+``(sin a, 0, cos a)``), the easing, the hold-your-heading rule for a
+stationary actor, and that the RPG runtime's NPC mover turns its NPC.
 """
 
 from __future__ import annotations
 
 import math
-import os
-import sys
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from types import SimpleNamespace
 
 from .. import facing
+
+
+def actor(angle=None):
+    return SimpleNamespace(pos=[0.0, 0.0, 0.0],
+                           properties={} if angle is None else {"angle": angle})
 
 
 def test_heading_uses_the_engine_forward_convention():
@@ -30,49 +29,55 @@ def test_heading_uses_the_engine_forward_convention():
     assert math.isclose(facing.heading_from(-1.0, 0.0), -math.pi / 2)
 
 
-def test_first_heading_is_set_outright():
-    props = {}
-    facing.face_heading(props, 1.0, 0.0)
-    assert math.isclose(props[facing.FACING_KEY], math.pi / 2)
+def test_without_a_delta_the_heading_is_set_outright():
+    a = actor()
+    facing.face_heading(a, 1.0, 0.0)
+    assert math.isclose(a.properties["angle"], 90.0)
+    assert math.isclose(facing.heading(a), math.pi / 2)
 
 
 def test_a_turn_is_eased_over_time_not_snapped():
-    props = {facing.FACING_KEY: 0.0}
+    a = actor(0.0)
     # Ask for most of a half turn (not exactly pi, where either way round is
     # equally short and the direction is arbitrary).
-    facing.face_heading(props, -0.2, -1.0, delta=0.016)
-    turned = props[facing.FACING_KEY]
+    facing.face_heading(a, -0.2, -1.0, delta=0.016)
+    turned = facing.wrap_angle(facing.heading(a))
     step = facing.ACTOR_TURN_RATE * 0.016
     assert 0.0 < abs(turned) <= step + 1e-9   # it moved, but only one step
     assert abs(turned) < math.pi * 0.9        # nowhere near there yet
 
 
 def test_easing_takes_the_short_way_round():
-    # From just below +pi to just above -pi is a small turn, not a full lap.
-    props = {facing.FACING_KEY: math.pi - 0.05}
-    facing.face_heading(props, -0.05, -1.0, delta=0.016)
-    # Still near the far side of the circle, and it moved *up* toward +pi
-    # (wrapping) rather than unwinding the long way through zero.
-    assert abs(facing.wrap_angle(props[facing.FACING_KEY] - (math.pi - 0.05))) < 0.2
+    a = actor(math.degrees(math.pi - 0.05))
+    facing.face_heading(a, -0.05, -1.0, delta=0.016)
+    assert abs(facing.wrap_angle(facing.heading(a) - (math.pi - 0.05))) < 0.2
 
 
 def test_arriving_snaps_exactly_when_within_one_step():
-    props = {facing.FACING_KEY: 0.0}
-    facing.face_heading(props, 0.001, 1.0, delta=1.0)
-    assert math.isclose(props[facing.FACING_KEY], math.atan2(0.001, 1.0))
+    a = actor(0.0)
+    facing.face_heading(a, 0.001, 1.0, delta=1.0)
+    assert math.isclose(facing.heading(a), math.atan2(0.001, 1.0))
 
 
 def test_a_stationary_actor_holds_its_heading():
-    props = {facing.FACING_KEY: 1.25}
-    facing.face_heading(props, 0.0, 0.0, delta=0.016)
-    assert props[facing.FACING_KEY] == 1.25
+    a = actor(71.6)
+    facing.face_heading(a, 0.0, 0.0, delta=0.016)
+    assert a.properties["angle"] == 71.6
 
 
-def test_get_heading_falls_back_to_the_design_time_angle():
-    assert facing.get_heading({'angle': 0.75}) == 0.75
-    assert facing.get_heading({facing.FACING_KEY: 0.5, 'angle': 0.75}) == 0.5
-    assert facing.get_heading({}) == 0.0
-    assert facing.get_heading({facing.FACING_KEY: None, 'angle': None}) == 0.0
+def test_the_heading_is_the_design_time_angle_until_play_turns_it():
+    assert math.isclose(facing.heading(actor(90.0)), math.pi / 2)
+    assert facing.heading(actor()) == 0.0
+    assert facing.heading(actor(None)) == 0.0
+
+
+def test_install_makes_the_engine_ease_its_own_turns(monkeypatch):
+    from engine import monster_facing
+    monkeypatch.setattr(monster_facing, "TURN_RATE", None)
+    facing.install()
+    a = actor(0.0)
+    monster_facing.face_direction(a, (-0.2, 0.0, -1.0), 0.016)
+    assert abs(facing.wrap_angle(facing.heading(a))) <= facing.ACTOR_TURN_RATE * 0.016 + 1e-9
 
 
 class _NPC:
@@ -97,19 +102,17 @@ class _Walker:
     logic = None
 
 
-def test_runtime_npc_mover_writes_the_property_the_renderer_reads():
-    """The regression: schedule-driven NPCs used to write a bare ``angle``.
-
-    ``Monster.get_render_state`` snapshots ``_facing`` (and nothing else) as the
-    angle the 3D head billboard rotates by, so an NPC walked by the RPG runtime
-    slid around the world without ever turning.
-    """
+def test_runtime_npc_mover_turns_the_npc_it_walks():
+    """The regression: schedule-driven NPCs slid around without turning."""
     npc = _NPC()
     _Walker()._move(npc, 0.1)
 
     assert npc.pos[0] > 0.0                       # it walked
-    assert facing.FACING_KEY in npc.properties    # and it turned
-    assert math.isclose(npc.properties[facing.FACING_KEY], math.pi / 2, abs_tol=1e-6)
+    # ...and swung one eased step from its authored heading (0) toward +X.
+    assert math.isclose(facing.heading(npc), facing.ACTOR_TURN_RATE * 0.1, abs_tol=1e-6)
+    for _ in range(5):
+        _Walker()._move(npc, 0.1)
+    assert math.isclose(facing.heading(npc), math.pi / 2, abs_tol=1e-6)
 
 
 def test_a_fleeing_villager_runs_while_its_stamina_lasts():

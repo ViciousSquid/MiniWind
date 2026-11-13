@@ -11,7 +11,17 @@ def collision_brush(brush):
 
     if PARKED_HIDDEN_KEY not in brush:
         return brush
-    return dict(brush, hidden=authored_hidden(brush))
+    local = dict(brush, hidden=authored_hidden(brush))
+    if brush.get("is_mover") or brush.get("is_door"):
+        # Fio 3.5 keeps a door's or mover's live position out of the brush
+        # (its ``pos`` is where it was authored) and resolves it by the
+        # brush's identity, which a copy does not have: carry where it is now.
+        from engine import brush_placement
+
+        local["pos"] = list(brush_placement.placement(brush).centre)
+        for key in brush_placement.RUNTIME_CACHE_KEYS:
+            local.pop(key, None)
+    return local
 
 
 class CompanionCollisionGrid:

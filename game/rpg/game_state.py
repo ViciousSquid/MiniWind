@@ -37,7 +37,7 @@ from .character import Character
 from ..diceroll import CHECK_NOTATION, DiceRoller
 
 try:  # engine.gore is a tiny, Qt-free rule module; guard for non-engine contexts
-    from . import gore as _gore
+    import game.rpg.gore as _gore
 except Exception:  # pragma: no cover
     _gore = None
 
@@ -126,14 +126,14 @@ class GameState:
         char = Character.create(name, race_id, class_id, birthsign_id, gender, custom_class,
                                 rng=rng)
         if head:
-            from . import heads
+            import game.rpg.heads as heads
             char.head = heads.normalise(head)
         gs = cls(store, char, rng)
         gs.grant_starter_kit()
         return gs
 
     def grant_starter_kit(self) -> None:
-        from . import classes as cls
+        import game.rpg.classes as cls
         klass = cls.get(self.character.class_id)
         for iid, qty in STARTER_KITS.get(klass.specialisation, STARTER_KITS["Combat"]):
             stack = items.make(iid, qty)
@@ -536,7 +536,7 @@ class GameState:
         self.award_xp(getattr(q, "xp", 0))
         self.message(f"Quest complete: {q.name}")
         # Helping someone in need is a good deed (game.rpg.alignment).
-        from . import alignment
+        import game.rpg.alignment as alignment
         delta = alignment.player_deed(self.character, "quest")
         if delta:
             self.message(f"Alignment {delta:+.1f}: you helped someone in need.")
@@ -592,7 +592,7 @@ def _is_enemy(props: Dict) -> bool:
     temperament, or of a faction at war with the player."""
     if str(props.get("aggression", "")).lower() == "hostile":
         return True
-    from . import factions
+    import game.rpg.factions as factions
     team = props.get("faction") or props.get("team") or ""
     try:
         return bool(team) and factions.is_hostile("player", team)

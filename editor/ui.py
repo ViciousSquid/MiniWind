@@ -1,10 +1,11 @@
+from engine.asset_qt import load_icon
 import os
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QStatusBar, QToolBar,
     QLabel, QSpinBox, QComboBox, QAction, QMessageBox, QFrame,
     QDockWidget, QTabWidget, QPushButton, QActionGroup,
     QApplication, QSizePolicy, QInputDialog, QMenu,
-    QStyle, QStyleOptionButton, QCheckBox
+    QStyle, QStyleOptionButton
 )
 from PyQt5.QtCore import Qt, QSize, QByteArray, QRect
 from PyQt5.QtGui import QIcon, QKeySequence, QPainter
@@ -84,7 +85,9 @@ class RotatablePlayButton(QPushButton):
 
 #: Toolbar icon edge and Play button length, by Settings > Large Toolbar
 #: Buttons (``[Display] big_toolbar_buttons``).
-TOOLBAR_ICON_SIZES = {True: 45, False: 24}
+# Small: 24 * 1.10 = 26.4, rounded to a whole Qt logical pixel.
+# Both modes remain upper bounds in the adaptive toolbar fit.
+TOOLBAR_ICON_SIZES = {True: 40, False: 26}
 PLAY_BUTTON_LENGTHS = {True: 250, False: 110}
 
 
@@ -92,6 +95,31 @@ def toolbar_metrics(config):
     """``(icon size, Play button length)`` for the current setting."""
     big = config.getboolean('Display', 'big_toolbar_buttons', fallback=False)
     return TOOLBAR_ICON_SIZES[big], PLAY_BUTTON_LENGTHS[big]
+
+
+def fit_toolbar_metrics(config, available, buttons, separators, vertical=True,
+                        spacing=4, margin=2, handle=8, separator_extent=8):
+    """Fit *every* tool and Play into one toolbar row/column.
+
+    Large buttons are an upper bound, not a promise of 45-pixel icons on a
+    small screen. Reserve the Play button and Qt's own inter-item spacing
+    before dividing the remaining height between ordinary tool buttons.
+    The extra slack covers the frame and style-specific layout rounding.
+    """
+    preferred_icon, preferred_play = toolbar_metrics(config)
+    buttons = max(1, int(buttons))
+    separators = max(0, int(separators))
+    # Every button and separator has a gap after it (conservative by one).
+    overhead = (buttons + separators + 1) * max(0, spacing)
+    overhead += 2 * max(0, margin) + max(0, handle)
+    overhead += separators * max(0, separator_extent) + 24
+    budget = max(0, int(available) - overhead)
+    button_padding = 8 if vertical else 4
+    # Keep Play tall enough for its rotated icon and label on short screens.
+    play_floor = 80 if vertical else 90
+    icon = max(1, min(preferred_icon, (budget - play_floor) // buttons - button_padding))
+    play_length = max(32, min(preferred_play, budget - buttons * (icon + button_padding)))
+    return icon, play_length
 
 
 #: Bumped whenever the default dock arrangement changes.  A layout saved by
@@ -460,7 +488,7 @@ class Ui_MainWindow(object):
         # DEFINED BEFORE create_toolbars so it can be used there
         self.action_asset_browser = QAction(MainWindow)
         self.action_asset_browser.setObjectName("action_asset_browser")
-        self.action_asset_browser.setIcon(QIcon("assets/browser.png"))
+        self.action_asset_browser.setIcon(load_icon("assets/browser.png"))
         self.action_asset_browser.setText("Asset Browser")
         self.action_asset_browser.setToolTip("Toggle Asset Browser")
         
@@ -478,11 +506,11 @@ class Ui_MainWindow(object):
 
     def create_menu_bar(self, MainWindow):
         menubar = MainWindow.menuBar()
+        # Only style the menu-bar titles here. QMenu item styling belongs
+        # exclusively to the application stylesheet: applying both local and
+        # global rules to popups can leave stale selection paint on macOS.
         menubar.setStyleSheet("""
             QMenuBar::item:selected {
-                background-color: #F08000;
-            }
-            QMenu::item:selected {
                 background-color: #F08000;
             }
         """)
@@ -509,14 +537,14 @@ class Ui_MainWindow(object):
         MainWindow.file_menu.addSeparator()
         MainWindow.file_menu.addAction(QAction('Exit', MainWindow, shortcut='Ctrl+Q', triggered=MainWindow.close))
 
-        MainWindow.undo_action = QAction(QIcon("assets/b_undo.png"), 'Undo', MainWindow)
+        MainWindow.undo_action = QAction(load_icon("assets/b_undo.png"), 'Undo', MainWindow)
         MainWindow.undo_action.setShortcut('Ctrl+Z')
         MainWindow.undo_action.setObjectName('undo_action')
         MainWindow.undo_action.setToolTip("Undo last action")
         MainWindow.undo_action.triggered.connect(MainWindow.undo)
         edit_menu.addAction(MainWindow.undo_action)
         
-        MainWindow.redo_action = QAction(QIcon("assets/b_redo.png"), 'Redo', MainWindow)
+        MainWindow.redo_action = QAction(load_icon("assets/b_redo.png"), 'Redo', MainWindow)
         MainWindow.redo_action.setShortcut('Ctrl+Y')
         MainWindow.redo_action.setObjectName('redo_action')
         MainWindow.redo_action.setToolTip("Redo last action")
@@ -536,15 +564,16 @@ class Ui_MainWindow(object):
         edit_menu.addAction(MainWindow.paste_action)
 
         edit_menu.addSeparator()
-        edit_menu.addAction(QAction('Hide Brush', MainWindow, shortcut='H', triggered=MainWindow.hide_selected_brush))
-        edit_menu.addAction(QAction('Unhide All Brushes', MainWindow, shortcut='Shift+H', triggered=MainWindow.unhide_all_brushes))
+        edit_menu.addAction(QAction('Hide Selected', MainWindow, shortcut='H', triggered=MainWindow.hide_selected_brush))
+        edit_menu.addAction(QAction('Unhide All', MainWindow, shortcut='Shift+H', triggered=MainWindow.unhide_all_brushes))
 
         edit_menu.addSeparator()
-        grid_colours_action = QAction('Grid colours…', MainWindow)
-        grid_colours_action.setToolTip("Customise grid line colours")
-        grid_colours_action.triggered.connect(MainWindow.open_grid_colours_dialog)
-        edit_menu.addAction(grid_colours_action)
-        MainWindow.grid_colours_action = grid_colours_action
+        colours_action = QAction('Colours…', MainWindow)
+        colours_action.setToolTip("Customise the grid's colours and the floating windows' "
+                                  "(SysMon, the pause menu)")
+        colours_action.triggered.connect(MainWindow.open_colours_dialog)
+        edit_menu.addAction(colours_action)
+        MainWindow.colours_action = colours_action
 
         # --- Select menu: component modes + Radiant-style area selections ---
         MainWindow.component_mode_actions = {}
@@ -663,6 +692,17 @@ class Ui_MainWindow(object):
             MainWindow.set_connection_links_enabled)
         view_menu.addAction(MainWindow.connection_links_action)
 
+        MainWindow.show_whole_world_action = QAction(
+            'Show whole world', MainWindow, checkable=True)
+        MainWindow.show_whole_world_action.setChecked(
+            MainWindow.config.getboolean('Display', 'show_whole_world', fallback=True))
+        MainWindow.show_whole_world_action.setToolTip(
+            "Big World maps: load every editor cell. Clear to stream cells "
+            "around the 3D camera.")
+        MainWindow.show_whole_world_action.triggered.connect(
+            MainWindow.set_show_whole_world)
+        view_menu.addAction(MainWindow.show_whole_world_action)
+
         view_menu.addSeparator()
         MainWindow.save_layout_action = QAction("Save Layout", MainWindow)
         MainWindow.save_layout_action.triggered.connect(MainWindow.save_layout)
@@ -751,6 +791,12 @@ class Ui_MainWindow(object):
         MainWindow.tools_menu.addSeparator()
         MainWindow.tools_menu.addAction(MainWindow.terrain_action)
         MainWindow.tools_menu.addAction(MainWindow.procedural_action)
+        MainWindow.decal_tool_action = QAction('Decal Tool', MainWindow, checkable=True)
+        MainWindow.decal_tool_action.setToolTip(
+            'Place decals from textures/decals on any surface in the 3D view; '
+            'Shift-click to select, drag or nudge them (as terrain stamps)')
+        MainWindow.decal_tool_action.triggered.connect(MainWindow.toggle_decal_tool)
+        MainWindow.tools_menu.addAction(MainWindow.decal_tool_action)
         MainWindow.tools_menu.addSeparator()
 
         # Debug Tables is deliberately lazy: importing/constructing the
@@ -787,7 +833,7 @@ class Ui_MainWindow(object):
         icon_size_val, _length = toolbar_metrics(MainWindow.config)
 
         MainWindow.play_button = RotatablePlayButton(
-            QIcon("assets/b_test.png"), "Play", MainWindow)
+            load_icon("assets/b_test.png"), "Play", MainWindow)
         MainWindow.play_button.setIconSize(QSize(icon_size_val, icon_size_val))
         MainWindow.play_button.setToolTip("Drop in and play (F5)")
         MainWindow.play_button.setShortcut("f5")
@@ -828,6 +874,9 @@ class Ui_MainWindow(object):
         MainWindow.addToolBar(Qt.RightToolBarArea, tool_toolbar)
         # Kept so Settings > Editor > Tooltips can reach its buttons.
         MainWindow.tool_toolbar = tool_toolbar
+        # A toolbar resize can change available room without a window resize
+        # (orientation, docking, macOS window geometry, status bar changes).
+        tool_toolbar.installEventFilter(MainWindow)
 
         icon_size_val, play_length = toolbar_metrics(MainWindow.config)
         # Read back by MainWindow.apply_toolbar_button_size when the setting
@@ -853,7 +902,7 @@ class Ui_MainWindow(object):
             """
             b = QPushButton()
             b.setProperty("toolbar_icon_button", True)
-            b.setIcon(QIcon(icon))
+            b.setIcon(load_icon(icon))
             b.setIconSize(QSize(icon_size_val, icon_size_val))
             
             # Width: icon + 2px left/right borders + 2px padding
@@ -1024,6 +1073,7 @@ class Ui_MainWindow(object):
         terrain_btn.clicked.connect(lambda: terrain_menu.popup(
             terrain_btn.mapToGlobal(terrain_btn.rect().bottomLeft())))
 
+
         MainWindow.visgroups_btn = make_btn(
             "assets/eye.png", "Visgroups & Cordon",
             on_click=MainWindow.set_visgroups_window_visible,
@@ -1054,7 +1104,13 @@ class Ui_MainWindow(object):
 
         MainWindow._sync_play_button = sync_play_button_orientation
         tool_toolbar.orientationChanged.connect(sync_play_button_orientation)
+        tool_toolbar.orientationChanged.connect(
+            lambda _orientation: MainWindow.apply_toolbar_button_size())
+        tool_toolbar.topLevelChanged.connect(
+            lambda _floating: MainWindow.apply_toolbar_button_size())
         sync_play_button_orientation(tool_toolbar.orientation())
+        # Set the initial fit before Qt records the default dock arrangement.
+        MainWindow.apply_toolbar_button_size()
 
         # Capture this exact arrangement once.  View > Reset Layout restores
         # this Qt state instead of trying to reconstruct a nested dock tree
@@ -1112,22 +1168,6 @@ class Ui_MainWindow(object):
         bottom_layout.addSpacing(20)
         bottom_layout.addWidget(QLabel("Display:"))
         bottom_layout.addWidget(MainWindow.display_mode_combobox)
-
-        MainWindow.show_whole_world_checkbox = QCheckBox("Show whole world")
-        MainWindow.show_whole_world_checkbox.setStyleSheet("""
-            QCheckBox::indicator { width: 14px; height: 14px;
-                border: 1px solid #888; border-radius: 2px; background: #3c3f41; }
-            QCheckBox::indicator:checked { background: #F08000;
-                border-color: #F08000; image: url(assets/checkmark.svg); }
-            QCheckBox:disabled { color: #777; }
-        """)
-        MainWindow.show_whole_world_checkbox.setChecked(
-            MainWindow.config.getboolean('Display', 'show_whole_world', fallback=True))
-        MainWindow.show_whole_world_checkbox.setToolTip(
-            "Load every editor cell. Clear to stream cells around the 3D camera.")
-        MainWindow.show_whole_world_checkbox.toggled.connect(MainWindow.set_show_whole_world)
-        bottom_layout.addSpacing(12)
-        bottom_layout.addWidget(MainWindow.show_whole_world_checkbox)
 
         # Camera mode (native): First Person vs Overhead (top-down).
         MainWindow.camera_mode_combobox = QComboBox()

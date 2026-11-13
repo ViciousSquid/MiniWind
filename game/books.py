@@ -121,7 +121,7 @@ def refresh() -> None:
 
 def book_of_item(item_id) -> Optional[Book]:
     """The text a book item holds, or None for a book with no text."""
-    from .rpg import items as rpg_items
+    import game.rpg.items as rpg_items
     d = rpg_items.get(item_id)
     if d is None or d.category != rpg_items.BOOK:
         return None

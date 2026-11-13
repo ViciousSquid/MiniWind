@@ -61,8 +61,8 @@ implements; `API_VERSION_INFO` is the same value as an `(int, int, int)` tuple.
 
 | Value | Introduced |
 |-------|------------|
-| `API_VERSION` | `"1.7.0"` |
-| `API_VERSION_INFO` | `(1, 7, 0)` |
+| `API_VERSION` | `"1.9.0"` |
+| `API_VERSION_INFO` | `(1, 9, 0)` |
 
 History:
 
@@ -91,6 +91,35 @@ History:
 - **1.7.0** — the [pause menu](#pause-menu-api-170-play-mode):
   `register_pause_menu_item`, the `pause_menu_opened` / `pause_menu_closed`
   events, and `main_window.open_pause_menu()` / `close_pause_menu()`. Additive.
+- **1.8.0** — [`placement(brush)`](#placement--where-a-brush-is-api-180): where a
+  brush is, authored and live, its spin and its derived bounds. **One
+  behaviour change for plugins that read movers:** a mover's or door's `pos` is
+  its *authored* placement and no longer changes in play, and the play-time
+  keys `original_pos`, `_rot_angle` and `rotation_yaw` are no longer written
+  into brushes (or saved in maps). A plugin that read a moving brush's live
+  position from `brush['pos']`, its rest from `original_pos` or its spin from
+  `_rot_angle`/`rotation_yaw` reads `placement(brush).centre`, `.authored` and
+  `.spin` instead. Every other plugin loads and behaves unchanged.
+- **1.9.0** — **the renderer contract takes published tables only** ("tables
+  all the way to GL"). Only renderer implementations are affected:
+  - the frame input's `terrain` is an immutable
+    `engine.terrain_frame.TerrainFrame` -- the dense `TerrainTable`, per-slot
+    grass and block-mesh arrays, the paint maps, the appearance as numbers --
+    never the `Terrain` object. A renderer owns every GL resource it builds
+    from it (`engine.renderer.core.terrain_gl.TerrainGL` is the built-in
+    implementation, reusable as it stands);
+  - three post-scene members take vertex arrays instead of authored objects:
+    `draw_face_highlight(projection, view, triangles)`,
+    `draw_connection_lines(projection, view, segments, colours)`,
+    `draw_collision_visualization(projection, view, vertices, runs)`;
+  - `RenderStats` gains `terrain_visible_chunks`, `terrain_culled_chunks`,
+    `terrain_triangles`, `terrain_drawn_slots`;
+  - `render_refs` / `entity_refs` (the brush dictionaries and Things behind
+    the tables' rows) are no longer in the frame input.
+
+  A renderer written for 1.6-1.8 that draws the terrain or implements those
+  three members must be updated and declare `api_version = "1.9.0"`; there
+  is no shim. Every other plugin loads and behaves unchanged.
 
 A plugin declares the minimum it needs with `FioPlugin.api_version`. If that is
 **newer** than the host's `API_VERSION`, the manager refuses to load the plugin
@@ -357,7 +386,7 @@ it returns must satisfy the `engine.renderer.Renderer` protocol:
 - **the frame:** `render_scene(projection, view, camera_pos, primary_selection,
   config, clear=True, brush_slots=None)`. `config` is the frame input
   documented in `engine.renderer.FRAME_INPUT` (the dense `RenderTable` /
-  `EntityTable`, their slots, terrain and the view settings);
+  `EntityTable`, their slots, the published terrain and the view settings);
   `primary_selection` is an `engine.renderer.SelectionOverlay` or `None`.
 - **settings:** `view_distance`, `shadows_enabled`, `water_quality`,
   `set_grid(world_size, grid_size)`
@@ -368,9 +397,45 @@ it returns must satisfy the `engine.renderer.Renderer` protocol:
   Play); show each animated texture's frame for that time, keeping its GL
   name. `RendererCore` implements it; a renderer without it shows GIFs still.
 - **post-scene drawing the viewport asks for:** `draw_billboards`,
-  `draw_player_glasses`, `draw_bullet_marks`, `draw_connection_lines`,
-  `draw_face_highlight`, `draw_component_overlay`,
-  `draw_collision_visualization`
+  `draw_player_glasses`, `draw_bullet_marks`, `draw_component_overlay`, and
+  three that take arrays the host builds with `engine.overlay_geometry`
+  (API 1.9.0):
+  - `draw_face_highlight(projection, view, triangles)` -- world-space
+    triangles, float32 `(n, 3)`, or `None`;
+  - `draw_connection_lines(projection, view, segments, colours)` -- float32
+    `(n, 2, 3)` and `(n, 3)`;
+  - `draw_collision_visualization(projection, view, vertices, runs)` --
+    `GL_LINES` vertices float32 `(n, 3)` and runs of
+    `(first, count, (r, g, b))`, drawn in order.
+
+**The frame is tables (API 1.9.0).** Nothing a renderer is handed is an
+authored object, and a renderer writes nothing on what it is handed:
+
+- `render_table` / `entity_table` and their slot arrays, as before. Keep
+  per-table state of your own under the table's identity and `generation`;
+  `RenderTable.row_changes_since(serial)` reports the rows refreshed since
+  the `row_change_serial` you last saw (or `None`: rebuild).
+- `terrain`: a `TerrainFrame` or `None`. `frame.table` is the
+  `TerrainTable` (one row per resident chunk: the bordered height grid,
+  `grid_res`, world origin and size, height range, `version`, `order`);
+  `frame.products.grass[slot]` / `.blocks[slot]` are
+  `(version, slot_order, float32 array)`; `frame.paint_maps`,
+  `frame.paint_display` and `frame.paint_versions` are read-only views by
+  chunk coordinate; the rest are numbers and flags (`appearance` -- the
+  uniform values by name -- `gradient`, `flat_mode`, `blocks`, the grass
+  settings). Upload a row when the `version` you hold differs; drop what you
+  built for a slot when `table.order[slot]` changes or the row stops being
+  `live`; keep your state under `frame.key` and free it when the key changes.
+  Streaming, LOD and chunk building are done before the frame
+  (`Terrain.advance`, by the host): a renderer computes no height.
+- `decals`: projected decals (blood), or `None`: `(models, params)`, float32
+  `(n, 16)` and `(n, 4)`, from the logic thread's `DecalTable`
+  (`engine/decal_table.py`). Each is a box -- the unit cube's column-major
+  model matrix -- with `(texture variant, opacity, kind, mirrored)`; `kind`
+  is 0 for what landed on a wall, 1 on a floor. Draw the box and paint its
+  texture onto whatever the frame has drawn inside it (the built-in pass
+  reconstructs the surface from depth: `engine/renderer/forward/decals.py`,
+  `decal.frag`). A renderer that ignores the key simply shows no blood.
 
 The renderer owns its technique — shaders, passes, lighting model, shadowing,
 G-buffer — and consumes the dense tables rather than authored
@@ -395,8 +460,9 @@ lifetime of the renderer that owns it.*
   framebuffers, and every texture and model it loads — including the names it
   returns from `load_texture`.
 - The host discards renderer-produced GL handles before calling `cleanup()` (its
-  sprite table, the terrain's program and texture bindings), and `cleanup()` must
-  delete everything the renderer made, lazily created objects included.
+  sprite table), and `cleanup()` must delete everything the renderer made,
+  lazily created objects included -- what it built for the terrain among
+  them: since API 1.9.0 the terrain holds no GL name at all.
 - A replacement renderer receives fresh resource tables: the host reloads its
   sprites through the new renderer's `load_texture` and hands them over with
   `set_sprite_textures`. Never assume a GL name from another renderer, or from an
@@ -715,7 +781,7 @@ isn't present on this host, rather than raising:
 | `host.globals` | the [`GlobalStore`](#globalstore--cross-level-storage) |
 | `host.game_state` | the game-state object |
 | `host.monster_ai` | the monster AI subsystem |
-| `host.logic.world_runtime.terrain` | the live world terrain object |
+| `host.logic.world_runtime.terrain` | the live world terrain object (heights, sculpting, paint, serialisation; no GL -- `terrain.publish()` is what a renderer draws) |
 | `host.editor` | the editor main window if running in the editor, else `None` |
 
 For anything without a named accessor — including subsystems added later:
@@ -896,6 +962,29 @@ def keys(self, store="plugins") -> list
 
 Reach it via `api.globals` / `host.globals`, or the `global_get` / `global_set`
 shortcuts on `EditorAPI` and `RuntimeAPI`.
+
+---
+
+## `placement` — where a brush is (API 1.8.0)
+
+```python
+from plugins.api import placement
+
+p = placement(brush)
+p.authored   # (x, y, z): a box's pos, an angled brush's planes' centre
+p.centre     # (x, y, z): where it is now (a mover's runtime transform applied)
+p.spin       # (axis_x, axis_y, axis_z, angle_degrees) while it spins, else None
+p.half       # the shape's unturned half-extents
+p.bounds     # (lo_x, lo_y, lo_z, hi_x, hi_y, hi_z): its derived world AABB
+```
+
+The engine keeps one placement per brush: `pos` is where the mapper put it,
+and a mover's or door's runtime transform (its travel and spin) is owned by
+the engine's mover table, never written into the brush. `placement` reads both
+through the same resolver culling, collision and picking use, so a plugin sees
+a moving brush exactly where it is drawn and collides. Before 1.8.0 movers
+overwrote `pos` every tick and kept `original_pos`, `_rot_angle` and
+`rotation_yaw` in the brush (and in saved maps); those keys are gone.
 
 ---
 
@@ -1082,7 +1171,8 @@ def on_tick(self, logic, ctx):
   put them back in `on_play_stop` so the edited map is unchanged (see
   `TidySession.stop` and `BigWorldSession.stop`).
 - **Never make an OpenGL call off the render thread.** If a change needs GL work,
-  defer it to a render frame (BigWorld defers its terrain chunk prune this way).
+  defer it to a render frame. (The terrain needs none: it is GL-free, and a
+  change to it reaches the renderer through what it publishes.)
 - **The player runtime is dependency-free.** No PyGLM, no PyQt in the runtime
   path — plugin entities fall back to `plugins/entitybase.py` when the editor
   package is absent, so the same plugin loads in the editor, the desktop player

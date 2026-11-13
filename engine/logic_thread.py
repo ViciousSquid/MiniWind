@@ -92,6 +92,9 @@ class LogicThread(threading.Thread):
     
     TICK_RATE = 60
     TICK_DURATION = 1.0 / TICK_RATE
+    #: How far past a tick's due time the loop wakes (seconds): an early
+    #: wake would run no tick. The accumulator carries it, so it never drifts.
+    WAKE_MARGIN = 0.0002
 
     # Construction-time host contracts for the extracted Logic runtimes.
     #
@@ -286,7 +289,7 @@ class LogicThread(threading.Thread):
         # the simulation orchestrator and delegates the state machine here.
         #: Extraction folder of a played .fiopak, set by the editor at Play;
         #: its cutscenes/ is searched before the project's.
-        self.package_root = None
+        self.package = None
         self.cutscene_runtime = CutsceneRuntime(self)
         # LogicPortals owns portal topology, transit and fade runtime.
         self.portal_runtime = LogicPortals(self, portal_type=Portal)
@@ -382,7 +385,6 @@ class LogicThread(threading.Thread):
 
     def run(self):
         last_time = time.perf_counter()
-        deadline = last_time
         accumulator = 0.0
         
         while self.running:
@@ -400,17 +402,18 @@ class LogicThread(threading.Thread):
             accumulator = self._step_frame(accumulator, frame_time=current_time)
             self._publish_frame()
 
-            # Absolute deadlines preserve the 60 Hz cadence despite sleep
-            # overshoot. Sleeping 90% of the remainder ran this loop faster
-            # than the simulation, periodically publishing duplicate poses.
-            deadline += self.TICK_DURATION
-            sleep_time = deadline - time.perf_counter()
+            # Sleep until the accumulator next holds a whole tick -- the next
+            # tick's due time, less what stepping and publishing took -- and
+            # wake just past it, never just before (an early wake runs no
+            # tick and sleeps again). Sleeping a fixed share of a tick from
+            # this iteration's start instead overshot whenever an iteration
+            # began just short of a tick: ticks then landed up to ~14 ms off
+            # their 60 Hz slots (p95), and with no interpolation the picture
+            # moved unevenly.
+            sleep_time = (self.TICK_DURATION - accumulator
+                          - (time.perf_counter() - current_time) + self.WAKE_MARGIN)
             if sleep_time > 0:
                 time.sleep(sleep_time)
-            else:
-                # The accumulator handles simulation debt. Do not also spin
-                # through missed scheduling deadlines after a slow frame.
-                deadline = time.perf_counter()
                 
     def _publish_frame(self) -> bool:
         """Hand the frame just prepared to the renderer, if it is not reading.
@@ -670,6 +673,10 @@ class LogicThread(threading.Thread):
         physics_world = self.session_runtime.physics_world
         if physics_world is not None:
             physics_world.step(delta, self.player_runtime.player)
+            if getattr(physics_world, 'player_crushed', False):
+                # A heavy body pinned the player against a wall.
+                physics_world.player_crushed = False
+                self.trigger_runtime._apply_player_damage(physics_world.CRUSH_DAMAGE)
             # Physics owned those positions for the duration of the step; the
             # Prop domain takes its index back into line now that it is over.
             self.prop_runtime.sync_physics_positions()

@@ -29,7 +29,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 TEST_ROOTS = ("tests", "plugins", "game/tests")
 
 #: Directories pytest.ini excludes via `norecursedirs`.
-SKIP_DIRS = {".git", "build", "dist", "__pycache__", "assets", "maps"}
+SKIP_DIRS = {".git", ".buildozer", "build", "dist", "__pycache__", "assets", "maps"}
 
 
 def _test_modules():
@@ -262,7 +262,6 @@ def test_logic_thread_does_not_reintroduce_authoritative_world_aliases():
 MACHINERY_TEST_ROOTS = (
     "tests",
     "plugins/bigworld/tests",
-    "plugins/tidy/tests",
 )
 
 #: These names have appeared as substitutes for production owners in behavioural

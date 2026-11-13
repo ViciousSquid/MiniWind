@@ -142,12 +142,12 @@ def draw_ghost(painter, owner, pointer, size=52, source=None) -> None:
     if str(iid).startswith("spell:"):
         iid = str(iid)[len("spell:"):]          # a spell's strip slot
     if source[0] in ("spell", "spell_hand") or iid != source[2]:
-        from ..rpg import magic
+        import game.rpg.magic as magic
         from PyQt5.QtCore import QPointF
         from PyQt5.QtGui import QColor
         spell = magic.get(iid)
         try:
-            from .. import item_icons
+            import game.item_icons as item_icons
             pm = item_icons.spell_pixmap(iid, size)
         except Exception:
             pm = None
@@ -165,7 +165,7 @@ def draw_ghost(painter, owner, pointer, size=52, source=None) -> None:
             painter.restore()
         return
     try:
-        from .. import item_icons
+        import game.item_icons as item_icons
         pm = item_icons.icon_pixmap(iid, None, size)
     except Exception:
         pm = None

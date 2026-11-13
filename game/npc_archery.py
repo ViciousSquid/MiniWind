@@ -32,6 +32,7 @@ import math
 
 from . import combat_loadout
 from . import fio
+from .facing import face_heading
 
 #: The same numbers the player's bow uses (game.runtime re-exports these so
 #: there is one definition): a full draw, and the range it buys.
@@ -47,8 +48,6 @@ NOCK_SECONDS = 0.55
 #: creature level adds to that.
 POWER_DRAW_CHANCE = 0.3
 POWER_DRAW_PER_LEVEL = 0.03
-#: Fio's hit sphere is lifted this far above an actor's origin.
-EYE_LIFT = 64.0
 
 
 def range_for(charge: float) -> float:
@@ -93,7 +92,7 @@ CROSSBOW_DAMAGE = 0.85
 
 def is_crossbow(props) -> bool:
     """Whether the ranged weapon in *props*' hand is a crossbow."""
-    from .rpg import items
+    import game.rpg.items as items
     d = items.get(props.get("_active_weapon") or props.get("equipped_weapon") or "")
     return d is not None and d.get("kind") == items.KIND_CROSSBOW
 
@@ -101,7 +100,7 @@ def is_crossbow(props) -> bool:
 def offhand_crossbow(props) -> str:
     """The crossbow in *props*' actor's off hand, or '' (bows never pair)."""
     from .held_weapons import offhand_in_use
-    from .rpg import items
+    import game.rpg.items as items
     off = offhand_in_use(props)
     d = items.get(off) if off else None
     return off if d is not None and d.get("kind") == items.KIND_CROSSBOW else ""
@@ -119,7 +118,7 @@ def loaded_hand(props, now):
 
 def crossbow_in_kit(props):
     """The crossbow *props*' actor would fight with at range, or ''."""
-    from .rpg import items
+    import game.rpg.items as items
     try:
         weapon = combat_loadout.weapon_for(combat_loadout.build_loadout(props),
                                            combat_loadout.BOW)
@@ -269,8 +268,7 @@ class NpcArchery:
             p["_bow_charge"] = draw["charge"]
             dx = target_pos[0] - thing.pos[0]
             dz = target_pos[2] - thing.pos[2]
-            if dx or dz:
-                p["_facing"] = math.atan2(dx, dz)
+            face_heading(thing, dx, dz)
             if draw["charge"] >= draw["plan"]:
                 self._loose(thing, draw, target_pos)
 
@@ -309,8 +307,11 @@ class NpcArchery:
             CROSSBOW_RELOAD_SECONDS if crossbow else NOCK_SECONDS)
         p["_offhand_anim" if off else "_attack_anim"] = 0.2
         charge = draw["charge"]
-        start = [float(thing.pos[0]), float(thing.pos[1]) + 48.0, float(thing.pos[2])]
-        lift = EYE_LIFT
+        # Loosed from and aimed at the middle of a body, where the engine's
+        # hit sphere is (fio.projectile_body_lift).
+        body = fio.projectile_body_lift()
+        start = [float(thing.pos[0]), float(thing.pos[1]) + body, float(thing.pos[2])]
+        lift = body
         if draw["target"] == "player":
             player = fio.player(logic)
             lift = float(getattr(player, "camera_height", 48.0) or 48.0) * 0.6

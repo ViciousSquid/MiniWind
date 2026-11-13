@@ -1,3 +1,4 @@
+from engine.asset_qt import load_pixmap
 import numpy as np
 import math
 import time
@@ -5,12 +6,16 @@ import os
 from PyQt5.QtWidgets import QWidget, QMenu, QFileDialog, QApplication
 from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPolygonF, QPixmap
 from PyQt5.QtCore import Qt, QRectF, QPointF, QPoint, QTimer
-from editor.things import (Thing, Light, PlayerStart, Speaker, Prop, Monster,
+from editor.things import (Thing, Light, PlayerStart, Speaker, Prop, Monster, Decal,
                           LogicGate, LogicRelay, LogicTimer, LogicCommand, LevelChanger, PathNode,
                           LogicCamera, LogicSpawner, Portal, LogicState, Effect)
 from engine import brush_geometry as bg  # convex/angled-brush geometry
-from engine.constants import brush_aabb_bounds
+from engine import brush_placement
+from engine.constants import brush_aabb_bounds, PLAYER_HULL_SIZE
+from engine.entity_models import (model_path as entity_model_path,
+                                  model_rotation, model_scale)
 from editor import component_edit as ce  # shared object/face/edge/vertex model
+from editor.selection import SelectionLookup
 
 # How close (in screen pixels) the cursor has to be before a press grabs a
 # component handle or a brush side.  Converted to world units with the view's
@@ -175,7 +180,7 @@ class View2D(QWidget):
             'white': "assets/circ_white.png",
         }
         for color_name, path in colour_icon_map.items():
-            pixmap = QPixmap(path)
+            pixmap = load_pixmap(path)
             if not pixmap.isNull():
                 self.color_pixmaps[color_name] = pixmap.scaled(18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation) 
 
@@ -535,9 +540,8 @@ class View2D(QWidget):
         """(min1, min2, max1, max2) footprint of a brush or point of a thing in
         the current view plane."""
         if isinstance(obj, dict):
-            pos, size = obj['pos'], obj['size']
-            return (pos[i1] - size[i1] / 2, pos[i2] - size[i2] / 2,
-                    pos[i1] + size[i1] / 2, pos[i2] + size[i2] / 2)
+            b = brush_placement.world_bounds(obj)
+            return (b[i1], b[i2], b[i1 + 3], b[i2 + 3])
         p = obj.pos
         return (p[i1], p[i2], p[i1], p[i2])
 
@@ -1242,7 +1246,11 @@ class View2D(QWidget):
         return self.editor.state.view_filters.hides(obj)
 
     def _hidden(self, obj):
-        """Hidden by the map, or filtered out of the editor's views."""
+        """Hidden by the map, or filtered out of the editor's views. Decals
+        are never in the 2D views: the Decal tool edits them in the 3D view,
+        where what they paint is what is shown (as terrain stamps)."""
+        if isinstance(obj, Decal):
+            return True
         props = obj if isinstance(obj, dict) else obj.properties
         return bool(props.get('hidden', False)) or self._filtered(obj)
 
@@ -1251,19 +1259,16 @@ class View2D(QWidget):
         if self._hidden(brush):
             return False
         
-        # Get brush bounds in the 2D view's coordinate system
-        pos = brush.get('pos', [0, 0, 0])
+        # Derived bounds (brush_placement) in the view's two axes.
         size = brush.get('size', [0, 0, 0])
-        
+
         # Skip degenerate brushes
         if size[axis1_idx] <= 0 or size[axis2_idx] <= 0:
             return False
-        
-        # Calculate min/max in world coordinates for the two axes
-        min_x = pos[axis1_idx] - size[axis1_idx] / 2.0
-        max_x = pos[axis1_idx] + size[axis1_idx] / 2.0
-        min_y = pos[axis2_idx] - size[axis2_idx] / 2.0
-        max_y = pos[axis2_idx] + size[axis2_idx] / 2.0
+
+        b = brush_placement.world_bounds(brush)
+        min_x, max_x = b[axis1_idx], b[axis1_idx + 3]
+        min_y, max_y = b[axis2_idx], b[axis2_idx + 3]
         
         # Create brush bounds rect
         brush_bounds = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
@@ -1283,6 +1288,8 @@ class View2D(QWidget):
             radius = thing.get_radius()
         # Also add a small fixed margin for sprites
         margin = max(32.0, radius) / self.zoom_factor if self.zoom_factor > 0 else 32.0
+        if isinstance(thing, PlayerStart):
+            margin = max(margin, 64.0)  # full 100-unit sign, including its base
 
         point_rect = QRectF(x - margin, y - margin, margin * 2, margin * 2)
         return visible_bounds.intersects(point_rect)
@@ -1655,8 +1662,8 @@ class View2D(QWidget):
         olive_dim = QColor(128, 128, 0, 80)
         chain_pen = QPen(olive, 2, Qt.DashLine)
 
-        for name, node in node_lookup.items():
-            next_name = node.get_next_node_name()
+        links = [(node, node.get_next_node_name()) for node in node_lookup.values()]
+        for node, next_name in links:
             if not next_name:
                 continue
             next_node = node_lookup.get(next_name)
@@ -1785,6 +1792,11 @@ class View2D(QWidget):
         # Computed once: when several objects are selected the unified group box
         # owns the handles, so individual brushes must not draw their own.
         group_active = self._group_manip_active()
+        selected = SelectionLookup(self.editor.state.selected_objects)
+        primary = self.editor.primary_selection()
+        transform = (self.width() / 2, self.height() / 2,
+                     self.pan_offset.x(), self.pan_offset.y(), self.zoom_factor,
+                     self.view_type in ('front', 'side'))
 
         for brush in self.editor.state.brushes:
             # CULL brush if not visible
@@ -1792,7 +1804,7 @@ class View2D(QWidget):
                 continue
                 
             # Check if brush is in selected_objects list (for multi-select support)
-            is_selected = brush in self.editor.state.selected_objects or brush is self.editor.primary_selection()
+            is_selected = brush in selected or brush is primary
             is_trigger = brush.get('is_trigger', False)
             is_subtractive = brush.get('operation') == 'subtract'
             is_locked = brush.get('lock', False)
@@ -1841,12 +1853,19 @@ class View2D(QWidget):
 
             pos = brush['pos']
             size = brush['size']
-            
-            w_pos = QPointF(pos[axis1_idx] - size[axis1_idx]/2, pos[axis2_idx] - size[axis2_idx]/2)
-            w_size = QPointF(size[axis1_idx], size[axis2_idx])
-            p1 = self.world_to_screen(w_pos)
-            p2 = self.world_to_screen(w_pos + w_size)
-            screen_rect = QRectF(p1, p2).normalized()
+            # A previewed mover is drawn where the preview carries it: its
+            # runtime displacement (brush_placement), not a write to pos.
+            shift = None
+            if is_mover or brush.get('is_door'):
+                runtime = brush_placement.runtime_of(brush)
+                if runtime is not None:
+                    home = brush_placement.authored_box(brush)
+                    shift = (runtime[0] - home[0], runtime[1] - home[1],
+                             runtime[2] - home[2])
+                    pos = [pos[0] + shift[0], pos[1] + shift[1], pos[2] + shift[2]]
+
+            screen_rect = self._brush_screen_rect(
+                pos, size, axis1_idx, axis2_idx, transform)
 
             # Angled (clipped) brushes draw their true convex outline; plain box
             # brushes draw the fast bounding rectangle.  screen_rect is still
@@ -1857,6 +1876,8 @@ class View2D(QWidget):
                 if convex is not None and convex.is_valid:
                     hull = convex.silhouette(axis1_idx, axis2_idx)
             if hull:
+                if shift is not None:
+                    hull = [(a + shift[axis1_idx], b + shift[axis2_idx]) for a, b in hull]
                 poly = QPolygonF([self.world_to_screen(QPointF(a, b)) for a, b in hull])
                 painter.drawPolygon(poly)
             else:
@@ -1926,6 +1947,23 @@ class View2D(QWidget):
                 self.draw_resize_handles(painter, screen_rect)
 
             self.draw_brush_color_tag(painter, brush, screen_rect)
+
+    @staticmethod
+    def _brush_screen_rect(pos, size, axis1, axis2, transform):
+        """Project a box with this draw's fixed viewport/pan/zoom values.
+
+        Preserve the old QPointF rounding: convert the minimum corner and
+        size separately, then add them, rather than computing pos + size/2.
+        """
+        cx, cy, pan_x, pan_y, zoom, invert_y = transform
+        x = float(pos[axis1] - size[axis1] / 2)
+        y = float(pos[axis2] - size[axis2] / 2)
+        x2, y2 = x + float(size[axis1]), y + float(size[axis2])
+        sx1, sx2 = cx + (x - pan_x) * zoom, cx + (x2 - pan_x) * zoom
+        dy1, dy2 = (y - pan_y) * zoom, (y2 - pan_y) * zoom
+        if invert_y:
+            return QRectF(QPointF(sx1, cy - dy1), QPointF(sx2, cy - dy2)).normalized()
+        return QRectF(QPointF(sx1, cy + dy1), QPointF(sx2, cy + dy2)).normalized()
 
     def draw_glow_light_arrow(self, painter, brush, ax1, ax2, ax_map):
         """Draw a wide colored arrow radiating from the glow brush's light emission face."""
@@ -2047,7 +2085,7 @@ class View2D(QWidget):
     def _compute_model_screen_coords(self, model_thing, ax_map, ax1, ax2):
         """Helper to compute screen coordinates for a model's wireframe.
         Returns (pts_x, pts_y) numpy arrays, or None if failed."""
-        model_path = model_thing.properties.get('model_path')
+        model_path = entity_model_path(model_thing)
         if not model_path:
             return None
 
@@ -2070,9 +2108,9 @@ class View2D(QWidget):
 
         # Transform parameters
         pos = model_thing.pos
-        scale = model_thing.properties.get('scale', 1.0)
+        scale = model_scale(model_thing)
         if isinstance(scale, (int, float)): scale = [scale, scale, scale]
-        rot = model_thing.properties.get('rotation', [0, 0, 0])
+        rot = model_rotation(model_thing)
         
         # Build Rotation Matrix
         def rotate_x(a):
@@ -2118,15 +2156,16 @@ class View2D(QWidget):
 
     def _draw_model_wireframe(self, painter, model_thing, ax_map, ax1, ax2):
         """Draws the projected wireframe of a 3D model in the 2D view."""
-        model_path = model_thing.properties.get('model_path')
+        model_path = entity_model_path(model_thing)
 
         coords = self._compute_model_screen_coords(model_thing, ax_map, ax1, ax2)
 
         if coords is None:
             painter.setPen(QPen(QColor(200, 200, 200), 1))
             s_pos = self.world_to_screen(QPointF(model_thing.pos[ax_map[ax1]], model_thing.pos[ax_map[ax2]]))
-            painter.drawRect(QRectF(s_pos.x()-10, s_pos.y()-10, 20, 20))
-            return
+            rect = QRectF(s_pos.x()-10, s_pos.y()-10, 20, 20)
+            painter.drawRect(rect)
+            return rect
 
         pts_x, pts_y = coords
         n_pts = len(pts_x)
@@ -2177,6 +2216,9 @@ class View2D(QWidget):
                 painter.drawLine(p0, p1)
                 painter.drawLine(p1, p2)
                 painter.drawLine(p2, p0)
+
+        return QRectF(float(np.min(pts_x)), float(np.min(pts_y)),
+                      max(2.0, float(np.ptp(pts_x))), max(2.0, float(np.ptp(pts_y))))
 
     @staticmethod
     def _point_segment_distance_sq(point, a, b):
@@ -2258,6 +2300,8 @@ class View2D(QWidget):
         ax_map = {'x': 0, 'y': 1, 'z': 2}
         axis1_idx = ax_map[ax1]
         axis2_idx = ax_map[ax2]
+        selected = SelectionLookup(self.editor.state.selected_objects)
+        primary = self.editor.primary_selection()
         
         for thing in self.editor.state.things:
             # Skip hidden things
@@ -2278,10 +2322,8 @@ class View2D(QWidget):
             # billboard.  Representation, not asset history, decides what the
             # 2D view draws.
             render_mode = str(thing.properties.get('render_mode', 'model')).lower()
-            if thing.properties.get('model_path') and render_mode == 'model':
-                self._draw_model_wireframe(painter, thing, ax_map, ax1, ax2)
-                # Selection box for models
-                draw_rect = QRectF(s_pos.x() - 16, s_pos.y() - 16, 32, 32)
+            if entity_model_path(thing) and (render_mode == 'model' or isinstance(thing, PlayerStart)):
+                draw_rect = self._draw_model_wireframe(painter, thing, ax_map, ax1, ax2)
 
             # --- PORTAL RENDERING ---
             elif isinstance(thing, Portal):
@@ -2343,7 +2385,8 @@ class View2D(QWidget):
                     font = QFont()
                     font.setPointSize(8)
                     painter.setFont(font)
-                    label = f"{int(thing.get_radius())} u  [{thing.get_affects_type()}]"
+                    affects = thing.get_affects_type() if isinstance(thing, PathNode) else 'ground'
+                    label = f"{int(thing.get_radius())} u  [{affects}]"
                     painter.drawText(QPointF(s_pos.x() + radius + 4, s_pos.y() + 4), label)
                     painter.restore()
 
@@ -2376,50 +2419,50 @@ class View2D(QWidget):
                     draw_rect = self._sprite_rect(pixmap, s_pos)
                     painter.drawPixmap(draw_rect.toRect(), pixmap)
 
-                # 2b. The entity's label (a Monster's name; a PlayerStart's
-                # name and Primary) beneath its sprite.
-                label_lines = thing.editor_label_lines()
-                if label_lines:
-                    self._draw_entity_label(painter, s_pos, label_lines,
-                                            self._ENTITY_LABEL_COLOURS.get(
-                                                type(thing).__name__, QColor(255, 100, 100)),
-                                            draw_rect)
+            # 2b. The entity's label (a Monster's name; a PlayerStart's
+            # name and Primary) beneath its model or sprite.
+            label_lines = thing.editor_label_lines()
+            if label_lines:
+                self._draw_entity_label(painter, s_pos, label_lines,
+                                        self._ENTITY_LABEL_COLOURS.get(
+                                            type(thing).__name__, QColor(255, 100, 100)),
+                                        draw_rect)
 
-                # 3. Direction Arrow
-                angle_deg = None
-                if 'angle' in thing.properties:
-                    angle_deg = float(thing.properties.get('angle', 0.0))
-                
-                if angle_deg is not None:
-                    painter.save()
-                    arrow_color = QColor(0, 255, 255) if thing.__class__.__name__ == 'PlayerStart' else QColor(255, 128, 0)
-                    angle_rad = math.radians(angle_deg)
-                    arrow_len = 35 * self.zoom_factor
-                    if arrow_len < 15: arrow_len = 15
-                    
-                    dx = math.cos(angle_rad) * arrow_len
-                    dy = math.sin(angle_rad) * arrow_len
-                    if self.view_type == 'top': dy = -dy 
-                    
-                    s_end = s_pos + QPointF(dx, dy)
-                    painter.setPen(QPen(arrow_color, 2))
-                    painter.drawLine(s_pos, s_end)
-                    
-                    head_angle = math.atan2(s_end.y() - s_pos.y(), s_end.x() - s_pos.x())
-                    head_size = 8
-                    p1 = s_end - QPointF(math.cos(head_angle - math.pi / 6) * head_size, 
-                                         math.sin(head_angle - math.pi / 6) * head_size)
-                    p2 = s_end - QPointF(math.cos(head_angle + math.pi / 6) * head_size, 
-                                         math.sin(head_angle + math.pi / 6) * head_size)
-                    
-                    painter.setBrush(QBrush(arrow_color))
-                    painter.drawPolygon(QPolygonF([s_end, p1, p2]))
-                    painter.restore()
+            # 3. Direction Arrow
+            angle_deg = None
+            if 'angle' in thing.properties:
+                angle_deg = float(thing.properties.get('angle', 0.0))
+
+            if angle_deg is not None:
+                painter.save()
+                arrow_color = QColor(0, 255, 255) if thing.__class__.__name__ == 'PlayerStart' else QColor(255, 128, 0)
+                angle_rad = math.radians(angle_deg)
+                arrow_len = 35 * self.zoom_factor
+                if arrow_len < 15: arrow_len = 15
+
+                dx = math.cos(angle_rad) * arrow_len
+                dy = math.sin(angle_rad) * arrow_len
+                if self.view_type == 'top': dy = -dy
+
+                s_end = s_pos + QPointF(dx, dy)
+                painter.setPen(QPen(arrow_color, 2))
+                painter.drawLine(s_pos, s_end)
+
+                head_angle = math.atan2(s_end.y() - s_pos.y(), s_end.x() - s_pos.x())
+                head_size = 8
+                p1 = s_end - QPointF(math.cos(head_angle - math.pi / 6) * head_size,
+                                     math.sin(head_angle - math.pi / 6) * head_size)
+                p2 = s_end - QPointF(math.cos(head_angle + math.pi / 6) * head_size,
+                                     math.sin(head_angle + math.pi / 6) * head_size)
+
+                painter.setBrush(QBrush(arrow_color))
+                painter.drawPolygon(QPolygonF([s_end, p1, p2]))
+                painter.restore()
 
             # 4. Overlays (selection highlight + color tag)
             if draw_rect:
                 self.draw_thing_color_tag(painter, thing, draw_rect)
-                is_selected = thing in self.editor.state.selected_objects or thing == self.editor.primary_selection()
+                is_selected = thing in selected or thing == primary
                 if is_selected:
                     painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DotLine))
                     painter.setBrush(Qt.NoBrush)
@@ -2842,7 +2885,7 @@ class View2D(QWidget):
         This runs at ~60 FPS but only repaints when the camera actually changes,
         keeping CPU usage minimal while providing smooth viewcone updates.
         """
-        if not self.isVisible():
+        if not self.isVisible() or self._paced_by_play():
             return
 
         camera = self.editor.view_3d.camera
@@ -3099,8 +3142,17 @@ class View2D(QWidget):
         painter.setBrush(QBrush(color))
         painter.drawPolygon(QPolygonF([p2, p_arrow1, p_arrow2]))
     
+    def _paced_by_play(self):
+        """True while a game is played: the 3D view then repaints the 2D
+        views itself, at ``QtGameView.PLAY_2D_VIEWS_HZ``, and this view's own
+        60 Hz timers (the camera cone, the connection arrows) stand down --
+        the camera moves every frame of play, and a repaint here is the whole
+        view: 4-9 ms of the GUI thread a frame."""
+        return bool(self.editor.view_3d.play_mode)
+
     def _update_connection_animations(self):
-        if not self.isVisible() or not self.editor.show_logic_links:
+        if (not self.isVisible() or not self.editor.show_logic_links
+                or self._paced_by_play()):
             return
         animation_speed = 0.05
         arrow_speed = 0.015  # Speed of traveling arrows
@@ -3805,8 +3857,9 @@ class View2D(QWidget):
             plugin_menu = menu.addMenu("Plugins")
             plugin_submenus = {}
             for plugin, label, cls in plugin_entries:
-                submenu = plugin_submenus.setdefault(
-                    plugin, plugin_menu.addMenu(plugin.name))
+                if plugin not in plugin_submenus:
+                    plugin_submenus[plugin] = plugin_menu.addMenu(plugin.name)
+                submenu = plugin_submenus[plugin]
                 action_item = submenu.addAction(label)
                 plugin_actions[action_item] = (plugin, label, cls)
 
@@ -3852,7 +3905,11 @@ class View2D(QWidget):
             new_thing = Light(pos=pos_3d)
         elif action == add_effect_action:
             new_thing = Effect(pos=pos_3d)
-        elif action == add_player_start_action: 
+        elif action == add_player_start_action:
+            # The clicked height is the feet. Spawn.pos remains the runtime's
+            # hull centre; top view places the feet on the Y=0 reference plane.
+            feet_y = 0.0 if self.view_type == 'top' else pos_3d[1]
+            pos_3d[1] = feet_y + PLAYER_HULL_SIZE[1] / 2.0
             new_thing = PlayerStart(pos=pos_3d)
         elif action == add_prop_action:
             new_thing = Prop(pos=pos_3d)
@@ -3867,7 +3924,15 @@ class View2D(QWidget):
         elif action == add_logic_timer_action: new_thing = LogicTimer(pos=pos_3d)
         elif action == add_logic_command_action: new_thing = LogicCommand(pos=pos_3d)
         elif action == add_monster_action:
-            new_thing = Monster(pos=pos_3d)
+            # Monster.pos is the billboard's centre (the AI grounds it at
+            # floor + sprite_height / 2), so the clicked height is the feet,
+            # exactly as for a PlayerStart. Placing the centre at the click
+            # sank the lower half of the sprite into the floor.
+            feet_y = 0.0 if self.view_type == 'top' else pos_3d[1]
+            new_thing = Monster(pos=list(pos_3d))
+            centre_y = feet_y + float(
+                new_thing.properties['sprite_height']) / 2.0
+            new_thing.pos = [pos_3d[0], centre_y, pos_3d[2]]
         elif action == add_logic_gate_action:
             new_thing = LogicGate(pos=pos_3d)
             new_thing.properties['logic_type'] = 'AND' 
@@ -3967,6 +4032,9 @@ class View2D(QWidget):
 
             self.main_window.save_state()
             self.editor.state.things.append(thing)
+            placed = getattr(thing, 'on_editor_placed', None)
+            if callable(placed):
+                placed(self.editor.state)
             self.editor.set_selected_objects([thing])
             if self.main_window.properties_tab_widget:
                 self._focus_properties_tab()
@@ -4274,7 +4342,7 @@ class View2D(QWidget):
                 is_hit = self._portal_gizmo_hit_test(thing, screen_pos, ax1, ax2)
 
             # Standard Thing Hit Test
-            elif thing.properties.get('model_path'):
+            elif entity_model_path(thing):
                 # Advanced Model Hit Test: Check Bounding Box of projected vertices
                 coords = self._compute_model_screen_coords(thing, ax_map, ax1, ax2)
                 if coords:
@@ -4323,16 +4391,15 @@ class View2D(QWidget):
             if self._hidden(brush):
                 continue
 
-            # FIX: Use .get() to avoid KeyError if 'pos' or 'size' are missing
-            pos = brush.get('pos')
-            size = brush.get('size')
-            
-            if pos is None or size is None:
+            if brush.get('pos') is None or brush.get('size') is None:
                 continue
 
-            p1 = QPointF(pos[ax_map[ax1]] - size[ax_map[ax1]]/2, pos[ax_map[ax2]] - size[ax_map[ax2]]/2)
-            p2 = QPointF(pos[ax_map[ax1]] + size[ax_map[ax1]]/2, pos[ax_map[ax2]] + size[ax_map[ax2]]/2)
-            brush_rect = QRectF(p1, p2).normalized()
+            # Derived bounds (brush_placement): an angled brush's planes, a
+            # previewed mover where it is drawn.
+            b = brush_placement.world_bounds(brush)
+            i1, i2 = ax_map[ax1], ax_map[ax2]
+            brush_rect = QRectF(QPointF(b[i1], b[i2]),
+                                QPointF(b[i1 + 3], b[i2 + 3])).normalized()
             
             if brush_rect.contains(world_pos):
                 # Track locked brushes separately if setting is enabled

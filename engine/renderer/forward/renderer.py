@@ -10,13 +10,18 @@ implements :class:`engine.renderer.api.Renderer` and builds on
 import os
 
 import glm
+import weakref
+
 import numpy as np
 import OpenGL.GL as gl
 
 from engine import entity_table as entity_projection
+from engine import render_table
 from engine import shaders
 from engine.constants import (
+    PLAYER_HULL_SIZE,
     RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX)
+from engine.entity_models import editor_models_around
 
 # Camera render-distance cull. The pure per-object geometry lives in
 # engine.render_cull (GL-free, so it is unit-testable without a GL context) and
@@ -30,12 +35,23 @@ from .instancing import InstancingMixin
 from .lighting import LightingMixin
 from .passes import PassesMixin
 from .portals import PortalsMixin
+from .occlusion import OcclusionMixin
+from .decals import DecalsMixin
 from .distance import DistanceMixin
 from .shaders import ShadersMixin
 
 
-class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
-                      DistanceMixin, ShadersMixin, RendererCore):
+
+def nodraw_brushes(table, slots):
+    """The brushes among *slots* with a ``nodraw`` face: 'Solid Lit' draws
+    them textured, so the faces play will not draw stay plain to see."""
+    if table is None or not len(slots):
+        return np.empty(0, dtype=np.int32)
+    ids = table.tex_name_id[slots]
+    return slots[(ids == render_table.TEX_ID_NODRAW).any(axis=1)]
+
+class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin, DecalsMixin,
+                      DistanceMixin, OcclusionMixin, ShadersMixin, RendererCore):
     """Fio's forward OpenGL 3.3 renderer, registered as ``"Forward"``.
 
     *config* is the application ConfigParser (or None). *texture_loader*
@@ -43,12 +59,27 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
     use it to serve a fixed texture.
     """
 
+    #: Texture unit of the angled brushes' transform buffer texture, read by
+    #: the batched convex path's vertex shader. Units in use elsewhere: 0
+    #: diffuse, 2 glass scene, 3 water depth, 4..11 shadow cube-maps, 12..13
+    #: terrain height and paint and 15 the terrain's regional biome map
+    #: (terrain program only; TerrainGL.BIOME_TEXTURE_UNIT).
+    GEO_TRANSFORM_UNIT = 14
+
     def __init__(self, config=None, *, texture_loader=None):
         super().__init__(texture_loader)
         self.render_stats.details['sprite texture array'] = self._describe_sprite_layers
 
         # Glass samples the already-rendered scene for screen-space transmission.
         # Kept lazy because most frames contain no glass at all.
+        #: Screen-space reflections -- water, wet decals -- on or off (the
+        #: ``reflections`` console command). They fade out with distance
+        #: either way (engine.shaders.REFLECTION_FADE_START / END).
+        self.reflections_enabled = True
+        #: How far from the camera wet decals reflect (the ``decalfade``
+        #: console command): full to two thirds of it, none from it on.
+        from engine.shaders import REFLECTION_FADE_END
+        self.decal_reflection_fade = REFLECTION_FADE_END
         self._glass_scene_texture = 0
         self._glass_scene_size = (0, 0)
         self._glass_scene_texture_unit = 2
@@ -73,10 +104,12 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             #: settings.ini [Renderer] grass: False turns terrain grass off
             #: everywhere, whatever each map asks for.
             self.grass_enabled = config.getboolean('Renderer', 'grass', fallback=True)
-            #: settings.ini [Renderer] low_grass: True keeps the original,
-            #: half-as-thick grass; False (default) the thick meadows.
-            self.grass_quality = ('low' if config.getboolean('Renderer', 'low_grass', fallback=False)
-                                  else 'high')
+            #: settings.ini [Renderer] grass_quality: how much grass grows
+            #: (Terrain.GRASS_QUALITIES: high, medium, low, off; wheat always
+            #: grows). An older file's low_grass = True was half the grass.
+            legacy = 'medium' if config.getboolean('Renderer', 'low_grass', fallback=False) else 'high'
+            self.grass_quality = str(config.get('Renderer', 'grass_quality',
+                                                fallback=legacy)).strip().lower() or legacy
             try:
                 shadow_size = config.getint('Renderer', 'shadow_map_size', fallback=self.SHADOW_MAP_SIZE)
             except Exception:
@@ -94,6 +127,15 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         self.water_quality = 'expensive'
         # Clamp to a sane, power-of-two-ish range. Lower = faster, blockier.
         self.shadow_map_size = max(256, min(2048, int(shadow_size)))
+        # How angled brushes' faces are batched (PassesMixin.GEO_BATCHING):
+        # driver-dependent, so measured rather than assumed, and settable.
+        # (``settings``, not ``config``: the frame-input audit reads every
+        # ``config.get`` in the package as a per-frame key.)
+        settings = config
+        batching = (settings.get('Renderer', 'geo_batching', fallback='elements')
+                    if settings is not None else 'elements')
+        batching = str(batching or '').strip().lower()
+        self.geo_batching = batching if batching in self.GEO_BATCHING else 'elements'
 
         self.fog_quality = 'low'      # 'low' = 16 steps, 'high' = 32 steps
         # OpenGL diagnostics are deliberately opt-in. Keep GL state probing out
@@ -105,10 +147,16 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
 
         # GPU-instanced model data. One persistent VBO is shared by all model
         # VAOs; each instance carries a model matrix and normal matrix (112 B).
-        # The shared brush-instance buffer and its VAO. One layout serves every
-        # pass that submits runs (see BRUSH_INSTANCE_ATTRS).
-        self._brush_instance_vbo = None
-        self._brush_instance_vao = None
+        # Box brush instances: one stream (buffer, VAO, CPU mirror) per pass,
+        # per view, per use in the frame, written only where it changed
+        # (instancing.BrushStream; one layout, BRUSH_INSTANCE_ATTRS).
+        self._brush_streams = {}
+        self._stream_calls = {}
+        #: The view the passes are drawing: None for the main view, a portal's
+        #: (aperture, depth) while its virtual view draws.
+        self._instance_view = None
+        #: Bytes uploaded to box instance streams (tests and tools).
+        self.instance_bytes_uploaded = 0
         self._sprite_instance_vbo = None
         self._sprite_instance_vao = None
         self._sprite_instance_capacity = 0
@@ -140,8 +188,6 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         self._sprite_depth_scratch = np.empty(0, dtype=np.float64)
         self._sprite_depth_aux_scratch = np.empty(0, dtype=np.float64)
         self._sprite_sorted_slots_scratch = np.empty(0, dtype=np.int32)
-        self._brush_instance_capacity = 0
-        self._brush_instance_data = np.empty((0, 32), dtype=np.float32)
         self._model_instance_vbo = None
         self._model_instance_capacity = 0
         self._model_instance_data = np.empty((0, 29), dtype=np.float32)
@@ -163,6 +209,13 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         # Depth cube-map shadow-mapping state (created lazily once GL is ready).
         self._shadow_fbo = None
         self._shadow_cubemaps = []          # texture ids, one cube-map per shadow slot
+        self._init_decals()
+        #: Effects also write depth this frame (see _write_effect_depth), and
+        #: the nearest few's centre and size, for the water pass to reflect.
+        self._effects_write_depth = False
+        self._reflected_effects = None
+        #: (publication key, TerrainGL): the GL side of the terrain drawn.
+        self._terrain_gl_state = None
         self._light_shadow_index = {}       # id(light) -> shadow slot index for this frame
         # Per-slot cache so a light's cube-map is only re-rendered when it (or one
         # of its in-range casters) actually moves — static lights become ~free.
@@ -230,7 +283,8 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         # cannot bleed neighbouring frames through transparent borders.
         self.effect_explosion_texture = 0
         explosion_path = os.path.join('assets', 'textures', 'effects', 'explosion.png')
-        if os.path.exists(explosion_path):
+        from engine.asset_archives import asset_exists
+        if asset_exists(explosion_path):
             self.effect_explosion_texture = self.load_texture(
                 'explosion.png', 'textures/effects')
             if self.effect_explosion_texture:
@@ -244,10 +298,8 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
                 gl.glTexParameteri(
                     gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
 
-        # Animated FIRE/ORB texture sets. Each GIF is decoded once into
-        # individual GL textures; the render path only selects the current frame.
-        self._load_fire_effect_textures()
-        self._load_orb_effect_textures()
+        # Animated FIRE/ORB texture sets are decoded when a map first holds
+        # an effect that uses them (ensure_effect_frames), not here.
 
         # Create VAOs after shaders are ready
         if not self._shader_init_failed:
@@ -262,6 +314,26 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             self._init_portal_gl()
             self._init_shadow_resources()
             self._init_distance()
+            self._init_occlusion(config)
+
+    def _kept_distance_cull(self, table, slots, cx, cz, limit_sq):
+        """:meth:`_distance_cull_slots`, its result kept per view (M4): the
+        same read-only array while the visible set (the same immutable
+        array), the camera's position, the limit and the table's transforms
+        stand; a result equal to the last keeps the last array."""
+        key = self._instance_view
+        held = self._distance_culls.get(key)
+        inputs = (cx, cz, limit_sq, table.generation, table.transform_version)
+        if (held is not None and held[0] is slots and not slots.flags.writeable
+                and held[1]() is table and held[2] == inputs):
+            return held[3]
+        culled = self._distance_cull_slots(table, slots, cx, cz, limit_sq)
+        if held is not None and held[1]() is table and np.array_equal(held[3], culled):
+            culled = held[3]
+        else:
+            culled.flags.writeable = False
+        self._distance_culls[key] = (slots, weakref.ref(table), inputs, culled)
+        return culled
 
     def render_scene(self, projection, view, camera_pos,
                      primary_selection, config, clear=True, brush_slots=None):
@@ -296,6 +368,8 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         self._frame_camera_pos = self._camera_xyz(camera_pos)
         self.render_stats.reset()
         self.render_stats.total_brushes = len(config.get('all_brush_slots', ()))
+        if not getattr(self, '_portal_scene_pass', False):
+            self._stream_calls.clear()
         self._begin_geo_frame()
         self._frame_lights_uploaded.clear()
         self._light_ubo_key = None
@@ -355,9 +429,18 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         slots = brush_slots
         if (config.get('camera_distance_cull', config.get('play_mode', False))
                 and cx is not None):
-            slots = self._distance_cull_slots(
-                table, slots, cx, cz, self.view_distance.distance_sq)
-        groups = self._classify_brush_slots(table, slots, config)
+            slots = self._kept_distance_cull(table, slots, cx, cz,
+                                             self.view_distance.distance_sq)
+        # GPU-verified hidden cells drop out here, before the passes classify,
+        # sort and pack the surviving rows (renderer/forward/occlusion.py).
+        slots = self._occlusion_filter_slots(table, slots, config, camera_pos,
+                                             view)
+        # Kept while the visible rows and their classification are unchanged
+        # (a copy: the depth sort below replaces some of its arrays).
+        groups = dict(self._pass_memo(
+            ('classify', self._instance_view), table, slots,
+            (bool(config.get('play_mode', False)),), (),
+            lambda: self._classify_brush_slots(table, slots, config)))
         # Water and glass each copy the whole frame for their refraction, so
         # only ask for that when one of them is actually in view.
         if len(groups['water']) or len(groups['glass']):
@@ -501,7 +584,18 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
                     self.draw_textured_brushes_optimized(projection, view, camera_pos, textured_opaque, lights, config, _tbl)
                     self.draw_lit_brushes_optimized(projection, view, camera_pos, solid_opaque, lights, config, table=_tbl)
                 else:
-                    self.draw_lit_brushes_optimized(projection, view, camera_pos, opaque_brushes, lights, config, table=_tbl)
+                    # 'Solid Lit': nodraw brushes keep their texture, so what
+                    # will not be drawn in play stays plain to see; water is
+                    # never textured -- a shaded brush in its colour, drawn
+                    # with the solid ones (see the water pass below).
+                    nodraw = nodraw_brushes(_tbl, opaque_brushes)
+                    solid = opaque_brushes
+                    if len(nodraw):
+                        solid = opaque_brushes[np.isin(opaque_brushes, nodraw, invert=True)]
+                        self.draw_textured_brushes_optimized(projection, view, camera_pos, nodraw, lights, config, _tbl)
+                    if len(water_brushes):
+                        solid = np.concatenate((solid, water_brushes))
+                    self.draw_lit_brushes_optimized(projection, view, camera_pos, solid, lights, config, table=_tbl)
             else:
                 self.draw_lit_brushes_optimized(projection, view, camera_pos, opaque_brushes, lights, config, table=_tbl)
         finally:
@@ -519,11 +613,29 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
                 fading_model_mask[:] = False     # distance colour has no alpha
             opaque_model_slots = numeric_model_slots[~fading_model_mask]
             fading_model_slots = numeric_model_slots[fading_model_mask]
+            # The private spawn sign has clear acrylic. Draw it after other
+            # opaque models so they are visible through its panel.
+            editor_mask = (etable.class_bits[opaque_model_slots]
+                           & entity_projection.ENT_EDITOR_MODEL) != 0
+            editor_model_slots = opaque_model_slots[editor_mask]
+            opaque_model_slots = opaque_model_slots[~editor_mask]
+            if len(editor_model_slots):
+                # Not from inside: the camera loads at the spawn, and the
+                # sign's panels would cover the whole view.
+                inside = editor_models_around(
+                    etable.pos[editor_model_slots],
+                    (camera_pos[0], camera_pos[1], camera_pos[2]),
+                    [size / 2.0 for size in PLAYER_HULL_SIZE])
+                editor_model_slots = editor_model_slots[~inside]
             if len(opaque_model_slots):
                 if look == 'Wireframe':
                     gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
                 self.draw_models_instanced(
                     projection, view, camera_pos, etable, opaque_model_slots,
+                    lights, config)
+            if len(editor_model_slots):
+                self.draw_models_instanced(
+                    projection, view, camera_pos, etable, editor_model_slots,
                     lights, config)
         if brush_display_mode == 'Overlay' and current_mode == RENDER_MODE_LIT:
             # The textured, lit frame with its triangles drawn over it.
@@ -568,6 +680,19 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             self.draw_models_instanced(
                 projection, view, camera_pos, etable, fading_model_slots,
                 lights, config)
+        if etable is not None and len(etable.effect_slots):
+            self.ensure_effect_frames(etable)
+        # Projected decals (blood): onto the opaque world just drawn, before
+        # anything blended, so they lie under water and glass.
+        self.draw_decals(projection, view, camera_pos, config.get('decals'))
+        # High-quality water reflects what is in the depth buffer: in a frame
+        # that has some, effects write their solid part there too.
+        self._reflected_effects = None
+        self._effects_write_depth = bool(
+            current_mode == RENDER_MODE_LIT and len(water_brushes)
+            and getattr(self, 'water_quality', 'expensive') == 'expensive'
+            and getattr(self, 'water_enabled', True)
+            and bool(_tbl.water_high_quality[water_brushes].any()))
         if effect_slots is not None and len(effect_slots):
             self.draw_effects_instanced(
                 projection, view, etable, effect_slots,
@@ -585,7 +710,9 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             self.draw_lit_brushes_optimized(projection, view, camera_pos, transparent_brushes, lights, config, is_transparent_pass=True, table=_tbl)
         else:
             self.draw_lit_brushes_optimized(projection, view, camera_pos, transparent_brushes, lights, config, is_transparent_pass=True, table=_tbl)
-        if current_mode == RENDER_MODE_LIT:
+        if current_mode == RENDER_MODE_LIT and brush_display_mode == 'Solid Lit':
+            pass        # water was drawn as a solid, shaded brush (above)
+        elif current_mode == RENDER_MODE_LIT:
             self.draw_water_brushes(
                 projection, view, camera_pos, water_brushes, lights, config,
                 table=_tbl)
@@ -593,6 +720,10 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
                                      table=_tbl)
             self.draw_fog_volumes(projection, view, camera_pos, fog_volumes, lights, config,
                                   table=_tbl)
+        # The frame's opaque depth is finished: poll the chained occlusion
+        # probes and issue this frame's, against exactly the geometry the
+        # brushes were hidden behind (renderer/forward/occlusion.py).
+        self._occlusion_end_of_frame(projection, view, camera_pos, config)
         gl.glDepthMask(gl.GL_TRUE)
         gl.glDisable(gl.GL_DEPTH_TEST)
         gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
@@ -605,6 +736,7 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
 
     def cleanup(self):
         """Release ForwardRenderer's own GL resources, then RendererCore's."""
+        self._cleanup_occlusion()
         if self._sprite_layers is not None:
             self._sprite_layers.cleanup()
             self._sprite_layers = None
@@ -620,6 +752,16 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         # renderer rebuild (a render-mode or shadow-quality change) strands the
         # whole cube-map pool -- MAX_SHADOW_LIGHTS cube-maps at shadow_map_size,
         # tens of megabytes of VRAM, every time.
+        try:
+            self._cleanup_decals()
+        except Exception:
+            pass
+        if self._terrain_gl_state is not None:
+            try:
+                self._terrain_gl_state[1].cleanup()
+            except Exception:
+                pass
+            self._terrain_gl_state = None
         if self._shadow_cubemaps:
             try:
                 gl.glDeleteTextures(self._shadow_cubemaps)
@@ -651,17 +793,21 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             self._light_ubo_key = None
             self._light_ubo_bound = False
         # Instance streams: one buffer and one vertex array per pass.
-        for vao in (self._brush_instance_vao, self._sprite_instance_vao,
-                    self._effect_instance_vao):
+        self._release_brush_streams()
+        self._slot_transform_caches.clear()
+        self._pass_memos.clear()
+        self._selected_payloads.clear()
+        self._distance_culls.clear()
+        self.__dict__.pop('_occlusion_kept', None)
+        for vao in (self._sprite_instance_vao, self._effect_instance_vao):
             if vao:
                 gl.glDeleteVertexArrays(1, [vao])
-        for vbo in (self._brush_instance_vbo, self._sprite_instance_vbo,
-                    self._effect_instance_vbo):
+        for vbo in (self._sprite_instance_vbo, self._effect_instance_vbo):
             if vbo:
                 gl.glDeleteBuffers(1, [vbo])
-        self._brush_instance_vao = self._sprite_instance_vao = None
+        self._sprite_instance_vao = None
         self._effect_instance_vao = None
-        self._brush_instance_vbo = self._sprite_instance_vbo = None
+        self._sprite_instance_vbo = None
         self._effect_instance_vbo = None
         # Portal resources. The mask and rim programs are not in ``shaders``.
         if self._portal_quad_vao:

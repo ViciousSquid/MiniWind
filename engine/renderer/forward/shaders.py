@@ -91,9 +91,9 @@ class ShadersMixin:
 
             # terrain
             try:
-                terrain_vs = compileShader(DEFAULT_SHADERS['terrain.vert'], gl.GL_VERTEX_SHADER)
+                terrain_vs = compileShader(DEFAULT_SHADERS['terrain_indexed.vert'], gl.GL_VERTEX_SHADER)
                 terrain_fs = compileShader(
-                    shaders.light_ubo_source(DEFAULT_SHADERS['terrain.frag']),
+                    shaders.light_ubo_source(DEFAULT_SHADERS['terrain_flat.frag']),
                     gl.GL_FRAGMENT_SHADER,
                 )
                 terrain_program = compileProgram(terrain_vs, terrain_fs, validate=False)
@@ -139,19 +139,26 @@ class ShadersMixin:
         self.uniforms['textured'].preload(['texture_diffuse', 'tex_scale', 'tex_angle', 'tex_shift', 'normalMatrix'])
         self._compile_instanced_model_shaders(lit_vert, lit_frag, tex_vert, tex_frag)
         self._compile_instanced_brush_shader(tex_vert, tex_frag)
+        self._compile_geo_face_shader(tex_vert, tex_frag)
         self._compile_instanced_lit_brush_shader(lit_vert, lit_frag)
         self._compile_instanced_depth_shader()
         self._compile_instanced_sprite_shader()
         self._compile_instanced_effect_shader()
 
     def _compile_standard_shaders(self):
-        lit_shader = self.shader_loader.compile_shader_program('lit.vert', 'lit.frag')
+        # From the embedded sources, like every other program here. These two
+        # used to be read back from assets/shaders, which ShaderLoader only
+        # writes when the install folder is writable; a read-only Fio.app
+        # never had the files, so no 3D view was drawn there.
+        lit_shader = self.shader_loader.compile_from_source(
+            self._shader_source('lit.vert'), self._shader_source('lit.frag'))
         self.shaders['lit'] = lit_shader
         self.uniforms['lit'] = UniformCache(lit_shader)
         self._preload_lit_uniforms('lit')
         self.uniforms['lit'].preload(['normalMatrix'])
 
-        tex_shader = self.shader_loader.compile_shader_program('textured.vert', 'textured.frag')
+        tex_shader = self.shader_loader.compile_from_source(
+            self._shader_source('textured.vert'), self._shader_source('textured.frag'))
         self.shaders['textured'] = tex_shader
         self.uniforms['textured'] = UniformCache(tex_shader)
         self._preload_lit_uniforms('textured')
@@ -162,6 +169,7 @@ class ShadersMixin:
         tex_frag = DEFAULT_SHADERS.get('textured.frag', '')
         self._compile_instanced_model_shaders(lit_vert, lit_frag, tex_vert, tex_frag)
         self._compile_instanced_brush_shader(tex_vert, tex_frag)
+        self._compile_geo_face_shader(tex_vert, tex_frag)
         self._compile_instanced_lit_brush_shader(lit_vert, lit_frag)
         self._compile_instanced_depth_shader()
         self._compile_instanced_sprite_shader()
@@ -292,6 +300,40 @@ layout (location = 10) in vec4 iPayload;
     #: stale value is somebody else's sprite.
     SPRITE_INSTANCE_FLOATS = 13
 
+    #: Blood on a wounded actor's sprite. Stains what the sprite's image
+    #: already shows (it is applied to the texel, so never outside the
+    #: figure): blotches round the body's middle that grow and join as the
+    #: wound count rises. *wound* is (amount 0..1,
+    #: pattern 0..15); the pattern is the actor's own, so two actors differ.
+    SPRITE_WOUND_GLSL = """
+float woundHash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float woundNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(woundHash(i), woundHash(i + vec2(1.0, 0.0)), f.x),
+               mix(woundHash(i + vec2(0.0, 1.0)), woundHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+vec3 woundedColour(vec3 colour, vec2 uv, vec2 wound) {
+    float amount = wound.x;
+    // In blocks, like the pixels of the sprite it is on.
+    uv = (floor(uv * 72.0) + 0.5) / 72.0;
+    vec2 seed = vec2(wound.y * 7.31, wound.y * 3.17);
+    // Blotches: two octaves; more of them pass the threshold as it falls.
+    float blot = 0.65 * woundNoise(uv * 7.0 + seed) + 0.35 * woundNoise(uv * 17.0 + seed * 2.0);
+    // Mostly the torso: the middle of the image, a little above centre.
+    vec2 d = (uv - vec2(0.5, 0.42)) * vec2(2.4, 1.7);
+    float body = exp(-dot(d, d) * mix(1.6, 0.85, amount));
+    float cover = mix(0.74, 0.47, amount);
+    float stain = smoothstep(cover, cover + 0.05, blot * body);
+    // Blood keeps the sprite's shading: dark, red, slightly wet.
+    float shade = dot(colour, vec3(0.299, 0.587, 0.114));
+    vec3 blood = vec3(0.40, 0.012, 0.012) * (0.40 + 0.85 * shade);
+    return mix(colour, blood, clamp(stain, 0.0, 1.0) * 0.92);
+}
+"""
+
     def _compile_instanced_sprite_shader(self):
         """Compile the billboard shader with its centre and size per instance.
 
@@ -339,28 +381,50 @@ layout (location = 10) in vec4 iPayload;
             return
         source = source.replace(
             'out vec2 TexCoords;',
-            'out vec2 TexCoords;\nflat out float InstanceAlpha;\nflat out vec3 InstanceTint;',
+            'out vec2 TexCoords;\nflat out float InstanceAlpha;\n'
+            'flat out vec2 InstanceWound;\nflat out vec3 InstanceTint;',
             1,
         )
+        # The opacity attribute carries blood too: alpha + 2 * (steps + 16 *
+        # pattern). A pass that writes only an opacity (0..1) gets none.
         source = source.replace(
             'void main() {',
-            'void main() {\n    InstanceAlpha = iSpriteAlpha;\n    InstanceTint = iSpriteTint;',
+            'void main() {\n'
+            '    float packedWound = floor(iSpriteAlpha * 0.5);\n'
+            '    InstanceAlpha = iSpriteAlpha - 2.0 * packedWound;\n'
+            '    InstanceWound = vec2(mod(packedWound, 16.0) / 15.0,\n'
+            '                         floor(packedWound / 16.0));\n'
+            '    InstanceTint = iSpriteTint;',
             1,
         )
         frag = frag.replace(
             'in highp vec3 FragPos;',
-            'in highp vec3 FragPos;\nflat in float InstanceAlpha;\nflat in vec3 InstanceTint;',
+            'in highp vec3 FragPos;\nflat in float InstanceAlpha;\n'
+            'flat in vec3 InstanceTint;\n'
+            'flat in vec2 InstanceWound;\n' + self.SPRITE_WOUND_GLSL,
             1,
         )
         frag = frag.replace(
             'FragColor = vec4(applyFog(texColor.rgb, FragPos), texColor.a);',
-            'FragColor = vec4(applyFog(texColor.rgb * InstanceTint, FragPos), texColor.a * InstanceAlpha);',
+            'if (InstanceWound.x > 0.0)\n'
+            '        texColor.rgb = woundedColour(texColor.rgb, TexCoords, InstanceWound);\n'
+            '    FragColor = vec4(applyFog(texColor.rgb * InstanceTint, FragPos), texColor.a * InstanceAlpha);',
             1,
         )
+        # alphaCutoff (0 unless set): the depth-only pass that lets water
+        # reflect effects keeps just their solid part (draw_fire_effects_instanced).
+        cutoff = 'if(texColor.a < 0.1) discard;'
+        if cutoff in frag:
+            frag = frag.replace(
+                'uniform sampler2D sprite_texture;',
+                'uniform sampler2D sprite_texture;\nuniform float alphaCutoff;', 1)
+            frag = frag.replace(
+                cutoff, 'if(texColor.a < max(0.1, alphaCutoff)) discard;', 1)
         if self._register_instanced_shader('sprite_instanced', source, frag,
                                            extra_uniforms=['projection', 'view',
                                                            'sprite_texture',
-                                                           'use_fixed_facing']):
+                                                           'use_fixed_facing',
+                                                           'alphaCutoff']):
             print(f'{_RENDERER_PREFIX} Sprite instancing shader compiled successfully.')
         self._compile_layered_sprite_shader(source, frag)
 
@@ -477,6 +541,94 @@ layout (location = 10) in vec4 iPayload;
         if self._register_instanced_shader('brush_instanced', vertex, tex_frag,
                                            extra_uniforms=['texture_diffuse']):
             print(f'{_RENDERER_PREFIX} Brush face instancing shader compiled successfully.')
+
+    #: Per-vertex face attributes of an angled brush's textured-pass VAO: the
+    #: face's UV scale, rotation and shift, the same on every vertex of the
+    #: face. Locations 3..5 -- 0..2 are the mesh's position, normal and UV.
+    GEO_FACE_ATTRS = """layout (location = 3) in vec2 aFaceScale;
+layout (location = 4) in float aFaceAngle;
+layout (location = 5) in vec2 aFaceShift;
+
+"""
+
+    def _geo_face_vertex_source(self, tex_vert):
+        """The textured vertex shader with its per-face UV uniforms as inputs.
+
+        Locals named after the dropped uniforms leave the UV maths in the body
+        byte for byte what the uniform path runs. None if the source does not
+        have the shape this rewrite expects.
+        """
+        drop = ('uniform vec2 tex_scale', 'uniform float tex_angle',
+                'uniform vec2 tex_shift')
+        kept = [line for line in tex_vert.splitlines()
+                if not line.strip().startswith(drop)]
+        vertex = '\n'.join(kept)
+        if (len(kept) != len(tex_vert.splitlines()) - len(drop)
+                or 'out vec3 FragPos;' not in vertex
+                or 'void main() {' not in vertex):
+            return None
+        vertex = vertex.replace('out vec3 FragPos;',
+                                self.GEO_FACE_ATTRS + 'out vec3 FragPos;', 1)
+        return vertex.replace(
+            'void main() {',
+            'void main() {\n'
+            '    vec2 tex_scale = aFaceScale;\n'
+            '    float tex_angle = aFaceAngle;\n'
+            '    vec2 tex_shift = aFaceShift;\n', 1)
+
+    def _compile_geo_face_shader(self, tex_vert, tex_frag):
+        """Compile the textured shader with its per-face UV uniforms as inputs.
+
+        An angled brush's faces each carry their own UV scale, rotation and
+        shift, which the textured pass used to upload as three uniforms before
+        every face's draw. They do not change from frame to frame, so they are
+        written once, per vertex, when the mesh is built; this variant reads
+        them from there -- the same float32 values in, the same TexCoords out.
+        Absent if the driver rejects it; the pass then keeps the uniform path.
+
+        ``geo_batched`` goes one step further for the batched submission: the
+        model and normal matrices, which differ per brush, are fetched from a
+        buffer texture at the vertex's transform slot (an integer attribute
+        written with the vertex), since OpenGL 3.3 gives a vertex no way to
+        know which draw of a batch it belongs to. Again locals carry the
+        dropped uniforms' names, so the body is unchanged.
+        """
+        vertex = self._geo_face_vertex_source(tex_vert)
+        if vertex is None:
+            return
+        if self._register_instanced_shader('geo_textured', vertex, tex_frag,
+                                           extra_uniforms=['texture_diffuse',
+                                                           'normalMatrix']):
+            print(f'{_RENDERER_PREFIX} Angled-brush face shader compiled successfully.')
+        drop = ('uniform mat4 model;', 'uniform mat3 normalMatrix;')
+        kept = [line for line in vertex.splitlines()
+                if not line.strip().startswith(drop)]
+        if len(kept) != len(vertex.splitlines()) - len(drop):
+            return
+        batched = '\n'.join(kept).replace(
+            'out vec3 FragPos;', self.GEO_BATCH_INPUTS + 'out vec3 FragPos;', 1)
+        batched = batched.replace('void main() {\n',
+                                  'void main() {\n' + self.GEO_BATCH_FETCH, 1)
+        if self._register_instanced_shader('geo_batched', batched, tex_frag,
+                                           extra_uniforms=['texture_diffuse',
+                                                           'uTransforms']):
+            print(f'{_RENDERER_PREFIX} Batched angled-brush shader compiled successfully.')
+
+    #: The batched variant's extra inputs: the vertex's transform slot and the
+    #: buffer texture of transforms (seven RGBA32F texels per slot).
+    GEO_BATCH_INPUTS = """layout (location = 6) in int aSlot;
+uniform samplerBuffer uTransforms;
+
+"""
+    GEO_BATCH_FETCH = (
+        '    int transform = aSlot * 7;\n'
+        '    mat4 model = mat4(texelFetch(uTransforms, transform),\n'
+        '                      texelFetch(uTransforms, transform + 1),\n'
+        '                      texelFetch(uTransforms, transform + 2),\n'
+        '                      texelFetch(uTransforms, transform + 3));\n'
+        '    mat3 normalMatrix = mat3(texelFetch(uTransforms, transform + 4).xyz,\n'
+        '                             texelFetch(uTransforms, transform + 5).xyz,\n'
+        '                             texelFetch(uTransforms, transform + 6).xyz);\n')
 
     def _compile_instanced_model_shaders(self, lit_vert, lit_frag, tex_vert, tex_frag):
         """Compile GL 3.3 model shaders whose transforms come from instanced attributes."""

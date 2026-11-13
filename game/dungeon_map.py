@@ -178,7 +178,7 @@ def _editor_angle(dx, dz):
 
 def parse_loot(text) -> List[Dict]:
     """``"gold:50, potion_heal"`` as item stacks (unknown ids are skipped)."""
-    from .rpg import items as rpg_items
+    import game.rpg.items as rpg_items
     out = []
     for part in str(text or "").split(","):
         part = part.strip()
@@ -213,7 +213,7 @@ def _distances(open_, start):
 
 def build_map(design: Design, settings: Optional[Dict] = None) -> Dict:
     """The playable map for *design*."""
-    from .rpg import bestiary
+    import game.rpg.bestiary as bestiary
     d = design
     cell = float(d.cell)
     h, w = d.height, d.width

@@ -925,7 +925,7 @@ class Expander:
         p = _props(c)
         for k in [k for k in p if k.startswith("_")]:
             del p[k]
-        from ..rpg import items as rpg_items
+        import game.rpg.items as rpg_items
         inv = []
         for iid, qty in items:
             it = rpg_items.make(iid, qty) if hasattr(rpg_items, "make") else None

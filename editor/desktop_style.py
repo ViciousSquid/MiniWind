@@ -1,5 +1,7 @@
 """The editor's Windows layout rules, shared on every desktop platform."""
 
+from engine.asset_archives import asset_files
+from engine.asset_qt import add_application_font, load_icon
 from pathlib import Path
 import os
 import sys
@@ -9,7 +11,7 @@ from PyQt5.QtGui import QColor, QCursor, QFont, QFontDatabase, QFontMetrics, QGu
 from PyQt5.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialogButtonBox,
                              QFileDialog, QFileIconProvider,
                              QFormLayout, QHeaderView, QLabel, QMessageBox, QProxyStyle, QSizePolicy, QStyle, QStyleFactory,
-                             QRadioButton, QSplitter, QTabWidget, QToolTip, QWidget)
+                             QMenu, QRadioButton, QSplitter, QTabWidget, QToolTip, QWidget)
 
 UI_FONT = "Fio UI"
 MONO_FONT = "IBM Plex Mono"
@@ -164,6 +166,9 @@ class EditorStyle(QProxyStyle):
             QStyle.PM_ToolBarSeparatorExtent: 8, QStyle.PM_ToolBarExtensionExtent: 16,
             QStyle.PM_DockWidgetFrameWidth: 1, QStyle.PM_DockWidgetTitleMargin: 4,
             QStyle.PM_DockWidgetSeparatorExtent: 4, QStyle.PM_SplitterWidth: 4,
+            # Qt scales this from 72 dpi on macOS and 96 elsewhere, which made
+            # dock title buttons 21px there and 20px everywhere else.
+            QStyle.PM_DockWidgetTitleBarButtonMargin: 4,
             QStyle.PM_HeaderMargin: 4, QStyle.PM_HeaderMarkSize: 12,
             QStyle.PM_SmallIconSize: 16, QStyle.PM_LargeIconSize: 32,
             QStyle.PM_MenuPanelWidth: 1, QStyle.PM_MenuHMargin: 0,
@@ -195,14 +200,14 @@ class EditorStyle(QProxyStyle):
             QStyle.SP_MessageBoxCritical: 'error', QStyle.SP_MessageBoxQuestion: 'question',
         }
         if icon in files:
-            return QIcon(str(ICON_DIRECTORY / (files[icon] + '.svg')))
+            return load_icon(str(ICON_DIRECTORY / (files[icon] + '.svg')))
         return super().standardIcon(icon, option, widget)
 
 
 class EditorFileIcons(QFileIconProvider):
     def icon(self, value):
         folder = value.isDir() if hasattr(value, 'isDir') else value == QFileIconProvider.Folder
-        return QIcon(str(ICON_DIRECTORY / ('folder.svg' if folder else 'file.svg')))
+        return load_icon(str(ICON_DIRECTORY / ('folder.svg' if folder else 'file.svg')))
 
 
 class EditorLayoutRules(QObject):
@@ -226,6 +231,12 @@ class EditorLayoutRules(QObject):
     def eventFilter(self, obj, event):
         if not isinstance(obj, QWidget):
             return False
+        if (sys.platform == 'darwin' and isinstance(obj, QMenu)
+                and event.type() == QEvent.MouseMove):
+            # Qt 5/Cocoa sometimes leaves one-pixel selection edges behind
+            # when QMenu redraws only the old and new action rectangles.
+            # A coalesced full update includes those edges and separators.
+            obj.update()
         if event.type() in (QEvent.Polish, QEvent.FontChange) and isinstance(obj, (QLabel, QCheckBox, QRadioButton)):
             if obj.text() and obj.maximumHeight() == 16777215:
                 previous = obj.property('_fio_label_height')
@@ -321,8 +332,9 @@ def install_editor_style(app):
     if getattr(app, "_fio_editor_style_installed", False):
         return
     directory = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "editor"
-    for path in sorted(directory.glob("*.ttf")):
-        if QFontDatabase.addApplicationFont(str(path)) < 0:
+    # Loose, or inside assets/fonts.fiopak: read in place.
+    for path in asset_files(directory, ('.ttf',)):
+        if add_application_font(path) < 0:
             raise RuntimeError("Could not load editor font: " + str(path))
     families = set(QFontDatabase().families())
     if not {UI_FONT, MONO_FONT}.issubset(families):

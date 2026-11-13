@@ -137,8 +137,16 @@ class Audit:
         if name in self._seen:
             return
         self._seen.add(name)
-        # Asset thumbnails reflow after a 50ms resize debounce.
+        # Asset thumbnails are decoded off the UI thread as tiles show:
+        # every capture waits for them, so both systems show them finished.
         self.settle(80 if name.startswith(('main/', 'docks/assets')) else 20)
+        from editor.asset_browser import AssetBrowserTab
+        tabs = root.findChildren(AssetBrowserTab) if hasattr(root, 'findChildren') else []
+        if isinstance(root, AssetBrowserTab):
+            tabs.append(root)
+        for tab in tabs:
+            if tab.isVisible():
+                tab.finish_thumbnails()
         image_name = slug(name)[:140] + "-" + hashlib.sha1(name.encode()).hexdigest()[:8] + ".png"
         pixmap = root.grab() if self.screenshots else None
         dpr = root.devicePixelRatioF()
@@ -318,7 +326,23 @@ def run_audit(audit, window, sections):
         for large in (False, True):
             window.config.set("Display", "big_toolbar_buttons", str(large))
             window.apply_toolbar_button_size()
-            audit.surface("toolbar/" + ("large" if large else "small"), window.tool_toolbar)
+            audit.settle()
+            tool = window.tool_toolbar
+            # The editor must never put Play (or another editing tool) behind
+            # Qt's overflow chevron. Audit this on real Windows/Cocoa widgets,
+            # not just against the cross-platform arithmetic unit test.
+            for action in tool.actions():
+                rect = tool.actionGeometry(action)
+                if (not rect.isValid() or rect.y() < 0
+                        or rect.bottom() >= tool.height()):
+                    raise AssertionError(
+                        "Toolbar action clipped on %s (large=%s): %r rect=%r height=%d"
+                        % (audit.app.platformName(), large, action.text(),
+                           rect, tool.height()))
+            if not window.play_button.isVisibleTo(tool):
+                raise AssertionError("Play is hidden on %s (large=%s)"
+                                     % (audit.app.platformName(), large))
+            audit.surface("toolbar/" + ("large" if large else "small"), tool)
         window.config.set("Display", "big_toolbar_buttons", "False")
         window.apply_toolbar_button_size()
 
@@ -400,7 +424,7 @@ def run_audit(audit, window, sections):
         audit.modal("dialogs/open-map-picker", lambda: QtWidgets.QFileDialog.getOpenFileName(
             window, 'Open Map', 'maps', 'Maps (*.json)'), size=(36 * line, 24 * line))
         audit.modal("dialogs/project-overview", window.open_project_overview)
-        audit.modal("dialogs/grid-colours", window.open_grid_colours_dialog)
+        audit.modal("dialogs/colours", window.open_colours_dialog)
         audit.modal("dialogs/about", window.show_about)
 
     if enabled("game"):

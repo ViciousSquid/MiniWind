@@ -495,13 +495,22 @@ def test_sound_and_moving_door_are_replicated_without_client_simulation(coop_gam
         "id": "coop-test-door",
         "is_door": True,
         "pos": [0, 80, 0],
+        "size": [48, 128, 16],
         "start_on": False,
     }
     coop.logic.editor_state.brushes.append(door)
+    # A door is a row of the engine's mover table from the start of play;
+    # this one arrives late, so have the doors gathered again.
+    coop.logic.mover_runtime._init_doors()
     frame = coop.snapshot()
     frame["moving_brushes"]["coop-test-door"]["pos"] = [72, 80, 0]
     apply(coop, frame)
-    assert list(door["pos"]) == [72, 80, 0]
+    # Fio 3.5: a door's ``pos`` is where it was authored; where it is now is
+    # its live placement, which the replicated frame moved.
+    from engine import brush_placement
+
+    assert list(door["pos"]) == [0, 80, 0]
+    assert list(brush_placement.placement(door).centre) == [72, 80, 0]
     sound = {"file": "fire.wav", "position": [0, 0, 0]}
     coop.logic.game_state.queue_sound(copy.deepcopy(sound))
     assert coop._sounds[-1] == sound

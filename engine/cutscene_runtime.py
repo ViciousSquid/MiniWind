@@ -33,16 +33,13 @@ class CutsceneRuntime:
         self._message_queue = queue.SimpleQueue()
 
     def _cutscene_file_path(self, filename):
-        """Resolve an authored cutscene path without allowing it outside cutscenes/.
-
-        A played package's own ``cutscenes/`` (``logic.package_root``) is
-        searched before the project's.
+        """Resolve an authored cutscene path in the project, without allowing
+        it outside cutscenes/ (a played package's are :meth:`_package_cutscene`).
         """
         raw = str(filename or "").strip().replace("\\", "/")
         if not raw:
             return None
-        roots = [getattr(self.logic, "package_root", None),
-                 getattr(self.logic, "root_dir",
+        roots = [getattr(self.logic, "root_dir",
                          os.path.dirname(os.path.dirname(__file__)))]
         for project_root in roots:
             if not project_root:
@@ -58,15 +55,31 @@ class CutsceneRuntime:
                 return candidate
         return None
 
+    def _package_cutscene(self, filename):
+        """The member of the played package (``logic.package``, read in place)
+        that *filename* names inside its ``cutscenes/``, or None. A package's
+        cutscenes come before the project's."""
+        package = getattr(self.logic, "package", None)
+        if package is None:
+            return None
+        member = package.member(filename)
+        if member is None or not member.startswith("cutscenes/"):
+            return None
+        return member
+
     def _load_cutscene_file(self, filename):
-        path = self._cutscene_file_path(filename)
-        if path is None:
+        member = self._package_cutscene(filename)
+        path = None if member is not None else self._cutscene_file_path(filename)
+        if member is None and path is None:
             debug_log("Cutscene", f"FAILED: '{filename}' not found or outside cutscenes/")
             return None
         try:
-            with open(path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-        except (OSError, ValueError, TypeError) as exc:
+            if member is not None:
+                data = self.logic.package.load_json(member)
+            else:
+                with open(path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
             debug_log("Cutscene", f"FAILED: '{filename}' could not be loaded: {exc}")
             return None
         if not isinstance(data, dict) or not isinstance(data.get("camera"), list):
@@ -119,67 +132,77 @@ class CutsceneRuntime:
     @staticmethod
     def _cutscene_sample(rows, elapsed, initial_pos=None, initial_yaw=0.0):
         """Sample one actor/camera track with linear interpolation."""
-        valid = [row for row in rows if isinstance(row, dict)]
-        if not valid:
-            return None
-        valid.sort(key=lambda row: CutsceneRuntime._cutscene_number(row.get("time", 0.0)))
-        first_time = CutsceneRuntime._cutscene_number(valid[0].get("time", 0.0))
-        if elapsed < first_time and initial_pos is not None:
-            return {"pos": list(initial_pos), "yaw": float(initial_yaw), "_before": True}
-        if elapsed <= first_time:
-            return valid[0]
-        for index in range(1, len(valid)):
-            right = valid[index]
-            left = valid[index - 1]
-            right_time = CutsceneRuntime._cutscene_number(right.get("time", 0.0))
-            left_time = CutsceneRuntime._cutscene_number(left.get("time", 0.0))
-            if elapsed <= right_time:
-                span = right_time - left_time
-                t = 1.0 if span <= 1e-9 else max(0.0, min(1.0, (elapsed - left_time) / span))
-                lp = CutsceneRuntime._cutscene_vec3(left.get("pos", [0, 0, 0]))
-                rp = CutsceneRuntime._cutscene_vec3(right.get("pos", lp), lp)
+        # Only the two bracketing frames matter. Read their times once, without
+        # sorting/copying the complete track on every camera and actor tick.
+        # A stable sort chose the *last* equal-time left frame and the *first*
+        # equal-time right frame; retain those choices, including at endpoints.
+        # Keep reading the live rows each call: runtime track edits take effect
+        # immediately and cannot leave a persistent ordering cache stale.
+        left = right = None
+        left_time = right_time = 0.0
+        number = CutsceneRuntime._cutscene_number
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            when = number(row.get("time", 0.0))
+            if elapsed <= when:
+                if right is None or when < right_time:
+                    right, right_time = row, when
+            elif left is None or when >= left_time:
+                left, left_time = row, when
+        if right is None:
+            # Also the original result for a NaN elapsed time: every ordered
+            # comparison fails, so sampling falls through to the last frame.
+            return left
+        if left is None:
+            if elapsed < right_time and initial_pos is not None:
+                return {"pos": list(initial_pos), "yaw": float(initial_yaw), "_before": True}
+            return right
+        span = right_time - left_time
+        t = 1.0 if span <= 1e-9 else max(0.0, min(1.0, (elapsed - left_time) / span))
+        lp = CutsceneRuntime._cutscene_vec3(left.get("pos", [0, 0, 0]))
+        rp = CutsceneRuntime._cutscene_vec3(right.get("pos", lp), lp)
 
-                # A teleport belongs to the destination keyframe.  Keep the
-                # previous shot completely unchanged until its timestamp, then
-                # cut to the new location.  This makes large cross-map jumps
-                # explicit rather than turning them into a very fast move.
-                if right.get("teleport", False):
-                    if elapsed < right_time:
-                        return {
-                            "pos": list(lp),
-                            "yaw": CutsceneRuntime._cutscene_number(left.get("yaw", 0.0)),
-                            "pitch": CutsceneRuntime._cutscene_number(left.get("pitch", 0.0)),
-                            "fov": CutsceneRuntime._cutscene_number(left.get("fov", 90.0), 90.0),
-                            "look_at": left.get("look_at"),
-                        }
-                    return {
-                        "pos": list(rp),
-                        "yaw": CutsceneRuntime._cutscene_number(right.get("yaw", 0.0)),
-                        "pitch": CutsceneRuntime._cutscene_number(right.get("pitch", 0.0)),
-                        "fov": CutsceneRuntime._cutscene_number(right.get("fov", 90.0), 90.0),
-                        "look_at": right.get("look_at"),
-                    }
-
+        # A teleport belongs to the destination keyframe.  Keep the
+        # previous shot completely unchanged until its timestamp, then
+        # cut to the new location.  This makes large cross-map jumps
+        # explicit rather than turning them into a very fast move.
+        if right.get("teleport", False):
+            if elapsed < right_time:
                 return {
-                    "pos": [lp[i] + (rp[i] - lp[i]) * t for i in range(3)],
-                    "yaw": CutsceneRuntime._cutscene_lerp_angle(
-                        CutsceneRuntime._cutscene_number(left.get("yaw", 0.0)),
-                        CutsceneRuntime._cutscene_number(right.get("yaw", 0.0)),
-                        t,
-                    ),
-                    "pitch": (
-                        CutsceneRuntime._cutscene_number(left.get("pitch", 0.0))
-                        + (CutsceneRuntime._cutscene_number(right.get("pitch", 0.0))
-                           - CutsceneRuntime._cutscene_number(left.get("pitch", 0.0))) * t
-                    ),
-                    "fov": (
-                        CutsceneRuntime._cutscene_number(left.get("fov", 90.0), 90.0)
-                        + (CutsceneRuntime._cutscene_number(right.get("fov", 90.0), 90.0)
-                           - CutsceneRuntime._cutscene_number(left.get("fov", 90.0), 90.0)) * t
-                    ),
+                    "pos": list(lp),
+                    "yaw": CutsceneRuntime._cutscene_number(left.get("yaw", 0.0)),
+                    "pitch": CutsceneRuntime._cutscene_number(left.get("pitch", 0.0)),
+                    "fov": CutsceneRuntime._cutscene_number(left.get("fov", 90.0), 90.0),
                     "look_at": left.get("look_at"),
                 }
-        return valid[-1]
+            return {
+                "pos": list(rp),
+                "yaw": CutsceneRuntime._cutscene_number(right.get("yaw", 0.0)),
+                "pitch": CutsceneRuntime._cutscene_number(right.get("pitch", 0.0)),
+                "fov": CutsceneRuntime._cutscene_number(right.get("fov", 90.0), 90.0),
+                "look_at": right.get("look_at"),
+            }
+
+        return {
+            "pos": [lp[i] + (rp[i] - lp[i]) * t for i in range(3)],
+            "yaw": CutsceneRuntime._cutscene_lerp_angle(
+                CutsceneRuntime._cutscene_number(left.get("yaw", 0.0)),
+                CutsceneRuntime._cutscene_number(right.get("yaw", 0.0)),
+                t,
+            ),
+            "pitch": (
+                CutsceneRuntime._cutscene_number(left.get("pitch", 0.0))
+                + (CutsceneRuntime._cutscene_number(right.get("pitch", 0.0))
+                   - CutsceneRuntime._cutscene_number(left.get("pitch", 0.0))) * t
+            ),
+            "fov": (
+                CutsceneRuntime._cutscene_number(left.get("fov", 90.0), 90.0)
+                + (CutsceneRuntime._cutscene_number(right.get("fov", 90.0), 90.0)
+                   - CutsceneRuntime._cutscene_number(left.get("fov", 90.0), 90.0)) * t
+            ),
+            "look_at": left.get("look_at"),
+        }
 
     def _start_json_cutscene(self, entity, filename, data):
         previous = self.state

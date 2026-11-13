@@ -132,7 +132,8 @@ def cmd_sim(ctx, args):
     if director is None:
         debug_log("Error", "sim: no active MiniWind session.")
         return
-    from .sim import crime as _crime, knowledge as _know
+    import game.sim.crime as _crime
+    import game.sim.knowledge as _know
     from .sim.director import actor_key as _key
 
     parts = args.split()
@@ -257,7 +258,7 @@ def cmd_quest(ctx, args):
         debug_log("Error", "quest: no active MiniWind session.")
         return
     try:
-        from .rpg import quests as _q
+        import game.rpg.quests as _q
     except Exception as exc:
         debug_log("Error", f"quest: {exc}")
         return
@@ -325,7 +326,7 @@ def cmd_inspect(ctx, args):
 
     def _open(actor):
         # The window opens on the view the pick was made in.
-        from .ui import inspector
+        import game.ui.inspector as inspector
         inspector.open_inspector(getattr(window, "view_3d", None), actor)
 
     begin = getattr(window, "begin_actor_pick", None)
@@ -408,7 +409,7 @@ def cmd_storyteller(ctx, args):
     if getattr(session, "storyteller", None) is None:
         debug_log("Error", "storyteller: no active MiniWind storyteller.")
         return None
-    from .ui import storyteller_window
+    import game.ui.storyteller_window as storyteller_window
     view = getattr(ctx.main_window, "view_3d", None)
     if storyteller_window.open_storyteller(view) is None:
         debug_log("Error", "storyteller: no game view to open it on.")
@@ -422,7 +423,7 @@ def cmd_debugtools(ctx, args):
         debug_log("Error", "debugtools: Play Mode only.")
         return None
     view = getattr(ctx.main_window, "view_3d", None)
-    from .ui import debug_tools
+    import game.ui.debug_tools as debug_tools
     if debug_tools.open_debug_tools(view) is None:
         debug_log("Error", "debugtools: no game view to open it on.")
     return None
@@ -438,8 +439,8 @@ def cmd_resurrect(ctx, args):
     window = ctx.main_window
 
     def _raise(actor):
-        from . import rewind
-        from .ui import hits
+        import game.rewind as rewind
+        import game.ui.hits as hits
         hits.queue(lambda session: rewind.resurrect(session, actor))
 
     begin = getattr(window, "begin_actor_pick", None)
@@ -458,7 +459,7 @@ def cmd_torch_shadows(ctx, args):
 
     The same setting as Settings > Game > Torch shadows (GAME /
     torch_shadows in settings.ini): it applies at once and is saved."""
-    from . import runtime
+    import game.runtime as runtime
     config = getattr(ctx.main_window, "config", None) or runtime._editor_config
     if config is None:
         debug_log("Error", "torch_shadows: no settings to change (no editor).")
@@ -528,7 +529,7 @@ def cmd_paths(ctx, args):
     if session is None or not ctx.play_mode:
         debug_log("Error", "paths: enter Play Mode first.")
         return None
-    from . import pathfinding_debug as debug
+    import game.pathfinding_debug as debug
     try:
         tokens = shlex.split(str(args or ""))
         command = tokens[0].lower() if tokens else "toggle"

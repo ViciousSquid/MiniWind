@@ -30,7 +30,7 @@ from .rpg import factions
 def build_model():
     """The hostility model for the current faction table."""
     from engine.hostility import HostilityModel
-    from . import data
+    import game.data as data
     names = [factions.normalise_team(n)
              for n in (data.load("factions") or {}).get("factions", [])]
     names = [n for n in dict.fromkeys(names) if n]
@@ -50,7 +50,7 @@ def install(logic) -> None:
     if ai is None:
         return
     ai.set_hostility(build_model())
-    from . import combat_loadout
+    import game.combat_loadout as combat_loadout
     combat_loadout.install_engine_hook()
 
 
@@ -59,5 +59,5 @@ def uninstall(logic) -> None:
     ai = getattr(logic, "monster_ai", None)
     if ai is not None and getattr(ai, "hostility", None) is not None:
         ai.set_hostility(None)
-    from . import combat_loadout
+    import game.combat_loadout as combat_loadout
     combat_loadout.uninstall_engine_hook()

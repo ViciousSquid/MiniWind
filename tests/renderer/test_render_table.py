@@ -9,7 +9,9 @@ refactor changes what gets drawn.
 import numpy as np
 import pytest
 
+from engine import brush_placement
 from engine import render_table as rt
+from tests.helpers import runtime
 from engine.render_table import RenderTable
 from engine.spatial import PARKED_HIDDEN_KEY
 
@@ -214,9 +216,14 @@ def test_transforms_refresh_without_touching_cold_columns():
     assert t.class_bits[0] == cold
 
 
+def _spinning(angle, axis, **fields):
+    """A brush turned by its runtime transform (Stage 2b: owned by a runtime
+    source, never a key in the dict)."""
+    return runtime.drive(_brush(rot_axis=list(axis), **fields), spin=(axis, angle))
+
+
 def test_rotation_is_zero_for_an_unrotated_brush():
-    t = _synced([_brush(id='a'), _brush(id='r', _rot_angle=45.0,
-                                        rot_axis=[0, 1, 0])])
+    t = _synced([_brush(id='a'), _spinning(45.0, [0, 1, 0], id='r')])
     assert not t.rot[0].any()
     assert t.rot[1, 3] == 45.0
 
@@ -281,9 +288,10 @@ def _glm_reference(brush):
     produce for a brush, flattened column-major as value_ptr would give them."""
     import glm
     m = glm.translate(glm.mat4(1.0), glm.vec3(*brush['pos']))
-    angle = brush.get('_rot_angle')
+    spin = brush_placement.runtime_of(brush)
+    angle = spin[6] if spin is not None else 0.0
     if angle:
-        axis = glm.vec3(*brush.get('rot_axis', [0, 1, 0]))
+        axis = glm.vec3(*spin[3:6])
         if glm.length(axis) > 0.001:
             m = glm.rotate(m, glm.radians(float(angle)), glm.normalize(axis))
     m = glm.scale(m, glm.vec3(*brush['size']))
@@ -305,14 +313,11 @@ def test_model_matrices_match_the_glm_path_they_replace():
     """
     brushes = [
         _brush(id='plain', pos=[10, 20, 30], size=[64, 128, 32]),
-        _brush(id='yaw', pos=[-5, 0, 7], size=[100, 100, 100],
-               _rot_angle=45.0, rot_axis=[0, 1, 0]),
-        _brush(id='diag', pos=[0, 0, 0], size=[16, 16, 16],
-               _rot_angle=30.0, rot_axis=[1, 1, 0]),
-        _brush(id='roll', pos=[3, 4, 5], size=[8, 8, 8],
-               _rot_angle=90.0, rot_axis=[0, 0, 1]),
-        _brush(id='degenerate', pos=[1, 2, 3], size=[64, 64, 64],
-               _rot_angle=12.0, rot_axis=[0.0, 0.0, 0.0]),
+        _spinning(45.0, [0, 1, 0], id='yaw', pos=[-5, 0, 7], size=[100, 100, 100]),
+        _spinning(30.0, [1, 1, 0], id='diag', pos=[0, 0, 0], size=[16, 16, 16]),
+        _spinning(90.0, [0, 0, 1], id='roll', pos=[3, 4, 5], size=[8, 8, 8]),
+        _spinning(12.0, [0.0, 0.0, 0.0], id='degenerate', pos=[1, 2, 3],
+                  size=[64, 64, 64]),
     ]
     t = _synced(brushes)
     models, normals = rt.model_matrices(t, np.arange(len(brushes), dtype=np.int32))
@@ -459,3 +464,62 @@ def test_water_optics_fall_back_to_existing_reflectivity():
     assert t.water_params[0, 4] == pytest.approx(0.5)
     assert t.water_params[0, 5] == pytest.approx(1.333)
     assert t.water_params[0, 6] == pytest.approx(0.0)
+
+
+
+def test_refreshed_rows_are_reported_to_a_reader_by_serial():
+    """The occlusion index is the renderer's own; the table reports which
+    rows it refreshed since the serial a reader last saw."""
+    from engine.cell_cull import CellGroupIndex
+
+    a = _brush(id="occlusion-a", pos=[100.0, 0.0, 100.0])
+    b = _brush(id="occlusion-b", pos=[200.0, 0.0, 100.0])
+    table = _synced([a, b])
+    assert not hasattr(table, "_occlusion_index")
+
+    index = CellGroupIndex(table)
+    seen = table.row_change_serial
+    assert len(table.row_changes_since(seen)) == 0
+    a["pos"] = [700.0, 0.0, 100.0]
+    table.refresh_transforms([a, b], [0])
+    changed = table.row_changes_since(seen)
+    assert changed.tolist() == [0]
+    index.update(table, changed.tolist())
+    seen = table.row_change_serial
+    mask, _boxes, groups, cells, _counts, _signatures = index.visible([0, 1])
+    assert tuple(cells[groups[0]]) == (1, 0)
+    assert tuple(cells[groups[1]]) == (0, 0)
+    assert mask.all()
+
+    b["shader"] = "Glass"
+    table.refresh_rows([a, b], [1])
+    assert table.row_changes_since(seen).tolist() == [1]
+    # Two readers at different serials each get what they missed.
+    assert sorted(table.row_changes_since(seen - 1).tolist()) == [0, 1]
+
+    # Structural publication: a reader behind it must rebuild.
+    generation = table.generation
+    table.sync([a, b, _brush(id="occlusion-new")], epoch=2)
+    assert table.generation != generation
+    assert table.row_changes_since(seen) is None
+
+
+def test_the_row_change_log_is_bounded():
+    a = _brush(id="log-a")
+    table = _synced([a])
+    start = table.row_change_serial
+    for _ in range(table.ROW_CHANGE_LOG * 3):
+        table.refresh_transforms([a], [0])
+    assert len(table._row_changes) <= table.ROW_CHANGE_LOG
+    assert table.row_changes_since(start) is None           # too far back
+    assert table.row_changes_since(table.row_change_serial - 2).tolist() == [0, 0]
+
+
+def test_render_table_peer_adoption_makes_readers_rebuild():
+    rows = [_brush(id="cache-a"), _brush(id="cache-b")]
+    source = _synced(rows, epoch=1)
+    peer = _synced(rows, epoch=1)
+    seen, generation = peer.row_change_serial, peer.generation
+    peer.adopt(source)
+    assert peer.generation != generation
+    assert peer.row_changes_since(seen) is None

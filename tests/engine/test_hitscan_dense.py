@@ -92,7 +92,8 @@ def _walk_monsters(things, ray_origin, ray_dir, reach, closest_brush_dist):
         sprite_width = float(thing.properties.get('sprite_width', 64.0))
         sprite_height = float(thing.properties.get('sprite_height', 128.0))
         radius = max(sprite_width * 0.75, sprite_height * 0.4, 48.0)
-        center = glm.vec3(thing.pos[0], thing.pos[1] + sprite_height * 0.45, thing.pos[2])
+        # pos is the billboard's centre: the feet are half the sprite below it.
+        center = glm.vec3(thing.pos[0], thing.pos[1] - sprite_height * 0.05, thing.pos[2])
         oc = ray_origin - center
         a = glm.dot(ray_dir, ray_dir)
         b = 2.0 * glm.dot(oc, ray_dir)
@@ -227,15 +228,24 @@ def test_a_brush_hidden_after_the_rows_were_built_does_not_block(logic):
 
 
 def test_a_mover_is_hit_where_it_is_now(logic):
+    """Where a mover is now is its runtime transform (Stage 2b: a runtime
+    source owns it; pos is its authored placement), and an editor edit of
+    that placement is journaled: the rows follow both."""
+    from tests.helpers import runtime
     floor = [box_brush("f%d" % i, (5000 + i * 100, 0, 0), (10, 10, 10)) for i in range(3)]
     door = box_brush("door", (0, 0, 100), (64, 64, 16), is_mover=True)
     thread = logic([*floor, door])
     origin, direction = glm.vec3(0, 0, 0), glm.vec3(0, 0, 1)
     assert _trace(thread, origin, direction, 1000.0)[0] == 92.0
-    door['pos'] = [0.0, 0.0, 200.0]    # the mover pass assigns a new list
+    runtime.drive(door, centre=(0.0, 0.0, 200.0))
     assert _trace(thread, origin, direction, 1000.0)[0] == 192.0
-    door['pos'] = [0.0, 500.0, 200.0]
+    runtime.drive(door, centre=(0.0, 500.0, 200.0))
     assert _trace(thread, origin, direction, 1000.0) == (INF, None)
+    runtime.release(door)
+    assert _trace(thread, origin, direction, 1000.0)[0] == 92.0
+    door['pos'] = [0.0, 0.0, 300.0]           # an editor edit, journaled
+    thread.editor_state.mark_world_changed([door])
+    assert _trace(thread, origin, direction, 1000.0)[0] == 292.0
 
 
 def test_the_rows_follow_the_cache_and_the_world_epoch(logic):
@@ -341,7 +351,7 @@ def test_a_monster_against_a_wall_at_its_exact_distance_is_decided_as_the_walk_d
     sprite_width = float(monster.properties.get('sprite_width', 64.0))
     sprite_height = float(monster.properties.get('sprite_height', 128.0))
     radius = max(sprite_width * 0.75, sprite_height * 0.4, 48.0)
-    center = glm.vec3(monster.pos[0], monster.pos[1] + sprite_height * 0.45, monster.pos[2])
+    center = glm.vec3(monster.pos[0], monster.pos[1] - sprite_height * 0.05, monster.pos[2])
     oc = origin - center
     a = glm.dot(direction, direction)
     b = 2.0 * glm.dot(oc, direction)

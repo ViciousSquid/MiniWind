@@ -174,6 +174,9 @@ class LogicSession:
 
             # Reset visual FX.
             logic.combat_runtime.bullet_marks = []
+            logic.combat_runtime.blood.clear()
+            logic.player_runtime.damage_marks = []
+            logic.player_runtime.damage_source = None
             logic.combat_runtime.muzzle_flash_active = False
 
             # Reset P2 stats through the player runtime owner.
@@ -273,6 +276,9 @@ class LogicSession:
             logic.timing_runtime.light_fade_states.clear()
             logic.combat_runtime.reset_weapons()
             logic.combat_runtime.bullet_marks = []
+            logic.combat_runtime.blood.clear()
+            logic.player_runtime.damage_marks = []
+            logic.player_runtime.damage_source = None
             logic.player_runtime.player_dead = False
             logic.combat_runtime.muzzle_flash_active = False
 
@@ -450,6 +456,7 @@ class LogicSession:
         for player in (logic.player_runtime.player, logic.player_runtime.player2):
             if player is not None:
                 player.ground_object = None
+                player.release_movers()
 
     def start_monster_ai(self):
         logic = self.logic

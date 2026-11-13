@@ -67,15 +67,45 @@ def resolve_speaker_sound(value, root):
 
 
 def list_speaker_audio(root, folder):
-    """Audio files under ``assets/<folder>``, as ``assets/<folder>/...`` paths."""
+    """Audio paths under assets/<folder>, using its archive when present.
+
+    A .fiopak is authoritative when present, matching runtime loading: loose
+    files are the fallback only when the archive does not exist.
+    """
     if folder not in SPEAKER_AUDIO_FOLDERS:
         return []
+    archive_path = os.path.join(root, "assets", f"{folder}.fiopak")
+    if os.path.isfile(archive_path):
+        from engine.audio_archives import list_archive_audio
+        import zipfile
+        try:
+            return list_archive_audio(
+                archive_path, f"assets/{folder}", AUDIO_EXTENSIONS
+            )
+        except (OSError, zipfile.BadZipFile) as exc:
+            print(f"[Audio] Cannot list {folder}.fiopak: {exc}")
+            return []
+
     base = os.path.join(root, "assets", folder)
-    found = []
+    found = set()
     for dirpath, _dirnames, filenames in os.walk(base):
         for name in filenames:
             if name.lower().endswith(AUDIO_EXTENSIONS):
                 rel = os.path.relpath(os.path.join(dirpath, name), root).replace("\\", "/")
                 if speaker_sound_path(rel) == rel:
-                    found.append(rel)
-    return sorted(found, key=str.lower)
+                    found.add(rel)
+    # And the audio in end users' own .fiopak packs (engine.asset_archives).
+    from engine.asset_archives import user_pack_entries, user_pack_paths
+    import zipfile
+    prefix = f"assets/{folder}/"
+    for pack in user_pack_paths(os.path.join(root, "assets")):
+        try:
+            with zipfile.ZipFile(pack) as archive:
+                entries, _skipped = user_pack_entries(archive)
+        except (OSError, ValueError, zipfile.BadZipFile) as exc:
+            print(f"[Audio] Cannot list {pack.name}: {exc}")
+            continue
+        found.update(name for name, _info in entries
+                     if name.startswith(prefix) and name.lower().endswith(AUDIO_EXTENSIONS)
+                     and speaker_sound_path(name) == name)
+    return sorted(found, key=str.casefold)

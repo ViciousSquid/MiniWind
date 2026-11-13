@@ -95,7 +95,7 @@ def _is_weapon(iid) -> bool:
     if not iid:
         return False
     try:
-        from ..rpg import items
+        import game.rpg.items as items
         d = items.get(iid)
     except Exception:
         return False
@@ -108,7 +108,7 @@ def _spell_of(stack):
     if not sid:
         return None
     try:
-        from ..rpg import magic
+        import game.rpg.magic as magic
         return magic.get(sid)
     except Exception:
         return None
@@ -127,6 +127,8 @@ class InventoryStrip(FloatingWindow):
     HEADER_H = 0
 
     def __init__(self, session):
+        from .paint_cache import PaintCache
+        self._cache = PaintCache()
         super().__init__("Inventory", 0, 0, 200, body_height=CELL)
         self.window_rect = QRect(0, 0, 0, 0)
         self.session = session
@@ -137,7 +139,7 @@ class InventoryStrip(FloatingWindow):
         self._press = None         # (QPoint, slot index)
         self._dragging = False
         self._last_click = (0.0, None)
-        from . import fonts
+        import game.ui.fonts as fonts
         self.f_count = fonts.dialogue_font_px(14)
         self.f_name = fonts.dialogue_font_px(16)
         self.f_number = fonts.dialogue_font_px(11)
@@ -201,32 +203,25 @@ class InventoryStrip(FloatingWindow):
         mine = drag.current is not None and drag.current.get("owner") is self
         # Picked up by a click somewhere: every slot is somewhere it can go.
         picked = drag.picked_source() if drag.current is None else None
+        hovered = next((i for i, rect in enumerate(self._rects) if hits.hovered(rect)), -1)
+        hidden = self._press[1] if mine and self._press is not None else -1
+        try:
+            handed = getattr(self.session.game.character, "handed", "right")
+        except Exception:
+            handed = "right"
+        # The bar, tiles, icons and numbers as one picture, painted again only
+        # when something it shows changes (paint_cache): it was ~2 ms a frame.
+        key = (tuple(repr(stack) for stack in self._slots[:len(self._rects)]),
+               tuple((r.x(), r.y(), r.width(), r.height()) for r in self._rects),
+               self.selected, hovered, dragged is not None, picked, hidden,
+               tuple(sorted(worn)), tuple(hands), handed)
+        frame = QRect(self.window_rect).adjusted(-6, -6, 6, 6 + NUMBERS + 4)
+        self._cache.draw(painter, key, frame,
+                         lambda p: self._paint_slots(p, worn, hands, hovered, dragged,
+                                                     picked, hidden))
+        drag.set_zones(self, [(QRect(rect), ("strip", i)) for i, rect in enumerate(self._rects)])
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
-        self._draw_bar(painter)
-        zones = []
-        for i, rect in enumerate(self._rects):
-            stack = self._slots[i] if i < len(self._slots) else None
-            iid = stack.get("id") if stack else None
-            sel = i == self.selected
-            hot = hits.hovered(rect)
-            here = picked is not None and picked[0] == "strip" and picked[1] == i
-            self._draw_tile(painter, rect, stack, sel, hot, dragged is not None,
-                            open_=picked is not None and not here)
-            hide = mine and self._press is not None and self._press[1] == i
-            spell = _spell_of(stack)
-            if spell is not None and not hide:
-                self._draw_spell(painter, rect, spell, hands[i] if i < len(hands) else None)
-            elif iid and not hide:
-                held = (hands[i] is not None if _is_weapon(iid) and i < len(hands)
-                        else iid in worn)
-                self._draw_item(painter, rect, iid, stack, held)
-            painter.setFont(self.f_number)
-            painter.setPen(_EMBER if sel else _NUMBER)
-            painter.drawText(QRect(rect.x(), rect.bottom() + 2, rect.width(), NUMBERS),
-                             Qt.AlignCenter, str(i + 1))
-            zones.append((QRect(rect), ("strip", i)))
-        drag.set_zones(self, zones)
         # The selected slot's name, above the bar.
         stack = self._slots[self.selected] if self.selected < len(self._slots) else None
         if stack and dragged is None:
@@ -238,6 +233,29 @@ class InventoryStrip(FloatingWindow):
             drag.draw_ghost(painter, self, (hits.pointer[0] + 22, hits.pointer[1] + 22)
                             if hits.pointer else None, 34, source=picked)
         painter.restore()
+
+    def _paint_slots(self, painter, worn, hands, hovered, dragged, picked, hidden):
+        """The bar and every slot: tile, picture and number (cached by draw())."""
+        self._draw_bar(painter)
+        for i, rect in enumerate(self._rects):
+            stack = self._slots[i] if i < len(self._slots) else None
+            iid = stack.get("id") if stack else None
+            sel = i == self.selected
+            here = picked is not None and picked[0] == "strip" and picked[1] == i
+            self._draw_tile(painter, rect, stack, sel, i == hovered, dragged is not None,
+                            open_=picked is not None and not here)
+            hide = i == hidden
+            spell = _spell_of(stack)
+            if spell is not None and not hide:
+                self._draw_spell(painter, rect, spell, hands[i] if i < len(hands) else None)
+            elif iid and not hide:
+                held = (hands[i] is not None if _is_weapon(iid) and i < len(hands)
+                        else iid in worn)
+                self._draw_item(painter, rect, iid, stack, held)
+            painter.setFont(self.f_number)
+            painter.setPen(_EMBER if sel else _NUMBER)
+            painter.drawText(QRect(rect.x(), rect.bottom() + 2, rect.width(), NUMBERS),
+                             Qt.AlignCenter, str(i + 1))
 
     def _draw_bar(self, painter):
         """The riveted iron backing bar with its bronze rim."""
@@ -281,7 +299,7 @@ class InventoryStrip(FloatingWindow):
         rarity = (stack or {}).get("rarity")
         if rarity and rarity != "common":
             try:
-                from ..rpg import items
+                import game.rpg.items as items
                 rgb = items.RARITY_INFO[items.rarity_of(stack)]["rgb"]
                 top = QColor(int(rgb[0] * 0.42), int(rgb[1] * 0.42), int(rgb[2] * 0.42), 250)
                 bot = QColor(int(rgb[0] * 0.14), int(rgb[1] * 0.14), int(rgb[2] * 0.14), 250)
@@ -314,7 +332,7 @@ class InventoryStrip(FloatingWindow):
     def _draw_name(self, painter, stack):
         name = str(stack.get("name") or stack.get("id"))
         try:
-            from ..rpg import items
+            import game.rpg.items as items
             colour = QColor(*items.RARITY_INFO[items.rarity_of(stack)]["rgb"])
         except Exception:
             colour = QColor(245, 240, 220)
@@ -335,7 +353,7 @@ class InventoryStrip(FloatingWindow):
         the mouse buttons that cast it)."""
         pm = None
         try:
-            from .. import item_icons
+            import game.item_icons as item_icons
             pm = item_icons.spell_pixmap(spell.id, rect.width() - 8)
         except Exception:
             pm = None
@@ -373,7 +391,7 @@ class InventoryStrip(FloatingWindow):
     def _draw_item(self, painter, rect, iid, stack, worn):
         pm = None
         try:
-            from .. import item_icons
+            import game.item_icons as item_icons
             pm = item_icons.icon_pixmap(iid, stack, rect.width() - 12)
         except Exception:
             pm = None

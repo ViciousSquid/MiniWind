@@ -102,8 +102,14 @@ class Quest:
 QUESTS: Dict[str, Quest] = {}
 
 
+#: Bumped by every :func:`register`: what a QuestLog derived from the
+#: registry is stale once it moves.
+VERSION = [0]
+
+
 def register(quest: Quest) -> Quest:
     QUESTS[quest.id] = quest
+    VERSION[0] += 1
     return quest
 
 
@@ -311,7 +317,22 @@ class QuestLog:
 
     # -- journal presentation ----------------------------------------------
     def active_quests(self) -> List[Quest]:
-        return [q for q in QUESTS.values() if self.is_active(q.id)]
+        """The active quests. Asked several times a frame (the tracker, the
+        quest arrow, the minimap): re-derived only when a quest's state in
+        the store changes -- one tuple of the state values, compared, is all
+        an unchanged answer costs."""
+        if getattr(self, "_quest_version", None) != (VERSION[0], len(QUESTS)):
+            self._quest_version = (VERSION[0], len(QUESTS))
+            self._quest_list = list(QUESTS.values())
+            self._state_keys = [self._key(q.id, "state") for q in self._quest_list]
+            self._active_token = None
+        quests = self._quest_list
+        from ..sim.knowledge import tokens
+        token = tokens(self.store, self._state_keys)
+        if token != self._active_token or not token:
+            self._active = [q for q in quests if self.is_active(q.id)]
+            self._active_token = token
+        return list(self._active)
 
     def completed_quests(self) -> List[Quest]:
         return [q for q in QUESTS.values() if self.is_complete(q.id)]

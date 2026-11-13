@@ -78,7 +78,7 @@ class PauseActions:
     def __init__(self, view, music=None):
         self.view = view
         if music is None:
-            from .. import music as _music
+            import game.music as _music
             music = _music.PLAYER
         self.music = music
 
@@ -374,7 +374,7 @@ class PauseActions:
 
     def pause_menu_rearrange_hud(self):
         """Leave the menu for the HUD's rearrange mode (game/ui/hud_layout.py)."""
-        from . import hud_layout
+        import game.ui.hud_layout as hud_layout
         hud_layout.start_arranging()
 
     def pause_menu_display_settings(self):
@@ -401,10 +401,21 @@ class PauseActions:
             if apply is not None:
                 apply()
 
+    def pause_menu_apply_grass(self, grass):
+        """Grass quality now: the renderer's two settings, which the view hands
+        the terrain every frame (QtGameView._publish_terrain); the terrain
+        regrows its grass only when they change."""
+        renderer = getattr(self.view, "renderer", None)
+        if renderer is None:
+            return
+        renderer.grass_enabled = True          # Off still grows the wheat
+        renderer.grass_quality = grass
+        self.view.update()
+
     # --------------------------------------------------------------- leaving
     def pause_menu_map_data(self):
         """``(world map, features)`` for the MAP page (see game/ui/worldmap)."""
-        from . import worldmap
+        import game.ui.worldmap as worldmap
         session = self._session()
         if session is None:
             return worldmap.WORLD, {"player": None, "places": [], "quests": []}
@@ -417,7 +428,7 @@ class PauseActions:
         """A click on the MAP page: the waypoint goes to world (x, z), or is
         taken away when the click was on it (MiniwindSession.toggle_waypoint).
         Queued for the game tick, which owns the session."""
-        from . import hits
+        import game.ui.hits as hits
         if self._session() is not None:
             hits.queue(lambda session: session.toggle_waypoint(x, z, pick))
 

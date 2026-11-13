@@ -54,9 +54,12 @@ DEPENDENCY_LIGHT_MODULES = [
     "plugins.bigworld.streaming",
     # The editor's Qt-free logic layers
     "editor.component_edit",
-    # Data archives are mounted by the engine; no standalone player package.
+    # Data archives and packages are read by the engine; MiniWind ships no
+    # standalone player package.
     "engine.asset_archives",
     "engine.game_package",
+    "engine.fiopak",
+    "engine.package_assets",
 ]
 
 BLOCKED = ("PyQt5", "OpenGL")

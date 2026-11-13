@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 import time
 
@@ -37,7 +38,7 @@ FIELDS = frozenset(
         "offhand_weapon",
         "handed",
         "is_shooting",
-        "_facing",
+        "angle",
         "_attack_anim",
         "_offhand_anim",
         "_active_weapon",
@@ -76,8 +77,10 @@ def clean(value):
         return value if math.isfinite(value) else 0.0
     if isinstance(value, (list, tuple)):
         return [clean(v) for v in value]
-    if isinstance(value, dict):
-        return {str(k): clean(v) for k, v in value.items() if not callable(v)}
+    if isinstance(value, Mapping):
+        # A dict, or the engine's row view of a door's or mover's state.
+        return {str(k): clean(v) for k, v in value.items()
+                if not callable(v) and not str(k).startswith("_")}
     return None
 
 
@@ -360,8 +363,6 @@ def apply(coop, message):
 
 
 def interpolate(coop):
-    from engine.change_journal import touch
-
     now = time.monotonic()
     for thing, start, end, received in getattr(coop, "_render_targets", {}).values():
         if thing.properties.get("multiplayer_player") and any(
@@ -370,8 +371,9 @@ def interpolate(coop):
         ):
             continue
         alpha = min(1.0, max(0.0, (now - received) / coop.SNAPSHOT_INTERVAL))
+        # Assigning pos journals the move (MOVED, with the position): only
+        # that column is re-read. apply() says STATE when properties arrive.
         thing.pos = [a + (b - a) * alpha for a, b in zip(start, end)]
-        touch(thing)
 
 
 def make_remote(context):

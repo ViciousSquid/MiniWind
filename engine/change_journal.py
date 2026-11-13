@@ -18,8 +18,8 @@ So the objects say when they change. There are two kinds of change:
   being triggered). Whoever writes such a value calls :func:`touch`.
 * :data:`VISIBILITY` -- only the live ``hidden`` flag, written by a streaming
   layer that parks the object; ``touch(obj, VISIBILITY)``.
-* :data:`FACING` -- only an actor's heading (its transient ``_facing``), which
-  turns a top-down head sprite; ``touch(obj, FACING)``.
+* :data:`FACING` -- only an actor's heading (its ``angle``), which turns a
+  top-down head sprite; :mod:`engine.monster_facing` is its only writer.
 
 Editor transactions still go through
 :meth:`editor.editor_state.EditorState.mark_world_changed`; this journal is
@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import threading
 import weakref
+import numpy as np
 
 #: The object's transform changed.
 MOVED = 1
@@ -50,9 +51,9 @@ STATE = 2
 #: row's textures, class and materials again cost ~180 ms per 10 000 rows, per
 #: render buffer.
 VISIBILITY = 4
-#: Only an actor's heading (``properties['_facing']``) changed. Like
-#: VISIBILITY, one warm value the tables re-read without resolving the row:
-#: whoever turns an actor near the player says so every tick it turns.
+#: Only an actor's heading (``properties['angle']``) changed. Like
+#: VISIBILITY, one warm value the tables re-read without resolving the row;
+#: :mod:`engine.monster_facing`, the only code that turns an actor, says so.
 FACING = 8
 
 #: Pending entries a subscriber may accumulate before it is told to refresh
@@ -103,6 +104,17 @@ class _Sink:
         # very thread, so it must not take the journal lock: one attribute
         # store, and the sink is skipped from then on.
         self.alive = False
+        # A collected subscriber cannot consume these again. The walk list is
+        # pruned on a later drain/subscribe, which may never happen after Stop;
+        # do not retain its pending ids or dense position views until then.
+        self.pending = {}
+        self.pending_positions = {}
+        self.drained_positions = {}
+
+
+class _FrozenPositions(tuple):
+    """Internal snapshot of already-converted Python float triples."""
+    __slots__ = ()
 
 
 class ChangeJournal:
@@ -164,9 +176,12 @@ class ChangeJournal:
             return
         position_values = None
         if positions is not None:
-            position_values = tuple(
-                (float(p[0]), float(p[1]), float(p[2])) for p in positions
-            )
+            if type(positions) is _FrozenPositions:
+                position_values = positions
+            else:
+                position_values = tuple(
+                    (float(p[0]), float(p[1]), float(p[2])) for p in positions
+                )
             if len(position_values) != len(oids):
                 raise ValueError("positions must align with objs")
         with self._lock:
@@ -241,11 +256,28 @@ def set_positions(objs, positions) -> None:
     per entity. *positions* is any ``(N, 3)`` sequence aligned with *objs*.
     """
     dense = []
-    for obj, (x, y, z) in zip(objs, positions):
-        value = [float(x), float(y), float(z)]
-        obj.__dict__['pos'] = value
-        dense.append(value)
-    JOURNAL.record_many(objs, MOVED, dense)
+    if (isinstance(positions, np.ndarray) and positions.ndim == 2
+            and positions.shape[1] == 3 and positions.dtype.kind in 'fiu'):
+        # The dense AI already computed these positions. Convert them in one
+        # native pass, rather than crossing back for three scalars per entity.
+        if positions.dtype.kind == 'f' and positions.dtype.itemsize <= 8:
+            values = positions.tolist()
+        else:
+            values = positions.astype(np.float64, copy=False).tolist()
+        if isinstance(objs, (list, tuple)):
+            dense = values if len(values) <= len(objs) else values[:len(objs)]
+            for obj, value in zip(objs, dense):
+                obj.__dict__['pos'] = value
+        else:
+            for obj, value in zip(objs, values):
+                obj.__dict__['pos'] = value
+                dense.append(value)
+    else:
+        for obj, (x, y, z) in zip(objs, positions):
+            value = [float(x), float(y), float(z)]
+            obj.__dict__['pos'] = value
+            dense.append(value)
+    JOURNAL.record_many(objs, MOVED, _FrozenPositions(map(tuple, dense)))
 
 
 class TrackedPosition:

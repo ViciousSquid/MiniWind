@@ -17,6 +17,10 @@ from collections import deque
 from .things import PlayerStart, Thing
 from editor.things import update_all_counters_from_entities
 from engine import player_starts as start_rules
+from engine.row_list import row_list
+
+#: EditorState attributes that hold a row set (see EditorState.__setattr__).
+_ROW_SETS = frozenset(("brushes", "things"))
 
 # Import I/O system for serialization
 try:
@@ -30,8 +34,15 @@ except ImportError:
 from engine.brush_geometry import (
     GEO_RUNTIME_KEYS, clip_brush as _geo_clip_brush,
     rotate_brush as _geo_rotate_brush, brush_has_geometry as _geo_has_geometry,
-    is_axis_aligned_box as _geo_is_box,
+    is_axis_aligned_box as _geo_is_box, drop_geometry as _geo_drop_geometry,
 )
+from engine.brush_faces import (
+    CANONICAL_MAP_VERSION, drop_tag_copies as _drop_tag_copies,
+    migrate_legacy as _migrate_legacy_faces)
+from engine.brush_placement import (
+    PLAY_STATE_KEYS as _PLAY_STATE_KEYS, RUNTIME_CACHE_KEYS as _PLACEMENT_CACHE_KEYS,
+    MAP_VERSION, drop_play_state as _drop_play_state, localise_legacy as _localise_legacy,
+    normalise_loaded as _normalise_placement, note_authored_change as _note_authored_change)
 
 # Keys written to brush dicts by the renderer/geometry layer at runtime.
 # They hold GLM/NumPy objects (not JSON-serialisable) and must be stripped
@@ -49,7 +60,11 @@ _RENDERER_PRIVATE_KEYS = frozenset({
     '_mat_cache_key', '_mat_cache',      # model matrix cache (renderer)
     '_nmat_cache_key', '_nmat_cache',    # normal matrix cache (renderer)
     '_render_mesh', '_render_sig',       # angled-brush GPU mesh cache (renderer)
-}) | GEO_RUNTIME_KEYS | frozenset(AABB_RUNTIME_KEYS)
+}) | GEO_RUNTIME_KEYS | frozenset(AABB_RUNTIME_KEYS) | frozenset(_PLAY_STATE_KEYS) \
+    | frozenset(_PLACEMENT_CACHE_KEYS)
+# _PLAY_STATE_KEYS: what play used to write into a brush (original_pos,
+# _rot_angle, rotation_yaw). Since Stage 2b of the unified brush model play
+# writes none of them; a map or undo checkpoint never carries them.
 
 class _HistoryBase(str):
     """The bottom entry of the undo stack after a load: where history begins.
@@ -82,18 +97,24 @@ class EditorState:
     #: UI event loop, edits are synchronous and nothing needs deferring.
     post_event = None
 
+    # The world's row sets, as RowLists (engine/row_list.py): a plain list
+    # assigned to ``brushes`` or ``things`` is taken as one, so the render
+    # and entity tables recognise an unchanged row set by its version
+    # instead of comparing every row each frame (M4). Assigning copies a
+    # plain list: keep using the attribute, not the list that was assigned.
+    # Only assignment is intercepted: the attributes stay plain, and reading
+    # them -- many times a tick -- costs what it always did.
+    def __setattr__(self, name, value):
+        if name in _ROW_SETS:
+            value = row_list(value)
+        object.__setattr__(self, name, value)
+
     def __init__(self):
         #: Coarse "something about the world changed" counter -- see
         #: :meth:`mark_world_changed`.  Set before anything that bumps it can
         #: run, because save_state() is reachable during construction.
         self._render_dirty_lock = threading.RLock()
         self.world_epoch = 0
-        #: File version of the map the scene was freshly
-        #: loaded from, while it is still exactly that file's contents (set by
-        #: the main window after a load; cleared by any edit and when Play
-        #: ends). Lets Play start reuse work derived from the file alone,
-        #: such as Big World's pristine base world.
-        self.play_source = None
         # Object ids whose render-facing cold columns changed in the current
         # editor transaction. _render_dirty_all is used for reload/undo,
         # where the object identities themselves are replaced.
@@ -103,8 +124,16 @@ class EditorState:
         self._render_dirty_all_epoch = -1
         # Bounded replay history for double-buffered render projections.
         self._render_dirty_history = deque(maxlen=32)
+        #: File version of the map the scene was freshly
+        #: loaded from, while it is still exactly that file's contents (set by
+        #: the main window after a load; cleared by any edit and when Play
+        #: ends). Lets Play start reuse work derived from the file alone,
+        #: such as Big World's pristine base world.
+        self.play_source = None
         self.brushes = []
         self.things = []
+        #: Big World maps keep only the cells near the editor camera live
+        #: (plugins/bigworld/editor_streaming.py); None for every other map.
         self.editor_stream = None
         # The multi-selection lives here rather than being bolted on by the
         # main window, so undo/redo and scene loads can keep it pointing at
@@ -247,6 +276,9 @@ class EditorState:
         Deliberately coarse.  It says *something* changed, not what; a consumer
         that wants to be finer-grained tracks its own per-row dirty set on top.
         """
+        # Readers caching derived bounds (collision rows, the physics grid's
+        # rows) check this stamp instead of looking at every mover per query.
+        _note_authored_change()
         with self._render_dirty_lock:
             self.world_epoch += 1
             if objects is None or not objects:
@@ -333,17 +365,15 @@ class EditorState:
         if not _geo_has_geometry(brush):
             return
         self.save_state()
-        brush.pop('geometry', None)
-        brush.pop('_geo_cache', None)
-        brush.pop('_geo_cache_sig', None)
+        # Tagged faces keep their material (it moves back to the per-tag
+        # dicts); the plane set and its caches go.
+        _geo_drop_geometry(brush)
         self.mark_lighting_dirty([brush])
 
     def simplify_brush_geometry(self, brush: dict) -> None:
         """If a geometry brush is really an axis-aligned box, drop to pos/size."""
         if _geo_has_geometry(brush) and _geo_is_box(brush):
-            brush.pop('geometry', None)
-            brush.pop('_geo_cache', None)
-            brush.pop('_geo_cache_sig', None)
+            _geo_drop_geometry(brush)
 
     # =========================================================================
     # SCENE MANAGEMENT
@@ -486,7 +516,12 @@ class EditorState:
     def get_level_data(self):
         """Serializes the current scene state into a dictionary."""
         data = {
-            'version': 3,  # Version 3 adds stable entity IDs and logic graph layout
+            # 3: stable entity IDs and logic graph layout. 4: one material
+            # record per brush face (engine.brush_faces.CANONICAL_MAP_VERSION).
+            # 5: an angled brush's planes in its local frame, placed by its
+            # pos; its size is a copy, re-derived from the planes on load
+            # (engine.brush_placement.MAP_VERSION).
+            'version': MAP_VERSION,
             'brushes': self._serialize_brushes(),
             # Cutscene Wizard actors are live authoring entities. Their actual
             # definitions live in the cutscene JSON and must never leak into
@@ -508,8 +543,6 @@ class EditorState:
         if not getattr(self, 'created_at', ''):
             self.created_at = datetime.datetime.now().isoformat(timespec='seconds')
         data['created'] = self.created_at
-        for key, value in getattr(self, 'tool_metadata', {}).items():
-            data.setdefault(key, value)
 
         # The custom item slots, where this world redefines them.
         items = self.item_definitions.to_level_data()
@@ -537,6 +570,11 @@ class EditorState:
         if graph_positions:
             data['logic_graph'] = {'node_positions': graph_positions}
 
+        # Keys the tools that built the map left at its top level (see
+        # load_from_data) are written back unchanged.
+        for key, value in getattr(self, 'tool_metadata', {}).items():
+            data.setdefault(key, value)
+
         return data
 
     def stream_editor_camera(self, position, *, force=False):
@@ -563,21 +601,24 @@ class EditorState:
             stream.manager.deactivation_radius = cfg['deactivation_radius']
             stream.reindex()
         pinned = [self.get_entity_id(obj) for obj in self.selected_objects]
-        local = stream.local_data(position, pinned=pinned)
+        self._adopt_stream_records(stream.local_data(position, pinned=pinned))
+        stream.remember_resident(self)
+        return True
+
+    def _adopt_stream_records(self, records):
+        """Make exactly *records* live, reusing objects that already are."""
         brushes = {b['id']: b for b in self.brushes}
         things = {t.properties['id']: t for t in self.things}
         new_brushes = [brushes[r['id']] if r['id'] in brushes else
-                       self._deserialize_brushes([r])[0] for r in local['brushes']]
+                       self._deserialize_brushes([r])[0] for r in records['brushes']]
         new_things = []
-        for record in local['things']:
+        for record in records['things']:
             identity = record['properties']['id']
             thing = things[identity] if identity in things else Thing.from_dict(record)
             if thing is not None:
                 new_things.append(thing)
         self.brushes, self.things = new_brushes, new_things
         self._invalidate_entity_caches()
-        stream.remember_resident(self)
-        return True
 
     def materialize_editor_world(self):
         """Hand the complete authored world to the existing Play lifecycle."""
@@ -595,20 +636,8 @@ class EditorState:
             stream.remember_resident(self)
             return
         stream.merge(self._serialize_brushes(), [t.to_dict() for t in self.things])
-        all_data = stream.all_data()
-        brushes = {b['id']: b for b in self.brushes}
-        things = {t.properties['id']: t for t in self.things}
-        new_brushes = [brushes[r['id']] if r['id'] in brushes else
-                       self._deserialize_brushes([r])[0] for r in all_data['brushes']]
-        new_things = []
-        for record in all_data['things']:
-            identity = record['properties']['id']
-            thing = things[identity] if identity in things else Thing.from_dict(record)
-            if thing is not None:
-                new_things.append(thing)
-        self.brushes, self.things = new_brushes, new_things
+        self._adopt_stream_records(stream.all_data())
         stream.suspended = True
-        self._invalidate_entity_caches()
         stream.remember_resident(self)
 
     def set_editor_whole_world(self, shown, position):
@@ -677,8 +706,17 @@ class EditorState:
 
         return serialized
 
-    def _deserialize_brushes(self, brushes_data, yield_hook=None):
-        """Deserialize brushes with I/O connections."""
+    def _deserialize_brushes(self, brushes_data, yield_hook=None, legacy=False,
+                             world_planes=False):
+        """Deserialize brushes with I/O connections.
+
+        *legacy* is true for brush records from a map saved before the
+        canonical face layout (map ``version`` below
+        ``engine.brush_faces.CANONICAL_MAP_VERSION``): their angled brushes'
+        per-tag material copies are migrated onto the planes by the
+        precedence rule. Records from anywhere else are canonical already; a
+        stray per-tag copy on an angled brush is dropped, never consulted.
+        """
         result = []
 
         for index, brush_data in enumerate(brushes_data):
@@ -688,6 +726,27 @@ class EditorState:
 
             # Backfill stable ID for legacy maps
             brush.setdefault('id', str(uuid.uuid4()))
+
+            # Play state an older build saved into the map (Stage 2b):
+            # dropped, a box saved mid-motion put back where it was authored.
+            _drop_play_state(brush)
+
+            # One material record per face (engine.brush_faces). Boxes are
+            # untouched; nothing in *brushes_data* is modified.
+            if 'geometry' in brush:
+                if legacy:
+                    _migrate_legacy_faces(brush)
+                else:
+                    _drop_tag_copies(brush)
+                # Before map version 5 an angled brush's planes are in world
+                # space: re-expressed in its local frame about their own
+                # centre, which becomes its pos (a stale pos/size copy cannot
+                # misplace it). From version 5 they are local already and
+                # only the size copy (not saved) is re-derived.
+                if world_planes:
+                    _localise_legacy(brush)
+                else:
+                    _normalise_placement(brush)
 
             # Restore I/O connections
             if IO_AVAILABLE and 'io_connections' in brush:
@@ -734,6 +793,28 @@ class EditorState:
             seen.add(tid)
 
     @staticmethod
+    def is_legacy_face_layout(level_data):
+        """Whether *level_data* predates the canonical face layout (an angled
+        face's material on its plane only): map ``version`` below
+        ``CANONICAL_MAP_VERSION``, or no version at all."""
+        try:
+            version = int(level_data.get('version') or 0)
+        except (TypeError, ValueError):
+            version = 0
+        return version < CANONICAL_MAP_VERSION
+
+    @staticmethod
+    def is_world_plane_layout(level_data):
+        """Whether *level_data* stores angled brushes' planes in world space
+        (map ``version`` below ``engine.brush_placement.MAP_VERSION``, or no
+        version at all): loading localises them."""
+        try:
+            version = int(level_data.get('version') or 0)
+        except (TypeError, ValueError):
+            version = 0
+        return version < MAP_VERSION
+
+    @staticmethod
     def validate_level_data(level_data):
         """Raise ``ValueError`` if *level_data* is not shaped like a map.
 
@@ -754,6 +835,9 @@ class EditorState:
         validates it before touching the open level -- so every brush and
         entity is not checked a second time. Every other caller leaves it
         False and the map is validated here.
+
+        ``stream_editor`` lets a Big World map keep only the cells around the
+        editor camera live (see :mod:`plugins.bigworld.editor_streaming`).
         """
         # Everything is parsed before the scene is touched: a malformed map
         # raises here and leaves the current scene exactly as it was, rather
@@ -770,11 +854,47 @@ class EditorState:
             # no other use of its records, so the stream may adopt them
             # rather than copy the whole map.
             stream = EditorCellStream.for_level(level_data, adopt=owned)
+        legacy = self.is_legacy_face_layout(level_data)
+        world_planes = self.is_world_plane_layout(level_data)
+        if stream is not None:
+            # Every record of the streamed world is migrated now, resident or
+            # not, so a later save writes the canonical layout throughout:
+            # no play state (Stage 2b), and a legacy file's faces.
+            records = stream.records['brushes']
+            replaced = {}
+            for identity, record in list(records.items()):
+                original = record
+                if any(key in record for key in _PLAY_STATE_KEYS):
+                    record = dict(record)
+                    _drop_play_state(record)
+                    records[identity] = record
+                    replaced[identity] = (original, record)
+                if legacy and 'geometry' in record:
+                    record = dict(record)
+                    _migrate_legacy_faces(record)
+                    records[identity] = record
+                if world_planes and 'geometry' in record:
+                    record = dict(record)
+                    _localise_legacy(record)
+                    records[identity] = record
+                    # Filed before this ran, reading world planes as local:
+                    # re-filed below from where it is.
+                    replaced[identity] = (original, record)
+            for identity, (original, record) in list(replaced.items()):
+                replaced[identity] = (original, records[identity])
+            if replaced:
+                # A box saved mid-motion is back at its authored placement, an
+                # angled brush is in its local frame: file each at home.
+                stream.refile_brushes(list(replaced.values()))
         local = stream.local_data() if stream is not None else level_data
         brushes_data = local.get('brushes') or []
         things_data = local.get('things') or []
 
-        new_brushes = self._deserialize_brushes(brushes_data, yield_hook=yield_hook)
+        # A streamed world's records were localised above; a plain map's are
+        # localised as they are deserialised.
+        new_brushes = self._deserialize_brushes(brushes_data, yield_hook=yield_hook,
+                                                legacy=legacy,
+                                                world_planes=world_planes and stream is None)
         new_things = []
         for index, t_data in enumerate(things_data):
             if yield_hook is not None and index % 25 == 0:
@@ -806,6 +926,13 @@ class EditorState:
         self._invalidate_entity_caches()
 
         self.terrain_data = level_data.get('terrain_data', None)
+        # Top-level keys starting with "_" belong to the tools that built the
+        # map (``_miniwind_world`` records which caves and roads the world
+        # generators already laid down). The editor has no use for them but
+        # must not drop them: saving used to, and a rebuilt world then had
+        # its roads applied twice.
+        self.tool_metadata = {k: v for k, v in level_data.items()
+                              if isinstance(k, str) and k.startswith('_')}
         self.view_filters.load_level_data(level_data)
         self.item_definitions.load(level_data.get('items'))
         self.sync_item_props()
@@ -817,13 +944,6 @@ class EditorState:
         # Absent in maps written before this existed; the overview falls back to
         # the file's own timestamps rather than inventing one.
         self.created_at = level_data.get('created', '')
-        # Top-level keys starting with "_" belong to the tools that built the
-        # map (``_miniwind_world`` records which caves and roads the world
-        # generators already laid down). The editor has no use for them but
-        # must not drop them: saving used to, and a rebuilt world then had
-        # its roads applied twice.
-        self.tool_metadata = {k: v for k, v in level_data.items()
-                              if isinstance(k, str) and k.startswith('_')}
 
         # Store logic graph positions for later use by the graph window
         self._logic_graph_positions = {}
@@ -836,6 +956,7 @@ class EditorState:
         # ===== NEW: Reset class counters based on loaded entity names =====
         update_all_counters_from_entities(self.brushes + self.things)
         if stream is not None:
+            # Names counted across the whole world, loaded cells or not.
             from types import SimpleNamespace
             update_all_counters_from_entities(
                 list(stream.records['brushes'].values()) + [
@@ -913,8 +1034,11 @@ class EditorState:
     def _selection_list(self):
         """Return the authoritative current selection without duplicates."""
         selection = []
+        seen = set()
         for obj in self.selected_objects:
-            if not any(obj is existing for existing in selection):
+            identity = id(obj)
+            if identity not in seen:
+                seen.add(identity)
                 selection.append(obj)
         return selection
 
@@ -974,16 +1098,31 @@ class EditorState:
                     and entry.get('data')
                 ]
 
+        terrain_paint_stamps = []
+        terrain_paint_base = []
+        if isinstance(self.terrain_data, dict):
+            terrain_paint_stamps = [
+                dict(stamp) for stamp in self.terrain_data.get('paint_stamps', [])
+                if isinstance(stamp, dict)
+            ]
+            terrain_paint_base = [
+                dict(entry) for entry in self.terrain_data.get('texture_paint_base', [])
+                if isinstance(entry, dict)
+            ]
+
         checkpoint = {
             'brushes': self._serialize_brushes_for_undo(),
             'things': [t.to_dict() for t in self.things],
             'selection': self._selection_identifiers(),
             'terrain_csg_subtractions': terrain_csg,
             'terrain_texture_paint': terrain_texture_paint,
+            'terrain_paint_stamps': terrain_paint_stamps,
+            'terrain_texture_paint_base': terrain_paint_base,
             'items': self.item_definitions.to_level_data(),
         }
         stream = self.editor_stream
         if stream is not None and not stream.suspended:
+            # Distant cells are part of the authored world, and of its history.
             stream.merge(self._serialize_brushes(), checkpoint['things'])
             checkpoint.update(stream.all_data())
             checkpoint['editor_camera'] = stream.position
@@ -1096,6 +1235,7 @@ class EditorState:
         # Restore brushes with I/O connections
         raw_brushes = state.get('brushes', [])
         if stream is not None:
+            # Full saved records, not the compact undo form.
             raw_brushes = self._deserialize_brushes(raw_brushes)
         new_brushes = []
         for brush_data in raw_brushes:
@@ -1145,6 +1285,16 @@ class EditorState:
                 self.terrain_data['texture_paint'] = [dict(entry) for entry in paint]
             else:
                 self.terrain_data.pop('texture_paint', None)
+
+        # Placed stamps and the paint under them travel with the paint.
+        for key, field in (('terrain_paint_stamps', 'paint_stamps'),
+                           ('terrain_texture_paint_base', 'texture_paint_base')):
+            if key in state and isinstance(self.terrain_data, dict):
+                values = state.get(key) or []
+                if values:
+                    self.terrain_data[field] = [dict(v) for v in values]
+                else:
+                    self.terrain_data.pop(field, None)
 
     def undo(self):
         """Step back one operation, making the current scene redoable.

@@ -52,29 +52,45 @@ def test_geometry_handle_moves_with_a_surviving_row():
 
 @pytest.mark.gl
 def test_dense_geometry_mesh_preparation_uses_handles_not_refs():
-    from engine.renderer.forward import ForwardRenderer
+    """Meshes are resolved from the dense geometry records, by handle.
+
+    The renderer reaches a record through ``geometry_id`` and the table's
+    ``geometry_records`` -- never through ``refs``/``brushes`` -- and keeps
+    what it resolved in arrays indexed by the same handle.
+    """
+    from tests.helpers import gl as glh
 
     convex = angled_brush("convex")
     table = RenderTable()
     table.sync([convex], 1)
+    table.refs = None          # any route through the object column fails
+    table.brushes = None
 
-    class Probe:
-        def __init__(self):
-            self.calls = []
+    glh.reset_texture_cache()
+    try:
+        with glh.GLTestContext(32, 32):
+            renderer = glh.make_renderer()
+            try:
+                calls = []
+                resolve = renderer._get_geo_mesh_record
 
-        def _get_geo_mesh_record(
-                self, record, geometry_id=None, geometry_generation=None):
-            self.calls.append((record, geometry_id, geometry_generation))
-            return "mesh"
+                def probe(record, *args, **kwargs):
+                    calls.append(record)
+                    return resolve(record, *args, **kwargs)
 
-    probe = Probe()
-    meshes = ForwardRenderer._prepare_geo_meshes(
-        probe, table, np.array([0], dtype=np.int32))
-
-    assert meshes == {0: "mesh"}
-    assert probe.calls == [(table.geometry_records[0], 0, table.generation)]
-    assert probe.calls[0][0].convex is not convex
-    assert probe.calls[0][0] is table.geometry_records[0]
+                renderer._get_geo_mesh_record = probe
+                meshes = renderer._prepare_geo_meshes(
+                    table, np.array([0], dtype=np.int32))
+                assert list(meshes) == [0]
+                assert calls == [table.geometry_records[0]]
+                assert calls[0].convex is not convex
+                handles = renderer._geo_handles(table)
+                assert handles.meshes[0] is meshes[0]
+                assert handles.vao[0] == meshes[0].vao
+            finally:
+                renderer.cleanup()
+    finally:
+        glh.reset_texture_cache()
 
 
 def test_dense_render_paths_have_no_convex_refs_slot_lookup():
@@ -98,16 +114,19 @@ def test_shadow_preparation_returns_dense_convex_slots():
     table.sync([box, convex], 1)
 
     class Probe:
-        def _frame_transforms(self, table, slots):
-            return np.zeros((len(slots), 16), dtype=np.float32), None
+        def _brush_stream(self, key, table, slots, spare=0.0, payload=0.0,
+                          normals=True):
+            self.packed = (key, list(slots), normals)
+            return 'stream'
 
-        def _pack_brush_instances(self, models, normals, rows, selected, alpha):
-            self.packed = len(rows)
+        def _pass_memo(self, key, table, slots, state, objects, build):
+            return build()
 
     probe = Probe()
-    cube_slots, geo_slots = ForwardRenderer._prepare_shadow_instances(
-        probe, table, np.array([0, 1], dtype=np.int32), True)
+    cube_slots, geo_slots, stream = ForwardRenderer._prepare_shadow_instances(
+        probe, table, np.array([0, 1], dtype=np.int32), True, key=('shadow', 3))
 
     assert cube_slots.tolist() == [0]
     assert geo_slots.tolist() == [1]
-    assert probe.packed == 1
+    assert probe.packed == (('shadow', 3), [0], False)
+    assert stream == 'stream'

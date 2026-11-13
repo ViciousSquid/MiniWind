@@ -123,7 +123,7 @@ def _weapon_word(item_id) -> str:
     if not text:
         return ""
     try:
-        from .rpg import items
+        import game.rpg.items as items
         d = items.get(text)
         if d is not None:
             kind = str(d.get("kind", "")).lower()
@@ -154,7 +154,7 @@ def name_of(thing) -> str:
     label = ""
     kind = ""
     try:
-        from .rpg import bestiary
+        import game.rpg.bestiary as bestiary
         c = bestiary.get(role) if role else None
         if c is not None:
             label, kind = c.name, c.kind
@@ -196,7 +196,7 @@ def _weapon_of(thing):
     weapon = p.get("_active_weapon") or p.get("equipped_weapon") or ""
     if not weapon:
         try:
-            from .rpg import bestiary
+            import game.rpg.bestiary as bestiary
             c = bestiary.get(str(p.get("npc_role") or "").lower())
             weapon = getattr(c, "weapon", "") if c is not None else ""
         except Exception:

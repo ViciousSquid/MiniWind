@@ -118,7 +118,7 @@ class LocalDevices:
 
     def poll(self):
 
-        from .. import keybinds
+        import game.keybinds as keybinds
         from ..gamepad import _stick
 
         if not getattr(self.view, "play_mode", False):

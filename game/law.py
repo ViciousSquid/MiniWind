@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from .sim import crime, knowledge, perception
 from .sim.director import PLAYER_KEY, actor_key
 from .sim.law import SEARCH_RADIUS
@@ -15,17 +17,29 @@ class SettlementLaw:
         if npc is not None and npc.properties.get("law_region"):
             return str(npc.properties["law_region"])
         pos = pos if pos is not None else self._player_pos()
-        nearest = None
-        markers = list(self._markers_of_kind("jurisdiction"))
-        markers.extend(m for m in self._markers_of_kind("location")
-                       if m.properties.get("law_region"))
-        for marker in markers:
-            d = self._dist2d(pos, marker.pos) if pos is not None else float("inf")
-            if d <= float(marker.properties.get("radius", 2200.0)):
-                if nearest is None or d < nearest[0]:
-                    nearest = (d, str(marker.properties.get("law_region")
-                                      or marker.properties.get("name")))
-        return nearest[1] if nearest else self.region_name
+        if pos is None:
+            return self.region_name
+        # Jurisdictions are static scenery: their radii and names are read
+        # once per marker set, not on each of the dozens of asks a tick makes.
+        markers = self._things_of_type("marker")
+        cached = getattr(self, "_law_regions", None)
+        if cached is None or cached[0] is not markers or cached[2] != len(markers):
+            areas = [(m, float(m.properties.get("radius", 2200.0)),
+                      str(m.properties.get("law_region") or m.properties.get("name")))
+                     for m in self._markers_of_kind("jurisdiction")]
+            areas.extend((m, float(m.properties.get("radius", 2200.0)),
+                          str(m.properties.get("law_region")))
+                         for m in self._markers_of_kind("location")
+                         if m.properties.get("law_region"))
+            cached = self._law_regions = (markers, areas, len(markers))
+        x, z = pos[0], pos[2]
+        nearest, nearest_d = None, None
+        for marker, radius, name in cached[1]:
+            mp = marker.pos
+            d = math.hypot(x - mp[0], z - mp[2])
+            if d <= radius and (nearest_d is None or d < nearest_d):
+                nearest, nearest_d = name, d
+        return nearest if nearest is not None else self.region_name
 
     def _law_sync(self):
         # Keep the character sheet, disposition and save format's old aggregate.
@@ -94,24 +108,54 @@ class SettlementLaw:
         Includes indirect accounts: word of mouth can make a new messenger.
         A dead, silenced, uncertain or already-reporting-complete witness drops
         out without a second marker lifecycle or a duplicate witness registry.
+
+        Drawn every frame by the minimap, so it is answered from what changed:
+        the roster (non-guard NPCs and their belief keys) follows the NPC set
+        and the change journal (an NPC's role, side or death); the accounts
+        are re-derived only when a belief token, a death or a reported flag
+        changes. Positions are read fresh for the (few) witnesses.
         """
+        from engine.change_journal import JOURNAL, OVERFLOW
+        store = self.store
+        bucket = self._things_of_type("npc")
+        roster = getattr(self, "_witness_roster", None)
+        if roster is None:
+            roster = self._witness_roster = _WitnessRoster()
+        changes = JOURNAL.drain(roster)
+        if roster.bucket is not bucket or roster.count != len(bucket) or changes is OVERFLOW:
+            roster.rebuild(self, bucket)
+        elif changes:
+            roster.refresh(self, changes)
+        cache = roster.cache
+        token = (knowledge.tokens(store, cache["keys"]),
+                 tuple([bool(npc.properties.get("dead")) for npc in cache["npcs"]]),
+                 tuple([crime.already_reported(store, e)
+                        for _npc, _identified, events in cache["witnesses"] for e in events]))
+        if token != cache["token"]:
+            witnesses = []
+            for npc, key in cache["roster"]:
+                if npc.properties.get("dead"):
+                    continue
+                accounts = [f for f in knowledge.facts_view_key(store, key)
+                            if f.get("actor") == self.player_key and crime.is_crime(f)
+                            and not f.get("reported")
+                            and not crime.already_reported(store, f.get("e", 0))
+                            and float(f.get("certainty", 0)) >= crime.REPORT_CERTAINTY]
+                if accounts:
+                    witnesses.append((npc, any(f.get("identified", True) for f in accounts),
+                                      tuple(f.get("e", 0) for f in accounts)))
+            cache["witnesses"] = witnesses
+            # The reported flags of the accounts just read are part of the key.
+            cache["token"] = token[:2] + (tuple([
+                crime.already_reported(store, e)
+                for _npc, _identified, events in witnesses for e in events]),)
         out = []
-        for npc in self.npcs():
-            if npc.properties.get("dead") or self._is_guard(npc):
-                continue
-            accounts = [f for f in knowledge.facts(self.store, actor_key(npc))
-                        if f.get("actor") == self.player_key and crime.is_crime(f)
-                        and not f.get("reported")
-                        and not crime.already_reported(self.store, f.get("e", 0))
-                        and float(f.get("certainty", 0)) >= crime.REPORT_CERTAINTY]
-            if not accounts:
-                continue
-            identified = any(f.get("identified", True) for f in accounts)
+        for npc, identified, _events in cache["witnesses"]:
+            p = npc.properties
             out.append({"x": float(npc.pos[0]), "z": float(npc.pos[2]),
-                        "name": str(npc.properties.get("display_name")
-                                    or npc.properties.get("name", "Witness")),
+                        "name": str(p.get("display_name") or p.get("name", "Witness")),
                         "identified": identified,
-                        "reporting": npc.properties.get("sched_state") == "REPORT",
+                        "reporting": p.get("sched_state") == "REPORT",
                         "state": "identified" if identified else "uncertain"})
         return out
 
@@ -139,3 +183,53 @@ class SettlementLaw:
                 "text": f"Settle my writ in {region} ({amount} gold).",
                 "goto": "END", "actions": [{"op": "pay_bounty"}]})
         return tree
+
+
+class _WitnessRoster:
+    """The NPCs who could carry word of a crime (not guards), with their
+    belief keys: rebuilt when the NPC set changes, re-checked per NPC when the
+    change journal says that NPC changed (a guard's role, a side, a death)."""
+
+    __slots__ = ("bucket", "count", "guard", "by_id", "cache", "__weakref__")
+
+    def __init__(self):
+        self.bucket = None
+        self.count = -1
+        self.guard = {}
+        self.by_id = {}
+        self.cache = None
+
+    def rebuild(self, law, bucket):
+        self.bucket, self.count = bucket, len(bucket)
+        self.by_id = {id(npc): npc for npc in bucket}
+        self.guard = {key: bool(law._is_guard(npc)) for key, npc in self.by_id.items()}
+        self._publish(bucket)
+
+    def refresh(self, law, changes):
+        """Re-check the NPCs whose state the journal says changed (a move
+        alone cannot make or unmake a guard)."""
+        from engine.change_journal import STATE
+        by_id, guard = self.by_id, self.guard
+        flipped = False
+        for key, flags in changes.items():
+            if not flags & STATE:
+                continue
+            npc = by_id.get(key)
+            if npc is None:
+                continue
+            now = bool(law._is_guard(npc))
+            if guard.get(key) != now:
+                guard[key] = now
+                flipped = True
+        if flipped:
+            self._publish(self.bucket)
+
+    def _publish(self, bucket):
+        guard = self.guard
+        roster = [(npc, knowledge.facts_key(actor_key(npc))) for npc in bucket
+                  if not guard.get(id(npc))]
+        old = self.cache
+        if old is not None and old["roster"] == roster:
+            return
+        self.cache = {"roster": roster, "npcs": [npc for npc, _ in roster],
+                      "keys": [key for _, key in roster], "token": None, "witnesses": []}

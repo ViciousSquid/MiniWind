@@ -123,8 +123,8 @@ def benefits(character):
     for (or against) *character* right now, in numbers -- the Fortune page
     lists these, so a fortunate player can see why the Vale is kinder to them.
     *good* is True for an advantage, False for a handicap, None for neutral."""
-    from . import charisma as cha
-    from . import combat
+    import game.rpg.charisma as cha
+    import game.rpg.combat as combat
     a = getattr(character, "attrs", {}) or {}
     charm = int(a.get(attr.PERSONALITY, 40))
     luck = int(a.get(attr.LUCK, 40))

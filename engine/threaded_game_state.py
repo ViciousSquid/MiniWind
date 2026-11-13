@@ -37,6 +37,8 @@ class RenderState:
         self.player_health = 100
         self.player_max_health = 100
         self.player_dead = False
+        self.local_spectator = False
+        self.spectator_glasses = ()
         self.active_weapon = None
         #: Bumped each time the player takes another weapon in hand by slot
         #: key; the HUD shows the weapon briefly when it changes.
@@ -96,6 +98,13 @@ class RenderState:
         
         # Visual FX
         self.bullet_marks = [] # List of {'pos': [x,y,z], 'alpha': float}
+        #: Projected decals (blood and placed): (models (n, 16), params (n, 4),
+        #: inverses (n, 16)) float32
+        #: from the combat runtime's DecalTable, or None (engine/decal_table.py).
+        self.decals = None
+        #: Directional damage for the HUD: ((x, y, z, strength 0..1), ...) --
+        #: where recent hits on the player came from -- or () (LogicRender).
+        self.damage_marks = ()
         #: Live monster projectiles, as an ``(N, 3)`` float32 array of positions.
         self.projectiles = np.empty((0, 3), dtype=np.float32)
 
@@ -120,6 +129,9 @@ class RenderState:
         # List of {'start': [x,y,z], 'end': [x,y,z], 'color': str}
         #   color is 'green' (has LOS) or 'red' (blocked)
         self.monster_debug_rays = []
+        #: ``hitboxes 1``: ``(centres (N, 3), radii (N,))`` float32 of the
+        #: monsters' hit spheres, else None.
+        self.monster_hitboxes = None
         
         # Debug / Stats
         self.total_brushes = 0
@@ -145,6 +157,8 @@ class RenderState:
         self.player_health = 100
         self.player_max_health = 100
         self.player_dead = False
+        self.local_spectator = False
+        self.spectator_glasses = ()
         self.active_weapon = None
         #: Bumped each time the player takes another weapon in hand by slot
         #: key; the HUD shows the weapon briefly when it changes.
@@ -187,6 +201,10 @@ class RenderState:
         self.hud_message = ""
         self.hud_prompt_key = None
         self.bullet_marks = []
+        self.decals = None
+        #: Directional damage for the HUD: ((x, y, z, strength 0..1), ...) --
+        #: where recent hits on the player came from -- or () (LogicRender).
+        self.damage_marks = ()
         #: Live monster projectiles, as an ``(N, 3)`` float32 array of positions.
         self.projectiles = np.empty((0, 3), dtype=np.float32)
         self.muzzle_flash_active = False
@@ -196,6 +214,7 @@ class RenderState:
         self.hud_health_alpha = 0.5
         self.monster_debug_active = False
         self.monster_debug_rays = []
+        self.monster_hitboxes = None
         self.total_brushes = 0
         self.culled_brushes = 0
         self.timestamp = 0.0
@@ -242,9 +261,8 @@ class ThreadedGameState:
         #: the thread already holding it); folded in by the next locked call.
         self._deferred_releases = []
 
-        # Double buffering, as in Quake 3's SMP renderer: the renderer reads
-        # one RenderState while the logic thread writes the other, and each
-        # owns its own persistent RenderTable/EntityTable.
+        # The renderer reads one RenderState while the logic thread writes
+        # the other. Each owns its own persistent RenderTable/EntityTable.
         #
         # The renderer borrows the read buffer for the length of a paint
         # (get_render_state / release_render_state). While it is borrowed the

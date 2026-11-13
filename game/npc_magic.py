@@ -52,6 +52,7 @@ import weakref
 from types import SimpleNamespace
 
 from . import fio
+from .facing import face_heading
 
 #: Below this fraction of its health, a caster that can heals before fighting on.
 HEAL_BELOW = 0.4
@@ -62,10 +63,6 @@ MAGICKA_PER_LEVEL = 12.0
 MAGICKA_REGEN = 3.0
 #: A staff channels its bound spell at this share of the spell's cost.
 STAFF_COST_SCALE = 0.5
-#: Bolts leave the caster this far above its origin.
-CAST_LIFT = 48.0
-#: Fio's hit sphere is lifted this far above an actor's origin.
-EYE_LIFT = 64.0
 #: Bolts fizzle beyond this range.
 SPELL_MAX_RANGE = 2048.0
 #: Ward effects and the colour each is drawn in.
@@ -110,7 +107,7 @@ HANDS = ("main", "off")
 
 def _all_known(props):
     """``(spell, entry)`` for every spell *props*' actor knows, in hand or not."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     spells = props.get("spells")
     if not isinstance(spells, list):
         return
@@ -160,7 +157,7 @@ def hands(props) -> dict:
 
 def _ranked(props):
     """*props*' known spells sorted into attacks, wards and heals, best first."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     attack, ward, heal = [], [], []
     for spell, entry in _all_known(props):
         damage = _float(entry.get("damage", spell.damage))
@@ -197,7 +194,7 @@ def ready_hands(props) -> dict:
     attack, ward, heal = _ranked(props)
     held = {}
     if attack or ward or heal:
-        from . import combat_loadout
+        import game.combat_loadout as combat_loadout
         if not props.get("equipped_weapon"):
             # Hands free: the strongest attack leads; the other hand guards.
             first = (attack or ward or heal)[0]
@@ -225,12 +222,12 @@ def ready_hands(props) -> dict:
 def hand_glows(props):
     """``[(hand, spell)]`` for the spells *props*' actor shows in its hands
     now: only while it fights, and not in a hand a weapon has taken."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     if props.get("dead") or not (props.get("awake") or props.get("_aggro_target") is not None):
         return []
     out = []
     held = hands(props)
-    from . import combat_loadout
+    import game.combat_loadout as combat_loadout
     wielding = combat_loadout._item_style(props.get("_active_weapon") or "")
     for hand in HANDS:
         spell = magic.get(held.get(hand, ""))
@@ -246,7 +243,7 @@ def hand_glows(props):
 
 def _heals(spell) -> float:
     """How much health *spell* restores to its caster (0 when it doesn't)."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     if spell.delivery != magic.SELF:
         return 0.0
     total = 0.0
@@ -258,7 +255,8 @@ def _heals(spell) -> float:
 
 def _staff_spell(props):
     """The spell a staff in *props*' kit channels, or None."""
-    from .rpg import items, magic
+    import game.rpg.items as items
+    import game.rpg.magic as magic
     weapons = [props.get("_active_weapon"), props.get("equipped_weapon")]
     for stack in props.get("inventory") or ():
         weapons.append(stack.get("id") if isinstance(stack, dict) else stack)
@@ -274,7 +272,7 @@ def _staff_spell(props):
 def attacks(props):
     """Every attack ``(spell, damage, speed, colour, cost)`` *props* can cast,
     strongest first. Per-actor overrides on the spell entry win."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     found = []
     for spell, entry in _known(props):
         damage = _float(entry.get("damage", spell.damage))
@@ -293,7 +291,7 @@ def attacks(props):
 def wards(props):
     """``(spell, kind, magnitude, duration)`` for every ward *props*' actor
     knows, strongest first."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     out = []
     for spell, _entry in _known(props):
         if spell.delivery != magic.SELF:
@@ -332,7 +330,7 @@ def roll_ward(props, rng) -> bool:
 
 def _wards_known(props):
     """Every ward *props*' actor knows, in hand or not."""
-    from .rpg import magic
+    import game.rpg.magic as magic
     for spell, _entry in _all_known(props):
         if spell.delivery == magic.SELF and any(
                 e.get("kind") in WARD_KINDS for e in spell.effects or ()):
@@ -567,15 +565,17 @@ class NpcMagic:
         logic = session.logic
         p = thing.properties
         p["_attack_anim"] = 0.2
-        start = [float(thing.pos[0]), float(thing.pos[1]) + CAST_LIFT, float(thing.pos[2])]
-        lift = EYE_LIFT
+        # Cast from and at the middle of a body, where the engine's hit
+        # sphere is (fio.projectile_body_lift).
+        body = fio.projectile_body_lift()
+        start = [float(thing.pos[0]), float(thing.pos[1]) + body, float(thing.pos[2])]
+        lift = body
         if target == "player":
             player = fio.player(logic)
             lift = float(getattr(player, "camera_height", 48.0) or 48.0) * 0.6
         aim = [target_pos[0], target_pos[1] + lift, target_pos[2]]
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
-        if dx or dz:
-            p["_facing"] = math.atan2(dx, dz)
+        face_heading(thing, dx, dz)
         dist = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
         speed = max(1.0, speed)
         vel = [dx / dist * speed, dy / dist * speed, dz / dist * speed]

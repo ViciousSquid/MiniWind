@@ -94,7 +94,7 @@ def current(config) -> dict:
 def apply(config) -> None:
     """Point the host's key constants at the bindings in *config*, and the
     pad's buttons (:data:`PAD`)."""
-    from . import host
+    import game.host as host
     keys = current(config)
     for action, _label, const, _default in ACTIONS:
         setattr(host, const, keys[action])
@@ -147,7 +147,7 @@ def bind_pad(config, action, button, save=None) -> str:
 
 def key_binding(action) -> str:
     """The key *action* is on now."""
-    from . import host
+    import game.host as host
     const = next((c for a, _l, c, _d in ACTIONS if a == action), None)
     return getattr(host, const, "") if const else ""
 

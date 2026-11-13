@@ -58,6 +58,7 @@ editor, the standalone player and headless tests alike.
 from __future__ import annotations
 
 import math
+from itertools import chain as _chain
 from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -74,6 +75,9 @@ from engine.spatial import (CELL_SIZE, PARKED_DISABLED_KEY, PARKED_HIDDEN_KEY,
 #: Below this many rows a predicate loop over every actor is cheaper than a
 #: vectorised radius prefilter (see :meth:`WorldIndex.counts_by_tier`).
 SCALAR_ROWS = 64
+
+
+_chain_from = _chain.from_iterable
 
 
 def _is_parked(props: dict) -> bool:
@@ -203,27 +207,37 @@ class WorldIndex:
         if n == 0:
             return
         self._ensure_capacity(n)
-        px, py, pz = self.px, self.py, self.pz
-        alive, dead, team_ids = self.alive, self.dead, self.team_ids
+        # Column by column, one comprehension each (as Fio's MonsterTable
+        # gathers), not a Python body per actor writing NumPy scalars.
+        props = [a.properties for a in rows]
+        positions = [a.pos for a in rows]
+        try:
+            xyz = np.fromiter(_chain_from(positions), dtype=np.float64,
+                              count=3 * n).reshape(n, 3)
+        except ValueError:           # a position that is not exactly (x, y, z)
+            xyz = np.array([(p[0], p[1], p[2]) for p in positions],
+                           dtype=np.float64).reshape(n, 3)
+        self.px[:n] = xyz[:, 0]
+        self.py[:n] = xyz[:, 1]
+        self.pz[:n] = xyz[:, 2]
+        dead = np.fromiter([bool(q.get("dead")) for q in props], dtype=bool, count=n)
+        self.dead[:n] = dead
+        # A parked row is only ever a corpse (parked living actors have no
+        # row), so alive is exactly "not dead".
+        np.logical_not(dead, out=self.alive[:n])
+        teams = [q.get("team") or q.get("faction") or "" for q in props]
         team_of_name = self._team_of_name
-        team_names = self.team_names
-        for i in range(n):
-            a = rows[i]
-            p = a.pos
-            px[i] = p[0]
-            py[i] = p[1]
-            pz[i] = p[2]
-            props = a.properties
-            is_dead = bool(props.get("dead"))
-            dead[i] = is_dead
-            alive[i] = not (is_dead or _is_parked(props))
-            team = props.get("team") or props.get("faction") or ""
-            tid = team_of_name.get(team)
-            if tid is None:
-                tid = len(team_names)
-                team_names.append(team)
-                team_of_name[team] = tid
-            team_ids[i] = tid
+        ids = [team_of_name.get(team) for team in teams]
+        if None in ids:
+            team_names = self.team_names
+            for i, team in enumerate(teams):
+                if ids[i] is None:
+                    tid = team_of_name.get(team)
+                    if tid is None:
+                        tid = team_of_name[team] = len(team_names)
+                        team_names.append(team)
+                    ids[i] = tid
+        self.team_ids[:n] = ids
 
     # ------------------------------------------------------------------
     # Bins

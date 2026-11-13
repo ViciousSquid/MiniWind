@@ -72,7 +72,7 @@ def active_session(main_window=None):
         if session is not None:
             return session
     try:
-        from . import runtime
+        import game.runtime as runtime
         return runtime._current_session
     except Exception:
         return None
@@ -231,7 +231,7 @@ def _SimulationTab(thing, QtWidgets, QtCore):
 
         def _fill_standing(self, session):
             try:
-                from .rpg import disposition as disp
+                import game.rpg.disposition as disp
                 s = disp.summary(session.game.character, self.thing.properties,
                                  session.store)
             except Exception:

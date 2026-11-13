@@ -36,7 +36,7 @@ def offhand_chance(props) -> float:
 def offhand_damage(props, offhand_id) -> int:
     """The off-hand blow's damage: the actor's own ``damage`` (its main
     hand's), scaled by how the second weapon compares with the first."""
-    from .rpg import items
+    import game.rpg.items as items
     try:
         base = float(props.get("damage", 10) or 10)
     except (TypeError, ValueError):
@@ -57,7 +57,7 @@ def offhand_strike(session, thing, aggro_monster, rng) -> bool:
     """*thing*'s main hand has just struck in melee: strike with its second
     weapon too, if it holds one. Returns whether it hit."""
     from .held_weapons import offhand_in_use
-    from .rpg import items
+    import game.rpg.items as items
     props = thing.properties
     off = offhand_in_use(props)
     d = items.get(off) if off else None

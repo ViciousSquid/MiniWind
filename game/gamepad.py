@@ -531,12 +531,13 @@ class QtSink:
         return getattr(getattr(self.view, "logic_thread", None), "_miniwind", None)
 
     def menu_open(self) -> bool:
-        from engine import qt_game_view as qv
+        from engine.view_pause import play_menu_open
+        from engine.view_pointer import game_pointer_open, window_wants_cursor
         view = self.view
         if not getattr(view, "play_mode", False):
             return True
-        if (qv._play_menu_open(view) or getattr(view, "pause_menu", None) is not None
-                or qv._game_pointer_open(view) or qv._window_wants_cursor(view)
+        if (play_menu_open(view) or getattr(view, "pause_menu", None) is not None
+                or game_pointer_open(view) or window_wants_cursor(view)
                 or self._death_menu_open()):
             return True
         session = self._session()
@@ -547,8 +548,8 @@ class QtSink:
     def keyboard_menu(self) -> bool:
         """A menu driven by the keyboard (arrows and Enter) rather than the
         pointer: the pause menu, the death screen."""
-        from engine import qt_game_view as qv
-        return bool(qv._play_menu_open(self.view) or self._death_menu_open())
+        from engine.view_pause import play_menu_open
+        return bool(play_menu_open(self.view) or self._death_menu_open())
 
     def context(self):
         session = self._session()
@@ -647,8 +648,8 @@ class QtSink:
 
     def hand(self, button, down):
         """A trigger holds a shield up, or uses its physical hand's item."""
-        from .rpg import equipment as eq
-        from .ui import hits
+        import game.rpg.equipment as eq
+        import game.ui.hits as hits
         session = self._session()
         if down:
             c = session.game.character if session is not None else None
@@ -679,7 +680,9 @@ class QtSink:
         session = self._session()
         if session is None:
             return False
-        from .ui import hits, drag, screens
+        import game.ui.hits as hits
+        import game.ui.drag as drag
+        import game.ui.screens as screens
         if session.dialogue is not None:
             hits.queue(lambda s: s.dialogue_key(name))
             return True
@@ -702,7 +705,7 @@ class QtSink:
         return bool(session is not None and session.open_screen == "lockpicking")
 
     def lockpick(self, action, value=0.0) -> None:
-        from .ui import hits
+        import game.ui.hits as hits
         hits.queue(lambda s: s.lockpick_action(action, value))
 
     # -- binding a button ------------------------------------------------------
@@ -722,7 +725,7 @@ class QtSink:
     # -- the game's own ---------------------------------------------------------
     def play_action(self, action, down):
         """One-shot actions are queued instead of relying on held-key snapshots."""
-        from .ui import hits
+        import game.ui.hits as hits
         if action == "interact":
             if down and not self.activate_strip():
                 self.view.game_state.set_use_key_pressed()
@@ -751,15 +754,15 @@ class QtSink:
         session = self._session()
         if session is None:
             return
-        from .ui import hits
+        import game.ui.hits as hits
         hits.queue(lambda s: s.cycle_strip(step))
 
     def activate_strip(self):
         session = self._session()
         if session is None:
             return False
-        from . import fio
-        from .ui import hits
+        import game.fio as fio
+        import game.ui.hits as hits
         def activate(s):
             if s.modal_input_active():
                 return
@@ -778,7 +781,8 @@ class QtSink:
         session = self._session()
         if session is None:
             return
-        from .ui import hits, screens
+        import game.ui.hits as hits
+        import game.ui.screens as screens
         hits.queue(lambda s: setattr(s, "open_screen",
                                      screens.next_statistics_tab(s.open_screen, step)))
 

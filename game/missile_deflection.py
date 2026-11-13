@@ -3,6 +3,7 @@
 import math
 
 from . import fio
+from .facing import heading
 from .rpg import attributes, blocking, equipment
 
 
@@ -27,7 +28,7 @@ def deflect(session, projectiles, row, target):
                 or float(p.get("_stamina", 1)) <= 0):
             return False
         luck = p.get("luck", 40)
-        facing = float(p.get("_facing", 0))
+        facing = heading(target)
         actor = target
         name = str(p.get("display_name") or p.get("name") or "NPC")
         dice = session.game.dice

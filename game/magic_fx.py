@@ -49,11 +49,9 @@ MAX_PARTICLES = 1600
 #: Lenses at once (the screen pass's uniform array).
 MAX_LENSES = 8
 #: Heights above the ground: ground rings and runes just over the floor
-#: decals, glows and flashes at body height, and how high a bolt flies (an
-#: impact's ground is this far below where it struck).
+#: decals, glows and flashes at body height.
 GROUND_LIFT = 20.0
 BODY_LIFT = 56.0
-BOLT_HEIGHT = 48.0
 #: A ward bubble's diameter, comfortably round the wearer; how strongly it
 #: bends what is behind it, and where (0 centre .. 1 edge) its rim refracts.
 WARD_SIZE = 200.0
@@ -181,7 +179,7 @@ def look_for(spell_id="", colour=None, element="magic", visuals=None) -> dict:
     look.update(SPELL_LOOKS.get(str(spell_id), {}))
     look.update(clean_visuals(visuals))
     if colour is None:
-        from .rpg import magic
+        import game.rpg.magic as magic
         colour = magic.element_color(element)
     look["colour"] = _rgb(colour)
     look["element"] = element
@@ -381,7 +379,10 @@ class MagicFX:
         now = self._clock()
         c = look["colour"]
         hot = _mix(c, (1.0, 1.0, 1.0), 0.45)
-        ground = _lift(pos, GROUND_LIFT - BOLT_HEIGHT)
+        # A bolt flies at body height (fio.projectile_body_lift above the
+        # caster's pos): its impact's ground is that far below where it struck.
+        import game.fio as fio
+        ground = _lift(pos, GROUND_LIFT - fio.projectile_body_lift())
         rows = [self._row(pos, FLASH, 0.35, look["flash"] * 0.5, look["flash"], hot, 1.0,
                           now=now),
                 self._row(ground, RING, 0.55, look["ring"], look["ring"], c, 1.0, flat=True,

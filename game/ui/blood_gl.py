@@ -48,11 +48,16 @@ def draw_decals(projection, view, decals) -> int:
     # actors, so it must be on whatever the pass before left it as.
     renderer._gl.glEnable(renderer._gl.GL_DEPTH_TEST)
     drawn = 0
-    for pos, rot, image, size, opacity in decals:
-        tex = renderer.texture(image)
-        if not tex:
-            continue
-        renderer._draw_texture(projection, view, pos, rot, tex, size, DECAL_Y,
-                               depth_write=False, opacity=opacity)
-        drawn += 1
+    batching = renderer.begin(projection, view)     # one upload, a draw per image
+    try:
+        for pos, rot, image, size, opacity in decals:
+            tex = renderer.texture(image)
+            if not tex:
+                continue
+            renderer._draw_texture(projection, view, pos, rot, tex, size, DECAL_Y,
+                                   depth_write=False, opacity=opacity)
+            drawn += 1
+    finally:
+        if batching:
+            renderer.end()
     return drawn

@@ -201,7 +201,7 @@ def draw(p, session, x, y, w, h):
     p.save()
     p.translate(ox, oy)
     p.scale(scale, scale)
-    from .. import controls
+    import game.controls as controls
     _text(p, (32, 522, 750, 23),
           "L-stick lift (lean lightly for fine aim)   ·   RT hold tension   ·   Y guide   ·   B leave"
           if controls.gamepad() else

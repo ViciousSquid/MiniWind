@@ -27,6 +27,8 @@ HANDS = {
 MAX_LAG = 0.12
 #: Longer frame gaps than this are not integrated (a hitch, a pause).
 MAX_STEP = 1.0 / 30.0
+#: The longest interval one ask integrates (seconds).
+MAX_CATCH_UP = 0.5
 
 
 def _wrap(a: float) -> float:
@@ -51,10 +53,14 @@ class Spring:
         if self.angle is None or self.last is None:
             self.angle, self.vel, self.last = float(target), 0.0, now
             return 0.0
-        dt = max(0.0, min(MAX_STEP, now - self.last))
+        # The whole interval since the last ask, in steps of at most half a
+        # MAX_STEP (stable at any rate): asked every frame that is two steps,
+        # as before; asked every few ticks (the NPCs' held items) it keeps
+        # real time rather than slowing down. Capped, so a long pause does
+        # not spin.
+        dt = max(0.0, min(MAX_CATCH_UP, now - self.last))
         self.last = now
-        # Integrate in a couple of sub-steps: stable at any frame rate.
-        steps = 2
+        steps = max(2, int(math.ceil(dt / (MAX_STEP * 0.5))))
         h = dt / steps
         for _ in range(steps):
             error = _wrap(target - self.angle)

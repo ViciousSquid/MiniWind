@@ -34,7 +34,10 @@ def map_path(root, name):
 
 
 def validate_profile(data, *, saved_class=None, allow_bot=False):
-    from ..rpg import birthsigns, classes, heads, races
+    import game.rpg.birthsigns as birthsigns
+    import game.rpg.classes as classes
+    import game.rpg.heads as heads
+    import game.rpg.races as races
 
     if not isinstance(data, dict):
         raise LobbyError("Invalid character selection.")

@@ -3,7 +3,8 @@ The MiniWind launcher — the first window after the splash screen.
 
 MiniWind is both a game and the editor that builds it, so launch asks which one
 you came for, and lets you set up the display before either starts. It is
-deliberately small: a banner, three display controls, and two buttons.
+deliberately small: a banner, the display controls, grass quality, and two
+buttons.
 
 Everything it changes is written straight back to ``settings.ini`` — the same
 file, the same keys, the same section names the Settings window uses — so the
@@ -62,7 +63,26 @@ DEFAULTS = {
     "res_height": 720,
     "vsync": True,
     "high_dpi_scaling": False,
+    "grass": "high",
 }
+
+#: Grass quality, most first: ``(value, label, help)``. Written as
+#: ``[Renderer] grass_quality``, which the renderer reads and hands the
+#: terrain (Terrain.GRASS_QUALITIES). Wheat fields always grow in full.
+GRASS = [
+    ("high", "High", "Thick meadows: all the grass."),
+    ("medium", "Medium", "Half the grass; quicker on a slow GPU."),
+    ("low", "Low", "A quarter of the grass; quicker still."),
+    ("off", "Off", "No grass. Wheat fields still grow."),
+]
+
+
+def grass_label(value: str) -> str:
+    return next((label for v, label, _h in GRASS if v == value), str(value))
+
+
+def grass_help(value: str) -> str:
+    return next((h for v, _l, h in GRASS if v == value), "")
 
 
 _ACCENT = "#F08000"   # Fio's accent
@@ -106,6 +126,15 @@ def read_version(root_dir: str = ".") -> str:
             return f.read().strip()
     except OSError:
         return ""
+
+
+def version_line(root_dir: str = ".") -> str:
+    """``MiniWind 1.0.0 · Fio 3.5.0.1211``: the game's version and the engine
+    build it runs on, kept apart (the engine's file is not the game's)."""
+    from ..rpg import GAME_NAME, GAME_VERSION
+    engine = read_version(root_dir).replace("version", "", 1).strip()
+    game = f"{GAME_NAME} {GAME_VERSION}"
+    return f"{game} · Fio {engine}" if engine else game
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +187,7 @@ def resolution_choices(current=None, screen_size=None):
 class DisplaySettings:
     """The launcher's slice of ``settings.ini``, read and written in place.
 
-    Only the four keys the launcher shows are touched; every other section and
+    Only the keys the launcher shows are touched; every other section and
     value in the file is preserved exactly as configparser found it, so the
     launcher can never clobber a setting it does not know about.
 
@@ -211,12 +240,37 @@ class DisplaySettings:
         except ValueError:
             return DEFAULTS["high_dpi_scaling"]
 
+    @property
+    def grass(self) -> str:
+        """"high", "medium", "low" or "off": ``[Renderer] grass_quality``,
+        read as the renderer reads it (an older file's ``low_grass`` was
+        half the grass; ``grass = False``, none)."""
+        known = [v for v, _l, _h in GRASS]
+        try:
+            if not self.config.getboolean("Renderer", "grass", fallback=True):
+                return "off"
+            legacy = "medium" if self.config.getboolean(
+                "Renderer", "low_grass", fallback=False) else "high"
+        except ValueError:
+            legacy = DEFAULTS["grass"]
+        value = str(self.config.get("Renderer", "grass_quality",
+                                    fallback=legacy)).strip().lower()
+        return value if value in known else DEFAULTS["grass"]
+
     # -- write -----------------------------------------------------------
     def save(self, mode: str, width: int, height: int, vsync: bool,
-             high_dpi: bool = None) -> None:
+             high_dpi: bool = None, grass: str = None) -> None:
         for section in ("Kiosk", "Display"):
             if not self.config.has_section(section):
                 self.config.add_section(section)
+        if grass is not None:
+            if not self.config.has_section("Renderer"):
+                self.config.add_section("Renderer")
+            # Off is the quality, not ``grass = False``, which would take
+            # the wheat too.
+            self.config.set("Renderer", "grass", "True")
+            self.config.set("Renderer", "grass_quality", str(grass))
+            self.config.remove_option("Renderer", "low_grass")
         self.config.set("Kiosk", "window_mode", str(mode))
         self.config.set("Kiosk", "res_width", str(int(width)))
         self.config.set("Kiosk", "res_height", str(int(height)))
@@ -232,7 +286,7 @@ class DisplaySettings:
     def reset(self) -> None:
         self.save(DEFAULTS["window_mode"], DEFAULTS["res_width"],
                   DEFAULTS["res_height"], DEFAULTS["vsync"],
-                  DEFAULTS["high_dpi_scaling"])
+                  DEFAULTS["high_dpi_scaling"], DEFAULTS["grass"])
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +475,17 @@ class Launcher(QDialog):
         self.res_combo = QComboBox()
         form.addRow("Resolution", self.res_combo)
         self.res_combo.currentIndexChanged.connect(self._save)
+
+        self.grass_combo = QComboBox()
+        for value, label, help_text in GRASS:
+            self.grass_combo.addItem(label, value)
+            self.grass_combo.setItemData(self.grass_combo.count() - 1, help_text,
+                                         Qt.ToolTipRole)
+        self.grass_combo.setToolTip(
+            "How much grass the terrain grows. Lower is quicker on a slow GPU.\n"
+            "Also in the pause menu's Options, where it changes at once.")
+        self.grass_combo.currentIndexChanged.connect(self._save)
+        form.addRow("Grass", self.grass_combo)
         body.addLayout(form)
 
         self.mode_help = QLabel()
@@ -458,7 +523,7 @@ class Launcher(QDialog):
         self.reset_button = QPushButton("Reset to defaults")
         self.reset_button.setToolTip(
             f"Back to {DEFAULTS['window_mode']}, "
-            f"{DEFAULTS['res_width']}×{DEFAULTS['res_height']}, vsync on.")
+            f"{DEFAULTS['res_width']}×{DEFAULTS['res_height']}, vsync on, high grass.")
         self.reset_button.clicked.connect(self._reset)
         buttons.addWidget(self.reset_button)
         buttons.addStretch(1)
@@ -505,13 +570,15 @@ class Launcher(QDialog):
 
         # Plain text, no panel behind it, and wide enough for the whole build
         # string — a version that reads "version 2.2.0.24…" is worse than none.
-        self.version_label = QLabel(read_version(root_dir) or "")
+        self.version_label = QLabel(version_line(root_dir))
         self.version_label.setStyleSheet(
             "color:#5f6169; background:transparent; border:none;")
         self.version_label.setFrameStyle(QFrame.NoFrame)
         self.version_label.setAutoFillBackground(False)
         self.version_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.version_label.setToolTip("From editor/version.txt")
+        self.version_label.setToolTip(
+            "MiniWind's own version, then the Fio engine build it runs on "
+            "(editor/version.txt)")
         self.version_label.setSizePolicy(QSizePolicy.Preferred,
                                          QSizePolicy.Preferred)
         footer.addWidget(self.version_label)
@@ -591,6 +658,7 @@ class Launcher(QDialog):
             self.settings.resolution)))
         self.vsync_check.setChecked(self.settings.vsync)
         self.high_dpi_check.setChecked(self.settings.high_dpi)
+        self.grass_combo.setCurrentIndex(max(0, self.grass_combo.findData(self.settings.grass)))
         self.high_dpi_note.setVisible(False)
         self._update_mode_help()
 
@@ -639,7 +707,8 @@ class Launcher(QDialog):
         width, height = self.current_resolution()
         self.settings.save(self.current_mode(), width, height,
                            self.vsync_check.isChecked(),
-                           self.high_dpi_check.isChecked())
+                           self.high_dpi_check.isChecked(),
+                           self.grass_combo.currentData() or DEFAULTS["grass"])
 
     def _reset(self):
         self.settings.reset()

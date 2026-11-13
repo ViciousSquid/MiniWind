@@ -225,7 +225,7 @@ def test_he_faces_the_body_when_he_reaps(session):
     _run_until_reaping(session, visit)
     reaper = visit["thing"]
     want = math.atan2(body.pos[0] - reaper.pos[0], body.pos[2] - reaper.pos[2])
-    got = float(reaper.properties["_facing"])
+    got = math.radians(float(reaper.properties["angle"]))
     assert abs(math.atan2(math.sin(got - want), math.cos(got - want))) < 0.2
 
 

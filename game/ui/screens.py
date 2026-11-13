@@ -295,7 +295,7 @@ def _draw_charcreate(painter, session, w, h):
 
 
 def _cc_bio(s):
-    from ..rpg import bios
+    import game.rpg.bios as bios
     return bios.bio_from_rolls(s.get("rolls") or {})
 
 
@@ -331,8 +331,8 @@ def _draw_fortune(painter, inner, ty, s):
     bio the dice have written so far underneath."""
     import math as _m
     import time
-    from . import hud
-    from ..rpg import bios
+    import game.ui.hud as hud
+    import game.rpg.bios as bios
     rolls = s.get("rolls") or {}
     elapsed = time.monotonic() - float(s.get("roll_t", 0.0))
     T.text(painter, inner.x(), ty + 16, "Roll your fortune", size=15,
@@ -730,7 +730,7 @@ def _draw_character(painter, session, w, h):
            size=11, color=T.PARCH, family="Segoe UI")
     rolls = getattr(c, "rolls", None) or {}
     if rolls:
-        from ..rpg import bios
+        import game.rpg.bios as bios
         bio = bios.bio_for(rolls.get("strength", 10), rolls.get("endurance", 10),
                            rolls.get("personality", 10))
         T.text_in(painter, QRect(inner.x() + 280, ty - 6, inner.width() - 280, 18),
@@ -1479,7 +1479,7 @@ TRADE_THUMB = (58 - 10) // 2
 def _trade_thumb(item_id, stack=None):
     """The item's thumbnail for a trade row, or None."""
     try:
-        from .. import item_icons
+        import game.item_icons as item_icons
         return item_icons.icon_pixmap(item_id, stack, TRADE_THUMB)
     except Exception:
         return None
@@ -1549,7 +1549,7 @@ def _handle_trade(session, key):
 
 def _book_with_text(item_id) -> bool:
     """Whether *item_id* is a book there is something to read in."""
-    from .. import books
+    import game.books as books
     return books.book_of_item(item_id) is not None
 
 
@@ -1633,7 +1633,7 @@ def _level_preview(c, choice):
         rows.append(("Melee damage", f"x{0.7 + c.attrs[a] / 100.0:.2f}",
                      f"x{0.7 + after.attrs[a] / 100.0:.2f}"))
     if choice == "charisma":
-        from ..rpg import fortune
+        import game.rpg.fortune as fortune
         rows.append(("Prices", f"x{_cha.price_multiplier(c.attrs[a], True):.2f}",
                      f"x{_cha.price_multiplier(after.attrs[a], True):.2f}"))
         rows.append(("Looks", _cha.tier(c.attrs[a]), _cha.tier(after.attrs[a])))
@@ -1727,7 +1727,7 @@ def _draw_levelup(painter, session, w, h):
     N", a line of encouragement (unless ``[GAME] motivational_quotes`` is off),
     then STRENGTH, ENDURANCE or MAGICKA, with what the highlighted one does
     and what it would change, in real numbers."""
-    from ..rpg import quotes
+    import game.rpg.quotes as quotes
     from ..rpg.character import LEVEL_ATTR_GAIN, LEVEL_CHOICES
     c = session.game.character
     st = _levelup_state(session)
@@ -2076,7 +2076,7 @@ _HANDLE = {
 def _teaching():
     """The teacher's pages (game/ui/teaching.py), which draw with this
     module's parchment and buttons."""
-    from . import teaching
+    import game.ui.teaching as teaching
     return teaching
 
 

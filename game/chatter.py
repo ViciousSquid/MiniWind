@@ -80,7 +80,8 @@ def _part_of_day(hour: float) -> str:
 
 def gossip_lines(fact: Dict, speaker: str = "", listener: str = "") -> Tuple[str, str]:
     """``(opener, reply)`` for *speaker* telling *listener* about *fact*."""
-    from .sim import events, knowledge
+    import game.sim.events as events
+    import game.sim.knowledge as knowledge
     what = knowledge.phrase(fact)
     source = str(fact.get("source", "told"))
     salt = (speaker, listener, fact.get("e", 0))

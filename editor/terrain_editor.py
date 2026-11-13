@@ -1,22 +1,24 @@
+from engine.asset_qt import load_icon
 import os
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QDoubleSpinBox,
     QComboBox, QPushButton, QGroupBox, QFormLayout, QSlider, QCheckBox,
     QTabWidget, QWidget, QFrame, QGridLayout, QScrollArea, QSizePolicy,
-    QColorDialog, QMessageBox, QProgressDialog, QApplication
+    QColorDialog, QMessageBox, QProgressDialog, QApplication, QMenu,
+    QFileDialog, QTabBar
 )
 from PyQt5.QtCore import QEvent, Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon, QColor, QPainter, QLinearGradient, QPen
 
 from engine.terrain import (Terrain, BIOMES, DEFAULT_BIOME, DEFAULT_USE_TEXTURES,
-                            DEFAULT_GRASS_ENABLED, DEFAULT_GRASS_HEIGHT,
-                            GRASS_HEIGHT_LIMITS, GRASS_MAX_DENSITY,
+                            DEFAULT_GRASS_ENABLED,
+                            GRASS_MAX_DENSITY, GRASS_HEIGHT_LIMITS,
                             biome_key_for_name)
+from engine import terrain_style
+from engine import terrain_stamp
 
-#: Density one grass slider step moves, and the density the label calls 100%.
 GRASS_DENSITY_STEP = 0.0001
 GRASS_DEFAULT_DENSITY = 0.02
-from engine import terrain_style
 
 
 class GradientPreview(QWidget):
@@ -208,7 +210,7 @@ class TerrainEditorPanel(QWidget):
         top_button_layout.setSpacing(10)
 
         regenerate_btn = QPushButton("Regenerate")
-        regenerate_btn.setIcon(QIcon("assets/ui/controls/refresh.svg"))
+        regenerate_btn.setIcon(load_icon("assets/ui/controls/refresh.svg"))
         regenerate_btn.setStyleSheet("""
             QPushButton {
                 background-color: #F08000;
@@ -228,7 +230,7 @@ class TerrainEditorPanel(QWidget):
         top_button_layout.addStretch()
 
         close_btn = QPushButton("Close")
-        close_btn.setIcon(QIcon("assets/ui/controls/close.svg"))
+        close_btn.setIcon(load_icon("assets/ui/controls/close.svg"))
         close_btn.clicked.connect(self.request_close)
         top_button_layout.addWidget(close_btn)
 
@@ -372,7 +374,7 @@ class TerrainEditorPanel(QWidget):
         seed_layout.addWidget(self.seed_spin)
         
         randomize_btn = QPushButton("Randomize")
-        randomize_btn.setIcon(QIcon("assets/ui/controls/dice.svg"))
+        randomize_btn.setIcon(load_icon("assets/ui/controls/dice.svg"))
         randomize_btn.clicked.connect(self.randomize_seed)
         seed_layout.addWidget(randomize_btn)
         
@@ -522,9 +524,18 @@ class TerrainEditorPanel(QWidget):
         self.grass_checkbox.toggled.connect(self.on_grass_changed)
         grass_layout.addRow(self.grass_checkbox)
 
-        # One slider step is GRASS_DENSITY_STEP tufts per square unit, so the
-        # full travel reaches GRASS_MAX_DENSITY (four times the old ceiling)
-        # and each step is still fine enough to set a saved density exactly.
+        self.grass_blade_height_spin = QDoubleSpinBox()
+        self.grass_height_spin = self.grass_blade_height_spin
+        self.grass_blade_height_spin.setRange(*GRASS_HEIGHT_LIMITS)
+        self.grass_blade_height_spin.setDecimals(2)
+        self.grass_blade_height_spin.setSingleStep(0.5)
+        self.grass_blade_height_spin.setSuffix(" units")
+        self.grass_blade_height_spin.setValue(self.terrain.GRASS_BLADE_HEIGHT)
+        self.grass_blade_height_spin.setToolTip(
+            "Blade height in world units; individual blades keep their natural size variation")
+        self.grass_blade_height_spin.valueChanged.connect(self.on_grass_blade_height_changed)
+        grass_layout.addRow("Height:", self.grass_blade_height_spin)
+
         self.grass_density_slider = QSlider(Qt.Horizontal)
         self.grass_density_slider.setRange(
             0, int(round(GRASS_MAX_DENSITY / GRASS_DENSITY_STEP)))
@@ -539,15 +550,6 @@ class TerrainEditorPanel(QWidget):
         density_row.addWidget(self.grass_density_slider, 1)
         density_row.addWidget(self.grass_density_value)
         grass_layout.addRow("Density:", density_row)
-
-        self.grass_height_spin = QDoubleSpinBox()
-        self.grass_height_spin.setRange(*GRASS_HEIGHT_LIMITS)
-        self.grass_height_spin.setSingleStep(0.5)
-        self.grass_height_spin.setDecimals(1)
-        self.grass_height_spin.setSuffix(" u")
-        self.grass_height_spin.setToolTip("Grass blade height, in world units")
-        self.grass_height_spin.valueChanged.connect(self.on_grass_blade_height_changed)
-        grass_layout.addRow("Height:", self.grass_height_spin)
 
         self.grass_color_btn = QPushButton("Blade Colour")
         self.grass_color_btn.clicked.connect(self.choose_grass_color)
@@ -859,7 +861,7 @@ class TerrainEditorPanel(QWidget):
 
         hm_btn_row = QHBoxLayout()
         load_hm_btn = QPushButton("Load Image…")
-        load_hm_btn.setIcon(QIcon("assets/ui/controls/folder.svg"))
+        load_hm_btn.setIcon(load_icon("assets/ui/controls/folder.svg"))
         load_hm_btn.clicked.connect(self.load_heightmap_image)
         hm_btn_row.addWidget(load_hm_btn)
 
@@ -886,8 +888,6 @@ class TerrainEditorPanel(QWidget):
         self.hm_strength_spin.setSingleStep(10)
         self.grass_checkbox.setChecked(self.terrain.grass_enabled)
         self._sync_grass_density_ui(self.terrain.grass_density)
-        self.grass_height_spin.setValue(
-            getattr(self.terrain, 'grass_height', DEFAULT_GRASS_HEIGHT))
         self._update_grass_color_preview()
 
         self.hm_strength_spin.setValue(self.terrain.heightmap_strength)
@@ -936,6 +936,7 @@ class TerrainEditorPanel(QWidget):
             mode_row.addWidget(btn)
             self.paint_tool_buttons[mode] = btn
         mode_row.addStretch()
+
         shared_layout.addLayout(mode_row)
 
         brush_size_row = QHBoxLayout()
@@ -1051,7 +1052,8 @@ class TerrainEditorPanel(QWidget):
 
         stamp_hint = QLabel(
             "Left-click to bake the texture selected in the Asset Browser "
-            "directly into the terrain."
+            "directly into the terrain. Shift-click a stamp to select it, then "
+            "drag it or nudge it with the arrow keys."
         )
         stamp_hint.setWordWrap(True)
         stamp_hint.setStyleSheet("color: #aaa; font-style: italic;")
@@ -1093,6 +1095,26 @@ class TerrainEditorPanel(QWidget):
 
         self._sculpt_stamp_tab_index = tabs.addTab(sculpt_tab, "Sculpt/Stamp")
         tabs.currentChanged.connect(self._on_terrain_tab_changed)
+
+        # Stamp file menu, shown beside the Sculpt/Stamp tab while it is
+        # active: saves the authored sculpt/paint layers to <map>.stamp so
+        # they can be merged back after the base map changes.
+        self.stamp_file_button = QPushButton("\U0001F4BE", tabs.tabBar())
+        self.stamp_file_button.setToolTip("Import / export stamp file")
+        self.stamp_file_button.setCursor(Qt.PointingHandCursor)
+        self.stamp_file_button.setFixedSize(34, 30)
+        self.stamp_file_button.setStyleSheet(
+            f"QPushButton {{ padding: 0px; min-height: 0px; border: none;"
+            f" background: transparent; font-size: {self._base_font_size + 5}pt; }}"
+            "QPushButton:hover { background-color: rgba(255, 255, 255, 40); }"
+            "QPushButton::menu-indicator { image: none; width: 0px; }"
+        )
+        stamp_file_menu = QMenu(self.stamp_file_button)
+        stamp_file_menu.addAction("Import stamp…", self.import_stamp)
+        stamp_file_menu.addAction("Export stamp…", self.export_stamp)
+        self.stamp_file_button.setMenu(stamp_file_menu)
+        self.stamp_file_button.hide()
+        self._sync_stamp_file_button()
 
         # The tab widget must itself be inserted into the content layout.
         # Without this, all of the tab pages exist but QTabWidget is never
@@ -1467,9 +1489,8 @@ class TerrainEditorPanel(QWidget):
         # Checkboxes
         self.solid_checkbox.setChecked(self.terrain.solid)
         self.grass_checkbox.setChecked(getattr(self.terrain, 'grass_enabled', False))
+        self.grass_blade_height_spin.setValue(self.terrain.GRASS_BLADE_HEIGHT)
         self._sync_grass_density_ui(getattr(self.terrain, 'grass_density', 0.02))
-        self.grass_height_spin.setValue(
-            getattr(self.terrain, 'grass_height', DEFAULT_GRASS_HEIGHT))
         self._update_grass_color_preview()
         self.flat_checkbox.setChecked(self.terrain.flat_mode)
         
@@ -1597,7 +1618,7 @@ class TerrainEditorPanel(QWidget):
         self.terrain_changed.emit()
 
     def _sync_grass_density_ui(self, density):
-        """Show *density* (tufts per square unit) on the slider and its label."""
+        """Show the saved density without changing its authored value."""
         density = max(0.0, min(GRASS_MAX_DENSITY, float(density)))
         self.grass_density_slider.setValue(int(round(density / GRASS_DENSITY_STEP)))
         self._label_grass_density(density)
@@ -1617,8 +1638,7 @@ class TerrainEditorPanel(QWidget):
     def on_grass_blade_height_changed(self, value):
         if self._building_ui:
             return
-        self.terrain.set_grass(enabled=self.grass_checkbox.isChecked(),
-                               height=float(value))
+        self.terrain.set_grass(enabled=self.grass_checkbox.isChecked(), height=value)
         self.terrain_changed.emit()
 
     def choose_grass_color(self):
@@ -1968,6 +1988,9 @@ class TerrainEditorPanel(QWidget):
         """Switch between the sculpt and stamp tools."""
         mode = "stamp" if mode == "stamp" else "sculpt"
         self.paint_tool_mode = mode
+        view_3d = self.editor.view_3d if self.editor else None
+        if mode != "stamp" and view_3d is not None:
+            view_3d.clear_stamp_selection()
 
         for name, button in self.paint_tool_buttons.items():
             button.setChecked(name == mode)
@@ -1980,7 +2003,24 @@ class TerrainEditorPanel(QWidget):
 
     def _on_terrain_tab_changed(self, _index):
         """Enable the terrain brush only while Sculpt/Stamp is the active tab."""
+        self._sync_stamp_file_button()
         self._sync_terrain_brush_activation()
+
+    def _sync_stamp_file_button(self):
+        """Attach the stamp file button to the Sculpt/Stamp tab while active."""
+        tabs = getattr(self, '_terrain_tabs', None)
+        button = getattr(self, 'stamp_file_button', None)
+        if tabs is None or button is None:
+            return
+        index = self._sculpt_stamp_tab_index
+        active = tabs.currentIndex() == index
+        tab_bar = tabs.tabBar()
+        if active and tab_bar.tabButton(index, QTabBar.RightSide) is not button:
+            tab_bar.setTabButton(index, QTabBar.RightSide, button)
+        elif not active and tab_bar.tabButton(index, QTabBar.RightSide) is button:
+            # setTabButton hides the widget it replaces; it stays owned by
+            # the tab bar for the next time the tab is selected.
+            tab_bar.setTabButton(index, QTabBar.RightSide, None)
 
     def _sync_terrain_brush_activation(self):
         view_3d = self.editor.view_3d if self.editor else None
@@ -2076,6 +2116,77 @@ class TerrainEditorPanel(QWidget):
         self.terrain_changed.emit()
         if self.editor and self.editor.show_toast:
             self.editor.show_toast("Terrain texture paint cleared")
+
+    def _default_stamp_path(self):
+        editor = self.editor
+        map_path = getattr(editor, 'file_path', None) if editor else None
+        fallback = ''
+        if editor is not None and getattr(editor, 'root_dir', None):
+            fallback = os.path.join(editor.root_dir, 'maps')
+            if not os.path.isdir(fallback):
+                fallback = editor.root_dir
+        return terrain_stamp.default_stamp_path(map_path, fallback)
+
+    def export_stamp(self):
+        """Save the terrain's placed stamps to a .stamp file."""
+        if not self.terrain.paint_stamps:
+            QMessageBox.information(
+                self, "Export Stamp",
+                "This terrain has no placed stamps to export.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Stamp", self._default_stamp_path(),
+            "Terrain Stamps (*.stamp);;All Files (*)")
+        if not path:
+            return
+        if not os.path.splitext(path)[1]:
+            path += terrain_stamp.STAMP_EXTENSION
+        try:
+            terrain_stamp.save_stamp_file(self.terrain, path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Export Stamp", f"Could not save stamp:\n{exc}")
+            return
+        if self.editor and self.editor.show_toast:
+            self.editor.show_toast(f"Stamp exported to {os.path.basename(path)}")
+
+    def import_stamp(self):
+        """Merge a .stamp file's stamps into the current terrain."""
+        default = self._default_stamp_path()
+        start = default if os.path.exists(default) else os.path.dirname(default)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Stamp", start,
+            "Terrain Stamps (*.stamp);;All Files (*)")
+        if not path:
+            return
+        try:
+            stamp = terrain_stamp.load_stamp_file(path)
+        except terrain_stamp.StampError as exc:
+            QMessageBox.warning(self, "Import Stamp", str(exc))
+            return
+
+        editor = self.editor
+        if editor:
+            # One import is one undo step.
+            editor.state.terrain_data = self.terrain.to_dict()
+            editor.save_state()
+        self.show_progress("Applying stamp…")
+        try:
+            changed = terrain_stamp.apply_stamp(self.terrain, stamp)
+        finally:
+            self.hide_progress()
+
+        if not changed:
+            if editor:
+                editor.state.discard_last_checkpoint()
+                editor.show_toast("Stamp already applied — nothing changed")
+            return
+        if editor:
+            editor.state.terrain_data = self.terrain.to_dict()
+        self._update_sculpt_info()
+        self.terrain_changed.emit()
+        if editor and editor.show_toast:
+            editor.show_toast(
+                f"{os.path.basename(path)}: {changed} stamp(s) placed")
 
     def request_close(self):
         """Close the panel and disable its 3D brush."""

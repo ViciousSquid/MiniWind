@@ -4,6 +4,8 @@ Each Thing type has associated I/O definitions (inputs/outputs) for
 the event-driven entity communication system.
 """
 
+from engine.asset_qt import load_pixmap
+from engine.asset_archives import asset_exists
 import copy
 from engine.data_copy import data_copy
 import os
@@ -12,6 +14,7 @@ import uuid
 import importlib
 
 from engine.change_journal import TrackedAttribute, TrackedPosition, touch
+from engine.constants import PLAYER_HULL_SIZE
 from engine.portal_transform import (
     basis_from_rotation as _portal_basis_from_rotation,
     map_point as _portal_map_point,
@@ -216,8 +219,8 @@ class Thing:
         absolute_path = os.path.join(project_root, cls.pixmap_path)
 
         pixmap = None
-        if os.path.exists(absolute_path):
-            loaded_pixmap = QPixmap(absolute_path)
+        if asset_exists(absolute_path):
+            loaded_pixmap = load_pixmap(absolute_path)
             if not loaded_pixmap.isNull():
                 pixmap = loaded_pixmap
             else:
@@ -254,7 +257,7 @@ class Thing:
             return self._pixmap_cache[cache_key]
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
         absolute_path = sprite_path if os.path.isabs(sprite_path) else os.path.join(project_root, sprite_path)
-        pixmap = QPixmap(absolute_path) if os.path.exists(absolute_path) else None
+        pixmap = load_pixmap(absolute_path) if asset_exists(absolute_path) else None
         if pixmap is not None and pixmap.isNull():
             pixmap = None
         self._pixmap_cache[cache_key] = pixmap
@@ -445,7 +448,14 @@ class PlayerStart(Thing):
     :mod:`engine.player_starts`, and ``EditorState.settle_player_starts``,
     which gives a level's first-created start the flag and keeps it unique).
     """
-    pixmap_path = "assets/sprites/player.png"
+    # Private editor artwork, deliberately outside assets/models (the browser).
+    # It is presentation only: no Prop/model fields are persisted on the spawn.
+    pixmap_path = None
+    editor_model_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'assets', 'editor', 'playerstart.obj')
+    editor_model_bounds = (tuple(-size / 2 for size in PLAYER_HULL_SIZE),
+                           tuple(size / 2 for size in PLAYER_HULL_SIZE))
     EDITOR_PRIMARY_PROPERTIES = ('angle',)
     
     def __init__(self, pos=None, properties=None):
@@ -597,12 +607,82 @@ class Speaker(Thing):
         return float(self.properties.get('radius', 512.0))
 
 
+class Decal(Thing):
+    """A decal: an image painted onto whatever surfaces its box meets.
+
+    It is a row of the same decal table blood is (engine.decal_table), drawn
+    by the same pass: a box thrown along (yaw, pitch) -- straight down by
+    default -- that paints walls, floors, the corner between, terrain and
+    models, under water and glass.
+
+    Properties
+    ----------
+    texture     An image in assets/textures/decals (a file name). One with
+                "wet" or "puddle" in its name is a mask of where the surface
+                is wet -- darkened and reflecting the scene (faded out with
+                distance, off with ``reflections 0``); any other is painted.
+    width, height, depth   The box: across, up the image, and along the throw.
+    yaw, pitch  The direction it is thrown: yaw 0 along +X, 90 along -Z;
+                pitch -90 straight down (a floor), 0 level (a wall).
+    roll        The image's rotation about the throw, degrees.
+    mirrored    Flip the image left to right.
+    opacity     How strongly it paints (for 'wet', how wet).
+    """
+    #: No icon and no box: what the decal paints is how the editor shows it
+    #: (placed, selected, dragged and nudged with the Decal tool).
+    pixmap_path = None
+    #: The Decal tool's selection; selected decals draw tinted.
+    editor_selected = False
+    EDITOR_PRIMARY_PROPERTIES = (
+        'texture', 'width', 'height', 'depth',
+        'yaw', 'pitch', 'roll', 'mirrored', 'opacity',
+    )
+
+    def __init__(self, pos=None, properties=None):
+        super().__init__(pos, properties)
+        self.properties['type'] = 'decal'
+        # Wet or Image is the image's name (wet / puddle), not a setting:
+        # an older map's decal_type is dropped.
+        self.properties.pop('decal_type', None)
+        self.properties.setdefault('texture', self.default_texture())
+        self.properties.setdefault('width', 128.0)
+        self.properties.setdefault('height', 128.0)
+        self.properties.setdefault('depth', 32.0)
+        self.properties.setdefault('yaw', 0.0)
+        self.properties.setdefault('pitch', -90.0)
+        self.properties.setdefault('roll', 0.0)
+        self.properties.setdefault('mirrored', False)
+        self.properties.setdefault('opacity', 1.0)
+
+    @staticmethod
+    def default_texture():
+        """A sensible first image: any that is not blood (gore's own) nor a
+        wet mask, else whatever there is."""
+        try:
+            from engine.decal_textures import images, is_wet_image
+            names = images()[1]
+        except Exception:
+            return ''
+        plain = [n for n in names
+                 if not n.lower().startswith('blood_') and not is_wet_image(n)]
+        return (plain or list(names) or [''])[0]
+
+    def throw_direction(self):
+        """The unit direction the decal is thrown in (into the surface)."""
+        import math
+        yaw = math.radians(float(self.properties.get('yaw', 0.0) or 0.0))
+        pitch = math.radians(float(self.properties.get('pitch', -90.0) or 0.0))
+        return (math.cos(pitch) * math.cos(yaw), math.sin(pitch),
+                -math.cos(pitch) * math.sin(yaw))
+
+
 class Monster(Thing):
     """Enemy entity with subtypes (human, flying)."""
     pixmap_path = "assets/sprites/monsters/human/idle.png"   # fallback
     EDITOR_PRIMARY_PROPERTIES = (
         'monster_type',
         'monster_id',
+        'angle',
         'health',
         'damage',
         'awake',
@@ -643,6 +723,7 @@ class Monster(Thing):
         self.properties['monster_type'] = monster_type
 
         self.properties.setdefault('monster_id', 0)
+        self.properties.setdefault('angle', 0.0)
         self.properties.setdefault('health', 100)
         self.properties.setdefault('damage', 10)
 
@@ -697,7 +778,7 @@ class Monster(Thing):
         invalidate_sprite_caches() if sprite files change on disk at runtime."""
         cached = cls._custom_path_exists_cache.get(abs_path)
         if cached is None:
-            cached = os.path.isfile(abs_path)
+            cached = asset_exists(abs_path)
             cls._custom_path_exists_cache[abs_path] = cached
         return cached
 
@@ -754,47 +835,6 @@ class Monster(Thing):
                 return custom_path
             print(f"[Monster] Custom sprite not found, using default: {custom_path}")
         return default_path
-
-    def get_render_snapshot(self):
-        """Return the actor state consumed by threaded rendering.
-
-        The render thread must not reach back into the live Thing. Keep the
-        resolved sprite, facing, and the weapon actually in hand in the snapshot.
-        """
-        idle = str(self.properties.get('custom_idle', '')).replace('\\', '/')
-        base = idle.rsplit('/', 1)[-1]
-        ttype = str(self.properties.get('type', '')).lower()
-        if 'is_head' in self.properties:
-            is_head = bool(self.properties['is_head'])
-        else:
-            is_head = (
-                ttype in ('npc', 'creature', 'monster')
-                and ('/heads/' in idle or idle.startswith('heads/'))
-                and base.startswith('head')
-            )
-        return {
-            'id': id(self),
-            'pos': list(self.pos),
-            'dead': self.properties.get('dead', False),
-            'is_shooting': self.properties.get('is_shooting', False),
-            'monster_type': self.properties.get('monster_type', 'human'),
-            'variant': self.properties.get('variant', '<None>'),
-            'sprite_width': self.properties.get('sprite_width', 128),
-            'sprite_height': self.properties.get('sprite_height', 128),
-            'custom_idle': self.properties.get('custom_idle', ''),
-            'custom_shoot': self.properties.get('custom_shoot', ''),
-            'hit_flash': self.properties.get('_hit_flash', 0.0),
-            'angle': float(self.properties.get('_facing', 0.0) or 0.0),
-            'sprite_path': self.get_sprite_path(),
-            'weapon_id': self.properties.get('_active_weapon') or self.properties.get(
-                'equipped_weapon',
-                (self.properties.get('equipment') or {}).get('weapon', '')
-                if isinstance(self.properties.get('equipment'), dict) else ''),
-            'is_head': is_head,
-            'gibbed': bool(self.properties.get('gibbed')),
-            'gib_sprite': self.properties.get('gib_sprite', ''),
-            'opacity': float(self.properties.get('_opacity', 1.0) or 0.0),
-        }
 
     def get_sprite_path(self) -> str:
         """
@@ -859,8 +899,8 @@ class Monster(Thing):
                 f"logic_{logic_type}.png"
             )
 
-            if os.path.exists(image_path):
-                pixmap = QPixmap(image_path)
+            if asset_exists(image_path):
+                pixmap = load_pixmap(image_path)
                 if not pixmap.isNull():
                     self._pixmap_cache[cache_key] = pixmap
                     return pixmap
@@ -877,8 +917,8 @@ class Monster(Thing):
             script_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
             abs_path = os.path.join(project_root, icon_path)
-            if os.path.exists(abs_path):
-                pix = QPixmap(abs_path)
+            if asset_exists(abs_path):
+                pix = load_pixmap(abs_path)
                 if not pix.isNull():
                     return pix
         except Exception:
@@ -979,8 +1019,8 @@ class LogicGate(Thing):
             project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
             abs_path = os.path.join(project_root, expected_path)
             
-            if os.path.exists(abs_path):
-                pix = QPixmap(abs_path)
+            if asset_exists(abs_path):
+                pix = load_pixmap(abs_path)
                 if not pix.isNull():
                     self._pixmap_cache[expected_path] = pix
                     return pix
@@ -1386,6 +1426,10 @@ class Portal(Thing):
     show_rim       (bool)  Draw outline.
     glasses        (bool)  Looking into this portal shows your own glasses
                            reflected back at you, like a mirror.  Default on.
+    fade_distance  (float) How far away the view through the portal is
+                           drawn. It fades out over the last quarter of this
+                           distance, showing what is behind the portal, and
+                           is not rendered at all beyond it.  Default 2048.
 
     I/O outputs
     -----------
@@ -1428,9 +1472,11 @@ class Portal(Thing):
     'color',
     'show_rim',
     'glasses',
+    'fade_distance',
     )
 
     DEFAULT_WIDTH  = 128.0
+    DEFAULT_FADE_DISTANCE = 2048.0
     DEFAULT_HEIGHT = 256.0
 
     # Transit cooldown prevents rapid back-and-forth oscillation (seconds).
@@ -1457,6 +1503,9 @@ class Portal(Thing):
         # Aperture geometry
         self.properties.setdefault('width',  self.DEFAULT_WIDTH)
         self.properties.setdefault('height', self.DEFAULT_HEIGHT)
+
+        # How far away its view is drawn (faded out over the last quarter).
+        self.properties.setdefault('fade_distance', self.DEFAULT_FADE_DISTANCE)
 
         # Orientation — [yaw_degrees, pitch_degrees, roll_degrees]
         self.properties.setdefault('rotation', [0.0, 0.0, 0.0])
@@ -2085,6 +2134,7 @@ ENTITY_TYPES = {
     'PlayerStart': PlayerStart,
     'Light': Light,
     'Speaker': Speaker,
+    'Decal': Decal,
     'Monster': Monster,
     'LogicRelay': LogicRelay,
     'LogicGate': LogicGate,
@@ -2110,7 +2160,7 @@ if _effect_class is not None:
 # Categories for editor UI
 ENTITY_CATEGORIES = {
     'Gameplay': ['PlayerStart', 'Monster', 'Prop', 'LevelChanger'],
-    'Environment': ['Light', 'Effect', 'Speaker', 'Portal'],
+    'Environment': ['Light', 'Effect', 'Speaker', 'Portal', 'Decal'],
     'Logic': ['LogicRelay', 'LogicGate', 'LogicTimer', 'LogicCommand', 'LogicCamera', 'LogicSpawner', 'LogicState'],
     'AI': ['PathNode'],
 }

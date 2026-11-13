@@ -23,8 +23,12 @@ except ImportError:  # pragma: no cover - exercised by the head-less player
         print(f"[{category}] {message}")
 from .change_journal import JOURNAL, STATE, set_positions, touch
 from . import monster_table
+from .monster_constants import (MONSTER_EYE_RISE, monster_body_rise,
+                                monster_eye_rise)
+from .monster_facing import face_direction
 from .spatial import TIER_DORMANT, tier_of
-from .constants import is_solid_world_brush
+from .brush_placement import world_bounds
+from .constants import brush_aabb_bounds, is_solid_world_brush
 from .physics import world_gravity
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,
@@ -577,10 +581,14 @@ all accumulated time when it runs, so simulation time is not lost.
                     self._sight_lost(thing, aggro_monster, float(t.dist_sq[row]))
             if fired[row]:
                 target_pos = glm.vec3(*map(float, t.target_pos[row]))
-                eye = glm.vec3(float(pos32[row, 0]), float(pos32[row, 1]) + 64.0,
+                eye = glm.vec3(float(pos32[row, 0]),
+                               float(pos32[row, 1]) + monster_eye_rise(props[row]),
                                float(pos32[row, 2]))
                 if aggro_monster is not None:
-                    target_eye = glm.vec3(target_pos.x, target_pos.y + 64.0, target_pos.z)
+                    target_eye = glm.vec3(
+                        target_pos.x,
+                        target_pos.y + monster_eye_rise(aggro_monster.properties),
+                        target_pos.z)
                 else:
                     target_eye = glm.vec3(px, py + self.lt.player_runtime.player.camera_height, pz)
                 self._monster_attack(thing, props[row].get('monster_type', 'human'),
@@ -760,6 +768,9 @@ all accumulated time when it runs, so simulation time is not lost.
         t.mode[rows] = np.where(in_sight, monster_table.MODE_CHASE,
                                 monster_table.MODE_SEARCH)
 
+        for i in np.flatnonzero(in_sight):
+            face_direction(monsters[rows[i]], target_pos[i] - p32[i], delta[i])
+
         # ---- Step toward the target, sliding along walls ------------------
         final = p32.copy()
         stepped = np.zeros(len(rows), dtype=bool)
@@ -835,12 +846,20 @@ all accumulated time when it runs, so simulation time is not lost.
         fired = np.zeros(len(rows), dtype=bool)
         if len(due):
             camera_height = self.lt.player_runtime.player.camera_height
+            # Eye heights from the table's columns (monster_eye_rise).
+            n = t.count
+            eye_rise = (np.where(t.flying[:n], MONSTER_EYE_RISE['flying'],
+                                 MONSTER_EYE_RISE['human'])
+                        * t.sprite_height[:n])
             for i in due:
                 row = rows[i]
-                eye = glm.vec3(float(p32[i, 0]), float(p32[i, 1]) + 64.0, float(p32[i, 2]))
+                eye = glm.vec3(float(p32[i, 0]), float(p32[i, 1]) + float(eye_rise[row]),
+                               float(p32[i, 2]))
                 if target[i] >= 0:
                     tp = target_pos[i]
-                    target_eye = glm.vec3(float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
+                    target_eye = glm.vec3(float(tp[0]),
+                                          float(tp[1]) + float(eye_rise[target[i]]),
+                                          float(tp[2]))
                 else:
                     target_eye = glm.vec3(float(player32[0]),
                                           float(player32[1]) + camera_height,
@@ -1118,9 +1137,12 @@ all accumulated time when it runs, so simulation time is not lost.
                      and not self._hunts_player(thing))
 
         # ---- Line of sight check ----
-        monster_eye = glm.vec3(thing_pos.x, thing_pos.y + 64.0, thing_pos.z)
+        monster_eye = glm.vec3(thing_pos.x, thing_pos.y + monster_eye_rise(thing.properties),
+                               thing_pos.z)
         if aggro_monster is not None:
-            target_eye = glm.vec3(target_pos.x, target_pos.y + 64.0, target_pos.z)
+            target_eye = glm.vec3(target_pos.x,
+                                  target_pos.y + monster_eye_rise(aggro_monster.properties),
+                                  target_pos.z)
         else:
             target_eye = glm.vec3(player_pos.x, player_pos.y + self.lt.player_runtime.player.camera_height, player_pos.z)
         has_los = False if no_target else self._has_line_of_sight(monster_eye, target_eye)
@@ -1138,6 +1160,7 @@ all accumulated time when it runs, so simulation time is not lost.
 
         pursuit_range = monster_table.engagement_range(thing.properties)
         if distance_sq <= pursuit_range * pursuit_range:
+            face_direction(thing, target_pos - thing_pos, delta)
             # ---- Entered engagement range ----
             if not state['in_sight']:
                 state['in_sight'] = True
@@ -1270,6 +1293,7 @@ all accumulated time when it runs, so simulation time is not lost.
             if distance_sq <= MONSTER_BITE_DISTANCE * MONSTER_BITE_DISTANCE and aggro_monster is None:
                 # Bite attack: instant hitscan, double damage
                 bite_damage = int(damage * MONSTER_BITE_DAMAGE_MULT)
+                self.lt.player_runtime.damage_source = tuple(thing.pos)
                 self.lt.trigger_runtime._apply_player_damage(
                     bite_damage, source=thing, cause="bite")
                 name = thing.properties.get('name', '?')
@@ -1300,6 +1324,7 @@ all accumulated time when it runs, so simulation time is not lost.
                         debug_log("MonsterAI",
                                   f"CROSSFIRE: {a_name} hit {v_name} — infighting!")
                 else:
+                    self.lt.player_runtime.damage_source = tuple(thing.pos)
                     self.lt.trigger_runtime._apply_player_damage(
                         damage, source=thing, cause="attack")
 
@@ -1641,9 +1666,9 @@ the scalar fallback for callers that do not have the dense table.
             if shooter_team and target_team and shooter_team == target_team:
                 continue
 
-            # Sphere intersection (same radius used by player shooting)
+            # Sphere intersection on the middle of the body
             radius = 80.0
-            center = glm.vec3(t.pos[0], t.pos[1] + 64.0, t.pos[2])
+            center = glm.vec3(t.pos[0], t.pos[1] + monster_body_rise(t.properties), t.pos[2])
             oc = ray_start - center
             a = glm.dot(ray_dir, ray_dir)
             b = 2.0 * glm.dot(oc, ray_dir)
@@ -1731,7 +1756,10 @@ the scalar fallback for callers that do not have the dense table.
             MONSTER_PROJECTILE_MAX_DIST,
         )
 
-        start_pos = glm.vec3(thing.pos[0], thing.pos[1] + 64.0, thing.pos[2])
+        # From the monster's muzzle (a flying monster's middle), not 64
+        # units above its centre -- over the head of a 160-unit flyer.
+        start_pos = glm.vec3(thing.pos[0], thing.pos[1] + monster_eye_rise(thing.properties),
+                             thing.pos[2])
         direction = target_pos - start_pos
         dir_len = glm.length(direction)
         if dir_len < 0.001:
@@ -1840,6 +1868,7 @@ the scalar fallback for callers that do not have the dense table.
             return False
 
         # Move toward the sound source
+        face_direction(monster, sound_pos - thing_pos, delta)
         direction = sound_pos - thing_pos
         dir_len = glm.length(direction)
         if dir_len > 0.001:
@@ -1875,7 +1904,8 @@ the scalar fallback for callers that do not have the dense table.
                 f'<span style="color: #FFA726;">investigating {noise_label} within Range at ({sound_pos.x:.0f}, {sound_pos.y:.0f}, {sound_pos.z:.0f})</span>')
             # Draw debug ray to sound source
             self._debug_rays.append({
-                'start': [thing_pos.x, thing_pos.y + 64.0, thing_pos.z],
+                'start': [thing_pos.x, thing_pos.y + monster_eye_rise(monster.properties),
+                          thing_pos.z],
                 'end': [sound_pos.x, sound_pos.y, sound_pos.z],
                 'color': 'orange',
             })
@@ -2069,6 +2099,7 @@ the scalar fallback for callers that do not have the dense table.
             if direction is None:
                 return      # the node is directly overhead; no way to walk to it
 
+        face_direction(monster, direction, delta)
         step = direction * MONSTER_MOVE_SPEED * speed_mult * delta
         new_pos = m_pos + step
 
@@ -2248,10 +2279,9 @@ the scalar fallback for callers that do not have the dense table.
         for brush in self.lt.editor_state.brushes:
             if not is_solid_world_brush(brush):
                 continue
-            pos = glm.vec3(brush['pos'])
-            size = glm.vec3(brush['size'])
-            b_min = pos - size * 0.5
-            b_max = pos + size * 0.5
+            b = brush_aabb_bounds(brush)
+            b_min = glm.vec3(b[0], b[1], b[2])
+            b_max = glm.vec3(b[3], b[4], b[5])
             hit, dist = self.lt.combat_runtime.intersect_ray_aabb(start, ray_dir, b_min, b_max)
             if hit and dist < ray_len - 0.1:
                 return False
@@ -2267,13 +2297,7 @@ the scalar fallback for callers that do not have the dense table.
         for brush in self.lt.editor_state.brushes:
             if not is_solid_world_brush(brush):
                 continue
-            pos = brush['pos']
-            size = brush['size']
-            bx_min = pos[0] - size[0] * 0.5
-            bx_max = pos[0] + size[0] * 0.5
-            bz_min = pos[2] - size[2] * 0.5
-            bz_max = pos[2] + size[2] * 0.5
-            by_max = pos[1] + size[1] * 0.5
+            bx_min, _by_min, bz_min, bx_max, by_max, bz_max = world_bounds(brush)
 
             if bx_min <= x <= bx_max and bz_min <= z <= bz_max:
                 if by_max <= start_y:
@@ -2290,14 +2314,7 @@ the scalar fallback for callers that do not have the dense table.
         for brush in self.lt.editor_state.brushes:
             if not is_solid_world_brush(brush):
                 continue
-            pos = brush['pos']
-            size = brush['size']
-            bx_min = pos[0] - size[0] * 0.5
-            bx_max = pos[0] + size[0] * 0.5
-            by_min = pos[1] - size[1] * 0.5
-            by_max = pos[1] + size[1] * 0.5
-            bz_min = pos[2] - size[2] * 0.5
-            bz_max = pos[2] + size[2] * 0.5
+            bx_min, by_min, bz_min, bx_max, by_max, bz_max = world_bounds(brush)
 
             m_xmin = mx - margin
             m_xmax = mx + margin

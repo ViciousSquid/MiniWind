@@ -244,3 +244,52 @@ def test_add_entity_at_origin_places_the_entity(window, menu_owner):
         assert list(placed.pos) == [0.0, 40.0, 0.0]
     finally:
         mgr.set_enabled(plugin, was)
+
+
+@pytest.fixture
+def prop_extender(plugin_manager, monkeypatch):
+    """``(manager, plugin)`` for the ``prop_extender`` fixture, which has two
+    entity types of its own."""
+    import plugins.manager as manager_module
+
+    mgr = plugin_manager("prop_extender")
+    monkeypatch.setattr(manager_module, "get_manager", lambda: mgr)
+    return mgr, mgr.find_plugin("prop_extender")
+
+
+@pytest.mark.parametrize("view_name", ["view_top", "view_front", "view_side"])
+def test_context_menu_groups_a_plugins_entities_in_one_submenu(
+        window, monkeypatch, view_name, prop_extender):
+    """A plugin's entities share one Plugins submenu in the 2D context menu,
+    not one (mostly empty) submenu each. Fio checks this with its Deathmatch
+    plugin's five entities; MiniWind does not ship Deathmatch, so the
+    ``prop_extender`` fixture's two stand in."""
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtGui import QContextMenuEvent
+    from PyQt5.QtWidgets import QMenu
+
+    mgr, plugin = prop_extender
+    was = mgr.is_enabled(plugin)
+    inspected = []
+
+    def inspect_menu(menu, *args):
+        plugins = next(action.menu() for action in menu.actions()
+                       if action.text() == "Plugins")
+        submenus = [action.menu() for action in plugins.actions()
+                    if action.text() == "prop_extender"]
+        assert len(submenus) == 1
+        assert [action.text() for action in submenus[0].actions()] == [
+            "Extender Bin", "Extender Goal",
+        ]
+        assert all(action.menu().actions() for action in plugins.actions())
+        inspected.append(True)
+        return None
+
+    monkeypatch.setattr(QMenu, "exec_", inspect_menu)
+    try:
+        mgr.set_enabled(plugin, True)
+        view = getattr(window, view_name)
+        view.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(80, 80)))
+        assert inspected == [True]
+    finally:
+        mgr.set_enabled(plugin, was)

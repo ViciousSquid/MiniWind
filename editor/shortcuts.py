@@ -55,13 +55,13 @@ _MENU_CATEGORY = {
 #: (category, keys, what it does).  Keep in step with the handlers.
 DECLARED = (
     ('Edit', 'Esc', 'Back out: cancel a drag, leave a mode, or deselect'),
-    ('Edit', 'Del', 'Delete the selection'),
-    ('Edit', 'Backspace', 'Delete the selection'),
+    ('Edit', 'Del / Backspace', 'Delete the selection'),
     ('Edit', 'Ctrl+C', 'Copy the selected brush or multi-selection'),
     ('Edit', 'Ctrl+V', 'Paste the copied brush or multi-selection, offset by one grid step'),
     ('Edit', 'Shift+Space', 'Clone the selection and place the copy'),
+    ('Tools', 'Ctrl+K', 'Drag an arrow from the selected entity to another entity to link them'),
     ('Edit', 'H', 'Hide the selected brush'),
-    ('Edit', 'Shift+H', 'Unhide every brush'),
+    ('Edit', 'Shift+H', 'Unhide everything hidden'),
 
     ('Selection', 'Ctrl+T', 'Select touching'),
     ('Selection', 'Ctrl+I', 'Select inside'),
@@ -91,7 +91,7 @@ DECLARED = (
     ('Play mode', 'E', 'Use / interact'),
     ('Play mode', 'Esc', 'Pause menu (Save, Load, Options, Exit)'),
     ('Play mode', 'F6', 'Toggle model collision'),
-    ('Play mode', 'F7', 'Toggle monster debug'),
+    ('Play mode', 'F7', 'Monster Debug window (and its sight lines)'),
     ('Play mode', 'F9', 'Toggle the lighting debug view'),
     ('Play mode', 'F12', 'Leave kiosk mode'),
     ('Play mode', '1 2 3 4', 'Select weapon'),

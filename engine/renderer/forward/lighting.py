@@ -7,6 +7,7 @@ upload, and omnidirectional point-light shadows as depth cube-maps.
 import glm
 import numpy as np
 import OpenGL.GL as gl
+from engine import glraw
 
 from engine import render_table
 from engine import shaders
@@ -22,6 +23,12 @@ _SHADER_LIGHT_CAPS = {
     'water': shaders.MAX_LIGHTS_WATER,
     'terrain': shaders.MAX_LIGHTS_TERRAIN,
 }
+
+
+def _split_casters(table, slots):
+    """``(box slots, convex geometry slots)`` of the caster *slots*."""
+    geometry = (table.class_bits[slots] & render_table.CLASS_HAS_GEOMETRY) != 0
+    return slots[~geometry], slots[geometry]
 
 
 class LightingMixin:
@@ -67,7 +74,8 @@ class LightingMixin:
         cap = _SHADER_LIGHT_CAPS.get(shader_name, self.MAX_LIGHTS)
         if self.lowpower_mode and shader_name in ('lit', 'textured', 'lit_instanced',
                                                   'textured_instanced', 'brush_instanced',
-                                                  'lit_brush_instanced'):
+                                                  'lit_brush_instanced', 'geo_textured',
+                                                  'geo_batched'):
             cap = min(cap, shaders.MAX_LIGHTS_ARM)
         return cap
 
@@ -87,6 +95,15 @@ class LightingMixin:
         vd = self.view_distance
         start, end = vd.resolve()
         cam = self._frame_camera_pos
+        # Sent when they change, per program (M4): the values are compared
+        # every frame, so a change still reaches the next draw. The terrain's
+        # program belongs to the terrain, which may set them itself.
+        values = (vd.fog_enabled, tuple(vd.fog_color), start, end,
+                  vd.fog_density, tuple(cam), tuple(vd.ambient))
+        if shader_name != 'terrain':
+            if uniforms.env == values:
+                return
+            uniforms.env = values
         gl.glUniform1i(uniforms['uFogEnabled'], 1 if vd.fog_enabled else 0)
         gl.glUniform3f(uniforms['uFogColor'], *vd.fog_color)
         gl.glUniform1f(uniforms['uFogStart'], start)
@@ -109,7 +126,8 @@ class LightingMixin:
 
     def _configure_light_ubo_programs(self):
         for name in ('lit', 'textured', 'lit_instanced', 'textured_instanced',
-                     'brush_instanced', 'lit_brush_instanced', 'water', 'terrain'):
+                     'brush_instanced', 'lit_brush_instanced', 'geo_textured',
+                     'geo_batched', 'water', 'terrain'):
             self._configure_light_ubo_program(name)
         self._ensure_light_ubo(self.MAX_LIGHTS)
 
@@ -160,12 +178,13 @@ class LightingMixin:
             raise TypeError("light upload requires (LightTable, slots)")
         table, slots = lights
         active_lights = slots[:count]
+        # Streamed play lights ease out before their cutoff (LightStream).
         fade = getattr(self, '_light_fade', None)
         weights = (1.0,) * count
         if fade is not None and fade[0] is table:
             weights = tuple(float(fade[1].get(slot, 1.0)) for slot in active_lights)
         key = ('dense', id(table), table.generation, count,
-               tuple(int(x) for x in active_lights), weights)
+               tuple(active_lights.tolist()), weights)
         if self._light_ubo_key == key:
             return
 
@@ -233,8 +252,11 @@ class LightingMixin:
         # _upload_light_ubo below makes sure the buffer exists and is bound.
         self._frame_lights_uploaded[shader_name] = (
             id(table), table.generation,
-            tuple(int(x) for x in slots[:cap]))
-        gl.glUniform1i(self.uniforms[shader_name]['active_lights'], num_lights)
+            tuple(slots[:cap].tolist()))
+        program = self.uniforms[shader_name]
+        if shader_name == 'terrain' or program.active_lights != num_lights:
+            gl.glUniform1i(program['active_lights'], num_lights)
+            program.active_lights = num_lights
         # One upload serves every pass: the buffer holds the frame's light
         # prefix up to MAX_LIGHTS, and each shader reads its own first
         # ``active_lights`` entries of it. Uploading per shader cap re-sent
@@ -245,7 +267,8 @@ class LightingMixin:
         # This is one shader-pass operation, never part of the per-draw loop.
         if shader_name in ('lit', 'textured', 'lit_instanced',
                            'textured_instanced', 'brush_instanced',
-                           'lit_brush_instanced', 'terrain'):
+                           'lit_brush_instanced', 'geo_textured', 'geo_batched',
+                           'terrain'):
             self._bind_shadow_maps(self.uniforms[shader_name])
 
     # --------------------------------------------------------------------------
@@ -342,29 +365,30 @@ class LightingMixin:
     #: the casters once and drawing them six times is the whole saving.
     SHADOW_RUN_KEY = KeyLayout([('face', 3)])
 
-    def _prepare_shadow_instances(self, table, in_brushes, instanced):
-        """Pack dense brush casters and return dense convex geometry slots.
+    def _prepare_shadow_instances(self, table, in_brushes, instanced,
+                                  key=('shadow', 0)):
+        """Bring a light's box casters' instance stream (*key*) up to date
+        and return ``(cube slots, convex geometry slots, stream)``.
 
         All inputs are RenderTable slots. No Brush reference is reconstructed
         here; geometry rows remain integer geometry_id handles and AABB rows
-        use the shared instanced cube buffer.
+        use the instanced cube buffer.
         """
         if table is None or not len(in_brushes):
-            return np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)
+            return (np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32),
+                    None)
 
         slots = np.asarray(in_brushes, dtype=np.int32)
-        geometry = (
-            (table.class_bits[slots] & render_table.CLASS_HAS_GEOMETRY) != 0
-        )
-        cube_slots = slots[~geometry]
-        geo_slots = slots[geometry]
+        # The casters split into boxes and convex meshes, kept while the
+        # light's casters and their classes are unchanged (M3.1).
+        cube_slots, geo_slots = self._pass_memo(
+            key, table, slots, (), (), lambda: _split_casters(table, slots))
 
+        stream = None
         if instanced and len(cube_slots):
-            models, _normals = self._frame_transforms(table, cube_slots)
-            rows = np.arange(len(cube_slots), dtype=np.int32)
-            self._pack_brush_instances(models, None, rows, 0.0, 0.0)
+            stream = self._brush_stream(key, table, cube_slots, normals=False)
 
-        return cube_slots, geo_slots
+        return cube_slots, geo_slots, stream
 
     @timed_pass('shadow maps')
     def render_shadow_maps(self, shadow_lights, config, camera_pos=None):
@@ -503,14 +527,12 @@ class LightingMixin:
         model_loc = u['model']
         lsm_loc = u['lightSpaceMatrix']
         depth_instanced = self.shaders.get('depth_cube_instanced')
-        instance_vao = None
         inst_lsm_loc = inst_lightpos_loc = inst_far_loc = -1
         if depth_instanced is not None and self._cube_vbo is not None:
             iu = self.uniforms['depth_cube_instanced']
             inst_lsm_loc = iu['lightSpaceMatrix']
             inst_lightpos_loc = iu['lightPos']
             inst_far_loc = iu['far_plane']
-            instance_vao = self._ensure_brush_instance_vao()
         lightpos_loc = u['lightPos']
         far_loc = u['far_plane']
         cube_vao = self.vaos['cube']
@@ -554,8 +576,9 @@ class LightingMixin:
             model_bases[:, 12:15] = entity_table.pos[model_slots]
             upload_base = uniform_rows('mat4', model_bases)
 
-            cube_slots, geo_slots = self._prepare_shadow_instances(
-                table, in_brushes, depth_instanced is not None)
+            cube_slots, geo_slots, stream = self._prepare_shadow_instances(
+                table, in_brushes, depth_instanced is not None,
+                key=('shadow', slot))
 
             for face in range(6):
                 gl.glFramebufferTexture2D(
@@ -564,22 +587,23 @@ class LightingMixin:
                 gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
                 lsm = proj * glm.lookAt(
                     center, center + face_dirs[face][0], face_dirs[face][1])
-                gl.glUniformMatrix4fv(
+                glraw.uniform_matrix4fv(gl, 
                     lsm_loc, 1, gl.GL_FALSE, glm.value_ptr(lsm))
 
-                if len(cube_slots) and depth_instanced is not None:
+                if len(cube_slots) and stream is not None:
                     gl.glUseProgram(depth_instanced)
-                    gl.glUniformMatrix4fv(
+                    glraw.uniform_matrix4fv(gl, 
                         inst_lsm_loc, 1, gl.GL_FALSE, glm.value_ptr(lsm))
                     gl.glUniform3f(inst_lightpos_loc, lx, ly, lz)
                     gl.glUniform1f(inst_far_loc, far_plane)
-                    gl.glBindVertexArray(instance_vao)
+                    gl.glBindVertexArray(stream.vao)
+                    gl.glBindBuffer(gl.GL_ARRAY_BUFFER, stream.vbo)
                     self._point_brush_instances_at(0)
                     gl.glDrawArraysInstanced(
                         gl.GL_TRIANGLES, 0, 36, len(cube_slots))
                     self.render_stats.shadow_draw_calls += 1
                     gl.glUseProgram(shader)
-                    gl.glUniformMatrix4fv(
+                    glraw.uniform_matrix4fv(gl, 
                         lsm_loc, 1, gl.GL_FALSE, glm.value_ptr(lsm))
                 elif len(cube_slots):
                     cube_models, _ = self._frame_transforms(table, cube_slots)
@@ -613,7 +637,7 @@ class LightingMixin:
                     gl.glBindVertexArray(obj.vao)
                     if (getattr(obj, 'ebo', None) is not None
                             and getattr(obj, 'index_count', 0)):
-                        gl.glDrawElements(
+                        glraw.draw_elements(gl, 
                             gl.GL_TRIANGLES, obj.index_count,
                             gl.GL_UNSIGNED_INT, None)
                     else:

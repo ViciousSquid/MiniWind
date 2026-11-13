@@ -370,7 +370,7 @@ def load_quests_for_editor(thing):
     ``properties['quests']`` list, those quests are migrated into the folder so
     nothing is lost. Returns a list of quest dicts (safe to mutate).
     """
-    from .rpg import quest_files
+    import game.rpg.quest_files as quest_files
     defs = quest_files.load_quest_defs()
     if defs:
         return defs
@@ -394,7 +394,7 @@ def save_quests_from_editor(thing, quests):
     Keeping the quests out of the ``GameSettings`` entity is deliberate: the
     ``.quest`` files are the single source of truth the running game loads.
     """
-    from .rpg import quest_files
+    import game.rpg.quest_files as quest_files
     try:
         quest_files.sync_quest_files(quests)
     except Exception:
@@ -1649,7 +1649,7 @@ def make_quests_launcher(thing):
             # Summary reflects the .quest files on disk; fall back to any legacy
             # on-entity quests (shown until the editor is opened and migrates them).
             try:
-                from .rpg import quest_files
+                import game.rpg.quest_files as quest_files
                 defs = quest_files.load_quest_defs()
                 if defs:
                     return defs

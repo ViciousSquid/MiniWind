@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 
-from .physics import world_gravity
+from .physics import PhysicsWorld, world_gravity
 from .change_journal import touch
 from .spatial import CellIndex, cell_of_point
 
@@ -45,6 +45,9 @@ class PropSession:
     DROP_TERMINAL_VELOCITY = 2400.0
     SPRITE_CAMERA_FACING = -10000.0
     RESPAWN_FADE_DURATION = 2.0
+    #: The least gap kept between the eye and the near side of a carried
+    #: body, however small its carry_distance.
+    MIN_CARRY_GAP = 30.0
 
     def __init__(self, logic):
         self.logic = logic
@@ -61,6 +64,10 @@ class PropSession:
         self._max_reach = self.DEFAULT_CARRY_REACH
         self.drop_interceptor = None
         self._falling = {}
+        #: The held Prop's horizontal half-width (from its physics body), and
+        #: which Prop it was measured for.
+        self._held_extent = 0.0
+        self._held_measured = None
 
     @staticmethod
     def is_prop(thing):
@@ -222,10 +229,13 @@ class PropSession:
 
     # -- I/O --------------------------------------------------------------
 
-    def _fire(self, prop, output):
+    def _fire(self, prop, output, activator=None):
         io = self.logic.io_manager
         if io is not None:
-            io.fire_output(prop, output)
+            if activator is None:
+                io.fire_output(prop, output)
+            else:
+                io.fire_output(prop, output, activator_entity=activator)
 
     def _on_rest(self, prop):
         self._fire(prop, "OnRest")
@@ -277,6 +287,8 @@ class PropSession:
                 continue
             if p.get("collect_collected", False):
                 continue
+            if self._too_heavy(p):
+                continue
 
             dx = float(prop.pos[0]) - eye[0]
             dy = float(prop.pos[1]) - eye[1]
@@ -311,6 +323,25 @@ class PropSession:
             if self.physics is not None:
                 self.physics.set_kinematic(best, True)
             self._fire(best, "OnCarried")
+
+    @staticmethod
+    def _too_heavy(properties):
+        """A Prop at the heaviest mass is never picked up, whatever its Carry
+        setting says: it is the mass at which the player cannot push it
+        either (PhysicsWorld.HEAVY_MASS)."""
+        try:
+            return float(properties.get("mass", 1.0)) >= PhysicsWorld.HEAVY_MASS
+        except (TypeError, ValueError):
+            return False
+
+    def _carry_extent(self, prop):
+        """How far the held Prop reaches toward the eye from its centre: its
+        physics body's horizontal half-width, or 0 without a body."""
+        body = self.physics.get_body(prop) if self.physics is not None else None
+        if body is None:
+            return 0.0
+        half = body.half_extents
+        return max(float(half[0]), float(half[2]))
 
     def _collectable(self, prop):
         p = prop.properties
@@ -444,7 +475,7 @@ class PropSession:
             self.logic.combat_runtime.give_weapon(weapon)
         return True
 
-    def _collect(self, prop):
+    def _collect(self, prop, *, grant=None, collector=None):
         """Collect *prop*; False (and nothing happens) if it gives nothing."""
         p = prop.properties
         collect_type = p.get("collect_type", "health")
@@ -456,7 +487,14 @@ class PropSession:
             value_num = 25
 
         item = None
-        if collect_type == "health":
+        if grant is not None:
+            item = self._item(prop) if collect_type == "item" else None
+            if collect_type == "item" and item is None:
+                self._report_unknown_item(prop)
+                return False
+            if not grant(collect_type, value_num, item):
+                return False
+        elif collect_type == "health":
             self._give_health(value_num)
         elif collect_type == "key":
             self._give_key(p.get("collect_key_name", ""))
@@ -476,7 +514,7 @@ class PropSession:
         if self.physics is not None:
             self.physics.set_kinematic(prop, True)
 
-        self._fire(prop, "OnCollected")
+        self._fire(prop, "OnCollected", activator=collector)
 
         emit = self.logic._plugin_emit
         if emit is not None:
@@ -485,6 +523,7 @@ class PropSession:
                 prop=prop,
                 collect_type=collect_type,
                 value=value_num,
+                **({"collector": collector} if collector is not None else {}),
             )
 
         if item is not None and item.pickup is not None:
@@ -515,13 +554,21 @@ class PropSession:
         print(f"[Props] {prop.properties.get('name', 'Prop')} gives item "
               f"{item_id!r}, but {reason}")
 
-    def collect_prop(self, prop):
-        """Collect *prop* through the same path as player collection."""
+    def collect_prop(self, prop, *, grant=None, collector=None):
+        """Collect a registered Prop, optionally for a non-player actor.
+
+        ``grant(kind, amount, compiled_item) -> bool`` applies that actor's
+        reward; False leaves the Prop untouched. The Prop domain still owns
+        consumption, physics, I/O and respawns. ``collector`` is the entity
+        supplied as the OnCollected activator and prop_collected event actor.
+        Without these arguments, the native human-player path is unchanged.
+        Call on the logic thread (or while holding the session tick lock).
+        """
         if prop is None or id(prop) not in self._by_id:
             return False
         if not self._collectable(prop):
             return False
-        return self._collect(prop)
+        return self._collect(prop, grant=grant, collector=collector)
 
     def respawn_prop(self, prop):
         """Force a collected Prop back into its authored live state."""
@@ -689,7 +736,17 @@ class PropSession:
         prop = self.held
         p = prop.properties
         offset = p.get("carry_offset", [0.0, -6.0, 0.0])
-        distance = float(p.get("carry_distance", 55.0))
+        if self._held_measured is not prop:
+            self._held_extent = self._carry_extent(prop)
+            self._held_measured = prop
+        # carry_distance is the gap from the eye to the held body's near side:
+        # its own half-width goes on top, so a body is held as clear of the
+        # face at any size or scale. Without a physics body there is no size
+        # to measure, and it is the distance to the Prop's origin.
+        gap = float(p.get("carry_distance", 55.0))
+        if self._held_extent > 0.0:
+            gap = max(gap, self.MIN_CARRY_GAP)
+        distance = gap + self._held_extent
 
         prop.pos = [
             eye[0] + forward[0] * distance + float(offset[0]),

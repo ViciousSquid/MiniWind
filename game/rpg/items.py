@@ -127,8 +127,15 @@ def apply_rarity(stack: Dict, rarity: str) -> Dict:
 ITEMS: Dict[str, ItemDef] = {}
 
 
+#: Callables run when the registry changes: the memos of what an item is
+#: (its stack size, whether it takes two hands) forget their answers.
+ON_CHANGE: List = []
+
+
 def register(item: ItemDef) -> ItemDef:
     ITEMS[item.id] = item
+    for forget in ON_CHANGE:
+        forget()
     return item
 
 
@@ -149,7 +156,7 @@ def make(item_id: str, qty: int = 1) -> Optional[Dict]:
 # whole new weapon by editing JSON — no code change.
 # ---------------------------------------------------------------------------
 def _load_items() -> None:
-    from .. import data
+    import game.data as data
     for iid, row in (data.load("items") or {}).items():
         row = dict(row)
         register(ItemDef(

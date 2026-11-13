@@ -17,9 +17,11 @@ weapon for the fighters who should have one.
 
 from __future__ import annotations
 
+import functools
 import math
 
 from . import combat_loadout
+from .facing import heading
 
 #: Fighters who may carry a second weapon, and the chance they do.
 SECOND_WEAPON_FACTIONS = {"guards": 0.7, "bandits": 0.55, "mercenaries": 0.8,
@@ -57,6 +59,11 @@ MARKSMAN_ROLES = ("hunter", "ranger", "marksman", "sniper")
 DRAW_RADIUS = 2600.0
 #: How far an actor must move in a tick to turn to face its walk.
 TURN_MIN_STEP = 0.5
+#: How far the player may move from where :meth:`HeldWeapons.update` took its
+#: set of actors before :meth:`HeldWeapons.overhead` stops trusting it. The set
+#: reaches this much beyond DRAW_RADIUS, so it holds everyone overhead() could
+#: draw until then.
+NEAR_SLACK = 256.0
 
 
 def _style(item_id) -> str:
@@ -145,7 +152,8 @@ def _arm_off_hand(p, role, team, equipped, rng, make_stack) -> bool:
     a second crossbow. Bows take both hands and never pair."""
     if p.get("offhand_weapon") or not equipped:
         return False
-    from .rpg import equipment, items
+    import game.rpg.equipment as equipment
+    import game.rpg.items as items
     main = items.get(equipped)
     if main is None or not equipment.can_dual_wield(main) \
             or main.get("kind") not in (items.KIND_MELEE, items.KIND_CROSSBOW):
@@ -184,9 +192,13 @@ class HeldWeapons:
     def __init__(self, session):
         self.session = session
         self._last = {}               # id(actor) -> (x, z)
-        #: id(actor) -> the heading last told to the renderer, so a head
-        #: sprite turns with its actor (engine.change_journal.FACING).
-        self._published = {}
+        #: ``(actors, x, z)``: those within DRAW_RADIUS of the player at
+        #: ``(x, z)`` at the last update (logic thread), published whole for
+        #: overhead() (UI thread) to walk instead of every actor in the
+        #: scene; None until the first update.
+        self._near = None
+        #: The overhead list the last tick built (see publish()); None until then.
+        self._published = None
         #: id(actor) -> its weapons' springs (game/weapon_sway.py): an NPC's
         #: blades trail and overshoot a turn just as the player's do.
         self._sway = {}
@@ -194,10 +206,11 @@ class HeldWeapons:
         self._blocks = {}
 
     def update(self) -> None:
-        """Facing for every actor near the player, eased into each turn and
-        handed on to the renderer, which turns the actor's head with it."""
+        """Facing for every actor near the player, eased into each turn.
+
+        game.facing journals each turn, so the renderer turns the head without
+        being handed anything here."""
         import time
-        from engine.change_journal import FACING, touch
         from .facing import face_heading
         s = self.session
         ppos = s._player_pos()
@@ -206,23 +219,28 @@ class HeldWeapons:
         now = time.perf_counter()
         delta = None if self._clock is None else max(0.0, min(0.1, now - self._clock))
         self._clock = now
-        published = {}
         r2 = DRAW_RADIUS * DRAW_RADIUS
         actors = s._actors
         cached = getattr(s, "_actors_by_id", None)
         by_id = (cached[1] if cached is not None and cached[0] is actors
                  else {id(t): t for t in actors})
+        reach2 = (DRAW_RADIUS + NEAR_SLACK) ** 2
         last = {}
+        near = []
         for t in actors:
             if t.properties.get("multiplayer_player"):
                 continue  # Player physics owns facing, including while strafing.
             x, z = float(t.pos[0]), float(t.pos[2])
             dx, dz = x - ppos[0], z - ppos[2]
-            if dx * dx + dz * dz > r2:
+            d2 = dx * dx + dz * dz
+            if d2 > r2:
+                if d2 <= reach2:
+                    near.append(t)
                 continue
             p = t.properties
             key = id(t)
             last[key] = (x, z)
+            near.append(t)
             target = None
             if not p.get("triggered", True):
                 aggro = by_id.get(p.get("_aggro_target"))
@@ -238,17 +256,10 @@ class HeldWeapons:
                 if fx * fx + fz * fz < TURN_MIN_STEP * TURN_MIN_STEP:
                     fx = fz = 0.0
             if fx or fz:
-                face_heading(p, fx, fz, delta)
+                face_heading(t, fx, fz, delta)
             self._update_block(t, target, getattr(s, "_archery_clock", now))
-            # Whoever turned it (this, the schedule mover, a bow's aim), the
-            # head sprite turns too.
-            facing = p.get("_facing")
-            if facing is not None:
-                published[key] = facing
-                if self._published.get(key) != facing:
-                    touch(t, FACING)
         self._last = last
-        self._published = published
+        self._near = (tuple(near), float(ppos[0]), float(ppos[2]))
         self._blocks = {key: value for key, value in self._blocks.items() if key in last}
         # overhead() (UI thread) adds springs; drop those of actors gone out
         # of range, from a copy of the keys.
@@ -258,7 +269,7 @@ class HeldWeapons:
     def _update_block(self, thing, target, now):
         """Shield users raise it between attacks, after a human reaction delay."""
         from .rpg.blocking import npc_shield
-        from . import npc_stamina
+        import game.npc_stamina as npc_stamina
 
         p = thing.properties
         shield = npc_shield(p)
@@ -288,19 +299,81 @@ class HeldWeapons:
         p["_shield_blocking"] = raised
         p["_shield_pose"] = pose * pose * (3 - 2 * pose)
 
+    #: Ticks between rebuilds of the held-items list (who is in range, what
+    #: each holds, attack and block poses, the sway springs). The holders'
+    #: positions and headings are read live every frame, so a weapon never
+    #: trails its actor; only a change of item or pose waits. Measured: see
+    #: docs/MIGRATION_FIO_3.5.md (Performance).
+    REBUILD_TICKS = 5
+
+    def publish(self) -> None:
+        """Rebuild the held-items list every :data:`REBUILD_TICKS` ticks
+        (logic thread), or at once when the player has moved further than the
+        list allows for (a teleport)."""
+        import time
+        ppos = self.session._player_pos()
+        if ppos is None:
+            self._published = None
+            return
+        published = self._published
+        self._ticks_since_build = getattr(self, "_ticks_since_build", 0) + 1
+        if (published is not None and self._ticks_since_build < self.REBUILD_TICKS
+                and (ppos[0] - published[1]) ** 2 + (ppos[2] - published[2]) ** 2
+                <= NEAR_SLACK * NEAR_SLACK):
+            return
+        self._ticks_since_build = 0
+        self._published = (self._build(time.perf_counter()), float(ppos[0]), float(ppos[2]))
+
     def overhead(self):
         """``[(pos, facing, weapon_id, handed, attacking, size[, block])]`` for the
-        actors near the player who hold something."""
+        actors near the player who hold something: the held-items list last
+        built, with each holder's position and heading as they are now."""
+        published = self._published
+        if published is not None:
+            ppos = self.session._player_pos()
+            if ppos is not None and ((ppos[0] - published[1]) ** 2 + (ppos[2] - published[2]) ** 2
+                                     <= NEAR_SLACK * NEAR_SLACK):
+                return self._placed(published[0])
+        import time
+        return self._placed(self._build(time.perf_counter()))
+
+    @staticmethod
+    def _placed(entries):
+        """The entries as drawn this frame: each at its holder's live position
+        and heading (plus its hand's sway); a holder dead or hidden since the
+        list was built drops out. Attribute reads and C calls only."""
+        out = []
+        radians = math.radians
+        for t, sway, weapon, handed, attacking, size, block in entries:
+            p = t.properties
+            if p.get("dead") or p.get("hidden"):
+                continue
+            tp = t.pos
+            facing = radians(float(p.get("angle", 0.0) or 0.0)) + sway
+            if block is None:
+                out.append(((tp[0], tp[1], tp[2]), facing, weapon, handed, attacking, size))
+            else:
+                out.append(((tp[0], tp[1], tp[2]), facing, weapon, handed, attacking, size,
+                            block))
+        return out
+
+    def _build(self, now):
+        """``[(actor, sway, weapon_id, handed, attacking, size, block|None)]``:
+        what each actor near the player holds; placed by :meth:`_placed`."""
         s = self.session
         ppos = s._player_pos()
         if ppos is None:
             return []
         r2 = DRAW_RADIUS * DRAW_RADIUS
         out = []
-        import time
         from .weapon_sway import WeaponSway
-        now = time.perf_counter()
-        for t in s._actors:
+        near = self._near
+        # The last update's set, unless the player has since moved further
+        # than it allows for (a teleport between ticks).
+        if near is not None and ((ppos[0] - near[1]) ** 2 + (ppos[2] - near[2]) ** 2
+                                 > NEAR_SLACK * NEAR_SLACK):
+            near = None
+        for t in (s._actors if near is None else near[0]):
             p = t.properties
             if (p.get("multiplayer_player") or p.get("dead") or p.get("hidden")
                     or p.get("_bw_parked_hidden") or p.get("away_on_journey")):
@@ -309,22 +382,22 @@ class HeldWeapons:
                 continue          # Death's scythe comes and goes with him
             if str(p.get("head") or "").lower().startswith("spider"):
                 continue          # a spider's weapon is never seen in its legs
-            x, y, z = float(t.pos[0]), float(t.pos[1]), float(t.pos[2])
+            x, z = float(t.pos[0]), float(t.pos[2])
             if (x - ppos[0]) ** 2 + (z - ppos[2]) ** 2 > r2:
                 continue
             size = float(p.get("sprite_width", 128) or 128)
             handed = str(p.get("handed", "right"))
-            facing = float(p.get("_facing", 0.0))
+            facing = heading(t)
             weapon = p.get("_active_weapon") or p.get("equipped_weapon") or ""
             attacking = bool(p.get("is_shooting") or p.get("_bow_charge") is not None)
             # Each hand trails a turn on its own spring, as the player's do.
             sway = self._sway.get(id(t))
             if sway is None:
                 sway = self._sway[id(t)] = WeaponSway()
-            main_facing = facing + sway.offset("main", facing, now)
-            off_facing = facing + sway.offset("off", facing, now)
+            main_sway = sway.offset("main", facing, now)
+            off_sway = sway.offset("off", facing, now)
             if weapon:
-                out.append(((x, y, z), main_facing, weapon, handed, attacking, size))
+                out.append((t, main_sway, weapon, handed, attacking, size, None))
             # The other hand: a lit torch (the runtime marks who holds one:
             # game/runtime.py, _update_torch_lights), else a second weapon.
             # A two-handed weapon in hand (a bow) leaves neither.
@@ -332,16 +405,20 @@ class HeldWeapons:
             if off_item and not two_handed(weapon):
                 other = "left" if handed == "right" else "right"
                 striking = bool(p.get("_offhand_anim", 0.0)) and not p.get("_torch_lit")
-                out.append(((x, y, z), off_facing, off_item, other, striking, size,
+                out.append((t, off_sway, off_item, other, striking, size,
                             float(p.get("_shield_pose", 0))))
         return out
 
 
+@functools.lru_cache(maxsize=1024)
 def two_handed(item_id) -> bool:
-    """Whether the weapon *item_id* needs both hands (every bow)."""
+    """Whether the weapon *item_id* needs both hands (every bow). Asked per
+    actor per frame; an item's class does not change during play (the cache
+    is cleared when a session starts)."""
     if not item_id:
         return False
-    from .rpg import equipment, items
+    import game.rpg.equipment as equipment
+    import game.rpg.items as items
     return equipment.is_two_handed(items.get(item_id))
 
 
@@ -357,3 +434,12 @@ def offhand_in_use(props) -> str:
     if two_handed(weapon):
         return ""
     return off
+
+
+def _watch_items():
+    import game.rpg.items as items
+    if two_handed.cache_clear not in items.ON_CHANGE:
+        items.ON_CHANGE.append(two_handed.cache_clear)
+
+
+_watch_items()

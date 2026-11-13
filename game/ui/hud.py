@@ -66,7 +66,7 @@ def draw(painter, session, width, height):
     menu_open = session.open_screen is not None or session.dialogue is not None
 
     # Name, health, magicka and the minimap, in the bronze frame top left.
-    from . import hud_frame
+    import game.ui.hud_frame as hud_frame
     hud_frame.draw(painter, session, c, width, height)
     # Every other panel can be moved and folded away (game/ui/hud_layout.py).
     layout.begin_frame()
@@ -112,7 +112,7 @@ def draw_bow_charge(painter, session, viewport, width, height):
     if charge is None or session.open_screen is not None or session.dialogue is not None:
         return
     charge = max(0.0, min(1.0, float(charge)))
-    from .. import fio
+    import game.fio as fio
     player = fio.player(getattr(viewport, "logic_thread", None))
     centre = edge = None
     if player is not None:
@@ -204,7 +204,7 @@ def _draw_interact_prompt(painter, session, width, height):
     painter.save()
     # The game's medieval face (MedievalSharp; Georgia where it is missing).
     # It has one upright weight, so it is not asked for bold.
-    from . import fonts
+    import game.ui.fonts as fonts
     painter.setFont(fonts.dialogue_font(PROMPT_FONT_PT))
     rect = QRect(0, int(height * 0.72), width, 34)
     # soft shadow for legibility over any terrain
@@ -264,7 +264,7 @@ def draw_barks(painter, session, viewport, width, height):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    from . import fonts
+    import game.ui.fonts as fonts
     font = fonts.dialogue_font(11)
     fm = QFontMetrics(font)
     painter.save()
@@ -307,7 +307,7 @@ def draw_floats(painter, session, viewport, width, height):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    from . import fonts
+    import game.ui.fonts as fonts
     font = fonts.dialogue_font(12)
     font.setItalic(True)
     font.setBold(True)
@@ -365,7 +365,7 @@ def draw_player_block(painter, session, viewport, width, height):
         # Seen from inside the player's own head (first person): over the
         # middle of the view, as the floats are.
         sp = (width * 0.5, height * 0.36)
-    from . import fonts
+    import game.ui.fonts as fonts
     font = fonts.dialogue_font(13)
     font.setBold(True)
     fm = QFontMetrics(font)
@@ -421,7 +421,7 @@ def draw_thoughts(painter, session, viewport, width, height):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    from . import fonts
+    import game.ui.fonts as fonts
     font = fonts.dialogue_font(10)
     fm = QFontMetrics(font)
     speaking = {id(thing) for thing, _t, _l in
@@ -608,7 +608,7 @@ def _paint_bubble(painter, cx, cy, kind):
     painter.setPen(Qt.NoPen)
     painter.drawRect(QRect(cx - BUBBLE_TAIL_W + 1, cy - 3, BUBBLE_TAIL_W * 2 - 1, 3))
     painter.setPen(text_col)
-    from . import fonts
+    import game.ui.fonts as fonts
     painter.setFont(fonts.dialogue_font(BUBBLE_FONT_PT))
     painter.drawText(rect, Qt.AlignCenter, glyph)
     painter.restore()
@@ -714,7 +714,7 @@ def _weapon_icon_pixmap(weapon_def, size=26):
     if weapon_def is None:
         return None
     try:
-        from .. import item_icons
+        import game.item_icons as item_icons
         return item_icons.icon_pixmap(weapon_def.id, None, size)
     except Exception:
         return None
@@ -722,7 +722,7 @@ def _weapon_icon_pixmap(weapon_def, size=26):
 
 def _spell_icon_pixmap(spell, size=26):
     try:
-        from .. import item_icons
+        import game.item_icons as item_icons
         return item_icons.spell_pixmap(spell.id, size)
     except Exception:
         return None
@@ -770,7 +770,7 @@ def _draw_active(painter, session, c, width, height):
         if item is not None and item.get("kind") in rpg_items.RANGED_KINDS:
             ammo = eq.ammo_for(c, item)
             if ammo is not None:
-                from ..rpg import inventory as inv
+                import game.rpg.inventory as inv
                 label += f" ({inv.quantity(c.inventory, ammo.id)})"
         T.text_in(painter, QRect(tx, top, x + ACTIVE_W - 52 - tx, 21), label, size=10,
                   color=T.GOLD_BRIGHT if spell or item else T.DIM,
@@ -780,7 +780,7 @@ def _draw_active(painter, session, c, width, height):
 
 
 def _draw_law(painter, session, width):
-    from . import fonts
+    import game.ui.fonts as fonts
     if not hasattr(session, "law_status"):
         return
     status = session.law_status()
@@ -1017,7 +1017,7 @@ def _wrap(a):
 
 def _draw_target(painter, session, width, height):
     """Nameplate + health bar for the creature under the crosshair."""
-    from .. import runtime as rt
+    import game.runtime as rt
     c = session.game.character
     reach = rt.BOW_REACH if c.active_weapon_kind in ("bow", "spell", "staff") else rt.MELEE_REACH * 1.6
     try:
@@ -1054,7 +1054,7 @@ def _target_odds(c, target_props):
 
     A lone melee weapon in reach always connects (see do_attack), so it reads
     "Sure hit"; a readied spell shows its cast check instead."""
-    from ..rpg import combat
+    import game.rpg.combat as combat
     try:
         if c.active_weapon_kind == "spell":
             spell = rpg_magic.get(c.active_spell or "")
@@ -1419,7 +1419,7 @@ def _draw_notifications(painter, session, width, height):
         return
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
-    from . import fonts
+    import game.ui.fonts as fonts
     font = fonts.dialogue_font(15)
     painter.setFont(font)
     metrics = painter.fontMetrics()
@@ -1488,7 +1488,7 @@ def _draw_floaters(painter, session, width, height):
 def draw_time_tint(painter, session, width, height, viewport=None):
     """The hour's light over the world: dawn, day, dusk and a dark night lit
     only where lamps and torches burn (game/ui/daylight.py)."""
-    from . import daylight
+    import game.ui.daylight as daylight
     daylight.draw(painter, session, viewport, width, height)
 
 
@@ -1561,7 +1561,7 @@ def draw_gore(painter, session, viewport, width, height):
             painter.setBrush(QColor(*_BLOOD, 235))
             painter.drawEllipse(QPointF(sp[0], sp[1]), r, r)
     # The player's own blood, on the screen's edge.
-    from .. import gore_fx
+    import game.gore_fx as gore_fx
     for b in screen:
         age = now - b["t0"]
         alpha = 200 * max(0.0, 1.0 - age / gore_fx.SCREEN_BLOOD_SECONDS)

@@ -71,7 +71,7 @@ def test_with_no_field_near_the_farmer_tends_the_nearest_animal():
     assert 400 < p["_dest"][0] < 500                         # beside the sheep
     farmer.pos = [450.0, 0.0, 0.0]
     w.drive(s, farmer)
-    assert "_dest" not in p and abs(p["_facing"] - np.pi / 2) < 1e-6
+    assert "_dest" not in p and abs(p["angle"] - 90.0) < 1e-4
 
 
 def test_work_alternates_between_the_field_and_the_animals():

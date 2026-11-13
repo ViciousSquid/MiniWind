@@ -189,7 +189,7 @@ def _uid(*parts):
 
 
 def _stack(item_id, qty):
-    from ..rpg import items as rpg_items
+    import game.rpg.items as rpg_items
     return rpg_items.make(item_id, int(qty)) or {"id": item_id, "qty": int(qty)}
 
 
@@ -252,7 +252,7 @@ def container(theme, kind, pos, rng, name, owner=None, locked=None):
 
 def book_pickup(book_id, pos, name):
     """A book lying where it was left: walk over it to pick it up."""
-    from ..rpg import items as rpg_items
+    import game.rpg.items as rpg_items
     d = rpg_items.get(book_id)
     icon = f"assets/sprites/items/{book_id}.png"
     if not os.path.isfile(icon):

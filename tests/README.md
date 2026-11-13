@@ -1,6 +1,6 @@
-# Fio test suite
+# Fio test suite (MiniWind)
 
-One suite, four tiers, selected by marker. Everything is run with `pytest` from
+One suite, five tiers, selected by marker: Fio's four, and MiniWind's own. Everything is run with `pytest` from
 the repository root; `pytest.ini` already points it at the three roots that hold
 tests (`tests/`, `plugins/`, `game/tests/`), so no path arguments are needed.
 
@@ -20,6 +20,8 @@ python -m pytest                     # everything except the benchmarks
 | Integration workflows | `python -m pytest -m integration` |
 | Performance guards | `python -m pytest -m perf` |
 | Renderer benchmark (reports timings) | `xvfb-run -a python -m pytest -m benchmark --run-benchmarks -s` |
+| Fio's suite as Fio ships it (not MiniWind's) | `QT_QPA_PLATFORM=offscreen python -m pytest -m "not miniwind and not gl and not benchmark"` |
+| MiniWind's own tests | `QT_QPA_PLATFORM=offscreen python -m pytest -m "miniwind and not gl and not benchmark"` |
 | One area | `python -m pytest tests/geometry` |
 
 On a machine with no GPU, `LIBGL_ALWAYS_SOFTWARE=1` in front of the `xvfb-run`
@@ -31,7 +33,7 @@ runs Qt offscreen and the `gl` tests skip with a reason; under a display
 
 ## The tiers
 
-**Unmarked — the headless core.** Runs on Python, NumPy and PyGLM alone: no
+**Unmarked — the headless core.** Runs on Python, NumPy, PyGLM, pygame-ce and Pillow: no
 PyQt5, no PyOpenGL, no display, no GPU. Geometry, the spatial index, the I/O
 system, the logic dispatcher, the plugin API, Big World, persistence and the
 threading invariants all live here. This is the tier CI runs first, and the one
@@ -59,6 +61,17 @@ separately from the steady state. It fails only against a stored baseline from
 the *same* machine (`FIO_BENCH_BASELINE=path.json`), never on an absolute
 number.
 
+**`miniwind` — MiniWind's own tests.** The game layer's (`game/tests/`) and
+those of MiniWind's seams in the engine and editor (`tests/miniwind/`: the
+game hooks, the single heading writer, the dormant editor, error reports and
+the freeze watchdog, mounted packages, the overhead sprite batch, terrain
+biomes, ...). Applied by path in `conftest.py`, never by hand, and combined
+with the tiers above (a MiniWind test is also `qt` or `gl` where it needs to
+be). Every other test is Fio's, kept as Fio ships it except where MiniWind's
+tree differs (a fixture map instead of a demo map): `-m "not miniwind"` is the
+check that the engine still meets upstream's contract, and a failure there is
+a migration defect, not a game one.
+
 Two more markers are orthogonal to the tiers: `integration` (several subsystems
 driven together) and `perf` (guards that count work rather than timing it, e.g.
 "this array is built once per session, not once per frame"). `slow` marks the
@@ -74,6 +87,7 @@ handful of tests that use real threads and real time.
 | `tests/spatial/` | The 512-unit cell convention and `SpatialGrid` |
 | `tests/monster_ai/` | Monster behaviour, patrol, combat, and the AI thread's lifetime |
 | `tests/renderer/` | Render-state construction, culling, double buffering, light budget |
+| `tests/brush_model/` | The unified brush model's guard rails: today's brush semantics pinned per shipped map, known inconsistencies (current and target), the write-site ratchet, AABB budgets (see `docs/brush-model-proposal.md`) |
 | `tests/plugins/` | The plugin API as a contract, driven by the fixture plugins in `tests/plugins/fixtures/` |
 | `tests/io/` | Connections, the reverse target index and its revision counter |
 | `tests/logic/` | The I/O execution path: dispatch, delays, chains, loops, failure |
@@ -85,6 +99,7 @@ handful of tests that use real threads and real time.
 | `tests/regression/` | One test per fixed defect, stating the invariant that was broken |
 | `tests/visual/` | The `gl` tier: a lit cube, its shadow, and a moving light |
 | `tests/performance/` | Work-per-frame guards and the renderer benchmark |
+| `tests/miniwind/` | The `miniwind` tier's engine and editor tests: MiniWind's seams in Fio |
 | `tests/helpers/` | Shared factories and fakes (not collected) |
 
 The plugins and first-party game keep their own tests next to the code
