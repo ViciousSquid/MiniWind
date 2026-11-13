@@ -104,8 +104,26 @@ def justified_line(kind: str, victim: str = "", speaker: str = "") -> str:
         victim=victim, Victim=victim[:1].upper() + victim[1:])
 
 
+def address(display_name: str) -> str:
+    """What a neighbour calls someone: their given name ("Kestrel" for
+    "Kestrel the Guard", "Ulla" for "Ulla of the Watch"), or "friend" for
+    someone known only by a job ("Town Archer", "Head Chef")."""
+    name = str(display_name or "").strip()
+    cuts = [name.find(joint) for joint in (" the ", " of ") if joint in name]
+    if cuts:
+        return name[:min(cuts)].strip() or "friend"
+    words = name.split()
+    if len(words) != 1:
+        return "friend"
+    return name
+
+
 def small_talk(a: str, b: str, hour: float) -> Tuple[str, str]:
-    """``(opener, reply)`` for *a* passing the time of day with *b*."""
+    """``(opener, reply)`` for *a* passing the time of day with *b*.
+
+    *a* and *b* are display names; each is addressed as a neighbour would
+    (:func:`address`), never "Morning, Town Archer."."""
     part = _part_of_day(hour)
     opener, reply = _pick(_SMALL_TALK[part], a, b, part, int(hour))
+    a, b = address(a), address(b)
     return opener.format(a=a, b=b), reply.format(a=a, b=b)

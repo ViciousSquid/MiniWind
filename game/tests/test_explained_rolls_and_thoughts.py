@@ -330,6 +330,21 @@ def test_small_talk_suits_the_hour():
                                for o, r in chatter._SMALL_TALK["morning"]]
 
 
+def test_neighbours_call_each_other_by_name_not_by_title():
+    """'Morning, Town Archer.' / 'Sleep well, Kestrel the Guard?' were heard
+    in Millbrook: neighbours used each other's full titles."""
+    from .. import chatter
+    assert chatter.address("Kestrel the Guard") == "Kestrel"
+    assert chatter.address("Ulla of the Watch") == "Ulla"
+    assert chatter.address("Mara") == "Mara"
+    assert chatter.address("Town Archer") == "friend"
+    assert chatter.address("Head Chef") == "friend"
+    for hour in (7.0, 13.0, 19.0, 23.0):
+        opener, reply = chatter.small_talk("Town Archer", "Kestrel the Guard", hour)
+        assert "Town Archer" not in opener + reply
+        assert "the Guard" not in opener + reply
+
+
 def test_two_idle_neighbours_pass_the_time_of_day(config):
     ann = _npc({"name": "Ann", "sched_state": "IDLE"})
     tom = _npc({"name": "Tom", "sched_state": "IDLE"})
