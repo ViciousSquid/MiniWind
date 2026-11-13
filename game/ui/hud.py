@@ -428,8 +428,10 @@ ROLL_BOX_GAP_PX = FLOAT_RISE_PX + 24.0
 ROLL_SIDE_INK = {"you": (255, 206, 96), "ally": (120, 214, 130), "foe": (238, 104, 88)}
 #: A roll involving the player or a companion, and a fight between NPCs
 #: alone (cooler, a little see-through: other people's business).
-ROLL_BOX_BG = {"party": (16, 15, 24, 228), "npc": (18, 34, 44, 200)}
-ROLL_BOX_EDGE = {"party": (150, 122, 64, 230), "npc": (80, 120, 140, 220)}
+#: A roll box's background and edge: black for this screen's player's own
+#: rolls ("you"), blue-slate for everyone else's -- allies, foes, NPCs.
+ROLL_BOX_BG = {"you": (16, 15, 24, 228), "other": (18, 34, 44, 200)}
+ROLL_BOX_EDGE = {"you": (150, 122, 64, 230), "other": (80, 120, 140, 220)}
 
 
 def _box_action(label, against_name):
@@ -710,7 +712,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
     w, h, fm, result = layout["w"], layout["h"], layout["fm"], layout["result"]
     die = ROLL_BOX_DIE
     count = len(visuals)
-    kind = box.get("kind") if box.get("kind") in ROLL_BOX_BG else "party"
+    kind = "you" if side == "you" else "other"
     bg = QColor(*ROLL_BOX_BG[kind])
     bg.setAlpha(int(bg.alpha() * alpha / 255))
     edge = QColor(*ROLL_BOX_EDGE[kind])

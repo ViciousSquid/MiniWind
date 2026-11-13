@@ -25,7 +25,8 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
 * **Roll boxes.** A roll shows in a small box over whoever rolls it (never a
   corner panel): their name in their side's colour (gold you, green an ally,
   red a foe), what the roll is for, the real dice tumbling, the verdict, and —
-  for a hit — the damage. Fights between NPCs alone use a blue-slate box.
+  for a hit — the damage. Your own rolls sit on a black box; everyone else's
+  (allies, foes, fights between NPCs) on a blue-slate one.
   Boxes that overlap more than slightly lock into one stack, the attacker's
   roll on top (Settings › Game › *Stack dialogs*, on by default). A character
   with a roll box over its head says nothing (speech bubbles, barks and

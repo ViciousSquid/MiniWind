@@ -500,3 +500,30 @@ def test_mashing_attack_tells_the_last_roll_at_once_and_shows_the_new_one(qt_app
         assert held is not None and held[1] == second["health_before"]
     else:
         assert held is None
+
+
+@pytest.mark.parametrize("side,kind,bg", [
+    ("you", "party", "you"), ("ally", "party", "other"),
+    ("foe", "party", "other"), ("foe", "npc", "other")])
+def test_your_rolls_sit_on_black_everyone_elses_on_blue(qt_app, side, kind, bg):
+    """The box behind your own roll is black; behind anyone else's -- an ally,
+    a foe, a fight between NPCs -- blue-slate, whatever the roll's kind."""
+    from PyQt5.QtGui import QImage, QPainter, QColor
+    from ..ui import hud
+    box = {"result": {"label": "Roll to hit", "roll_result": 14, "target": 8,
+                      "success": True, "dice_notation": "1d20", "roll_details": [14],
+                      "components": [{"notation": "1d20", "roll_details": [14]}]},
+           "elapsed": 0.0, "duration": 6.0, "actor": None, "side": side,
+           "kind": kind, "seed": 3}
+    layout = hud._roll_box_layout(box, 1200)
+    img = QImage(400, 300, QImage.Format_ARGB32)
+    img.fill(QColor(255, 255, 255))
+    p = QPainter(img)
+    hud._draw_roll_box(p, box, layout, 10, 10, (200, 290), 0)
+    p.end()
+    px = QColor(img.pixel(14, 10 + layout["h"] - 4))            # inside, clear of text
+    want = QColor(*hud.ROLL_BOX_BG[bg][:3])
+    alpha = hud.ROLL_BOX_BG[bg][3] / 255.0
+    expect = [round(c * alpha + 255 * (1 - alpha)) for c in (want.red(), want.green(), want.blue())]
+    assert abs(px.red() - expect[0]) <= 3 and abs(px.green() - expect[1]) <= 3 \
+        and abs(px.blue() - expect[2]) <= 3, (px.getRgb(), expect)
