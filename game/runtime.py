@@ -687,6 +687,16 @@ def _slug_text(text: str) -> str:
     same few thousand names again."""
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
 
+_NUMBER_WORDS = ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven",
+                 "Eight", "Nine", "Ten")
+
+
+def _number_word(n) -> str:
+    """"One" for 1 ... "Ten" for 10; the digits past that."""
+    n = int(n)
+    return _NUMBER_WORDS[n] if 0 <= n < len(_NUMBER_WORDS) else str(n)
+
+
 class MiniwindSession(SettlementLaw):
     """Owns the clock, the player character, NPC AI and dialogue state."""
 
@@ -1755,6 +1765,27 @@ class MiniwindSession(SettlementLaw):
                 if log.start(q.id):
                     obj = log.current_objective(q.id)
                     self.notify(f"{q.name}: {obj}" if obj else q.name, 6.0)
+                    self._stage_begun(q, delay=2.0)
+
+    def _stage_begun(self, q, delay: float = 0.6) -> None:
+        """*q* has just reached its current stage: the one it sends the
+        player to calls out its ``call`` line, if near enough to be heard."""
+        st = q.stage(self.game.quests.stage_of(q.id))
+        if st is None or not st.call or st.condition_kind() != _quests.COND_TALK:
+            return
+        target = self._slug(st.condition_target())
+        for npc in self.npcs():
+            if self._is_named(npc, target) and not npc.properties.get("dead"):
+                self.bark_later(npc, self._quest_line(st.call, npc), delay)
+                return
+
+    def _quest_completed(self, q) -> None:
+        """*q* is done: a chapter of the main story shows its card."""
+        if q is None or not getattr(q, "chapter", 0):
+            return
+        import time as _time
+        self.title_card = {"kicker": f"Chapter {_number_word(q.chapter)} complete",
+                           "title": q.chapter_title or q.name, "t0": _time.monotonic()}
 
     def _ensure_player_head(self) -> str:
         """Make sure the player is a head, and show it; returns the head id.
@@ -3840,10 +3871,12 @@ class MiniwindSession(SettlementLaw):
                 if nxt is not None:
                     log.set_stage(q.id, nxt)
                 self.notify(f"Quest complete: {q.name}", 5.0)
+                self._quest_completed(q)
             elif nxt is not None:
                 log.set_stage(q.id, nxt)
                 obj = log.current_objective(q.id)
                 self.notify(f"{q.name}: {obj}" if obj else f"{q.name} updated", 4.0)
+                self._stage_begun(q)
 
     @property
     def selected_dice_type(self) -> str:
@@ -10236,6 +10269,7 @@ class MiniwindSession(SettlementLaw):
             self.game.quests.advance(action.get("quest", ""))
         elif op == "complete_quest":
             self.game.complete_quest(action.get("quest", ""))
+            self._quest_completed(_quests.get(action.get("quest", "")))
             # Finishing a quest for this NPC is a lasting good turn they remember.
             disp.remember(self.store, npc.properties, "quest_helped")
         elif op == "join_guild":

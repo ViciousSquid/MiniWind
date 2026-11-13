@@ -41,6 +41,7 @@ One quest per file, named `<id>.quest`. Example (`a_word_with_wick.quest`):
 | `xp`       | XP awarded on completion.                                            |
 | `rewards`  | `gold`, `items` (`[["item_id", qty], ...]`), `rep` (`["faction", n]`). |
 | `stages`   | Ordered stages; each has an `index`, `journal`, `objective`, and an optional completion `condition`. A stage with `"finishes": true` completes the quest. |
+| `chapter`, `chapter_title` | Optional. A chapter of the main story (1, 2, …) and its title: finishing the quest shows the card "Chapter One complete · The Old Mill". |
 | `starts_on_new_game` | Optional. `true` starts the quest for every new character, so the journal and the quest arrow have somewhere to begin. *Trouble at the Old Mill* is the only one. |
 
 ### Stage extras
@@ -48,6 +49,7 @@ One quest per file, named `<id>.quest`. Example (`a_word_with_wick.quest`):
 | Field      | Meaning                                                              |
 |------------|---------------------------------------------------------------------|
 | `waypoint` | Where the quest arrow points on a stage with no machine-readable target (a place, NPC, monster type or item id). Never advances the quest. |
+| `call`     | On a `talk` stage: a line the person you are sent to calls out once, over their head, as the stage begins, if they are near enough to be heard ("You! New face!"). |
 | `say`      | On a `talk` stage: the line the person you were sent to opens the conversation with while you are on that stage ("Go on." then leads to their usual talk). Tokens read the world as it is: `{shelf_flour}` (flour on the speaker's own shelf: "no flour", "one sack of flour", "3 sacks of flour"), `{mill_wheat}` and `{mill_flour}` (in the working windmill nearest the speaker: "no", "12 measures of", "1 sack of"). |
 
 ### Stage conditions

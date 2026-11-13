@@ -4,6 +4,8 @@
   "giver": "Elowen",
   "faction": "town",
   "starts_on_new_game": true,
+  "chapter": 1,
+  "chapter_title": "The Old Mill",
   "desc": "Millbrook has no flour, and Elowen wants to know why.",
   "xp": 40,
   "rewards": {
@@ -30,7 +32,8 @@
         "target": "Elowen",
         "count": 1
       },
-      "say": "You, new face. Have you got a minute? Eight sacks a week, I sell. Today I've {shelf_flour} on the shelf, and it isn't for want of asking. Ever since bandits took the Old Mill, the Cross sends its runner to Mara's windmill, and Millbrook gets whatever's left. Ask Mara. She'll tell you."
+      "say": "Eight sacks a week, I sell. Today I've {shelf_flour} on the shelf, and it isn't for want of asking. Ever since bandits took the Old Mill, the Cross sends its runner to Mara's windmill, and Millbrook gets whatever's left. Ask Mara. She'll tell you.",
+      "call": "You! New face! Have you got a minute?"
     },
     {
       "index": 10,
@@ -77,11 +80,11 @@
         "target": "Aldric",
         "count": 1
       },
-      "say": "The Old Mill? Clear? Then the carts can roll again, and the Cross can buy its own flour instead of taking Millbrook's. The Cross thanks you, and so does my purse, reluctantly."
+      "say": "The Old Mill? Clear? Then the carts can roll again, and the Cross can buy its own flour instead of taking Millbrook's. The Cross thanks you, and so does my purse, reluctantly. One more thing: there's talk the flour went south, to the shore. South shore means Mirrormere, and Old Maud at Reedhollow sees every boat on that water."
     },
     {
       "index": 50,
-      "journal": "Aldric paid me for clearing the Old Mill. Hollin's Cross will grind its own grain again, and Millbrook's shelves should fill.",
+      "journal": "Aldric paid me for clearing the Old Mill. Hollin's Cross will grind its own grain again, and Millbrook's shelves should fill. He says the stolen flour went south, to Mirrormere; Old Maud at Reedhollow sees every boat on that water.",
       "objective": "Aldric paid me for clearing the Old Mill.",
       "finishes": true
     }

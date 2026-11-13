@@ -315,3 +315,20 @@ def test_an_empty_shelf_is_said_plainly():
     session = _session([elowen])
     session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
     assert "Today I've no flour on the shelf" in _speak(session, elowen)
+
+
+def test_elowen_calls_out_and_the_chapter_has_a_card():
+    import time
+    elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen"})
+    session = _session([elowen])
+    session._player_pos = lambda: [0.0, 0.0, 50.0]
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    queued = [text for _at, thing, text in session.__dict__.get("_bark_queue", [])
+              if thing is elowen]
+    assert queued == ["You! New face! Have you got a minute?"]
+    q = quests.get("mill_bandits")
+    assert (q.chapter, q.chapter_title) == (1, "The Old Mill")
+    session._quest_completed(q)
+    assert session.title_card["kicker"] == "Chapter One complete"
+    assert session.title_card["title"] == "The Old Mill"
+    assert session.title_card["t0"] <= time.monotonic()

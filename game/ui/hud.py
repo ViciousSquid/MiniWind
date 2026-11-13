@@ -91,6 +91,50 @@ def draw(painter, session, width, height):
     _draw_floaters(painter, session, width, height)
     if not menu_open:
         _draw_interact_prompt(painter, session, width, height)
+    _draw_title_card(painter, session, width, height)
+
+
+#: A chapter card's life: fading in, held, fading out (seconds).
+TITLE_CARD_IN, TITLE_CARD_HOLD, TITLE_CARD_OUT = 0.9, 3.6, 1.4
+
+
+def _draw_title_card(painter, session, width, height):
+    """A finished chapter's card across the upper middle of the screen: a
+    small gold line ("Chapter One complete") over its title, on a soft dark
+    band that fades out at its ends. Shown once, then gone."""
+    card = getattr(session, "title_card", None)
+    if not card:
+        return
+    import time as _time
+    age = _time.monotonic() - float(card.get("t0", 0.0))
+    total = TITLE_CARD_IN + TITLE_CARD_HOLD + TITLE_CARD_OUT
+    if age >= total:
+        session.title_card = None
+        return
+    a = (age / TITLE_CARD_IN if age < TITLE_CARD_IN else
+         1.0 if age < TITLE_CARD_IN + TITLE_CARD_HOLD else
+         (total - age) / TITLE_CARD_OUT)
+    a = max(0.0, min(1.0, a))
+    from PyQt5.QtGui import QLinearGradient, QBrush
+    cy = int(height * 0.30)
+    band = QRect(0, cy - 58, width, 116)
+    g = QLinearGradient(0, 0, width, 0)
+    g.setColorAt(0.0, QColor(8, 8, 14, 0))
+    g.setColorAt(0.25, QColor(8, 8, 14, int(170 * a)))
+    g.setColorAt(0.75, QColor(8, 8, 14, int(170 * a)))
+    g.setColorAt(1.0, QColor(8, 8, 14, 0))
+    painter.save()
+    painter.fillRect(band, QBrush(g))
+    rule = QLinearGradient(width * 0.3, 0, width * 0.7, 0)
+    for at, alpha in ((0.0, 0), (0.5, 200), (1.0, 0)):
+        rule.setColorAt(at, QColor(T.GOLD.red(), T.GOLD.green(), T.GOLD.blue(), int(alpha * a)))
+    painter.fillRect(QRect(int(width * 0.3), cy - 12, int(width * 0.4), 1), QBrush(rule))
+    T.text_in(painter, QRect(0, cy - 48, width, 30), str(card.get("kicker", "")).upper(),
+              size=13, color=QColor(T.GOLD.red(), T.GOLD.green(), T.GOLD.blue(), int(255 * a)),
+              align=T.ALIGN_CENTER, bold=True, family="small")
+    T.text_in(painter, QRect(0, cy - 8, width, 54), str(card.get("title", "")), size=34,
+              color=QColor(240, 232, 214, int(255 * a)), align=T.ALIGN_CENTER)
+    painter.restore()
 
 
 #: The bow-draw pie's radius, and how far it sits out from the player's head:
