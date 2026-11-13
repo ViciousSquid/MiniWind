@@ -490,3 +490,30 @@ def test_the_helmet_sits_on_top_of_the_head(qt_app, tmp_path, monkeypatch):
     top = sum(head.pixel(x, 60) != both.pixel(x, 60) for x in range(head.width()))
     assert top > head.width() // 3                        # the crown is covered
     assert head_gear.sprite_path(heads.head_path("head01"), None) == heads.head_path("head01")
+
+
+@pytest.mark.parametrize("head", ["head01", "head13", "head40", "head07"])
+@pytest.mark.parametrize("helmet", ["iron_helmet", "leather_helmet", "chain_coif"])
+def test_nothing_of_the_head_shows_outside_the_helmet(qt_app, head, helmet):
+    """Only the face shows, through the visor: every visible pixel of the
+    worn head lies inside the helmet's shape, and the opening shows the face
+    (the eyes sit in it)."""
+    import os
+    import game.head_gear as head_gear
+    from ..rpg import heads
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(root, heads.head_path(head))
+    img = head_gear.composite(path, helmet)
+    assert img is not None
+    worn = head_gear.helmet_picture(helmet)
+    (left, top, width, height), _head = head_gear.placement(
+        path, head_gear._image(path), worn, img.width())
+    for y in range(0, img.height(), 4):
+        for x in range(0, img.width(), 4):
+            inside = left - 2 <= x <= left + width + 2 and top - 2 <= y <= top + height + 2
+            if not inside:
+                assert (img.pixel(x, y) >> 24) & 0xFF == 0, (x, y)
+    # The openings' middle shows something (the face), not a hole.
+    ox, oy = worn[2]
+    k = width / worn[0].width()
+    assert (img.pixel(int(left + ox * k), int(top + oy * k)) >> 24) & 0xFF > 0

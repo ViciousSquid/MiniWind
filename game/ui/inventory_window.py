@@ -713,11 +713,11 @@ class InventoryWindow(FloatingWindow):
             rig = eye_rig.rig_for(os.path.join(root, heads.any_head_path(head)), size)
         except Exception:
             rig = None
+        if self._draw_worn_helmet(painter, c, head, cx, cy, size, size):
+            return              # helmeted: only the face shows, through the visor
         if rig is not None:
             eye_rig.draw(painter, rig, cx - rig.head.width() // 2,
                          cy - rig.head.height() // 2, hits.pointer)
-            self._draw_worn_helmet(painter, c, head, cx, cy, rig.head.width(),
-                                   rig.head.height())
             return
         pm = self._doll.get(head)
         if pm is None:
@@ -734,23 +734,23 @@ class InventoryWindow(FloatingWindow):
             self._doll[head] = pm
         if pm is not None and not pm.isNull():
             painter.drawPixmap(cx - pm.width() // 2, cy - pm.height() // 2, pm)
-            self._draw_worn_helmet(painter, c, head, cx, cy, pm.width(), pm.height())
 
-    def _draw_worn_helmet(self, painter, c, head, cx, cy, w, h):
-        """The helmet in the head slot, over the head drawn *w* x *h* about
-        (*cx*, *cy*) -- placed as on the overhead sprite (game/head_gear.py)."""
+    def _draw_worn_helmet(self, painter, c, head, cx, cy, w, h) -> bool:
+        """With a helmet in the head slot, draw the head wearing it over the
+        *w* x *h* head about (*cx*, *cy*): the same picture as the overhead
+        sprite (game/head_gear.py). False with no helmet."""
         try:
             import game.head_gear as head_gear
             import game.rpg.heads as heads
             helmet = head_gear.helmet_id(c)
             if not helmet:
-                return
+                return False
             root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             size = max(w, h)
-            head_gear.draw_helmet(painter, os.path.join(root, heads.any_head_path(head)),
-                                  helmet, cx - size / 2.0, cy - size / 2.0, size)
+            return head_gear.draw_worn(painter, os.path.join(root, heads.any_head_path(head)),
+                                       helmet, cx - size / 2.0, cy - size / 2.0, size)
         except Exception:
-            pass
+            return False
 
     def _draw_equipment(self, painter, rect):
         c = self._character()
