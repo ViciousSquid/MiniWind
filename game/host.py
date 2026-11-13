@@ -1390,6 +1390,7 @@ class MiniwindGame:
                     hud.draw_barks(painter, session, viewport, w, h)
                     hud.draw_thoughts(painter, session, viewport, w, h)
                     hud.draw_floats(painter, session, viewport, w, h)
+                    hud.draw_roll_boxes(painter, session, viewport, w, h)
                     hud.draw_player_block(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)

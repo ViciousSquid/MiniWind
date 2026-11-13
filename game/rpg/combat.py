@@ -20,7 +20,7 @@ stats live.
 from __future__ import annotations
 
 import random
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from . import attributes as attr
 from . import skills as sk
@@ -108,12 +108,61 @@ def attack_odds(character, target_props: Dict, hand: str = "main",
 # ---------------------------------------------------------------------------
 # Player outgoing damage
 # ---------------------------------------------------------------------------
-def base_ranged_damage(character, *, hand="main", ammo=None, draw=1.0):
-    """An arrow's physical energy before critical/sneak and class bonuses."""
+#: The dice a weapon's damage is rolled on (see :func:`damage_die`).
+DAMAGE_DICE = (4, 6, 8, 10, 12)
+
+
+def damage_die(base: float, weapon=None) -> Tuple[int, float]:
+    """The die a weapon of *base* damage rolls, and the flat amount added to
+    it: ``(sides, flat)``, so the roll averages *base*. An item can name its
+    own die (``"damage_die": "d8"``); otherwise it is the largest of
+    :data:`DAMAGE_DICE` whose average does not pass *base* (a d4 at least)."""
+    sides = None
+    own = weapon.get("damage_die") if weapon is not None else None
+    if own:
+        try:
+            sides = int(str(own).lower().lstrip("1").lstrip("d"))
+        except ValueError:
+            sides = None
+    if sides is None:
+        sides = DAMAGE_DICE[0]
+        for die in DAMAGE_DICE:
+            if (die + 1) / 2.0 <= base:
+                sides = die
+    return sides, float(base) - (sides + 1) / 2.0
+
+
+def roll_damage(base: float, weapon=None, *, dice=None, rng=None,
+                target_name: str = "") -> Dict:
+    """Roll a weapon's damage die: ``{"base", "face", "sides", "flat"}`` --
+    *base* replaced by the die's face plus its flat amount (never below 1).
+    With *dice*, the roll is shown beside the to-hit d20."""
+    sides, flat = damage_die(base, weapon)
+    if dice is not None:
+        name = getattr(weapon, "name", None) or "Unarmed"
+        label = f"Damage ({name}: d{sides}{flat:+.0f})" if round(flat) else \
+            f"Damage ({name}: d{sides})"
+        result = dice.request_roll(f"1d{sides}", source="combat.damage",
+                                   context={"label": label, "damage_die": True,
+                                            "target": target_name})
+        face = int(result.get("roll_result", 1))
+        # What the roll box says under the hit: "Iron Longsword d12+10 → 19".
+        bonus = f"{flat:+.0f}" if round(flat) else ""
+        result["detail"] = f"{name} d{sides}{bonus} → {int(round(max(1.0, face + flat)))}"
+    else:
+        roll = getattr(rng, "randint", None) or random.randint
+        face = int(roll(1, sides))
+    return {"base": max(1.0, face + flat), "face": face, "sides": sides, "flat": flat}
+
+
+def base_ranged_damage(character, *, hand="main", ammo=None, draw=1.0, base=None):
+    """An arrow's physical energy before critical/sneak and class bonuses
+    (*base* replaces the weapon's own damage: its rolled damage die)."""
     weapon = eq.hand_weapon(character, hand)
     if weapon is None or weapon.get("kind") not in items.RANGED_KINDS:
         return 0.0
-    base = float(weapon.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
+    if base is None:
+        base = float(weapon.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
     skill = character.skill(weapon.get("skill", sk.MARKSMAN))
     damage = base * (0.4 + skill / 110.0) + (float(ammo.get("damage", 0)) if ammo else 0)
     if weapon.get("kind") == items.KIND_BOW:
@@ -187,6 +236,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
             why=_hit_why(character, skill_id, skill, bonus, target_ac, fatigue_frac,
                          hit_probability),
             context={"skill": skill_id, "target": target_props.get("name", ""),
+                     "against_name": _target_name(target_props),
                      "attack_bonus": bonus, "armour_class": target_ac})
         result["hit_roll"] = hit_roll
         if not hit_roll["success"]:
@@ -194,6 +244,12 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     elif rng.random() > hit_probability:
         return result  # miss
     result["hit"] = True
+
+    # --- the weapon's damage die: base becomes the die + its flat amount ---
+    rolled = roll_damage(base, w, dice=dice, rng=rng,
+                         target_name=str(target_props.get("name", "")))
+    result.update(damage_face=rolled["face"], damage_die=rolled["sides"])
+    base = rolled["base"]
 
     # --- base scaling by skill (0.4x at 0 skill → ~1.3x at 100) ---
     dmg = base * (0.4 + skill / 110.0)
@@ -204,7 +260,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         # A gathered blow (a warrior's charged fist) multiplies it.
         dmg *= max(0.1, float(power))
     elif kind in items.RANGED_KINDS:
-        dmg = base_ranged_damage(character, hand=hand, ammo=shot, draw=draw)
+        dmg = base_ranged_damage(character, hand=hand, ammo=shot, draw=draw, base=base)
     elif kind == items.KIND_STAFF:
         dmg *= 0.7 + character.skill(sk.OFFENSIVE) / 100.0
 

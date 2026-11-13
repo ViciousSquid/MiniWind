@@ -79,8 +79,9 @@ def test_player_hit_tests_the_npc_shield_and_applies_the_saved_damage():
     outcomes = []
     for face in (1, 20):
         game = fighter()
-        # The to-hit roll lands, a failed critical, then the defender's save.
-        game.dice = DiceRoller(rng=Faces(20, 1, face))
+        # The to-hit roll lands, the damage die rolls a 4, a failed critical,
+        # then the defender's save.
+        game.dice = DiceRoller(rng=Faces(20, 4, 1, face))
         target = guard()
         result = game.attack_creature(target, guaranteed=True)
         assert target["health"] == 500 - round(result["damage"])

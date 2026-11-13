@@ -65,7 +65,9 @@ def test_an_attack_roll_names_its_target_and_its_odds():
     assert "vs Armour Class 10" in hit["why"] and hit["why"].startswith("d20 +")
     assert hit["success"] == res["hit"]
     if res["hit"]:
-        source, crit = seen[1]
+        # A hit rolls its damage die, then for a critical.
+        assert seen[1][0] == "combat.damage"
+        source, crit = seen[2]
         assert source == "combat.critical"
         assert crit["success"] == res["crit"]
 

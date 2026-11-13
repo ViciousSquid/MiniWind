@@ -474,15 +474,28 @@ class NpcMagic:
         if (isinstance(props, dict) and damage_kind == "physical" and damage > 0
                 and not props.get("multiplayer_player")):
             from .rpg import armour_class as ac_rules
+            from .diceroll import DiceRoller, roll_check
             attacker = getattr(_attacker, "properties", None)
-            chance = ac_rules.to_hit(ac_rules.npc_attack_bonus(attacker), ac_rules.of(props))
-            rng = getattr(self.session, "rng", None)
-            roll = rng.random() if rng is not None else __import__("random").random()
-            hit = roll < chance
+            bonus = ac_rules.npc_attack_bonus(attacker)
+            target_ac = ac_rules.of(props)
+            chance = ac_rules.to_hit(bonus, target_ac)
+            # A d20 of its own (no listeners: not the player's dice log).
+            roll = roll_check(DiceRoller(rng=getattr(self.session, "rng", None)), chance,
+                              "Roll to hit", source="combat.npc_hit",
+                              why=f"d20 {bonus:+d} vs Armour Class {target_ac}",
+                              context={"npc": True, "quiet": True})
+            hit = bool(roll["success"])
             outcome = getattr(self.session, "attack_outcome", None)
-            if outcome is not None and _attacker is not None:
+            show = getattr(self.session, "show_roll_box", None)
+            side = getattr(self.session, "side_of", None)
+            if _attacker is not None:
                 try:
-                    outcome(_attacker, hit)         # HIT / MISS over the attacker
+                    if outcome is not None:
+                        outcome(_attacker, hit)     # HIT / MISS over the attacker
+                    if show is not None:
+                        name = str(props.get("display_name") or props.get("name") or "")
+                        show(_attacker, roll, kind="npc",
+                             against=(name.upper(), side(victim) if side else "ally"))
                 except Exception:
                     pass
             if not hit:
@@ -490,9 +503,16 @@ class NpcMagic:
         if isinstance(props, dict):
             from .rpg.blocking import npc_block
             game = getattr(self.session, "game", None)
-            damage = npc_block(props, damage, damage_kind=damage_kind,
-                               dice=getattr(game, "dice", None),
-                               rng=getattr(self.session, "rng", None))["damage"]
+            saved = npc_block(props, damage, damage_kind=damage_kind,
+                              dice=getattr(game, "dice", None),
+                              rng=getattr(self.session, "rng", None))
+            damage = saved["damage"]
+            show = getattr(self.session, "show_roll_box", None)
+            if saved.get("block_roll") and show is not None:
+                try:
+                    show(victim, saved["block_roll"], kind="npc")   # its shield save
+                except Exception:
+                    pass
         dealt = ward_soak(props, damage) if isinstance(props, dict) else damage
         bleed = getattr(self.session, "gore_npc_hit", None)
         if bleed is not None:

@@ -125,12 +125,20 @@ def test_npcs_roll_against_each_others_armour_class_and_say_so():
     from ..npc_magic import NpcMagic
     floated = []
 
+    boxes = []
+
     class Session:
         game = SimpleNamespace(dice=None)
-        rng = SimpleNamespace(random=lambda: 0.5)
+        rng = Faces(*([10] * 6))                # every d20 lands a 10
 
         def attack_outcome(self, who, hit):
             floated.append((who, hit))
+
+        def show_roll_box(self, who, result, **kw):
+            boxes.append((who, result["roll_result"], kw.get("kind")))
+
+        def side_of(self, who):
+            return "ally"
 
         def gore_npc_hit(self, *a):
             pass
@@ -140,9 +148,11 @@ def test_npcs_roll_against_each_others_armour_class_and_say_so():
     wolf = SimpleNamespace(properties=creature("wolf"))
     plated = SimpleNamespace(properties=creature("guard", armour_class=30))
     bare = SimpleNamespace(properties=creature("hen", armour_class=5))
-    assert magic.damage_filter(plated, 10, wolf) == 0      # needs a 24: a miss
+    assert magic.damage_filter(plated, 10, wolf) == 0      # needs a 20: a miss
     assert magic.damage_filter(bare, 10, wolf) == 10       # needs a 2: a hit
     assert floated == [(wolf, False), (wolf, True)]
+    # Each roll shows in a box over the attacker, as an NPC fight.
+    assert boxes == [(wolf, 10, "npc"), (wolf, 10, "npc")]
     # Magic is not turned by armour.
     assert magic.damage_filter(plated, 10, wolf, damage_kind="fire") == 10
 
@@ -157,3 +167,24 @@ def test_hit_and_miss_float_over_the_attacker(qt_app):
     assert s.floats[id(wolf)][1] == HIT_TEXT
     s.attack_outcome(wolf, False)
     assert s.floats[id(wolf)][1] == MISS_TEXT
+
+
+def test_wolves_wear_the_wolf_heads(qt_app):
+    """A wolf -- spawned (npc_role) or placed by hand (creature_role only) --
+    wears wolf01 / wolf02, dealt evenly, never a human face."""
+    from .test_cast_controls import _Logic, _Thing
+    from ..runtime import MiniwindSession
+    from ..rpg import heads
+    assert heads.animal_heads("wolf") == ["wolf01", "wolf02"]
+    spawner = _Thing("Spawn_wolf", (0, 0, 0), type="creaturespawn", creature_role="wolf",
+                     count=4, faction="wildlife")
+    placed = _Thing("Wolf", (300, 0, 0), type="creature", creature_role="wolf", health=40)
+    s = MiniwindSession(_Logic([spawner, placed]), cfg={})
+    s.spawn_creature_points()
+    s._assign_npc_heads()
+    wolves = [t for t in s.logic.things
+              if (t.properties.get("npc_role") or t.properties.get("creature_role")) == "wolf"
+              and t.properties.get("type") != "creaturespawn"]
+    worn = [t.properties["head"] for t in wolves]
+    assert len(worn) == 5 and set(worn) <= {"wolf01", "wolf02"}
+    assert {"wolf01", "wolf02"} <= set(worn)

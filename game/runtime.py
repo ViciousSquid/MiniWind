@@ -894,6 +894,10 @@ class MiniwindSession(SettlementLaw):
         self._torch_flicker_t = 0.0
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
+        #: Roll boxes over everyone else who rolls (game/ui/hud.py
+        #: draw_roll_boxes): ``{id(actor): box}``; the player's own roll is
+        #: :attr:`dice_animation`, drawn over the player.
+        self.roll_boxes: Dict[int, Dict] = {}
         #: Recent explained rolls ("Roll to hit: 7 (need 14+) — FAILED"),
         #: newest last, for the HUD's roll log; "success" is whether the roll
         #: went the player's way.
@@ -978,6 +982,11 @@ class MiniwindSession(SettlementLaw):
         except (AttributeError, TypeError, ValueError):
             return default
 
+    def stack_dialogs_enabled(self) -> bool:
+        """Roll boxes too close together join one stack (GAME → "Stack
+        dialogs"). On unless turned off."""
+        return self._game_flag("stack_dialogs")
+
     def gore_enabled(self) -> bool:
         """Blood and gibs (GAME → "Gore"). On unless turned off."""
         return self._game_flag("gore")
@@ -1044,6 +1053,10 @@ class MiniwindSession(SettlementLaw):
             return
         current = self.dice_animation
         if current is not None and current.get("elapsed", 0.0) == 0.0:
+            if context.get("damage_die") and "companion" not in current:
+                # A hit's damage die tumbles beside its d20 (game/ui/dice3d.py).
+                current["companion"] = result
+                return
             # Rolled in the same instant as the one about to be shown (a hit
             # and its critical, a kill's loot): listed under it, not over it.
             current.setdefault("followups", []).append(result)
@@ -1052,8 +1065,69 @@ class MiniwindSession(SettlementLaw):
             "result": result,
             "elapsed": 0.0,
             "duration": DICE_DISPLAY_DURATION,
+            # Shown in a box over the player (draw_roll_boxes); a roll
+            # against someone names them in their side's colour.
+            "actor": self.player_actor, "side": "you", "kind": "party",
+            "against": ((str(context["against_name"]), "foe")
+                        if context.get("against_name") else None),
         }
         return
+
+    # ------------------------------------------------------------ roll boxes
+    def side_of(self, thing) -> str:
+        """Whose side *thing* is on, for a roll box's colours: "you", an
+        "ally" (a follower, or anyone not set against you) or a "foe"."""
+        if thing is None or thing is self.player_actor:
+            return "you"
+        props = getattr(thing, "properties", None) or {}
+        if props.get("is_player"):
+            return "you"
+        if props.get("follow_player") or props.get("companion"):
+            return "ally"
+        hostile = str(props.get("aggression", "")).lower() == "hostile"
+        faction = str(props.get("faction") or props.get("team") or "").lower()
+        if hostile or faction in ("bandits", "cultists", "monsters") \
+                or props.get("_aggro_target") == id(self.player_actor):
+            return "foe"
+        return "ally"
+
+    def show_roll_box(self, actor, result, *, kind: str = "party", side=None,
+                      against=None) -> Optional[Dict]:
+        """Show *result* (a d20 check) in a small box over *actor*: the one
+        rolling. *kind* "party" is a roll involving the player or a companion,
+        "npc" a fight between NPCs alone (drawn on another background).
+        *against* is ``(name, side)`` of whom it is rolled against. Only near
+        enough to be on screen; one box per actor, the newest."""
+        if actor is None or not result or getattr(actor, "pos", None) is None:
+            return None
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(actor.pos, ppos) > BARK_RADIUS:
+            return None
+        box = {"result": result, "elapsed": 0.0, "duration": DICE_DISPLAY_DURATION,
+               "actor": actor, "kind": kind, "side": side or self.side_of(actor),
+               "against": against, "seed": self.rng.randint(1, 1 << 15)}
+        self.__dict__.setdefault("roll_boxes", {})[id(actor)] = box
+        return box
+
+    def has_roll_box(self, thing) -> bool:
+        """Whether *thing* has a roll box over its head right now (its speech
+        bubbles give way to it)."""
+        if thing is None:
+            return False
+        if id(thing) in (self.__dict__.get("roll_boxes") or {}):
+            return True
+        own = self.dice_animation
+        return own is not None and own.get("actor") is thing
+
+    def live_roll_boxes(self):
+        """Every roll box on screen: the player's own roll and everyone
+        else's, ``[box]``."""
+        out = [b for b in (self.__dict__.get("roll_boxes") or {}).values()
+               if getattr(b.get("actor"), "pos", None) is not None]
+        own = self.dice_animation
+        if own is not None and own.get("actor") is not None:
+            out.append(own)
+        return out
 
     def reset_progress(self) -> None:
         """Erase all saved progress and return the session to a clean slate.
@@ -1248,8 +1322,12 @@ class MiniwindSession(SettlementLaw):
                                           else None)
         final = res["final"]
         if attacker is not None and "ac" in res:
-            # The attacker's to-hit roll against the player's Armour Class.
+            # The attacker's to-hit roll against the player's Armour Class:
+            # HIT / MISS and its dice over the attacker.
             self.attack_outcome(attacker, not res.get("deflected"))
+            if res.get("defence_roll"):
+                self.show_roll_box(attacker, res["defence_roll"],
+                                   against=("YOU", "you"))
         # armour training whenever armour is tested -- a deflected blow too
         worn = res["armor_class"]
         if worn == "heavy":
@@ -1534,7 +1612,9 @@ class MiniwindSession(SettlementLaw):
             if ttype not in ("npc", "creature", "monster"):
                 continue
             cur = str(p.get("head", "") or "")
-            role = str(p.get("npc_role", "") or "").lower()
+            # An animal can be marked either way (a spawned one carries
+            # npc_role; one placed by hand may carry only creature_role).
+            role = str(p.get("npc_role", "") or p.get("creature_role", "") or "").lower()
             guard = heads.is_guard(p)
             if is_head_npc(p):
                 owner = head_identity(p)
@@ -3498,6 +3578,11 @@ class MiniwindSession(SettlementLaw):
 
     def _tick_dice_animation(self, delta: float) -> None:
         """Advance and expire the transient dice presentation."""
+        boxes = self.__dict__.get("roll_boxes") or {}
+        for key, box in list(boxes.items()):
+            box["elapsed"] += max(0.0, float(delta))
+            if box["elapsed"] >= box["duration"]:
+                del boxes[key]
         if self.dice_animation is None:
             return
         self.dice_animation["elapsed"] += max(0.0, float(delta))
@@ -6954,6 +7039,8 @@ class MiniwindSession(SettlementLaw):
         target, the blood, the target's anger, a kill."""
         _journal(target)     # a kill/gib changes how the target is drawn
         self.attack_outcome(self.player_actor, bool(res.get("hit")))
+        if res.get("block_roll"):
+            self.show_roll_box(target, res["block_roll"])     # their shield save
         if res.get("hit"):
             self._gore_hit(target, res.get("damage", 0.0),
                            crit=bool(res.get("crit") or heavy), killed=bool(res.get("killed")))
@@ -7000,6 +7087,8 @@ class MiniwindSession(SettlementLaw):
             res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
             _journal(hit_monster)
             self.attack_outcome(self.player_actor, bool(res.get("hit")))
+            if res.get("block_roll"):
+                self.show_roll_box(hit_monster, res["block_roll"])
             if res.get("hit"):
                 self._gore_hit(hit_monster, res.get("damage", 0.0), crit=bool(res.get("crit")),
                                killed=bool(res.get("killed")))

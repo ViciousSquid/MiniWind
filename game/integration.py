@@ -554,6 +554,10 @@ GAME_SETTINGS = (
     ("visualise_dice_rolls", "Visualise dice rolls",
      "Show every dice roll the game makes (checks, attacks, the console's "
      "'roll') as animated dice over the game.", False),
+    ("stack_dialogs", "Stack dialogs",
+     "Roll boxes over people standing close together join one stack, the "
+     "attacker's roll at the top. Off: each box stays over its roller, even "
+     "where boxes overlap.", True),
     ("show_dialogue_heads", "Show dialogue heads",
      "Show the character's head beside the conversation window when talking "
      "to an NPC. The head always matches the NPC's world sprite.", True),

@@ -84,7 +84,8 @@ def draw(painter, session, width, height):
         panel("compass", lambda: _draw_compass(painter, session, width, height))
         panel("target", lambda: _draw_target(painter, session, width, height))
     panel("status", lambda: _draw_status_flags(painter, session, c, width, height))
-    panel("dice", lambda: _draw_dice_roll(painter, session, width, height))
+    # Dice rolls float in small boxes over whoever rolls (draw_roll_boxes),
+    # not in a corner panel.
     panel("rolls", lambda: _draw_roll_log(painter, session, width, height))
     panel("toasts", lambda: _draw_notifications(painter, session, width, height))
     _draw_floaters(painter, session, width, height)
@@ -229,6 +230,16 @@ def _world_to_screen(glm, proj, view, x, y, z, width, height):
     return ((nx * 0.5 + 0.5) * width, (1.0 - (ny * 0.5 + 0.5)) * height)
 
 
+def _has_roll_box(session, thing) -> bool:
+    """Whether *thing* has a roll box over its head: its speech bubble, bark
+    and thought give way to it."""
+    has = getattr(session, "has_roll_box", None)
+    try:
+        return bool(has(thing)) if has is not None else False
+    except Exception:
+        return False
+
+
 def draw_bubbles(painter, session, viewport, width, height):
     """Draw a small speech bubble above nearby NPCs that have something for the
     player: '!' for an available quest, '…' for dialogue/trade. Overhead only."""
@@ -246,6 +257,8 @@ def draw_bubbles(painter, session, viewport, width, height):
         return
     ppos = [float(player.pos[0]), float(player.pos[1]), float(player.pos[2])]
     for npc, kind in session.bubble_npcs(ppos)[:10]:
+        if _has_roll_box(session, npc):
+            continue                    # its roll box is over its head
         head_y = npc.pos[1] + float(npc.properties.get("sprite_height", 112)) * 0.5 + 26.0
         sp = _world_to_screen(glm, proj, view, npc.pos[0], head_y, npc.pos[2], width, height)
         if sp is not None:
@@ -272,6 +285,8 @@ def draw_barks(painter, session, viewport, width, height):
     painter.setFont(font)
     painter.setRenderHint(painter.Antialiasing, True)
     for thing, text, left in barks[:8]:
+        if _has_roll_box(session, thing):
+            continue                    # its roll box is over its head
         head_y = thing.pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 40.0
         sp = _world_to_screen(glm, proj, view, thing.pos[0], head_y, thing.pos[2],
                               width, height)
@@ -336,6 +351,313 @@ def draw_floats(painter, session, viewport, width, height):
         painter.setPen(QColor(*_FLOAT_INK, alpha))
         painter.drawText(rect, int(Qt.AlignCenter), text)
     painter.restore()
+
+
+# ------------------------------------------------------------------ roll boxes
+#: How a roll box's dice are drawn, and how far above the head its bottom
+#: stands: room for "*fizzled*", HIT or MISS to rise between them.
+ROLL_BOX_DIE = 40
+ROLL_BOX_GAP_PX = FLOAT_RISE_PX + 24.0
+#: Who is rolling, or rolled against, by side: you, an ally, a foe.
+ROLL_SIDE_INK = {"you": (255, 206, 96), "ally": (120, 214, 130), "foe": (238, 104, 88)}
+#: A roll involving the player or a companion, and a fight between NPCs
+#: alone (cooler, a little see-through: other people's business).
+ROLL_BOX_BG = {"party": (16, 15, 24, 228), "npc": (18, 34, 44, 200)}
+ROLL_BOX_EDGE = {"party": (150, 122, 64, 230), "npc": (80, 120, 140, 220)}
+
+
+def _box_action(label, against_name):
+    """A roll's label as a box's action: "Roll to hit Bandit" -> "ROLL TO
+    HIT" (the target is named after it in its own colour), "Bandit rolls to
+    hit you" -> "ROLL TO HIT", "Hunter: shield saving throw" -> "SHIELD SAVE"."""
+    text = str(label or "Roll")
+    low = text.lower()
+    if "rolls to hit" in low or low.startswith("roll to hit"):
+        return "ROLL TO HIT"
+    if ":" in text:
+        text = text.split(":", 1)[1].strip()
+    text = text.replace("saving throw", "save")
+    if against_name and text.lower().endswith(" " + str(against_name).lower()):
+        text = text[: -len(str(against_name)) - 1]
+    return text.upper()
+
+
+def _box_verdict(result):
+    """The settled line: "14 (need 7+) — HIT", "4 (need 9+) — MISS"."""
+    total = result.get("roll_result", 0)
+    target = result.get("target")
+    if target is None:
+        return f"ROLLED {total}", None
+    passed = bool(result.get("success"))
+    low = str(result.get("label", "")).lower()
+    if "to hit" in low:
+        word = "HIT" if passed else "MISS"
+    elif "save" in low or "saving" in low:
+        word = "SAVED" if passed else "FAILED"
+    else:
+        word = "SUCCESS" if passed else "FAILED"
+    return f"{total} (need {target}+) — {word}", passed
+
+
+def draw_roll_boxes(painter, session, viewport, width, height):
+    """Every roll on screen in a small box over the one rolling: the
+    player's own (gold name), an ally's (green) or a foe's (red); a fight
+    between NPCs alone on a cooler background. The real dice tumble in it
+    (game/ui/dice3d.py). Boxes never overlap: a box that would is lifted
+    clear above the others, a thin line still pointing to its roller."""
+    boxes = session.live_roll_boxes() if hasattr(session, "live_roll_boxes") else ()
+    if not boxes or viewport is None:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    anchored = []
+    for box in boxes[:10]:
+        actor = box.get("actor")
+        pos = getattr(actor, "pos", None)
+        props = getattr(actor, "properties", None) or {}
+        if pos is None:
+            continue
+        head_y = pos[1] + float(props.get("sprite_height", 112) or 112) * 0.5 + 24.0
+        sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
+        if sp is None and (props.get("is_player") or box.get("side") == "you"):
+            sp = (width * 0.5, height * 0.4)       # first person: over the view's middle
+        if sp is None:
+            continue
+        layout = _roll_box_layout(box, width)
+        if layout is not None:
+            anchored.append((sp, box, layout))
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    stack = True
+    try:
+        stack = bool(session.stack_dialogs_enabled())
+    except Exception:
+        pass
+    for group in _stack_roll_boxes(anchored, width, height, stack=stack):
+        for bx, by, sp, box, layout, pointer in group:
+            _draw_roll_box(painter, box, layout, bx, by, sp, ROLL_BOX_GAP_PX, pointer=pointer)
+    painter.restore()
+
+
+#: Boxes may overlap this much (a share of the smaller box, across or down)
+#: and stay over their rollers; any closer and they become one stack.
+ROLL_BOX_OVERLAP_OK = 0.3
+ROLL_BOX_STACK_GAP = 1      # stacked boxes sit locked together
+
+
+def _is_attack(box) -> bool:
+    return "to hit" in str((box.get("result") or {}).get("label", "")).lower()
+
+
+def _stack_roll_boxes(anchored, width, height, stack=True):
+    """Lay the boxes out: each right over its roller, a slight overlap
+    allowed; boxes closer than that join one stack over their rollers, the
+    attacker's roll always at the top (with *stack* off -- Settings > Game >
+    "Stack dialogs" -- they stay over their rollers, overlapping).
+    Returns groups of ``(x, y, anchor, box, layout, pointer)``, bottom box
+    last in a stack."""
+    natural = []
+    for sp, box, layout in anchored:
+        w, h = layout["w"], layout["h"]
+        x = int(max(4, min(width - w - 4, sp[0] - w / 2)))
+        y = int(sp[1] - ROLL_BOX_GAP_PX - h)
+        natural.append((x, y, w, h))
+    # Union boxes that overlap more than slightly.
+    parent = list(range(len(anchored)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(natural)):
+        for j in range(i + 1, len(natural)):
+            xi, yi, wi, hi = natural[i]
+            xj, yj, wj, hj = natural[j]
+            across = min(xi + wi, xj + wj) - max(xi, xj)
+            down = min(yi + hi, yj + hj) - max(yi, yj)
+            if across <= 0 or down <= 0:
+                continue
+            if stack and across > ROLL_BOX_OVERLAP_OK * min(wi, wj) and \
+                    down > ROLL_BOX_OVERLAP_OK * min(hi, hj):
+                parent[find(i)] = find(j)
+    clusters = {}
+    for i in range(len(anchored)):
+        clusters.setdefault(find(i), []).append(i)
+    # The player's own box first, then nearest the bottom of the screen;
+    # later ones keep clear of what is already placed.
+    order = sorted(clusters.values(), key=lambda m: (
+        all(anchored[i][1].get("side") != "you" for i in m),
+        -max(anchored[i][0][1] for i in m)))
+    placed = []
+
+    def heavy(x, y, w, h):
+        for (px, py, pw, ph) in placed:
+            across = min(x + w, px + pw) - max(x, px)
+            down = min(y + h, py + ph) - max(y, py)
+            if across > ROLL_BOX_OVERLAP_OK * min(w, pw) and \
+                    down > ROLL_BOX_OVERLAP_OK * min(h, ph):
+                return True
+        return False
+
+    groups = []
+    for members in order:
+        # Attacks on top, then the rest (saves), each in roll order.
+        members.sort(key=lambda i: (not _is_attack(anchored[i][1]), i))
+        heights = [natural[i][3] for i in members]
+        total = sum(heights) + ROLL_BOX_STACK_GAP * (len(members) - 1)
+        widest = max(natural[i][2] for i in members)
+        xs = [anchored[i][0][0] for i in members]
+        bottom = min(natural[i][1] + natural[i][3] for i in members)
+        above = (sum(xs) / len(xs), bottom - total)
+        beside = [(min(xs) - 40 - widest / 2, None), (max(xs) + 40 + widest / 2, None)]
+        chosen = None
+        for centre, top in [above] + beside:
+            top = max(4, bottom - total) if top is None else top
+            left = centre - widest / 2
+            if top < 4 or left < 4 or left + widest > width - 4 or top + total > height - 4:
+                continue
+            if not heavy(left, top, widest, total):
+                chosen = (centre, top)
+                break
+        if chosen is None:
+            chosen = (above[0], max(4, above[1]))
+        centre, y = chosen
+        group = []
+        for k, i in enumerate(members):
+            sp, box, layout = anchored[i]
+            w, h = layout["w"], layout["h"]
+            x = int(max(4, min(width - w - 4, centre - w / 2)))
+            group.append((x, int(y), sp, box, layout, k == len(members) - 1))
+            y += h + ROLL_BOX_STACK_GAP
+        placed.append((int(centre - widest / 2), int(chosen[1]), int(widest), int(total)))
+        groups.append(group)
+    return groups
+
+
+def _roll_box_layout(box, width):
+    """What a roll box shows and how big it is, or None with nothing to show."""
+    result = box.get("result") or {}
+    visuals = _prepare_dice_animation(box, result)
+    if not visuals:
+        return None
+    elapsed = float(box.get("elapsed", 0.0))
+    settle = max((d["motion"]["delay"] + d["motion"]["duration"] for d in visuals), default=0.0)
+    fade_start = max(DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL, settle) + DICE_RESULT_HOLD_DURATION
+    alpha = 255
+    if elapsed > fade_start:
+        alpha = max(0, int((fade_start + DICE_ANIMATION_FADE - elapsed) / DICE_ANIMATION_FADE * 255))
+    if alpha <= 0:
+        return None
+    actor = box.get("actor")
+    props = getattr(actor, "properties", None) or {}
+    side = box.get("side") or "ally"
+    against = box.get("against")
+    name = "YOU" if side == "you" else str(props.get("display_name")
+                                           or props.get("name") or "").upper()
+    action = _box_action(result.get("label"), against[0] if against else "")
+    parts = [(name, ROLL_SIDE_INK.get(side, (226, 224, 236))),
+             (": " + action, (226, 224, 236))]
+    if against and against[0]:
+        parts.append((" " + str(against[0]).upper(), ROLL_SIDE_INK.get(against[1], (226, 224, 236))))
+    details = []
+    companion = box.get("companion")
+    if companion:
+        details.append(str(companion.get("detail") or describe_roll(companion)))
+    for extra in box.get("followups", ()) or ():
+        if "critical" in str(extra.get("label", "")).lower() and extra.get("success"):
+            details.append("CRITICAL HIT")
+    die = ROLL_BOX_DIE
+    title_font = T.font(7, bold=True, family="Segoe UI")
+    fm = QFontMetrics(title_font)
+    title_w = sum(fm.horizontalAdvance(t) for t, _c in parts)
+    detail_font = T.font(7, family="Segoe UI")
+    dm = QFontMetrics(detail_font)
+    detail_w = max((dm.horizontalAdvance(t) for t in details), default=0)
+    w = int(max(150, title_w + 20, detail_w + 20, len(visuals) * (die + 14) + 26))
+    h = int(22 + die + 12 + 16 + 13 * len(details) + 6)
+    return {"visuals": visuals, "elapsed": elapsed, "alpha": alpha, "side": side,
+            "parts": parts, "details": details, "title_font": title_font, "fm": fm,
+            "title_w": title_w, "w": w, "h": h, "result": result}
+
+
+def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
+    """One roll box at (*bx*, *by*), pointing down to its roller's head at
+    *anchor* (a thin line when it was lifted clear of another box)."""
+    from . import dice3d
+    visuals, elapsed, alpha = layout["visuals"], layout["elapsed"], layout["alpha"]
+    side, parts, details = layout["side"], layout["parts"], layout["details"]
+    w, h, fm, result = layout["w"], layout["h"], layout["fm"], layout["result"]
+    die = ROLL_BOX_DIE
+    count = len(visuals)
+    kind = box.get("kind") if box.get("kind") in ROLL_BOX_BG else "party"
+    bg = QColor(*ROLL_BOX_BG[kind])
+    bg.setAlpha(int(bg.alpha() * alpha / 255))
+    edge = QColor(*ROLL_BOX_EDGE[kind])
+    edge.setAlpha(int(edge.alpha() * alpha / 255))
+    ax, ay = anchor[0], anchor[1] - gap
+    tip = max(bx + 10, min(bx + w - 10, ax))
+    if pointer and (by + h + 9 < ay - 2 or abs(tip - ax) > 2):
+        # The bottom of a stack, lifted above or set beside its roller: a
+        # thin line to it.
+        painter.setPen(QPen(edge, 1.2))
+        painter.drawLine(QPointF(tip, by + h + 9), QPointF(ax, ay))
+    painter.setPen(QPen(edge, 1.5))
+    painter.setBrush(bg)
+    painter.drawRoundedRect(QRectF(bx, by, w, h), 7, 7)
+    if pointer:
+        painter.drawPolygon(QPolygonF([QPointF(tip - 7, by + h - 1), QPointF(tip + 7, by + h - 1),
+                                       QPointF(tip, by + h + 9)]))
+    painter.setFont(layout["title_font"])
+    x = bx + (w - layout["title_w"]) / 2.0
+    for text, ink in parts:
+        painter.setPen(QColor(*ink, alpha))
+        painter.drawText(QPointF(x, by + 15), text)
+        x += fm.horizontalAdvance(text)
+    settled = True
+    for index, d in enumerate(visuals):
+        cx = bx + w / 2.0 + (index - (count - 1) / 2.0) * (die + 14)
+        cy = by + 22 + die / 2.0
+        m = d["motion"]
+        if elapsed < m["delay"]:
+            settled = False
+            continue
+        local = elapsed - m["delay"]
+        rotation, dx, dy, done = dice3d.pose(d["sides"], d["value"], m, local)
+        settled = settled and done
+        # The player's dice are in colour; anyone else's are greyscale.
+        body, ink = dice3d.colours(d["sides"], side == "you")
+        dice3d.draw_die(painter, d["sides"], d["value"], cx + dx * die * 0.5,
+                        cy + dy * die * 0.45, die, rotation, alpha=alpha,
+                        body=body, ink=ink,
+                        tumbling=not done, flicker=int(local * 18.0) + index * 5)
+        if d.get("role"):
+            T.text_in(painter, QRect(int(cx - 34), int(cy + die / 2 - 1), 68, 11),
+                      "TO HIT" if d["role"] == "hit" else "DAMAGE", size=6,
+                      color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
+                      bold=True, family="Segoe UI")
+    line_y = by + 22 + die + 12
+    if settled:
+        verdict, passed = _box_verdict(result)
+        ink = (_verdict_color(passed, alpha) if passed is not None
+               else QColor(255, 214, 130, alpha))
+        if passed is not None and box.get("against") and box["against"][1] == "you" \
+                and side != "you":
+            ink = _verdict_color(not passed, alpha)       # their hit is bad news
+        T.text_in(painter, QRect(bx, line_y, w, 15), verdict, size=8, color=ink,
+                  align=T.ALIGN_CENTER, bold=True, family="Segoe UI")
+        for k, text in enumerate(details):
+            T.text_in(painter, QRect(bx, line_y + 15 + 13 * k, w, 13), text, size=7,
+                      color=QColor(200, 196, 214, alpha), align=T.ALIGN_CENTER,
+                      family="Segoe UI")
+    else:
+        T.text_in(painter, QRect(bx, line_y, w, 15), "rolling…", size=7,
+                  color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
+                  italic=True, family="Segoe UI")
 
 
 #: "Block" over the player's head while the block is held: its ink, and how
@@ -432,6 +754,8 @@ def draw_thoughts(painter, session, viewport, width, height):
     painter.setRenderHint(painter.Antialiasing, True)
     r, g, b = _THOUGHT_FILL
     for thing, text, left in thoughts[:8]:
+        if _has_roll_box(session, thing):
+            continue                    # its roll box is over its head
         head_y = thing.pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 40.0
         sp = _world_to_screen(glm, proj, view, thing.pos[0], head_y, thing.pos[2],
                               width, height)
@@ -1133,23 +1457,25 @@ def _dice_entries(result):
 
 
 def _prepare_dice_animation(animation, result):
-    """Create independent timing and motion data for every displayed die."""
-    if "dice_visuals" in animation:
+    """Every displayed die's own throw (game/ui/dice3d.py): the roll's dice,
+    then a hit's damage die (``animation["companion"]``) thrown a moment
+    later, each with its own spin, timing and bounce -- never in step."""
+    companion = animation.get("companion")
+    key = "companion" if companion else "solo"
+    if animation.get("dice_visuals_for") == key:
         return animation["dice_visuals"]
+    from . import dice3d
     visuals = []
-    for index, entry in enumerate(_dice_entries(result)):
-        seed = index * 47 + entry["sides"] * 13 + entry["value"] * 7
-        visuals.append({
-            "sides": entry["sides"],
-            "value": entry["value"],
-            "delay": 0.04 * index + (seed % 9) * 0.012,
-            "roll_duration": 0.78 + (seed % 19) * 0.018,
-            "phase": (seed % 31) * 0.37,
-            "tilt": -7.0 + (seed % 15),
-            "x_offset": -3.0 + (seed % 7),
-            "y_offset": -2.0 + (seed % 5),
-        })
+    entries = [dict(e, role="hit" if companion else "") for e in _dice_entries(result)]
+    if companion:
+        entries += [dict(e, role="damage") for e in _dice_entries(companion)]
+    base = int(animation.get("seed", 0) or 0) or (id(animation) & 0xFFFF)
+    for index, entry in enumerate(entries):
+        seed = base * 31 + index * 977 + entry["sides"] * 13 + entry["value"] * 7
+        delay = 0.0 if entry["role"] != "damage" else 0.22
+        visuals.append(dict(entry, motion=dice3d.motion(seed, delay=delay + 0.05 * index)))
     animation["dice_visuals"] = visuals
+    animation["dice_visuals_for"] = key
     return visuals
 
 
@@ -1204,7 +1530,8 @@ def _draw_dice_roll(painter, session, width, height):
     duration = max(0.1, float(animation.get(
         "duration", DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL +
         DICE_ANIMATION_FADE + DICE_RESULT_HOLD_DURATION)))
-    settle_time = max((d["delay"] + d["roll_duration"] for d in visuals), default=0.0)
+    settle_time = max((d["motion"]["delay"] + d["motion"]["duration"] for d in visuals),
+                      default=0.0)
     fade_start = max(DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL, settle_time) + DICE_RESULT_HOLD_DURATION
     alpha = 255
     if elapsed > fade_start:
@@ -1217,12 +1544,15 @@ def _draw_dice_roll(painter, session, width, height):
     label = str(result.get("label") or "")
     target = result.get("target")
     followups = [r for r in animation.get("followups", ()) if r.get("label")]
+    if animation.get("companion"):
+        # The damage die's roll reads first under the hit's verdict.
+        followups = [animation["companion"]] + followups
     shown_followups = followups[:DICE_FOLLOWUP_LINES]
     count = len(visuals)
     columns = min(_DICE_MAX_COLUMNS, max(1, count))
     rows = (count + columns - 1) // columns
     die_size = 86 if count <= 4 else 72
-    gap = 12
+    gap = 22 if animation.get("companion") else 12
     panel_w = max(380 if label else 340, columns * die_size + (columns - 1) * gap + 40)
     extra_h = len(shown_followups) * 18 + (18 if len(followups) > len(shown_followups) else 0)
     panel_h = 76 + rows * (die_size + gap) + 34 + extra_h
@@ -1260,46 +1590,31 @@ def _draw_dice_roll(painter, session, width, height):
     settled = True
     start_y = panel_y + 68
     row_left = panel_x + (panel_w - (columns * die_size + (columns - 1) * gap)) // 2
+    from . import dice3d
     for index, die in enumerate(visuals):
         row, column = divmod(index, columns)
         center_x = row_left + die_size // 2 + column * (die_size + gap)
         center_y = start_y + die_size // 2 + row * (die_size + gap)
-        local = elapsed - die["delay"]
-        rolling = local < die["roll_duration"]
-        if rolling:
+        m = die["motion"]
+        if elapsed < m["delay"]:
             settled = False
-            frame = int(max(0.0, local) * 19.0 + die["phase"])
-            shown_value = frame % die["sides"] + 1
-            wobble = math.sin(max(0.0, local) * 24.0 + die["phase"])
-            angle = die["tilt"] * wobble
-            motion = math.sin(max(0.0, local) * 17.0 + die["phase"])
-            draw_alpha = alpha
-        else:
-            shown_value = die["value"]
-            settle = min(1.0, max(0.0, (local - die["roll_duration"]) / 0.24))
-            wobble = math.sin(local * 13.0 + die["phase"]) * (1.0 - settle)
-            angle = die["tilt"] * wobble
-            motion = math.sin(local * 11.0 + die["phase"]) * (1.0 - settle)
-            draw_alpha = alpha
-        x = int(center_x + die["x_offset"] * wobble)
-        y = int(center_y + die["y_offset"] * motion)
-        if die["sides"] == 6:
-            image = _dice_face_image(shown_value)
-        else:
-            image = _dice_image(f"blank_d{die['sides']}.png")
-        if image is None:
-            painter.save()
-            painter.setOpacity(max(0.0, min(1.0, alpha / 255.0)))
-            painter.setPen(QPen(QColor(80, 140, 210, alpha), 2))
-            painter.setBrush(QColor(35, 85, 150, alpha))
-            painter.drawRoundedRect(QRect(x - die_size // 2, y - die_size // 2,
-                                          die_size, die_size), 10, 10)
-            painter.restore()
-        _draw_dice_image(painter, image, x, y, die_size, angle, draw_alpha)
-        if image is None or die["sides"] != 6:
-            T.text_in(painter, QRect(x - die_size // 3, y - 15, 2 * die_size // 3, 30),
-                      str(shown_value), size=20 if count <= 4 else 17,
-                      color=QColor(255, 248, 230, alpha), align=T.ALIGN_CENTER,
+            continue                    # not thrown yet: it comes in a moment later
+        local = elapsed - m["delay"]
+        rotation, dx, dy, done = dice3d.pose(die["sides"], die["value"], m, local)
+        if not done:
+            settled = False
+        # It tumbles in from the side and bounces to rest, out of step with
+        # its neighbour.
+        x = center_x + dx * die_size * 0.6
+        y = center_y + dy * die_size * 0.5
+        dice3d.draw_die(painter, die["sides"], die["value"], x, y, die_size * 0.92,
+                        rotation, alpha=alpha, tumbling=not done,
+                        flicker=int(local * 18.0) + index * 5)
+        if die.get("role"):
+            T.text_in(painter, QRect(center_x - die_size // 2, center_y + die_size // 2 - 2,
+                                     die_size, 14),
+                      "TO HIT" if die["role"] == "hit" else f"DAMAGE  d{die['sides']}",
+                      size=7, color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
                       bold=True, family="Segoe UI")
 
     if settled:
