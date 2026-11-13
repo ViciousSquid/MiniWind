@@ -4,11 +4,23 @@ The starting quests of Miniwind. Importing this module registers them.
 
 from __future__ import annotations
 
-from .quests import Quest, Stage, register
+from . import quests as _quests
+from .quests import Quest, Stage
+
+
+def register(quest: Quest) -> Quest:
+    """Register a built-in *quest* unless that id is already registered.
+
+    Built-ins are the fallback: a ``.quest`` file or a map-authored quest of
+    the same id always wins, whichever was loaded first. ``load()`` runs again
+    whenever a :class:`GameState` is made (every new game), and used to put the
+    built-ins back over the files the session had already loaded.
+    """
+    return _quests.QUESTS.get(quest.id) or _quests.register(quest)
 
 
 def load() -> None:
-    """Register all built-in quests (idempotent)."""
+    """Register all built-in quests that nothing else has defined (idempotent)."""
 
     register(Quest(
         "mill_bandits", "Trouble at the Old Mill",

@@ -215,3 +215,21 @@ def test_wire_quest_givers_shows_available_quest_bubble():
     session._wire_quest_givers()
     # An un-started offered quest shows the '!' available-quest cue.
     assert session.bubble_kind(npc) == "quest"
+
+
+# --- precedence: the files win over the built-ins, in a new game too -------
+def test_a_new_character_keeps_the_quest_files_not_the_built_ins():
+    """Making a character builds a new GameState, whose constructor loads the
+    built-in quests. It used to register them again over the ``.quest`` files
+    the session had already loaded, so every new game played the built-in Old
+    Mill quest -- whose first stage never completes."""
+    session = _session([])
+    on_disk = {d["id"]: d for d in quest_files.load_quest_defs()}
+    assert "mill_bandits" in on_disk
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    for qid, data in on_disk.items():
+        running = quests.get(qid)
+        assert running is not None, qid
+        assert [s.index for s in running.stages] == [s["index"] for s in data["stages"]], qid
+        assert [s.objective for s in running.stages] == \
+            [s.get("objective", "") for s in data["stages"]], qid

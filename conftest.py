@@ -189,6 +189,27 @@ def _deterministic_rngs():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _quest_registry_restored():
+    """Give every test the quest registry it started with.
+
+    MiniWind's quest registry (``game.rpg.quests.QUESTS``) is process-wide.
+    Built-ins never overwrite a quest that is already registered (a ``.quest``
+    file or a map's own), so a test that loaded files or authored a quest
+    would otherwise decide which version every later test sees.
+    """
+    module = sys.modules.get("game.rpg.quests")
+    before = dict(module.QUESTS) if module is not None else None
+    yield
+    module = sys.modules.get("game.rpg.quests")
+    if module is None:
+        return
+    module.QUESTS.clear()
+    if before is not None:
+        module.QUESTS.update(before)
+    module.VERSION[0] += 1
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _plugins_loaded_before_isolation():
     """Load the plugins once, before any per-test registry snapshot is taken.
