@@ -12,7 +12,9 @@ launcher and Settings ▸ Display never disagree, and a choice made here is stil
 there next launch.
 
 * **PLAY** starts the game fullscreen (or however the display mode says),
-  hiding the editor UI — the existing kiosk mode.
+  hiding the editor UI — the existing kiosk mode. With a save on disk it is
+  **NEW GAME**, and **CONTINUE** beside it carries on from the newest save
+  (the autosave or a pause-menu slot).
 * **EDIT** opens the editor exactly as it always did.
 
 Dismissing the launcher any other way means Edit: the editor is the safe answer
@@ -109,6 +111,34 @@ _TITLE_SCALE = 2.6         # banner title, relative to the base font
 _SMALL_SCALE = 0.85        # captions and the version line
 _LOGO_FRACTION = 0.68      # splash-mark height, as a fraction of the banner
 _LOGO_GAP = 0.22           # space between the mark and the title
+
+
+#: The saves CONTINUE may resume: the autosave and the pause menu's slots
+#: (``saves/<name>.fiosave``; game/autosave.py, game/ui/pause_menu.py).
+RESUMABLE = ("autosave", "slot1", "slot2", "slot3")
+
+#: The save the last CONTINUE chose (a ``saves/`` name, no extension), for the
+#: bootstrap to load once the map is open (game.launched_resume).
+_resume = None
+
+
+def resume_save(root_dir: str = "."):
+    """The newest save CONTINUE would resume, as ``(name, path)``, or None."""
+    best = None
+    for name in RESUMABLE:
+        path = os.path.join(root_dir, "saves", name + ".fiosave")
+        try:
+            stamp = os.path.getmtime(path)
+        except OSError:
+            continue
+        if best is None or stamp > best[0]:
+            best = (stamp, name, path)
+    return None if best is None else (best[1], best[2])
+
+
+def chosen_resume():
+    """The save the launcher's CONTINUE chose, or None (PLAY: a new game)."""
+    return _resume
 
 
 def text_unit(widget) -> float:
@@ -528,8 +558,26 @@ class Launcher(QDialog):
         buttons.addWidget(self.reset_button)
         buttons.addStretch(1)
 
-        self.play_button = QPushButton("PLAY")
-        self.play_button.setDefault(True)
+        # With a save to go back to, CONTINUE comes first and PLAY says what
+        # it does instead: a new game. PLAY always started a new game, even
+        # with an autosave on disk; going back meant the pause menu's LOAD.
+        self._resume = resume_save(root_dir)
+        self.continue_button = None
+        if self._resume is not None:
+            self.continue_button = QPushButton("CONTINUE")
+            self.continue_button.setDefault(True)
+            self.continue_button.setToolTip(
+                "Carry on from your last save (" + self._resume[0] + ").")
+            self.continue_button.setStyleSheet(
+                f"QPushButton {{ background-color:{_PLAY_GREEN}; color:white;"
+                f" border:1px solid #1B5E20; font-weight:bold; letter-spacing:1px; }}"
+                f"QPushButton:hover {{ background-color:#388E3C; }}"
+                f"QPushButton:pressed {{ background-color:#1B5E20; }}")
+            self.continue_button.clicked.connect(self._continue)
+            buttons.addWidget(self.continue_button)
+
+        self.play_button = QPushButton("NEW GAME" if self._resume else "PLAY")
+        self.play_button.setDefault(self._resume is None)
         self.play_button.setStyleSheet(
             f"QPushButton {{ background-color:{_PLAY_GREEN}; color:white;"
             f" border:1px solid #1B5E20; font-weight:bold; letter-spacing:1px; }}"
@@ -598,7 +646,7 @@ class Launcher(QDialog):
         self._load()
         self._loading = False
         self._apply_metrics()
-        self.play_button.setFocus()
+        (self.continue_button or self.play_button).setFocus()
 
     # -- DPI-aware sizing --------------------------------------------------
     def _apply_metrics(self):
@@ -621,6 +669,8 @@ class Launcher(QDialog):
         size = self._button_size()
         self.play_button.setMinimumSize(size)
         self.edit_button.setMinimumSize(size)
+        if self.continue_button is not None:
+            self.continue_button.setMinimumSize(size)
         # Spans PLAY and EDIT: their two widths and the gap between them.
         self.multiplayer_button.setFixedWidth(
             2 * size.width() + getattr(self, '_button_spacing', 10))
@@ -725,7 +775,14 @@ class Launcher(QDialog):
         if dialog.exec_() == QDialog.Accepted and dialog.handed_off:
             self._finish(PLAY)
 
-    def _finish(self, choice: str):
+    def _continue(self):
+        global _resume
+        _resume = self._resume[0] if self._resume else None
+        self._finish(PLAY, resume=_resume)
+
+    def _finish(self, choice: str, resume=None):
+        global _resume
+        _resume = resume if choice == PLAY else None
         self.choice = choice
         self._save()
         self.accept() if choice != QUIT else self.reject()

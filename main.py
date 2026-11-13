@@ -439,6 +439,16 @@ if __name__ == "__main__":
             if launch_choice == "play":
                 window.loading_overlay.step("Starting the game", 90)
                 window.enter_kiosk_mode()
+                # A game may ask to carry on from a save chosen at launch
+                # (MiniWind's CONTINUE): loaded the way its own menus load one.
+                resume = getattr(game_module, 'launched_resume', None)
+                resume_name = resume() if callable(resume) and party_lobby is None else None
+                if resume_name:
+                    window.loading_overlay.step("Loading your last save", 95)
+                    menu = getattr(window.view_3d, 'play_menu', None)
+                    loader = getattr(getattr(menu, 'actions', None), 'load_named', None)
+                    if loader is not None:
+                        loader(resume_name, "your last save")
                 if party_lobby is not None and party_lobby.resume_path:
                     from engine import savegame
                     data=savegame.read(party_lobby.resume_path)
