@@ -464,6 +464,9 @@ class QtGameView(QOpenGLWidget):
         self._cached_player_ammo = 0
         self._cached_player_armor = 0
         self._cached_level_complete_ui = None
+        #: The level-complete request last confirmed or cancelled: a frame
+        #: published before that (the old session's last) may still carry it.
+        self._level_complete_done = None
         self._muzzle_flash_duration_frames = 3
 
         self.setAttribute(Qt.WA_OpaquePaintEvent)
@@ -967,8 +970,11 @@ class QtGameView(QOpenGLWidget):
             self._cached_bullet_marks = list(render_state.bullet_marks)
             self._cached_projectiles = np.array(render_state.projectiles, dtype=np.float32).reshape(-1, 3)
             self._cached_monster_rays = list(render_state.monster_debug_rays)
-            self._cached_level_complete_ui = render_state.level_complete_ui
-            self.hud.queue_immediate_level_change(self._cached_level_complete_ui)
+            ui = render_state.level_complete_ui
+            if ui is not None and ui is self._level_complete_done:
+                ui = None       # confirmed or cancelled already (view_hud)
+            self._cached_level_complete_ui = ui
+            self.hud.queue_immediate_level_change(ui)
             self._cached_underwater = render_state.player_underwater
             self._cached_underwater_tint = render_state.underwater_tint
             self._cached_p2_underwater = render_state.player2_underwater
