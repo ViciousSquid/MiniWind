@@ -414,6 +414,10 @@ class QtGameView(QOpenGLWidget):
         #: Set by a game layer that paints its own death screen (through the
         #: render.overlay hook), so the stock "DIED" screen stays off.
         self.game_death_screen = False
+        #: Set by a game that always draws its own HUD (MiniWind), so the
+        #: stock HUD is never drawn -- not even for the first frame of a play
+        #: session, before the game's overlay has run to say so.
+        self.game_hud = False
         #: A game layer's death screen menu, asked first about every key
         #: while the player is dead. Duck-typed: ``handle_key(event) -> bool``
         #: (True when it used the key). With one installed, Esc on death no
@@ -1304,7 +1308,10 @@ class QtGameView(QOpenGLWidget):
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         if self.play_mode:
             self.hud._draw_underwater_overlay(painter, render_state)
-        if self.editor.config.getboolean('Display', 'show_fps', fallback=False):
+        # The FPS counter is an editor's readout: a game launched to play
+        # (kiosk mode) keeps it off its screen; F3's sysmon still shows it.
+        if (self.editor.config.getboolean('Display', 'show_fps', fallback=False)
+                and not getattr(self.editor, 'is_kiosk_mode', False)):
             self.hud._draw_fps_counter(painter)
         if self.play_mode and self.show_sprites_in_play_mode:
             self.hud._draw_sprites_text(painter)
@@ -1328,7 +1335,8 @@ class QtGameView(QOpenGLWidget):
                 self.hud._draw_hud(painter, render_state)
         if (self.play_mode and render_state is not None
                 and render_state.damage_marks and not render_state.player_dead
-                and not self._suppress_default_hud):
+                and not self._suppress_default_hud
+                and not getattr(self, 'game_hud', False)):
             # Not part of the HUD's style or opacity: its own setting
             # ([Display] damage_indicators). Player one's, over the whole view.
             # A game that draws its own HUD (and its own hit feedback) keeps

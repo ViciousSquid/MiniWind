@@ -481,7 +481,7 @@ class ViewHud:
             return
         # A game layer that draws its own richer HUD through the render.overlay
         # hook sets this so the stock HUD does not overlap it.
-        if self.view._suppress_default_hud:
+        if self.view._suppress_default_hud or getattr(self.view, 'game_hud', False):
             return
         # A LogicCamera owns the player's view completely: no HUD is shown
         # while the cinematic is running.

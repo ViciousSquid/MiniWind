@@ -47,9 +47,14 @@ def _sel(session):
 # ===========================================================================
 # Dispatch
 # ===========================================================================
+#: How dark the world is behind character creation (and behind other screens).
+CREATION_DIM = 235
+SCREEN_DIM = 180
+
+
 def draw(painter, session, w, h):
     screen = session.open_screen
-    T.dim_screen(painter, w, h, alpha=180 if screen != "charcreate" else 235)
+    T.dim_screen(painter, w, h, alpha=SCREEN_DIM if screen != "charcreate" else CREATION_DIM)
     fn = _DRAW.get(screen)
     if fn:
         fn(painter, session, w, h)

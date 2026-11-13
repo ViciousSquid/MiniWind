@@ -120,6 +120,15 @@ class PauseMenu:
         self.sub_index = 0
         self._drop_rects = []            # [(sub index, QRect)] of the dropdown
 
+    def root_items(self):
+        """The root row's options. A game launched to play (kiosk mode, the
+        launcher's PLAY) has no EDITOR among them: the player came to play,
+        and the editor stays out of sight unless they leave fullscreen."""
+        items = list(self.ROOT_ITEMS)
+        if getattr(self.editor, 'is_kiosk_mode', False):
+            items = [item for item in items if item[0] != 'editor']
+        return items
+
     # ------------------------------------------------------------------ owner
     @property
     def editor(self):
@@ -213,7 +222,7 @@ class PauseMenu:
     def _items(self):
         """(key, label) pairs for the page currently on screen."""
         if self.page == 'root':
-            return list(self.ROOT_ITEMS)
+            return list(self.root_items())
         if self.page in ('load', 'save'):
             items = [(f'slot{i}', f'SLOT {i}') for i in range(1, SLOT_COUNT + 1)]
             items.append(('back', 'BACK'))
@@ -247,7 +256,7 @@ class PauseMenu:
     # ------------------------------------------------------------------- input
     def _root_key(self):
         """Key of the highlighted option on the root row."""
-        keys = [key for key, _ in self.ROOT_ITEMS]
+        keys = [key for key, _ in self.root_items()]
         return keys[max(0, min(self.index, len(keys) - 1))]
 
     def _set_index(self, index):
@@ -258,7 +267,7 @@ class PauseMenu:
 
     def toggle_dropdown(self, open_it=None):
         """Open or fold the GAME dropdown (highlighting GAME as it opens)."""
-        keys = [key for key, _ in self.ROOT_ITEMS]
+        keys = [key for key, _ in self.root_items()]
         self.expanded = (not self.expanded) if open_it is None else bool(open_it)
         if self.expanded:
             self.index = keys.index('game')
@@ -423,14 +432,14 @@ class PauseMenu:
             self.close()
             return
         self.page = 'root'
-        keys = [key for key, _ in self.ROOT_ITEMS]
+        keys = [key for key, _ in self.root_items()]
         self.index = keys.index('map')
         self.view.update()
 
     def _leave_options(self):
         """Back from OPTIONS to the root row, on OPTIONS."""
         self.page = 'root'
-        keys = [key for key, _ in self.ROOT_ITEMS]
+        keys = [key for key, _ in self.root_items()]
         self.index = keys.index('options')
         self.view.update()
 

@@ -193,6 +193,17 @@ def test_the_root_page_offers_its_options_in_order(app):
     assert _labels(menu) == ["RESUME", "MAP", "GAME", "OPTIONS", "EDITOR", "QUIT"]
 
 
+def test_a_game_launched_to_play_offers_no_editor(app):
+    """The launcher's PLAY runs in kiosk mode: the player came to play, so the
+    pause menu never offers to leave for the editor."""
+    menu = _menu()
+    menu.editor.is_kiosk_mode = True
+    menu.open()
+    assert _labels(menu) == ["RESUME", "MAP", "GAME", "OPTIONS", "QUIT"]
+    _choose(menu, "QUIT")
+    assert menu.page == "confirm"
+
+
 def test_the_death_screen_opens_straight_onto_load_and_backs_out_to_it(app):
     menu = _menu([{"map": "Miniwind", "saved_at": "", "summary": ""}, None, None])
     menu.open_load()

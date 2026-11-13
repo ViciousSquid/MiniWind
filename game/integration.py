@@ -677,6 +677,10 @@ def install_play_menu(view):
     # last autosave, a saved game, a new game (game/ui/death_screen.py); the
     # engine's stays off, and Esc on it no longer leaves for the editor.
     view.game_death_screen = True
+    # And its own HUD, from the first frame of every play session: the stock
+    # health readout used to flash up (a big orange "80") behind character
+    # creation until the game's overlay first ran.
+    view.game_hud = True
     from .ui.death_screen import DeathMenu
     view.death_menu = DeathMenu(view)
     install_wheel_zoom(view)

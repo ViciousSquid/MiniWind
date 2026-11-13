@@ -1330,6 +1330,8 @@ class MiniwindGame:
             # full-screen draw where no window manager exists (e.g. headless).
             self._serve_map_request(session, viewport)
             windowed = self._sync_overlay_windows(session, viewport, w, h)
+            if windowed:
+                self._dim_behind_creation(painter, session, w, h)
             # One of Fio's cutscenes owns the view: no game HUD and no
             # loadout popup over it (Fio hides its own HUD likewise).
             if fio.cutscene_active(session.logic):
@@ -1713,6 +1715,9 @@ class MiniwindGame:
                 click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
                 wants_cursor = True
             window_cls = CallbackWindow
+            if key == "screen:charcreate":
+                from .ui.creation_window import CreationWindow
+                window_cls = CreationWindow
             if key == "screen:lockpicking":
                 from .ui.lockpicking import LockpickWindow
                 window_cls = LockpickWindow
@@ -1746,6 +1751,16 @@ class MiniwindGame:
             bw, bh = dialogue_ui.window_body_size(session)
             cur.set_body_size(bw, bh)
         return True
+
+    @staticmethod
+    def _dim_behind_creation(painter, session, w, h):
+        """Darken the world behind character creation, as the full-screen
+        draw does (game/ui/screens.py): the game has not begun yet."""
+        if session.open_screen != "charcreate" and not session.needs_char_creation:
+            return
+        import game.ui.theme as T
+        import game.ui.screens as screens
+        T.dim_screen(painter, w, h, alpha=screens.CREATION_DIM)
 
     @staticmethod
     def _serve_autosave(session, viewport):
