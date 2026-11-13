@@ -421,6 +421,33 @@ def deflect_chance(character) -> float:
     return max(0.0, min(DEFLECT_MAX, (armour_class(character) - BASE_AC) * DEFLECT_PER_AC))
 
 
+#: Armour materials that are metal. Metal interferes with magic: nobody can
+#: cast a spell (or channel a staff) while wearing a piece of it. Leather --
+#: studded leather included -- hide, fur, cloth, wood and elven work do not.
+#: An item can say otherwise with an explicit ``"metal": true/false``.
+METAL_MATERIALS = frozenset({"iron", "steel", "chain", "scale", "plate", "mithril"})
+
+
+def is_metal(item_def) -> bool:
+    """Whether *item_def* is metal armour (see :data:`METAL_MATERIALS`)."""
+    if item_def is None or item_def.category != items.ARMOUR:
+        return False
+    explicit = item_def.get("metal")
+    if explicit is not None:
+        return bool(explicit)
+    return str(item_def.get("material", "")).lower() in METAL_MATERIALS
+
+
+def metal_worn(character):
+    """The first metal armour piece *character* wears (head to shield), or
+    None. Any one piece is enough to stop a spell."""
+    for slot in items.ARMOUR_SLOTS:
+        d = equipped_def(character, slot)
+        if is_metal(d):
+            return d
+    return None
+
+
 def total_equipped_weight(character) -> float:
     total = 0.0
     for slot, iid in character.equipment.items():

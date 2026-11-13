@@ -7189,6 +7189,10 @@ class MiniwindSession(SettlementLaw):
         if spell is None:
             return False
         self._attack_cooldown = 0.8
+        if rpg_magic.metal_blocks(c):
+            # A staff channels a spell, and metal stops that too.
+            self.notify(rpg_magic.METAL_INTERFERES)
+            return False
         target = self._acquire_target(BOW_REACH)
         cost = rpg_magic.cast_cost(c, spell) * 0.5   # staves are cheaper
         if not c.spend_magicka(cost):
@@ -7299,6 +7303,11 @@ class MiniwindSession(SettlementLaw):
         if c.is_dead or self._cast_cooldown > 0 or not c.active_spell:
             return False
         self._cast_cooldown = 0.7
+        # Worn metal stops every spell, Resurrection and Knock included,
+        # before any magicka is spent.
+        if rpg_magic.metal_blocks(c):
+            self.notify(rpg_magic.METAL_INTERFERES)
+            return False
         # At the level the player has raised it to (rpg_magic.for_caster).
         spell = rpg_magic.for_caster(c, c.active_spell)
         # Resurrection is special: it targets a *fallen* character, drains all

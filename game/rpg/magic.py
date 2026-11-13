@@ -526,6 +526,18 @@ class CastResult:
         self.roll = roll
 
 
+#: What the caster is told when worn metal stops a spell (see
+#: :func:`game.rpg.equipment.metal_worn`).
+METAL_INTERFERES = "The metal interferes..."
+
+
+def metal_blocks(character) -> bool:
+    """Whether metal armour *character* wears stops them casting. It stops
+    anyone, whatever their class; no magicka is spent."""
+    from . import equipment as eq
+    return eq.metal_worn(character) is not None
+
+
 def try_cast(character, spell_id: str, rng: Optional[random.Random] = None,
              dice: Optional["DiceRoller"] = None) -> CastResult:
     """Attempt to cast a known spell.
@@ -539,6 +551,8 @@ def try_cast(character, spell_id: str, rng: Optional[random.Random] = None,
         return CastResult(False, "unknown spell")
     if spell_id not in character.known_spells:
         return CastResult(False, "not known", spell)
+    if metal_blocks(character):
+        return CastResult(False, "metal", spell)
     cost = cast_cost(character, spell)
     if not character.spend_magicka(cost):
         return CastResult(False, "not enough magicka", spell)

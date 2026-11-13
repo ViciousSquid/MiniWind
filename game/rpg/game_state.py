@@ -389,6 +389,8 @@ class GameState:
             for e in (spell.effects if spell else []):
                 if e.get("kind") == "summon":
                     self.message(f"Summoned a {e.get('creature','creature')}!")
+        elif res.reason == "metal":
+            self.message(magic.METAL_INTERFERES)
         elif res.reason == "not enough magicka":
             self.message("Not enough magicka")
         elif res.reason == "fizzle":

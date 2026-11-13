@@ -93,7 +93,7 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
                sk.SPEECHCRAFT, sk.MERCANTILE, sk.ATHLETICS],
               starting_spells=["flare", "heal_minor"]),
     CharClass("sorcerer", "Sorcerer",
-              "A battle-mage who pairs heavy armour and bound blades with fire, frost and shock.",
+              "A spellcaster who pairs bound blades with fire, frost and shock.",
               sk.MAGIC, [attr.INTELLIGENCE, attr.ENDURANCE],
               [sk.OFFENSIVE, sk.DEFENSIVE, sk.HEAVY_ARMOR, sk.BLADE,
                sk.BLOCK, sk.ALCHEMY, sk.ATHLETICS],
