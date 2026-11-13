@@ -34,4 +34,8 @@ def test_no_one_in_the_vale_is_called_by_a_counter_or_a_job(world):
 def test_bryns_pasture_has_wolves_and_the_old_mill_stays_cleared(world):
     by = {t["properties"].get("name"): t["properties"] for t in world["things"]}
     assert by["CreatureSpawn_1"]["creature_role"] == "wolf"
+    assert "_spawned" not in by["CreatureSpawn_1"], "a spent spawner never spawns"
+    fiends = [t for t in world["things"] if t["properties"].get("npc_role") == "monster"
+              and t["properties"].get("name") in ("Creature_19", "Creature_20")]
+    assert not fiends
     assert by["BanditSpawner"]["respawn"] is False

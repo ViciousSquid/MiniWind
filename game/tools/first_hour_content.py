@@ -6,10 +6,13 @@ docs/main_quest.md) and is applied to ``maps/miniwind_world.json`` by name,
 idempotently: running the tool again changes nothing. It never moves geometry
 or anything it does not name.
 
-* **Bryn's pasture.** A spawn point 4.4 km north of Millbrook made two
-  level-4 Fiends, respawning, beside the shepherd whose quest is to cull
-  *wolves*. On the first morning they killed Bryn and a farmer, and mauled a
-  level-1 player walking up to take his quest. It now makes three wolves.
+* **Bryn's pasture.** A spawn point 4.4 km north of Millbrook had made two
+  level-4 Fiends beside the shepherd whose quest is to cull *wolves*, and a
+  save made during play had baked them into the map (as "Creature_19" and
+  "Creature_20") and marked the spawner spent. Within minutes of the player
+  arriving they killed Bryn and a farmer, and mauled a level-1 player walking
+  up to take his quest. The baked Fiends are gone and the spawner makes three
+  wolves at play start.
 * **The Old Mill's bandits do not come back.** Its spawner respawned, so
   "clearing" the mill never cleared it.
 * **Real names.** 81 generated townsfolk were called "Folk908 the Farmer",
@@ -58,10 +61,21 @@ def _by_name(things, name):
 def fix_bryns_pasture(world, log):
     for t in _by_name(world["things"], "CreatureSpawn_1"):
         p = t["properties"]
-        if p.get("creature_role") == "wolf":
-            continue
-        p.update(creature_role="wolf", faction="wildlife", count=3)
-        log.append("CreatureSpawn_1 by Bryn's pasture: two fiends -> three wolves")
+        if p.get("creature_role") != "wolf":
+            p.update(creature_role="wolf", faction="wildlife", count=3)
+            log.append("CreatureSpawn_1 by Bryn's pasture: two fiends -> three wolves")
+        if p.pop("_spawned", None) is not None:
+            # A save made during play baked this spawner's two Fiends into the
+            # map and marked it spent, so it never spawned again: the Fiends
+            # stood by the pasture for good, named "Creature_19" and "_20".
+            log.append("CreatureSpawn_1: spawns again at play start")
+    baked = [t for t in world["things"] if t.get("type") == "creature"
+             and t["properties"].get("npc_role") == "monster"
+             and t["properties"].get("name") in ("Creature_19", "Creature_20")]
+    for t in baked:
+        world["things"].remove(t)
+    if baked:
+        log.append(f"removed the {len(baked)} Fiends baked in beside Bryn's pasture")
 
 
 def fix_old_mill_spawner(world, log):
