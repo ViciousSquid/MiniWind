@@ -233,3 +233,23 @@ def test_a_new_character_keeps_the_quest_files_not_the_built_ins():
         assert [s.index for s in running.stages] == [s["index"] for s in data["stages"]], qid
         assert [s.objective for s in running.stages] == \
             [s.get("objective", "") for s in data["stages"]], qid
+
+
+def test_a_return_to_the_giver_stage_points_at_the_giver():
+    """'Return to Aldric' has no condition (the giver's dialogue advances it),
+    and used to have no arrow either -- with Aldric 12 km away."""
+    quests.register(quests.quest_from_dict(
+        {"id": "arrow_home", "name": "Arrow Home", "giver": "Aldric",
+         "stages": [{"index": 0, "journal": "Go", "objective": "Go",
+                     "condition": {"kind": "visit", "target": "Nowhere"}},
+                    {"index": 10, "journal": "Back", "objective": "Return to Aldric"},
+                    {"index": 20, "journal": "Paid", "finishes": True}]}))
+    aldric = entities.NPC(pos=[9000, 0, 6000], properties={"name": "Aldric"})
+    session = _session([aldric])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.game.quests.start("arrow_home")
+    session.game.quests.set_stage("arrow_home", 10)
+    q = quests.get("arrow_home")
+    assert session._objective_world_pos(q) == [9000, 0, 6000]
+    session.game.quests.set_stage("arrow_home", 20)
+    assert session._objective_world_pos(q) is None

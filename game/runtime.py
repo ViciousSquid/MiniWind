@@ -3411,6 +3411,11 @@ class MiniwindSession(SettlementLaw):
             return None
         kind = st.condition_kind()
         target = self._slug(st.condition_target())
+        if kind == _quests.COND_NONE and not st.finishes:
+            # A stage with no condition is advanced in conversation with the
+            # quest's giver ("Return to Aldric"): the arrow points at them,
+            # however far away they are.
+            kind, target = _quests.COND_TALK, self._slug(getattr(q, "giver", ""))
         if kind == _quests.COND_NONE or not target:
             return None
         pos = None
