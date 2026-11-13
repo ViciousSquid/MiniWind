@@ -36,6 +36,7 @@ from PyQt5.QtGui import (QBrush, QColor, QConicalGradient, QImage, QLinearGradie
 
 from . import theme as T
 from ..compass import CompassNeedle
+from ..rpg.character import whole_health
 
 #: Gap between the frame and the window's top-left corner.
 MARGIN = 14
@@ -275,7 +276,7 @@ def _draw_bars(p, f, c):
         return _fill_px(rect, value, maximum) / rect.width() if rect.width() else 0.0
 
     _bar(p, rects["health"], shown("health", c.health, c.max_health),
-         _FILLS["health"], value=f"{int(c.health)} / {int(c.max_health)}")
+         _FILLS["health"], value=f"{whole_health(c.health)} / {int(c.max_health)}")
     _stamina_line(p, rects["stamina"], rects["health"],
                   shown("stamina", c.stamina, c.max_stamina))
     if "magicka" in rects:
@@ -336,7 +337,7 @@ def draw(painter, session, c, width, height):
                    int(math.ceil(max(f.cy + 1.7 * f.R, f.text_y + 48.0))) + 4)
     under_key = (round(f.R, 1), "magicka" in rects,
                  _fill_px(rects["health"], c.health, c.max_health),
-                 int(c.health), int(c.max_health),
+                 whole_health(c.health), int(c.max_health),
                  _fill_px(rects["stamina"], c.stamina, c.max_stamina),
                  _fill_px(rects["magicka"], c.magicka, c.max_magicka)
                  if "magicka" in rects else None)

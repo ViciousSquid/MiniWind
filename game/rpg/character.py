@@ -57,6 +57,20 @@ def xp_to_next(level: int) -> int:
     return XP_PER_LEVEL * max(1, int(level))
 
 
+def whole_health(health) -> int:
+    """*health* as a whole number, as the HUD and the engine show it:
+    rounded, but never 0 while the character is alive, because 0 is dead
+    (the engine freezes the world for it). Rounding 0.4 down once left a
+    living character frozen on a death the game did not know about."""
+    try:
+        health = float(health)
+    except (TypeError, ValueError):
+        return 0
+    if not health > 0.0:
+        return 0
+    return max(1, int(round(health)))
+
+
 class Character:
     def __init__(self):
         # identity

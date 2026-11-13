@@ -40,6 +40,7 @@ from .rpg import factions
 from .rpg import gib
 from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
+from .rpg import character as rpg_character
 from .rpg import equipment as eq
 from .rpg import classes as rpg_classes
 from .rpg import items as rpg_items
@@ -138,6 +139,7 @@ OFFSCREEN_STRIDE = 4
 #: conditions) run this often rather than every tick.
 PROXIMITY_INTERVAL = 0.1
 NPC_WALK_SPEED = 90.0
+
 #: A provoked fighter remembers its opponent well beyond initial perception.
 #: Only retaliation applies this limit; ordinary detection stays at 1024.
 RETALIATION_PURSUIT_RANGE = 3200.0
@@ -1643,11 +1645,12 @@ class MiniwindSession(SettlementLaw):
             fio.player_runtime(self.logic).player_dead = False
         try:
             fio.player_runtime(self.logic).player_max_health = int(round(c.max_health))
-            if full:
-                fio.player_runtime(self.logic).player_health = int(round(c.health))
-            else:
-                # character is authoritative; mirror into the engine pool
-                fio.player_runtime(self.logic).player_health = int(round(max(0.0, c.health)))
+            # The character is authoritative; mirror it into the engine's
+            # whole-number pool. The engine calls the player dead at 0, so a
+            # living character (any health above 0) is never mirrored as 0:
+            # rounding 0.4 down used to freeze the world on a death the game
+            # did not know about, with no death screen and no way back.
+            fio.player_runtime(self.logic).player_health = rpg_character.whole_health(c.health)
         except Exception:
             pass
 
