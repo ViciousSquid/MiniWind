@@ -272,6 +272,76 @@ Frame rate and tick time do not move beyond run-to-run noise at any
 interval; the list's own cost stops falling at about 5 ticks, where a new
 swing or a raised shield still shows within 83 ms (`HeldWeapons.REBUILD_TICKS`).
 
+The HUD is drawn with QPainter over the GL view. The parts that do not
+change from frame to frame are now painted once into an image and redrawn as
+that one image until what they show changes (`game/ui/paint_cache.py`): the
+inventory strip, the bronze frame under and over the minimap (its fins, bars
+and identity text), and the minimap's disc. Each is keyed on what is visible
+-- a bar's fill in whole pixels, the minimap's offset in whole pixels and its
+turn in quarter degrees -- and painted from those same values, so a cached
+picture is pixel-identical to a fresh one (checked over a 900-tick soak). HUD
+CPU per frame: ~5.4 → ~2.2 ms.
+
+The minimap repaints only when it changes, so it is still while the player
+stands, and on the move it repaints at most 30 times a second
+(`worldmap.MINIMAP_HZ`); turning always repaints at once, as the north
+marker beside it is drawn live. A repaint costs ~0.85 ms. Measured walking a circle
+(15 s each, two runs):
+
+| Minimap cap | repaints/s | minimap CPU per frame | fps |
+|---|---|---|---|
+| none (every change) | 15.2 / 15.4 | 0.85 / 0.91 ms | 15.2 / 15.4 |
+| 30 Hz | 15.8 / 14.5 | 0.81 / 0.87 ms | 15.8 / 14.5 |
+| 10 Hz | 7.8 / 7.9 | 0.55 / 0.52 ms | 15.7 / 15.8 |
+
+At llvmpipe's 15 fps a 30 Hz cap never applies, and 10 Hz saves ~0.35 ms a
+frame. At 60 fps, 30 Hz saves ~0.4 ms a frame and 10 Hz ~0.7 ms, but 10 Hz
+makes the map visibly step. 30 is the default.
+
+Grass quality is a setting (the launcher; the pause menu's Options ▸
+Advanced ▸ Graphics, a slider that applies while it is dragged):
+`[Renderer] grass_quality` = high, medium, low or off. It grows that share of
+the grass (all, half, a quarter, none), keeping the first tufts placed, so a
+lower setting thins the same meadow. Wheat is a crop and always grows in
+full, so Off still has its fields (the farms and the seasons depend on them).
+An older file's `low_grass = True` reads as Medium.
+
+MiniWind's grass is its meadow and the tundra heath. The meadow
+(`game/meadow.py`, grown when Play starts) is occasional tufts all over the
+land: ten blades each, 3.5 times the map's blade height and a green of their
+own. At the map's size and ground colour a tuft is a dark speck from the
+overhead camera, which sits past the grass's detail distance, where only a
+blade's shaded root shows.
+
+Grass is drawn only where the camera can see it, and as cheaply as what is
+on screen allows (`engine/renderer/core/terrain_gl.py`):
+
+* Each chunk's blades are uploaded sorted into cells about 128 units square
+  (Morton order); only cells inside the view are drawn. MiniWind's chunks are
+  2048 units, so drawing a chunk whole drew 70% of its blades off screen.
+* Detail is chosen per cell: a cell wholly beyond the detail distance draws
+  one triangle a blade, the shape the shader already gives it there. Chosen
+  per chunk, every blade in the player's chunk was sent at full detail.
+* A run of cells no actor reaches draws without the shader's per-actor
+  parting loop (up to 20 actors, every vertex): the costliest part of a
+  distant blade.
+* Runs under 128 blades join their neighbour, drawn the costlier way.
+
+At the village start (meadow everywhere; 10 s each, llvmpipe):
+
+| Grass | before | culled | + detail per cell | + parting only where needed | fps (before → now) |
+|---|---|---|---|---|---|
+| High | 167 ms | 80 ms | 43 ms | 31-36 ms | 4.6 → 13.1 |
+| Medium | 93 ms | 44 ms | | 16-20 ms | 6.9 → 16.7-17.5 |
+| Low | 53 ms | 23 ms | | 9-11 ms | 9.8 → 20.7-21.2 |
+| Off (wheat) | 12.7 ms | 1.0 ms | | 0.8 ms | 16.3 → 23.8-24.1 |
+
+High sends 28,000 of the 78,000 blades held, in 50-75 draws (one a chunk
+before, 4-16). A shorter detail distance (150-300 units, from 350-700) would
+bring High to 20-27 ms, with only the grass near the player keeping its
+curved blades: a visible choice, left as it is. Over the tundra (before the
+culling) High drew 336,000 heath blades at 3.8 fps and Off 40 fps.
+
 Where the per-frame Python went (paused overworld, main thread): PyOpenGL's
 argument conversion for brush-instance pointers, matrices and element draws
 (now native entry points, `engine/glraw.py`); the minimap's witness markers

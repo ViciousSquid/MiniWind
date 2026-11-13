@@ -50,6 +50,98 @@ def _no_current_gl_context():
 _TEXTURE_MAX_ANISOTROPY = 0x84FE
 _MAX_TEXTURE_MAX_ANISOTROPY = 0x84FF
 
+#: About how wide a grass cell is (world units). A chunk's blades are
+#: uploaded sorted into cells (Morton order, so a block of neighbouring cells
+#: is mostly one run of the buffer) and only the cells inside the view are
+#: drawn: no blade outside the camera's frustum is sent through.
+GRASS_CELL_SIZE = 128.0
+#: At most this many cells a side (the Morton code holds 4 bits a side).
+GRASS_CELLS_MAX = 16
+
+
+def grass_cells_for(size):
+    """Cells a side for a chunk *size* units wide: a power of two, ~128 units each."""
+    n = 1
+    while n < GRASS_CELLS_MAX and size / (n * 2) >= GRASS_CELL_SIZE * 0.75:
+        n *= 2
+    return n
+
+
+def _morton(ix, iz):
+    """Interleave the bits of two small cell coordinates (Z-order)."""
+    out = np.zeros_like(ix)
+    for bit in range(4):
+        out |= ((ix >> bit) & 1) << (2 * bit)
+        out |= ((iz >> bit) & 1) << (2 * bit + 1)
+    return out
+
+
+def _sort_grass_cells(data, x0, z0, size):
+    """*data*'s blades sorted by cell, and the cells that hold any:
+    ``(data, starts, counts, boxes)`` with ``boxes`` (k, 7) float64 of
+    ``min x, max x, min root y, max root y, max size, min z, max z``."""
+    n = grass_cells_for(size)
+    ix = np.clip(((data[:, 0] - x0) * (n / size)).astype(np.int64), 0, n - 1)
+    iz = np.clip(((data[:, 2] - z0) * (n / size)).astype(np.int64), 0, n - 1)
+    cell = _morton(ix, iz)
+    order = np.argsort(cell, kind='stable')
+    data = np.ascontiguousarray(data[order])
+    cell = cell[order]
+    edges = np.flatnonzero(np.diff(cell)) + 1
+    starts = np.concatenate(([0], edges)).astype(np.int64)
+    counts = np.diff(np.concatenate((starts, [len(data)]))).astype(np.int64)
+    cols = data[:, (0, 1, 2, 3)].astype(np.float64)
+    lo = np.minimum.reduceat(cols, starts, axis=0)
+    hi = np.maximum.reduceat(cols, starts, axis=0)
+    boxes = np.stack((lo[:, 0], hi[:, 0], lo[:, 1], hi[:, 1], hi[:, 3],
+                      lo[:, 2], hi[:, 2]), axis=1)
+    return data, starts, counts, boxes
+
+
+def _visible_cells(boxes, planes, blade_height, blade_width):
+    """Which cells' blades can reach into the frustum (*planes*, (p, 4)).
+
+    A blade stands at most 1.3 x its size x the blade height and leans at
+    most its own length, so each cell's box grows by that much sideways and
+    upward (and its width): conservative, never culling a blade in view."""
+    reach = boxes[:, 4] * (blade_height * 1.3) + blade_width * 2.0 + 1.0
+    x0, x1 = boxes[:, 0] - reach, boxes[:, 1] + reach
+    z0, z1 = boxes[:, 5] - reach, boxes[:, 6] + reach
+    y0, y1 = boxes[:, 2] - 1.0, boxes[:, 3] + reach
+    a, b, c, d = planes[:, 0], planes[:, 1], planes[:, 2], planes[:, 3]
+    px = np.where(a >= 0, x1[:, None], x0[:, None])
+    py = np.where(b >= 0, y1[:, None], y0[:, None])
+    pz = np.where(c >= 0, z1[:, None], z0[:, None])
+    return ~((a * px + b * py + c * pz + d) < 0).any(axis=1)
+
+
+#: A run of fewer blades than this is folded into the run it touches: the
+#: draw call it would cost is dearer than drawing its blades the costlier way
+#: (detailed, or with the parting loop), which is always correct. Measured on
+#: llvmpipe: a draw ~25 us, a blade's parting loop ~0.2 us.
+GRASS_MERGE_RUN = 128
+
+
+def _merge_small_runs(runs):
+    """*runs* (``(start, count, detailed, pushed)``, in buffer order) with
+    every small run joined to an adjoining one, taking the costlier way of
+    each. Runs with out-of-view cells between them stay apart."""
+    if len(runs) < 2:
+        return runs
+    out = [list(runs[0])]
+    for start, count, detailed, pushed in runs[1:]:
+        last = out[-1]
+        if last[0] + last[1] == start and (
+                count < GRASS_MERGE_RUN or last[1] < GRASS_MERGE_RUN
+                or (detailed, pushed) == (last[2], last[3])):
+            last[1] += count
+            last[2] = last[2] or detailed
+            last[3] = last[3] or pushed
+        else:
+            out.append([start, count, detailed, pushed])
+    return [tuple(run) for run in out]
+
+
 class TerrainGL:
     """GL state for one published terrain (``TerrainFrame.key``)."""
 
@@ -109,6 +201,12 @@ class TerrainGL:
         self.culled_chunks = 0
         self.total_triangles = 0
         self.drawn_slots = np.empty(0, dtype=np.intp)
+        #: slot -> (starts, counts, boxes) of its grass cells (_sort_grass_cells).
+        self._grass_cells = {}
+        #: Grass instances and draws the last frame sent (tests, SysMon).
+        self.grass_instances_drawn = 0
+        self.grass_draws = 0
+        self._base_instance = None
 
     def _sync_gl_columns_reset(self):
         for name in ('_grass_vao', '_grass_vbo', '_grass_count', '_gpu_version',
@@ -497,7 +595,10 @@ class TerrainGL:
         gl.glBindVertexArray(0)
         return triangles
 
-    def _draw_grass(self, visible_slots, projection, view, camera_pos, env_uniforms):
+    def _draw_grass(self, visible_slots, projection, view, camera_pos, env_uniforms,
+                    frustum_planes=None):
+        self.grass_instances_drawn = 0
+        self.grass_draws = 0
         if not self.frame.grass_enabled or not self.grass_shader_program:
             return
         # A monotonic frame clock keeps wind speed independent of actual FPS.
@@ -526,6 +627,7 @@ class TerrainGL:
         # Actors parting the grass (TerrainFrame.grass_pushers).
         pushers = getattr(self.frame, 'grass_pushers', None)
         count_loc = u.get('uPusherCount', -1)
+        n_pushers = 0
         if count_loc is not None and count_loc != -1:
             n_pushers = 0 if pushers is None else min(len(pushers), 32)
             gl.glUniform1i(count_loc, n_pushers)
@@ -559,23 +661,49 @@ class TerrainGL:
         dist_sq = self.frame.table.nearest_dist_sq(
             visible_slots, float(camera_pos.x), float(camera_pos.z))
         max_sq = self.frame.grass_max_distance * self.frame.grass_max_distance
+        planes = (None if frustum_planes is None
+                  else np.asarray(frustum_planes, dtype=np.float64).reshape(-1, 4))
+        blade_height = float(self.frame.grass_height)
+        blade_width = float(self.frame.grass_blade_width)
+        lod_sq = self.frame.grass_lod_distance * self.frame.grass_lod_distance
+        if self._base_instance is None:
+            self._base_instance = bool(glraw.has_base_instance())
+        last_segments = None
+        near = (float(camera_pos.x), float(camera_pos.z),
+                float(self.frame.grass_lod_distance))
+        # Where actors part the grass: (x, z, radius). A run of cells none
+        # of them reaches draws with no pushers, so its vertices skip the
+        # shader's per-actor loop -- the costliest part of a far blade.
+        push_circles = (np.asarray(pushers[:n_pushers], dtype=np.float64)[:, :3]
+                        if n_pushers else None)
+        pushers_on = n_pushers
         for slot, d in zip(visible_slots, dist_sq):
             if self._grass_count[slot] <= 0 or not self._grass_vao[slot]:
                 continue
             if d > max_sq:
                 continue
-            # Whole chunks swap between detailed and single-triangle blades.
-            # The shader has already morphed every blade past
-            # GRASS_LOD_DISTANCE onto the far shape, and a chunk's nearest
-            # point is never further than any of its blades, so the swap
-            # cannot be seen.
-            lod_sq = self.frame.grass_lod_distance * self.frame.grass_lod_distance
-            segments = self.frame.grass_segments if d < lod_sq else 1
-            gl.glUniform1i(u['uSegments'], segments)
+            # Cells (or, without them, whole chunks) swap between detailed
+            # and single-triangle blades. The shader has already morphed every
+            # blade past GRASS_LOD_DISTANCE onto the far shape, and a cell's
+            # nearest point is never further than any of its blades, so the
+            # swap cannot be seen.
+            runs = self._grass_runs(int(slot), planes, blade_height, blade_width,
+                                    near, d < lod_sq, push_circles)
+            if not runs:
+                continue
             gl.glBindVertexArray(int(self._grass_vao[slot]))
-            gl.glDrawArraysInstanced(
-                gl.GL_TRIANGLES, 0, grass_vertex_count(segments),
-                int(self._grass_count[slot]))
+            for start, count, detailed, pushed in runs:
+                segments = self.frame.grass_segments if detailed else 1
+                if segments != last_segments:
+                    gl.glUniform1i(u['uSegments'], segments)
+                    last_segments = segments
+                wanted = n_pushers if pushed else 0
+                if wanted != pushers_on:
+                    gl.glUniform1i(count_loc, wanted)
+                    pushers_on = wanted
+                self._draw_grass_run(slot, grass_vertex_count(segments), start, count)
+                self.grass_instances_drawn += count
+                self.grass_draws += 1
         gl.glBindVertexArray(0)
         # Grass blades are double-sided. Put culling back the way it was
         # found -- the terrain pass runs with it off. Forcing it on leaked
@@ -762,6 +890,7 @@ class TerrainGL:
             self._grass_vao[slot] = self._grass_vbo[slot] = 0
             self._grass_count[slot] = 0
             self._grass_version[slot] = 0
+            self._grass_cells.pop(slot, None)
 
     def _free_slots(self, slots):
         self._free_grass(slots)
@@ -807,6 +936,80 @@ class TerrainGL:
         self._block_count[slot] = len(data)
         self._block_version[slot] = version
 
+    def _grass_runs(self, slot, planes, blade_height, blade_width,
+                    near=None, detailed=True, pushers=None):
+        """``[(first instance, count, detailed, pushed)]`` of *slot*'s grass
+        to draw: its cells inside the frustum, neighbouring ones merged into
+        one run.
+
+        *near* is ``(x, z, distance)``: a cell wholly further than *distance*
+        from (x, z) -- the grass's detail distance from the camera point --
+        draws its blades as single triangles, the shape the shader has
+        already morphed them into there, so the change cannot be seen. A run
+        never mixes the two. Without cells (or *near*) the run takes
+        *detailed*.
+
+        *pushers* are the ``(x, z, radius)`` of the actors parting the grass
+        (or None): a run is *pushed* when one of them reaches a blade root in
+        it; the rest need no parting."""
+        total = int(self._grass_count[slot])
+        cells = self._grass_cells.get(slot)
+        anyone = pushers is not None and len(pushers) > 0
+        if planes is None or cells is None:
+            return [(0, total, detailed, anyone)]
+        starts, counts, boxes = cells
+        # 0: out of view; 1: in view, far; 2: in view, detailed.
+        kind = _visible_cells(boxes, planes, blade_height, blade_width).astype(np.int8)
+        if near is not None and detailed:
+            x, z, reach = near
+            dx = np.maximum(np.maximum(boxes[:, 0] - x, x - boxes[:, 1]), 0.0)
+            dz = np.maximum(np.maximum(boxes[:, 5] - z, z - boxes[:, 6]), 0.0)
+            kind *= np.where(dx * dx + dz * dz < reach * reach, 2, 1).astype(np.int8)
+        elif detailed:
+            kind *= 2
+        if anyone:
+            # A pusher reaches a cell when its circle meets the cell's roots.
+            px, pz, pr = pushers[:, 0], pushers[:, 1], pushers[:, 2]
+            gx = np.maximum(np.maximum(boxes[:, 0, None] - px, px - boxes[:, 1, None]), 0.0)
+            gz = np.maximum(np.maximum(boxes[:, 5, None] - pz, pz - boxes[:, 6, None]), 0.0)
+            pushed = (gx * gx + gz * gz < pr * pr).any(axis=1)
+            kind = np.where(kind > 0, kind + 2 * pushed, 0).astype(np.int8)
+        if not kind.any():
+            return []
+        # The occupied cells lie end to end in the buffer, so a stretch of
+        # cells of one kind is one run.
+        edges = np.flatnonzero(np.diff(kind)) + 1
+        bounds = np.concatenate(([0], edges, [len(kind)]))
+        runs = []
+        for first, stop in zip(bounds[:-1], bounds[1:]):
+            if kind[first]:
+                begin = int(starts[first])
+                k = int(kind[first])
+                runs.append((begin, int(starts[stop - 1] + counts[stop - 1]) - begin,
+                             k in (2, 4), k >= 3))
+        return _merge_small_runs(runs)
+
+    def _draw_grass_run(self, slot, vertices, start, count):
+        """Draw *count* of *slot*'s blades from instance *start* (its VAO bound)."""
+        if start == 0:
+            gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, vertices, count)
+        elif self._base_instance:
+            gl.glDrawArraysInstancedBaseInstance(gl.GL_TRIANGLES, 0, vertices, count, start)
+        else:
+            # No base instance (macOS's GL 4.1): point the instance
+            # attributes at the run, draw, and point them back.
+            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, int(self._grass_vbo[slot]))
+            self._grass_attributes(start * 9 * 4)
+            gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, vertices, count)
+            self._grass_attributes(0)
+
+    @staticmethod
+    def _grass_attributes(base):
+        stride = 9 * 4
+        for loc, size, offset in ((6, 3, 24), (2, 3, 0), (3, 1, 12), (4, 1, 16), (5, 1, 20)):
+            gl.glVertexAttribPointer(loc, size, gl.GL_FLOAT, gl.GL_FALSE, stride,
+                                     ctypes.c_void_p(base + offset))
+
     def _upload_grass_chunk(self, slot: int):
         """Upload a slot's published grass instances (``(n, 9)`` float32)."""
         entry = self._product(self.frame.products.grass, slot)
@@ -817,17 +1020,21 @@ class TerrainGL:
         self._grass_version[slot] = version
         if count <= 0:
             self._grass_count[slot] = 0
+            self._grass_cells.pop(slot, None)
             return
+        table = self.frame.table
+        data, starts, counts, boxes = _sort_grass_cells(
+            data, float(table.world[slot, 0]), float(table.world[slot, 1]),
+            float(table.size[slot]))
+        self._grass_cells[slot] = (starts, counts, boxes)
         if not self._grass_vao[slot]:
             self._grass_vao[slot] = int(gl.glGenVertexArrays(1))
             self._grass_vbo[slot] = int(gl.glGenBuffers(1))
         gl.glBindVertexArray(int(self._grass_vao[slot]))
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, int(self._grass_vbo[slot]))
         gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data, gl.GL_STATIC_DRAW)
-        stride = 9 * 4
-        for loc, size, offset in ((6, 3, 24), (2, 3, 0), (3, 1, 12), (4, 1, 16), (5, 1, 20)):
-            gl.glVertexAttribPointer(loc, size, gl.GL_FLOAT, gl.GL_FALSE, stride,
-                                     ctypes.c_void_p(offset))
+        self._grass_attributes(0)
+        for loc in (6, 2, 3, 4, 5):
             gl.glEnableVertexAttribArray(loc)
             gl.glVertexAttribDivisor(loc, 1)
         gl.glBindVertexArray(0)
@@ -1012,7 +1219,8 @@ class TerrainGL:
                 self._upload_grass_chunk(slot)
             candidates = built[self._grass_count[built] > 0]
             visible_grass = candidates[table.visible(candidates, frustum_planes)]
-            self._draw_grass(visible_grass, projection, view, camera_pos, env_uniforms)
+            self._draw_grass(visible_grass, projection, view, camera_pos, env_uniforms,
+                             frustum_planes)
 
     # -- lifetime ---------------------------------------------------------
 
