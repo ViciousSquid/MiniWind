@@ -87,6 +87,10 @@ def test_macos_turns_by_native_deltas_with_the_cursor_detached(playing, monkeypa
     monkeypatch.setattr(view, "_mac_mouse", SimpleNamespace(take=take))
     monkeypatch.setattr(view, "_mac_cursor_detached", False)
     monkeypatch.setattr(gv.QCursor, "setPos", staticmethod(lambda *a: None))
+    # The re-centre has landed: the view waits for that before it detaches
+    # the cursor (Fio's play mouse-grab fix), lest it pin it over a button.
+    centre = view.mapToGlobal(view.rect().center())
+    monkeypatch.setattr(gv.QCursor, "pos", staticmethod(lambda: centre))
 
     view._skip_next_look_poll = True
     view._poll_mouse_look()                    # centre the cursor
