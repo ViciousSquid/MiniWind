@@ -193,3 +193,64 @@ def test_grass_flames_wear_every_fires_one_look():
         assert {t.properties["fire_texture"] for t in logic.editor_state.things} == {fire_look.texture()}
     finally:
         restore()
+
+
+def test_a_small_fire_in_a_field_rarely_dies_young():
+    """Dry wheat carries fire: from one spark in a light wind, fires that
+    die before reaching six cells are rare."""
+    died = 0
+    for seed in range(30):
+        fire = gf.GrassFire(_field(lambda x, z: 0.8), wind=lambda: (0.2, 0.1),
+                            rng=random.Random(100 + seed))
+        fire.ignite(0.0, 0.0)
+        _run(fire, 15.0)
+        died += len(fire.burnt) + len(fire.burning) < 6
+    assert died <= 2
+
+
+# --- rain (game/weather.py) --------------------------------------------------
+def test_rain_puts_a_fire_out_and_wet_grass_barely_catches():
+    from ..weather import Weather, RAIN, STORM
+    dry = gf.GrassFire(_field(lambda x, z: 1.0), wind=lambda: (0.5, 0.0), rng=random.Random(11))
+    dry.ignite(0.0, 0.0)
+    _run(dry, 20.0)
+    w = Weather(random.Random(1))
+    w.set(STORM)
+    w.update(1.0)                                         # the storm has come in
+    wet = gf.GrassFire(_field(lambda x, z: 1.0), wind=lambda: (0.5, 0.0), rng=random.Random(11))
+    wet.weather = lambda: (w.douse(), w.dryness())
+    assert w.dryness() < 0.5
+    lit = wet.ignite(0.0, 0.0)
+    _run(wet, 20.0)
+    assert len(wet.burning) + len(wet.burnt) < (len(dry.burning) + len(dry.burnt)) / 5
+    # A fire already burning when the rain comes is put out.
+    fire = gf.GrassFire(_field(lambda x, z: 1.0), wind=lambda: (0.5, 0.0), rng=random.Random(12))
+    fire.ignite(0.0, 0.0)
+    _run(fire, 10.0)
+    assert fire.burning
+    w2 = Weather(random.Random(2))
+    w2.set(RAIN)
+    w2.rain = 0.9
+    fire.weather = lambda: (w2.douse(), 1.0)
+    _run(fire, 12.0)
+    assert not fire.burning
+    assert lit in (True, False)
+
+
+def test_the_weather_turns_by_itself_and_the_ground_dries():
+    from ..weather import Weather, KINDS, RAIN, CLEAR
+    w = Weather(random.Random(3))
+    seen = set()
+    for _ in range(24 * 20):
+        w.update(0.25)
+        seen.add(w.kind)
+        assert 0.0 <= w.rain <= 1.0 and 0.0 <= w.wet <= 1.0
+    assert {RAIN, CLEAR} <= seen and seen <= set(KINDS)
+    w.set(RAIN)
+    for _ in range(12):
+        w.update(0.25)
+    soaked = w.wet
+    w.set(CLEAR, hours=10)
+    for _ in range(24):
+        w.update(0.25)
+    assert soaked > 0.5 and w.wet < soaked

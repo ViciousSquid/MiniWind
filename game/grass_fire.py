@@ -47,8 +47,8 @@ MAX_BURNING = 900
 MIN_FUEL = 0.08
 #: How fast fire jumps to a neighbour (per second, at full fuel and heat,
 #: no wind), and how much the wind adds downwind / takes upwind.
-SPREAD = 0.12
-WIND_PUSH = 2.6
+SPREAD = 0.16
+WIND_PUSH = 1.8
 UPWIND_FLOOR = 0.06
 #: A cell flares up over this many seconds, then dies down over its last.
 FLARE_SECONDS = 0.8
@@ -108,6 +108,11 @@ class GrassFire:
         #: Who set it, by cell (for blame: a fire the player started).
         self.by: Dict[Tuple[int, int], object] = {}
         self._fuel: Dict[Tuple[int, int], float] = {}
+        #: Told of each cell as it burns out: ``on_burnt(key)``.
+        self.on_burnt = None
+        #: ``() -> (douse, dryness)``: rain fighting the fire (0..1) and how
+        #: dry the ground is (1 dry .. 0 soaked), from game/weather.py.
+        self.weather = None
         self._carry = 0.0
         self._arrays = None
 
@@ -146,8 +151,9 @@ class GrassFire:
         if key in self.burning or key in self.burnt or len(self.burning) >= MAX_BURNING:
             return False
         f = self.fuel(key)
-        if f < MIN_FUEL:
-            return False
+        dry = self.weather()[1] if self.weather is not None else 1.0
+        if f * dry < MIN_FUEL:
+            return False                    # too little, or too wet, to catch
         total = burn_seconds(f, self.rng)
         cx, cz = centre_of(key)
         try:
@@ -193,11 +199,16 @@ class GrassFire:
 
     def _step(self) -> int:
         wx, wz = self.wind()
+        douse, dry = self.weather() if self.weather is not None else (0.0, 1.0)
+        # Rain burns a fire out faster and holds it back; wet ground barely
+        # catches. Heavy rain stops it spreading at all.
+        burn_down = STEP * (1.0 + 5.0 * douse)
+        hold = dry * max(0.0, 1.0 - 1.4 * douse) ** 2
         rng = self.rng
         newly = []
         done = []
         for key, cell in self.burning.items():
-            cell[0] -= STEP
+            cell[0] -= burn_down
             if cell[0] <= 0.0:
                 done.append(key)
                 continue
@@ -214,7 +225,7 @@ class GrassFire:
                 dist = math.hypot(dx, dz)
                 along = (dx * wx + dz * wz) / dist           # wind strength along the jump
                 push = max(UPWIND_FLOOR, 1.0 + WIND_PUSH * along)
-                rate = SPREAD * f * h * push / dist
+                rate = SPREAD * f * h * push / dist * hold
                 if rng.random() < 1.0 - math.exp(-rate * STEP):
                     newly.append((nk, self.by.get(key)))
         for key in done:
@@ -222,6 +233,8 @@ class GrassFire:
             self.by.pop(key, None)
             self.burnt.add(key)
             self.scorch_due.append(key)
+            if self.on_burnt is not None:
+                self.on_burnt(key)
         lit = 0
         for nk, by in newly:
             if self._light(nk, by):

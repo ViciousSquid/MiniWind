@@ -6,6 +6,8 @@ brown where the heat was less, flecks of pale ash and the odd dark stalk --
 with a ragged alpha so the edges of a burn are broken, not round. The game
 bakes them into the terrain's paint where grass burnt out
 (:meth:`game.runtime.MiniwindSession._scorch`), which also clears the grass.
+And two of bare, turned earth: a burnt wheat field once the scorch has gone,
+until its farmer sows it again (:mod:`game.fire_aftermath`).
 
 Run from the repo root::
 
@@ -65,7 +67,28 @@ def scorch(seed):
             py = int(y + np.sin(ang) * t) % SIZE
             stalks[py, px] = 1.0
     rgb = rgb * (1 - 0.6 * stalks[..., None])
-    alpha = np.clip(0.82 + 0.3 * char + 0.15 * (fine - 0.5), 0, 1)
+    # Opaque: no grass grows through it (thin paint lets meadow blades through).
+    alpha = np.ones_like(char)
+    out = np.dstack([np.clip(rgb, 0, 1), alpha])
+    return Image.fromarray((out * 255).astype(np.uint8), "RGBA")
+
+
+def earth(seed):
+    """Bare earth, turned over: what a burnt wheat field is once the scorch
+    has gone and before it is sown -- brown soil in furrows, a little ash."""
+    rng = np.random.default_rng(seed)
+    clods = tiling_noise(rng, SIZE, 8)
+    fine = tiling_noise(rng, SIZE, 24, octaves=3)
+    yy = np.arange(SIZE, dtype=np.float32)[:, None] * np.ones((1, SIZE), np.float32)
+    furrow = 0.5 + 0.5 * np.cos(yy / SIZE * 2 * np.pi * 8 + (clods - 0.5) * 1.6)
+    dark = np.array([0.22, 0.15, 0.09])
+    light = np.array([0.42, 0.31, 0.20])
+    k = np.clip(furrow * 0.7 + clods * 0.3, 0, 1)[..., None]
+    rgb = dark * (1 - k) + light * k
+    rgb = rgb * (0.82 + 0.36 * fine[..., None])
+    ash = np.clip((tiling_noise(rng, SIZE, 20, octaves=2) - 0.83) * 6.0, 0, 1)[..., None]
+    rgb = rgb * (1 - ash) + np.array([0.45, 0.43, 0.40]) * ash
+    alpha = np.ones_like(clods)
     out = np.dstack([np.clip(rgb, 0, 1), alpha])
     return Image.fromarray((out * 255).astype(np.uint8), "RGBA")
 
@@ -75,6 +98,10 @@ def main():
     for i in range(4):
         path = os.path.join(OUT, f"scorch_{i}.png")
         scorch(1000 + i).save(path, optimize=True)
+        print("wrote", path)
+    for i in range(2):
+        path = os.path.join(OUT, f"earth_{i}.png")
+        earth(2000 + i).save(path, optimize=True)
         print("wrote", path)
 
 

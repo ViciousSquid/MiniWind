@@ -2553,6 +2553,75 @@ class Terrain:
         bot = self.heightmap_data[y1, x0] * (1 - fx) + self.heightmap_data[y1, x1] * fx
         return top * (1 - fy) + bot * fy
 
+    def snapshot_texture_paint(self, bounds):
+        """The baked paint of the chunks under *bounds*, as it is now:
+        ``{chunk: (texture_paint_maps array, texture_paint_base array)}``.
+
+        Free: paint arrays are replaced, never written in place (see
+        :meth:`_bake_texture_rect`), so holding them keeps this moment's paint
+        whatever is baked after. Hand it to :meth:`restore_texture_paint` to
+        put part of it back -- a game's scorch, say, once the ground recovers.
+        """
+        return {key: (self.texture_paint_maps.get(key), self.texture_paint_base.get(key))
+                for key in self._chunks_in_bounds(bounds)}
+
+    def restore_texture_paint(self, bounds, snapshot):
+        """Put the paint under *bounds* back as *snapshot* (from
+        :meth:`snapshot_texture_paint`) had it; True if anything changed.
+
+        Only the texels inside *bounds* change; the rest of each chunk keeps
+        whatever was baked since. Grass grows back there by the ordinary
+        rule (paint under :attr:`GRASS_PAINT_CLEAR` lets it). Costs a copy of
+        each chunk touched (256 KB), its upload and its grass, like a bake.
+        """
+        try:
+            min_x, min_z, max_x, max_z = [float(v) for v in bounds]
+        except (TypeError, ValueError):
+            return False
+        res = self.TERRAIN_PAINT_RESOLUTION
+        cell = self.chunk_size / float(res)
+        stamped = bool(self.paint_stamps)
+        target = self.texture_paint_base if stamped else self.texture_paint_maps
+        changed = set()
+        for key in self._chunks_in_bounds((min_x, min_z, max_x, max_z)):
+            if key not in snapshot:
+                continue
+            orig = snapshot[key][1 if stamped else 0]
+            cur = target.get(key)
+            if cur is None and orig is None:
+                continue
+            chunk_min_x = self.offset_x + key[0] * self.chunk_size
+            chunk_min_z = self.offset_z + key[1] * self.chunk_size
+            ix0 = max(0, int(math.floor((min_x - chunk_min_x) / cell)))
+            ix1 = min(res - 1, int(math.floor((max_x - chunk_min_x) / cell)))
+            iz0 = max(0, int(math.floor((min_z - chunk_min_z) / cell)))
+            iz1 = min(res - 1, int(math.floor((max_z - chunk_min_z) / cell)))
+            if ix1 < ix0 or iz1 < iz0:
+                continue
+            new = cur.copy() if cur is not None else np.zeros((res, res, 4), np.uint8)
+            if orig is not None:
+                new[ix0:ix1 + 1, iz0:iz1 + 1] = orig[ix0:ix1 + 1, iz0:iz1 + 1]
+            else:
+                new[ix0:ix1 + 1, iz0:iz1 + 1] = 0
+            if cur is not None and np.array_equal(new, cur):
+                continue
+            if new[..., 3].any():
+                target[key] = new
+            else:
+                target.pop(key, None)
+            changed.add(key)
+        if not changed:
+            return False
+        if stamped:
+            self._drop_drag_cache()
+            self._recompose_paint(changed)
+        else:
+            self.texture_paint_base = dict(self.texture_paint_maps)
+            self._paint_changed_grass(tuple(changed))
+            for key in changed:
+                self._touch_texture_paint(key)
+        return True
+
     def _touch_texture_paint(self, coord):
         """Bump the version for one baked terrain paint chunk."""
         self._paint_version_counter += 1

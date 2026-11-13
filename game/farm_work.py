@@ -54,6 +54,11 @@ SCYTHE = "scythe"
 PITCHFORK = "pitchfork"
 REAPING = "REAPING"
 TENDING = "TENDING"
+SOWING = "SOWING"
+#: After a fire (game/fire_aftermath.py), a farmer sowing a burnt field again
+#: works extra hard: these hours rather than WORK_HOURS, and a quicker step.
+SOWING_HOURS = (5.0, 20.5)
+SOWING_SPEED = 1.3
 DELIVERING = "DELIVERING_WHEAT"
 DELIVERY_BATCH = 5
 DELIVERY_DISTANCE = 70.0
@@ -61,6 +66,31 @@ DELIVERY_DISTANCE = 70.0
 
 def is_farmer(props) -> bool:
     return str(props.get("npc_role", "")).lower() in FARM_ROLES
+
+
+def _aftermath(session):
+    return getattr(session, "fire_aftermath", None)
+
+
+def sowing_late(session, npc) -> bool:
+    """A farmer sowing a burnt field again works these extra hours, past
+    the schedule's working day (game/fire_aftermath.py)."""
+    after = _aftermath(session)
+    clock = getattr(session, "clock", None)
+    if after is None or clock is None or not is_farmer(npc.properties):
+        return False
+    now = float(clock.day) * 24.0 + float(clock.hour)
+    return (after.sowing(npc.properties, now)
+            and SOWING_HOURS[0] <= float(clock.hour) < SOWING_HOURS[1])
+
+
+def _scorched(terrain, x, z) -> bool:
+    """Ground a fire left painted (scorch, bare earth): nothing stands there
+    to reap."""
+    try:
+        return float(terrain._paint_alpha_batch([x], [z])[0]) >= terrain.GRASS_PAINT_CLEAR
+    except Exception:
+        return False
 
 
 def _dist(a, b) -> float:
@@ -104,6 +134,17 @@ def field_rows(terrain, centre) -> List[List[float]]:
     return path
 
 
+def _pace(props, hurrying) -> None:
+    """A farmer sowing again after a fire walks quicker; back to their own
+    pace after."""
+    if hurrying and "sow_base_speed" not in props:
+        base = float(props.get("move_speed", 90.0) or 90.0)
+        props["sow_base_speed"] = base
+        props["move_speed"] = base * SOWING_SPEED
+    elif not hurrying and "sow_base_speed" in props:
+        props["move_speed"] = props.pop("sow_base_speed")
+
+
 def stop(props) -> None:
     """Put the tool away and leave the farm routine."""
     _put_tool_away(props)
@@ -138,13 +179,21 @@ class FarmWork:
         p = npc.properties
         clock = session.clock
         hour = float(clock.hour)
-        if (not is_farmer(p) or p.get("dead") or npc.pos is None
-                or not (WORK_HOURS[0] <= hour < WORK_HOURS[1])):
-            stop(p)
-            return False
         now = float(clock.day) * 24.0 + hour
+        after = _aftermath(session)
+        sowing = bool(after is not None and is_farmer(p) and after.sowing(p, now))
+        hours = SOWING_HOURS if sowing else WORK_HOURS
+        if (not is_farmer(p) or p.get("dead") or npc.pos is None
+                or not (hours[0] <= hour < hours[1])):
+            stop(p)
+            _pace(p, False)
+            return False
         if self._deliver(session, npc, now):
             return True
+        points = after.sow_points(npc, now) if sowing else []
+        _pace(p, bool(points))
+        if points:
+            return self._sow(session, npc, points)
         task = p.get("_farm_task")
         if not task or now >= float(task.get("until", 0.0)) or now < float(task.get("since", 0.0)):
             task = self._choose(session, npc, now, task)
@@ -152,8 +201,24 @@ class FarmWork:
                 stop(p)
                 return False
         if task["kind"] == "reap":
-            return self._reap(npc, task)
+            return self._reap(session, npc, task)
         return self._tend(session, npc, task)
+
+    def _sow(self, session, npc, points) -> bool:
+        """Walk the burnt field's bare rows, sowing each: arriving at one
+        sows it (game/fire_aftermath.py), and on to the nearest next."""
+        p = npc.properties
+        _put_tool_away(p)
+        p.pop("_farm_task", None)
+        target = min(points, key=lambda r: _dist(npc.pos, r))
+        p["sched_state"] = SOWING
+        p["_farm_work"] = "sow"
+        if _dist(npc.pos, target) <= ARRIVE:
+            _aftermath(session).sow(target[0], target[1])
+            p.pop("_dest", None)
+        else:
+            p["_dest"] = [target[0], npc.pos[1], target[1]]
+        return True
 
     def _deliver(self, session, npc, now) -> bool:
         import game.windmills as windmills
@@ -240,7 +305,7 @@ class FarmWork:
                 best, best_d = t, d
         return best
 
-    def _reap(self, npc, task) -> bool:
+    def _reap(self, session, npc, task) -> bool:
         p = npc.properties
         rows = p.get("_farm_rows") or []
         if not rows:
@@ -248,7 +313,17 @@ class FarmWork:
         i = int(task.get("i", 0)) % len(rows)
         if _dist(npc.pos, rows[i]) <= ARRIVE:
             i = (i + 1) % len(rows)
-            task["i"] = i
+        # Past the rows a fire burnt: nothing stands there to reap.
+        import game.fio as fio
+        terrain = fio.terrain(session.logic) if getattr(session, "logic", None) is not None else None
+        if terrain is not None:
+            for _ in range(len(rows)):
+                if not _scorched(terrain, rows[i][0], rows[i][1]):
+                    break
+                i = (i + 1) % len(rows)
+            else:
+                return False                  # the whole field burnt
+        task["i"] = i
         target = rows[i]
         p["_dest"] = [target[0], npc.pos[1], target[1]]
         p["sched_state"] = REAPING
@@ -289,7 +364,7 @@ class FarmWork:
             work = p.get("_farm_work")
             if not work or p.get("dead") or p.get("hidden"):
                 continue
-            every = SWING_EVERY if work == "reap" else FORK_EVERY
+            every = SWING_EVERY if work in ("reap", "sow") else FORK_EVERY
             clock = float(p.get("_farm_swing", 0.0)) + float(delta)
             if p.get("_farm_swinging") and clock >= SWING_HOLD:
                 p["is_shooting"] = False
@@ -312,6 +387,8 @@ class FarmWork:
         weights = terrain.biome_weights_batch([npc.pos[0]], [npc.pos[2]])
         if weights[0, tb.WHEAT] * tb.bare_keep(weights)[0] < FIELD_WHEAT:
             return
+        if _scorched(terrain, npc.pos[0], npc.pos[2]):
+            return                            # burnt: no grain on ash
         import game.rpg.inventory as inventory
         import game.rpg.items as items
         inventory.add_item(inventory.get_inventory(npc), items.make("wheat"))

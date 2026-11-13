@@ -923,10 +923,22 @@ class MiniwindSession(SettlementLaw):
         from .wind import Wind
         from .grass_fire import GrassFire
         self.wind = Wind(random.Random())
+        from .weather import Weather
+        from .lens_water import LensWater
+        self.weather = Weather(random.Random())
+        #: Rain on the camera's glass (game/lens_water.py).
+        self.lens_water = LensWater(random.Random())
         self.grass_fire = GrassFire(self._grass_fuel, height=self._fire_ground,
                                     wind=self.wind.vector, rng=random.Random())
         self._fire_clock = 0.0
         self._scorch_clock = 0.0
+        self._aftermath_clock = 0.0
+        #: What a fire leaves: the news, the lost wheat, the farmers, the
+        #: ground recovering (game/fire_aftermath.py).
+        from .fire_aftermath import FireAftermath
+        self.fire_aftermath = FireAftermath(self)
+        self.grass_fire.on_burnt = self.fire_aftermath.burnt
+        self.grass_fire.weather = self._fire_weather
         #: Grass fire's flames: FIRE Effects spawned where it burns
         #: (game/flame_spawner.py).
         from .flame_spawner import FlameSpawner
@@ -1071,6 +1083,18 @@ class MiniwindSession(SettlementLaw):
         """Killing blows and crits jolt the screen (GAME → "Screen shake")."""
         return self._game_flag("screen_shake")
 
+    def weather_enabled(self) -> bool:
+        """Rain and cloud (``[GAME] weather``, Settings > Game); on by
+        default. Off, the sky stays clear and nothing is ever wet."""
+        return self._game_flag("weather")
+
+    def _fire_weather(self):
+        """``(douse, dryness)`` for grass fire: rain fighting it and how dry
+        the ground is (game/weather.py); none of it with the weather off."""
+        if not self.weather_enabled():
+            return 0.0, 1.0
+        return self.weather.douse(), self.weather.dryness()
+
     def grass_fire_enabled(self) -> bool:
         """Fire spreads through long grass and scorches the ground
         (``[GAME] grass_fire``, Settings > Game); on by default. Off, a fire
@@ -1127,12 +1151,22 @@ class MiniwindSession(SettlementLaw):
         there will burn."""
         if pos is None or not self.grass_fire_enabled():
             return False
-        return self.grass_fire.ignite(float(pos[0]), float(pos[2]), by=by)
+        lit = self.grass_fire.ignite(float(pos[0]), float(pos[2]), by=by)
+        if lit:
+            self.fire_aftermath.ignited(float(pos[0]), float(pos[2]))
+        return lit
 
     def _update_grass_fire(self, delta) -> None:
         """Advance the wind and any grass fire; set alight whoever stands in
         it; blacken the ground behind it."""
-        self.wind.update(float(delta) * float(getattr(self.clock, "hours_per_second", 1 / 60.0)))
+        hours = float(delta) * float(getattr(self.clock, "hours_per_second", 1 / 60.0))
+        self.wind.update(hours)
+        self.weather.update(hours)
+        self.lens_water.update(delta, self.weather.rain if self.weather_enabled() else 0.0)
+        self._aftermath_clock += delta
+        if self._aftermath_clock >= 0.25:
+            self._aftermath_clock = 0.0
+            self.fire_aftermath.update()
         fire = self.grass_fire
         spawner = self.flame_spawner
         if not fire.burning and not fire.scorch_due:
@@ -1191,11 +1225,12 @@ class MiniwindSession(SettlementLaw):
         from .grass_fire import CELL
         done = 0
         for x, z, fuel in cells:
+            self.fire_aftermath.before_scorch(x, z, CELL)
             seed = (int(x) * 73856093) ^ (int(z) * 19349663)
             art = self.SCORCH_ART[seed % len(self.SCORCH_ART)]
             try:
                 if ter.paint_texture_at(x, z, CELL * 0.9, art, feather=0.55,
-                                        opacity=0.55 + 0.4 * float(fuel),
+                                        opacity=1.0,
                                         angle=(seed % 628) / 100.0):
                     done += 1
             except Exception:
@@ -1540,6 +1575,11 @@ class MiniwindSession(SettlementLaw):
         self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
+        self.fire_aftermath.restore()  # scorch and bare fields from fires before
+        try:
+            self.weather.restore(json.loads(self.store.get("weather", "") or "{}"))
+        except (TypeError, ValueError):
+            pass
         self._party_due = True         # raised followers arrive with the player (update)
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
@@ -1588,6 +1628,7 @@ class MiniwindSession(SettlementLaw):
         if getattr(self, "burning", None) is not None:
             self.burning.clear()
         if getattr(self, "grass_fire", None) is not None:
+            self.fire_aftermath.persist()
             self.grass_fire.clear()
             self.flame_spawner.clear()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
@@ -5624,7 +5665,8 @@ class MiniwindSession(SettlementLaw):
                 and self.flour_supply.drive(npc, state)):
             return
 
-        if state == sched.WORKING and farm_work.is_farmer(p):
+        if ((state == sched.WORKING or farm_work.sowing_late(self, npc))
+                and farm_work.is_farmer(p)):
             if self.farm_work.drive(self, npc):
                 return
         elif p.get("_farm_tool") or p.get("_farm_delivery"):
@@ -5982,10 +6024,13 @@ class MiniwindSession(SettlementLaw):
     def _rumour_decay(self, fact):
         """How fast talk about the player fades, by the player's Charisma:
         people doubt ill of the charming and repeat their kindnesses, and
-        believe the worst of the repulsive."""
+        believe the worst of the repulsive. News nobody doubts (an event kind
+        tagged ``certain``: a fire) loses nothing in the telling."""
+        import game.sim.events as sim_events
+        if "certain" in sim_events.kind_spec(fact.get("kind", ""))["tags"]:
+            return 0.0
         if fact.get("actor") != self.player_key:
             return None
-        import game.sim.events as sim_events
         mult = rpg_fortune.RUMOUR_CHARM.get(
             rpg_cha.tier(rpg_cha.charisma_of(self.game.character)), 1.0)
         tags = sim_events.kind_spec(fact.get("kind", ""))["tags"]
@@ -6289,7 +6334,8 @@ class MiniwindSession(SettlementLaw):
                 and self.flour_supply.drive(npc, state)):
             return
 
-        if state == sched.WORKING and farm_work.is_farmer(p):
+        if ((state == sched.WORKING or farm_work.sowing_late(self, npc))
+                and farm_work.is_farmer(p)):
             # Farm work and wheat deliveries continue outside the camera too.
             if self.farm_work.drive(self, npc):
                 return
@@ -11130,6 +11176,8 @@ class MiniwindSession(SettlementLaw):
             # The director persists its subsystems (pacing, factions) with it.
             self.director.persist()
             self.law.persist()
+            self.fire_aftermath.persist()
+            self.store.set("weather", json.dumps(self.weather.snapshot()))
 
     def restore(self) -> None:
         # The event history first, so anything that reads it during the rest of

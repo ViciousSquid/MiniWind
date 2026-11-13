@@ -20,6 +20,8 @@ _OPENERS = {
                   "I was there! {What}."),
     "heard": ("I heard it happen: {what}.", "There was such a commotion. {What}."),
     "told": ("Did you hear? {What}.", "They're saying {what}.", "Word is, {what}."),
+    "certain": ("Did you hear? It's true: {what}.", "It's certain, {what}.",
+                "Everyone knows it by now: {what}."),
 }
 
 #: The listener's reply, by what sort of news it is (the event kind's tags).
@@ -29,6 +31,8 @@ _REPLIES = {
     "violence": ("In broad daylight? I'll keep my distance.", "The watch had better hear of this."),
     "property": ("I'll keep a hand on my purse.", "Thieves, here? Lock everything."),
     "social": ("Kind of them.", "Well, that's good to hear for once."),
+    "fire": ("Fire? Gods keep it from my roof.", "There goes the harvest, then.",
+             "Bread'll be dear this winter, you mark me."),
     "": ("Is that so?", "Huh. Who'd have thought.", "You don't say."),
 }
 
@@ -84,11 +88,13 @@ def gossip_lines(fact: Dict, speaker: str = "", listener: str = "") -> Tuple[str
     import game.sim.knowledge as knowledge
     what = knowledge.phrase(fact)
     source = str(fact.get("source", "told"))
+    tags = events.kind_spec(fact.get("kind", ""))["tags"]
+    if "certain" in tags and source != "witnessed":
+        source = "certain"
     salt = (speaker, listener, fact.get("e", 0))
     opener = _pick(_OPENERS.get(source, _OPENERS["told"]), *salt).format(
         what=what, What=what[:1].upper() + what[1:])
-    tags = events.kind_spec(fact.get("kind", ""))["tags"]
-    kind = next((t for t in ("grave", "violence", "property", "social") if t in tags), "")
+    kind = next((t for t in ("fire", "grave", "violence", "property", "social") if t in tags), "")
     return opener, _pick(_REPLIES[kind], *salt)
 
 

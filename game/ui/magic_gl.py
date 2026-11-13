@@ -195,6 +195,44 @@ void main() {
     frag.rgb += glow;
 }"""
 
+#: Rain on the lens (game/lens_water.py): each drop on the glass is a little
+#: lens -- the picture behind it seen through it upside-down and smaller,
+#: a darker edge, a bright rim and a highlight -- over the finished frame.
+_WET_FRAG = """#version 330 core
+in vec2 uv;
+uniform sampler2D scene;
+uniform vec4 drops[48];      // xy centre (uv, y up), z radius (uv height), w wetness
+uniform int count;
+uniform float aspect;
+out vec4 frag;
+void main() {
+    vec2 at = uv;
+    float shade = 1.0;
+    float shine = 0.0;
+    for (int i = 0; i < 48; i++) {
+        if (i >= count) break;
+        vec2 c = drops[i].xy;
+        float R = max(drops[i].z, 1e-4);
+        vec2 d = uv - c;
+        d.x *= aspect;
+        d.y *= 0.92;                       // a bead sits a touch wider than tall
+        float r = length(d) / R;
+        if (r >= 1.0) continue;
+        float w = drops[i].w;
+        float h = sqrt(1.0 - r * r);       // the bead's dome
+        // Through the bead the world is seen turned over and smaller.
+        vec2 look = -d * (2.6 + 2.0 * h);
+        look.x /= aspect;
+        at = mix(at, c + look * R * 0.0 + look, w);
+        shade *= mix(1.0, 0.55 + 0.45 * h, w);           // darker toward the edge
+        float rim = smoothstep(0.78, 0.95, r) * (1.0 - smoothstep(0.95, 1.0, r));
+        vec2 hl = d / R - vec2(-0.32, 0.38);
+        shine += w * (0.35 * rim + 0.9 * exp(-dot(hl, hl) * 40.0));
+    }
+    vec3 col = texture(scene, clamp(at, vec2(0.001), vec2(0.999))).rgb * shade;
+    frag = vec4(col + vec3(shine * 0.55), 1.0);
+}"""
+
 #: Effects are hidden by walls in front of them.
 DEPTH_TEST = True
 #: Instance floats per sprite: centre + size, colour, params.
@@ -205,6 +243,8 @@ class _State:
     ok = None
     prog = vao = quad = inst = 0
     lens_prog = lens_vao = 0
+    wet_prog = 0
+    wet_loc = {}
     fbo = tex = 0
     tex_size = (0, 0)
     loc = {}
@@ -254,6 +294,9 @@ def _init(gl) -> bool:
                        for n in ("scene", "lens", "ring", "shimmer", "count", "aspect",
                                  "time")}
         _S.lens_vao = gl.glGenVertexArrays(1)
+        _S.wet_prog = _compile(gl, _LENS_VERT, _WET_FRAG)
+        _S.wet_loc = {n: gl.glGetUniformLocation(_S.wet_prog, n)
+                      for n in ("scene", "drops", "count", "aspect")}
         _S.ok = True
     except Exception as exc:
         print(f"[MiniWind] magic effects unavailable: {exc}")
@@ -349,6 +392,39 @@ def project_lenses(projection, view, lenses, width, height):
     return out[:8]
 
 
+def _grab_frame(gl, x0, y0, w, h) -> None:
+    """Copy the finished frame (resolving any multisampling) into the pass's
+    texture, sized to the view."""
+    prev_draw = int(gl.glGetIntegerv(gl.GL_DRAW_FRAMEBUFFER_BINDING))
+    prev_read = int(gl.glGetIntegerv(gl.GL_READ_FRAMEBUFFER_BINDING))
+    if _S.tex_size != (w, h):
+        if _S.fbo:
+            gl.glDeleteFramebuffers(1, [_S.fbo])
+            gl.glDeleteTextures([_S.tex])
+        _S.tex = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, _S.tex)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, w, h, 0, gl.GL_RGBA,
+                        gl.GL_UNSIGNED_BYTE, None)
+        for param, value in ((gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
+                             (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR),
+                             (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
+                             (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, param, value)
+        _S.fbo = gl.glGenFramebuffers(1)
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, _S.fbo)
+        gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0,
+                                  gl.GL_TEXTURE_2D, _S.tex, 0)
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, prev_draw)
+        _S.tex_size = (w, h)
+    # Copy the frame (resolving any multisampling) into the texture.
+    gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, prev_draw)
+    gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, _S.fbo)
+    gl.glBlitFramebuffer(x0, y0, x0 + w, y0 + h, 0, 0, w, h,
+                         gl.GL_COLOR_BUFFER_BIT, gl.GL_NEAREST)
+    gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, prev_draw)
+    gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, prev_read)
+
+
 def draw_lenses(projection, view, lenses) -> int:
     """The fisheye pass over the finished frame (see the module doc)."""
     if not lenses:
@@ -361,34 +437,7 @@ def draw_lenses(projection, view, lenses) -> int:
         screen = project_lenses(projection, view, lenses, w, h)
         if not screen:
             return 0
-        prev_draw = int(gl.glGetIntegerv(gl.GL_DRAW_FRAMEBUFFER_BINDING))
-        prev_read = int(gl.glGetIntegerv(gl.GL_READ_FRAMEBUFFER_BINDING))
-        if _S.tex_size != (w, h):
-            if _S.fbo:
-                gl.glDeleteFramebuffers(1, [_S.fbo])
-                gl.glDeleteTextures([_S.tex])
-            _S.tex = gl.glGenTextures(1)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, _S.tex)
-            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, w, h, 0, gl.GL_RGBA,
-                            gl.GL_UNSIGNED_BYTE, None)
-            for param, value in ((gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
-                                 (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR),
-                                 (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
-                                 (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
-                gl.glTexParameteri(gl.GL_TEXTURE_2D, param, value)
-            _S.fbo = gl.glGenFramebuffers(1)
-            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, _S.fbo)
-            gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0,
-                                      gl.GL_TEXTURE_2D, _S.tex, 0)
-            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, prev_draw)
-            _S.tex_size = (w, h)
-        # Copy the frame (resolving any multisampling) into the texture.
-        gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, prev_draw)
-        gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, _S.fbo)
-        gl.glBlitFramebuffer(x0, y0, x0 + w, y0 + h, 0, 0, w, h,
-                             gl.GL_COLOR_BUFFER_BIT, gl.GL_NEAREST)
-        gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, prev_draw)
-        gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, prev_read)
+        _grab_frame(gl, x0, y0, w, h)
 
         prev_prog = gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM)
         depth = gl.glIsEnabled(gl.GL_DEPTH_TEST)
@@ -423,5 +472,48 @@ def draw_lenses(projection, view, lenses) -> int:
         return len(screen)
     except Exception as exc:
         print(f"[MiniWind] magic lens failed, turned off: {exc}")
+        _S.ok = False
+        return 0
+
+
+def draw_wet_lens(drops) -> int:
+    """Rain on the lens: *drops* ``[(x, y, radius, wetness)]`` in screen
+    fractions (y down) from :meth:`game.lens_water.LensWater.frame`, drawn
+    over the finished frame in one pass. Returns how many."""
+    if not drops:
+        return 0
+    import OpenGL.GL as gl
+    if not _init(gl):
+        return 0
+    try:
+        x0, y0, w, h = (int(v) for v in gl.glGetIntegerv(gl.GL_VIEWPORT))
+        _grab_frame(gl, x0, y0, w, h)
+        prev_prog = gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM)
+        depth = gl.glIsEnabled(gl.GL_DEPTH_TEST)
+        blend = gl.glIsEnabled(gl.GL_BLEND)
+        gl.glDisable(gl.GL_DEPTH_TEST)
+        gl.glDisable(gl.GL_BLEND)
+        gl.glUseProgram(_S.wet_prog)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, _S.tex)
+        loc = _S.wet_loc
+        gl.glUniform1i(loc["scene"], 0)
+        data = np.zeros((48, 4), dtype=np.float32)
+        n = min(48, len(drops))
+        for i, (x, y, r, wet) in enumerate(drops[:n]):
+            data[i] = (x, 1.0 - y, r, wet)          # uv has y up
+        gl.glUniform4fv(loc["drops"], 48, data)
+        gl.glUniform1i(loc["count"], n)
+        gl.glUniform1f(loc["aspect"], w / float(h))
+        gl.glBindVertexArray(_S.lens_vao)
+        gl.glDrawArrays(gl.GL_TRIANGLES, 0, 3)
+        gl.glBindVertexArray(0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        gl.glUseProgram(int(prev_prog))
+        (gl.glEnable if depth else gl.glDisable)(gl.GL_DEPTH_TEST)
+        (gl.glEnable if blend else gl.glDisable)(gl.GL_BLEND)
+        return n
+    except Exception as exc:
+        print(f"[MiniWind] wet lens failed, turned off: {exc}")
         _S.ok = False
         return 0

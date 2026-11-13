@@ -145,10 +145,19 @@ class Burning:
         if not self.burns and not self.fires:
             return
         delta = max(0.0, float(delta))
+        # Rain puts fire out sooner (game/weather.py).
+        douse = 0.0
+        weather_of = getattr(self.session, "_fire_weather", None)
+        if weather_of is not None:
+            try:
+                douse = float(weather_of()[0])
+            except Exception:
+                douse = 0.0
+        quench = delta * 4.0 * douse
         for key, burn in list(self.burns.items()):
             thing = burn["thing"]
             alive = self._alive(thing)
-            burn["left"] -= delta if alive else max(delta, FADE_SECONDS)
+            burn["left"] -= (delta if alive else max(delta, FADE_SECONDS)) + quench
             if burn["left"] <= 0.0:
                 self._put_out(burn["flame"])
                 del self.burns[key]
@@ -169,7 +178,7 @@ class Burning:
                 self._place(burn["flame"], pos, BODY_FLAME_SIZE, k)
         ppos = self.session._player_pos()
         for fire in list(self.fires):
-            fire["left"] -= delta
+            fire["left"] -= delta + quench
             if fire["left"] <= 0.0:
                 self._put_out(fire["flame"])
                 self.fires.remove(fire)

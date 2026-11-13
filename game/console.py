@@ -368,6 +368,37 @@ def cmd_pause(ctx, args):
     return None
 
 
+def cmd_weather(ctx, args):
+    """weather [clear|overcast|rain|storm] [hours] -- what the sky is doing
+    (game/weather.py); with a kind, make it so now, for a spell or *hours*."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    weather = getattr(session, "weather", None)
+    if weather is None:
+        debug_log("Error", "weather: Play Mode only.")
+        return None
+    parts = str(args or "").split()
+    if not parts:
+        snap = weather.snapshot()
+        debug_log("Info", f"weather: {snap['kind']} for {snap['left']:.1f} h more; rain "
+                          f"{snap['rain']:.2f}, ground wet {snap['wet']:.2f}.")
+        return None
+    hours = None
+    if len(parts) > 1:
+        try:
+            hours = float(parts[1])
+        except ValueError:
+            hours = None
+    if not weather.set(parts[0].lower(), hours):
+        debug_log("Error", "weather: clear, overcast, rain or storm.")
+        return None
+    msg = f"Weather: {parts[0].lower()}."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
 def cmd_dragonfire(ctx, args):
     """dragonfire 1..4 -- the look of every fire, for this session.
 
@@ -678,6 +709,8 @@ COMMANDS = (
      "— Time controls (rewind, play/pause, speed) and teleport to any cave (Play Mode)"),
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
+    (("weather",), cmd_weather,
+     "[clear|overcast|rain|storm] [hours] — What the sky is doing; make it so now (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
      "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,

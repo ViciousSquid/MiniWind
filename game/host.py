@@ -876,6 +876,13 @@ class MiniwindGame:
                 arrow_art.draw_arrows(projection, view, arrows)
         if lenses:
             magic_gl.draw_lenses(projection, view, lenses)
+        # Rain on the camera's glass, over everything in the world
+        # (game/lens_water.py).
+        water = getattr(session, "lens_water", None)
+        if water is not None and water.drops and session.weather_enabled():
+            if fx is None:
+                import game.ui.magic_gl as magic_gl
+            magic_gl.draw_wet_lens(water.frame())
 
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
@@ -1351,6 +1358,11 @@ class MiniwindGame:
                 # Blood on the world, under the night and the HUD.
                 hud.draw_gore(painter, session, viewport, w, h)
                 hud.draw_time_tint(painter, session, w, h, viewport)
+                # The weather over the world, under the HUD (game/ui/rain.py).
+                weather = getattr(session, "weather", None)
+                if weather is not None and session.weather_enabled():
+                    import game.ui.rain as rain
+                    rain.draw(painter, weather, session.wind.vector(), w, h, time.perf_counter())
                 # Magic's screen washes (a resurrection's dark red, a frost
                 # hit's rime) over the world, under the HUD.
                 import game.ui.magic_overlay as magic_overlay

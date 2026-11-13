@@ -432,6 +432,47 @@ Graphics; on by default):
   batches no more than twice a second), each lighting the ground around it.
   Turned off, a fire on the ground burns where it fell and goes no further.
 
+**After a fire** (`game/fire_aftermath.py`):
+
+* *Everyone knows.* A fire is seen for miles: everyone within 2,500 units
+  knows it for certain the moment it starts, and the news loses no certainty
+  however often it is retold ("It's true: fire swept through the wheat near
+  Millbrook, today."). When it is out, travellers carry it to other towns
+  and notice boards post it.
+* *The food is lost.* Scorched ground grows no grain: farmers reap nothing
+  there and skip its rows, so less wheat reaches the mill, less flour the
+  shops, and the hungry go hungrier.
+* *The farmers.* A farmer whose field burnt is furious (courage 0.45 or
+  more) or terrified for two days, and says so — about the fire and the
+  bread it cost — when you are near.
+* *The ground recovers, then they sow.* The scorch lies three days. Then heath
+  grows back by itself, but a wheat field lies bare, turned earth, and its
+  farmer works extra hard for two days — 5:00 to 20:30, a third quicker on
+  their feet — sowing it again, row by row: each row sown is wheat once
+  more. A field nobody sows grows back on its own after a week. Nothing
+  grows on scorched or bare ground.
+* Burns are kept with the save, per map.
+
+**Weather** (Settings › Game › *Weather*, on by default; `weather` in the
+console):
+
+* The sky turns by itself: spells of clear sky (6–20 hours), cloud (2–6),
+  rain (1–5) and now and then a storm (½–2), each easing into the next. Rain
+  soaks the ground; it dries over hours after, twice as fast under clear sky.
+  The weather is kept with the save.
+* *Rain fights fire.* Burning grass burns out up to six times faster in a
+  storm and spreads slower in any rain — heavy rain stops it spreading at
+  all. Wet ground barely catches (a soaked field one tenth as readily).
+  Someone burning, and a Flare's fire on the ground, go out sooner.
+* *How it looks.* Rain falls past the overhead camera: drops near the lens
+  are big soft smears out toward the edges of the view, streaking in toward
+  the middle as they fall, small and sharp, to splash on the ground; the
+  wind leans them; the world is washed darker under cloud; a storm's
+  lightning flashes. The camera gets wet: drops gather on the glass (more in
+  a storm), each a little lens showing the world through it upside-down,
+  run together, slide down when heavy, and dry off when the rain stops.
+  None of it ever covers the HUD.
+
 ---
 
 ## 10. Learning from tutors
