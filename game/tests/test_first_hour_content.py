@@ -57,3 +57,17 @@ def test_the_first_hour_has_locks_to_pick(world):
         assert name in locks, name
     assert "owner" not in locks["rusted_lockbox"] and "owner" not in locks["old_mill_strongbox"]
     assert locks["aldric_toll_chest"]["owner"] == "Aldric"
+
+
+def test_most_chests_are_locked_and_locks_vary(world):
+    from collections import Counter
+    chests = [t["properties"] for t in world["things"]
+              if t.get("type") == "container" and t["properties"].get("container_kind") == "chest"]
+    locked = [p for p in chests if p.get("locked")]
+    assert len(locked) >= 0.85 * len(chests)
+    tiers = Counter(p.get("lock_difficulty") for p in locked)
+    assert len(tiers) >= 4, tiers
+    for t in world["things"]:
+        p = t["properties"]
+        if t.get("type") == "container" and p.get("container_kind") in ("sack", "barrel", "urn"):
+            assert not p.get("locked"), "a sack has nothing to lock: " + str(p.get("name"))

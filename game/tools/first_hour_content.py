@@ -15,6 +15,9 @@ or anything it does not name.
   wolves at play start.
 * **The Old Mill's bandits do not come back.** Its spawner respawned, so
   "clearing" the mill never cleared it.
+* **Locked chests.** Only 14 of 330 containers were locked. Chests and
+  hoards are now locked nine times in ten and crates half the time, with a
+  lock as hard as what they guard; sacks, barrels and urns have none.
 * **Real names.** 81 generated townsfolk were called "Folk908 the Farmer",
   and Millbrook's two archers "Town Archer", in roll boxes, barks and
   conversation. Each gets a given name, kept in their title ("Edda the
@@ -201,8 +204,65 @@ def place_first_locks(world, log):
         log.append(f"placed {spec['display_name']} ({spec['lock']} lock)")
 
 
+LOCK_TIERS = ("novice", "apprentice", "adept", "expert", "master")
+#: Containers named for what they guard: hoards and coffers take the hard locks.
+HOARDS = ("Hoard", "Coffer", "Strongbox", "Barrow Chest", "Cache")
+
+
+def _stable_roll(props) -> float:
+    """A fixed number in [0, 1) for this container, from its id: the same lock
+    every time the tool runs, but varied across the world."""
+    import hashlib
+    key = str(props.get("id") or props.get("name") or "")
+    return int(hashlib.sha1(key.encode()).hexdigest()[:8], 16) / 0x100000000
+
+
+def lock_the_chests(world, log):
+    """Most chests are locked, as they would be: only a tenth have a broken
+    lock. Crates are padlocked half the time. A sack, a barrel or an urn has
+    nothing to lock. How hard a lock is follows what it guards: the worth of
+    what is inside, a merchant's chest a tier harder, a named hoard or coffer
+    expert or master. Locks already authored are kept as they are."""
+    people = {t["properties"].get("name"): t["properties"] for t in world["things"]
+              if t.get("type") == "npc"}
+    locked = 0
+    for t in world["things"]:
+        p = t["properties"]
+        if t.get("type") != "container" or p.get("locked"):
+            continue
+        kind = str(p.get("container_kind", ""))
+        roll = _stable_roll(p)
+        shown = str(p.get("display_name", ""))
+        if kind == "chest" or any(h in shown for h in HOARDS):
+            if roll < 0.10 and not any(h in shown for h in HOARDS):
+                continue                             # a broken lock: left open
+        elif kind == "crate":
+            if roll >= 0.5:
+                continue
+        else:
+            continue
+        worth = sum(int(i.get("value", 0) or 0) * int(i.get("qty", 1) or 1)
+                    for i in p.get("inventory", []) if isinstance(i, dict))
+        tier = 0 if worth < 20 else 1 if worth < 60 else 2 if worth < 150 else 3
+        if kind == "crate":
+            tier = min(tier, 1)
+        owner = people.get(p.get("owner")) or {}
+        if owner.get("merchant"):
+            tier += 1
+        if any(h in shown for h in HOARDS):
+            tier = max(tier, 3)
+        if roll > 0.85:
+            tier += 1                                # now and then a better lock
+        p["locked"] = True
+        p["lock_difficulty"] = LOCK_TIERS[max(0, min(tier, len(LOCK_TIERS) - 1))]
+        locked += 1
+    if locked:
+        log.append(f"locked {locked} chests and crates")
+
+
 STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
-         send_stray_skeletons_home, rename_their_chests, place_first_locks)
+         send_stray_skeletons_home, rename_their_chests, place_first_locks,
+         lock_the_chests)
 
 
 def apply(world):

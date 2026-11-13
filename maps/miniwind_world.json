@@ -674544,14 +674544,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Osric",
                 "owner_name": "Osric the Ferryman",
                 "type": "container",
                 "id": "a09bdaf0-ae9e-5916-9024-27ac08f48c02",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -677060,14 +677060,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Aldric",
                 "owner_name": "Aldric the Reeve",
                 "type": "container",
                 "id": "cbd6c873-6a90-5b33-95ea-c9d6a506494a",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -680074,14 +680074,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Fenwick",
                 "owner_name": "Fenwick the Hunter",
                 "type": "container",
                 "id": "e33b228f-7709-595f-8c81-70db7990aeae",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -681225,14 +681225,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Bryn",
                 "owner_name": "Bryn the Shepherd",
                 "type": "container",
                 "id": "b525e89b-ac0e-5a97-b243-93395a21f4ba",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -682006,12 +682006,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "type": "container",
                 "id": "04978618-d233-51a2-8d62-d0a81fb945da",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -683115,13 +683115,13 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner_faction": "cultists",
                 "type": "container",
                 "id": "7574ea46-4e73-5e6f-adbc-8ef790f39850",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -684768,12 +684768,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "type": "container",
                 "id": "2910aeab-c244-59f6-9e5d-af6504756ef1",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -685306,12 +685306,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "type": "container",
                 "id": "dd9ee37d-930d-567f-ad65-f0169f04399a",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -686075,13 +686075,13 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner_faction": "monsters",
                 "type": "container",
                 "id": "ccc5846f-92cc-53a0-bc27-c8512ba94ed5",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -688183,10 +688183,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -688400,10 +688400,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -688484,10 +688484,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -688665,10 +688665,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -691232,10 +691232,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -693230,10 +693230,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -693314,10 +693314,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -695514,10 +695514,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -695952,10 +695952,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -697234,10 +697234,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -698273,10 +698273,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -698388,10 +698388,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -699701,10 +699701,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -700071,10 +700071,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -701163,10 +701163,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -702350,10 +702350,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -703096,10 +703096,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -706779,10 +706779,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -729851,7 +729851,7 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
                 "lock_difficulty": "novice",
@@ -735830,10 +735830,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -739355,14 +739355,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 95.7,
                 "owner": "Thalen",
                 "owner_name": "Thalen the Smith",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -739428,14 +739428,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 0.2,
                 "owner": "Head chef",
                 "owner_name": "Head Chef",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -739538,7 +739538,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 262.7,
@@ -739575,14 +739575,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 8.0,
                 "owner": "Ysolde",
                 "owner_name": "Ysolde Steelhand",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -739777,14 +739777,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 263.7,
                 "owner": "Pell",
                 "owner_name": "Pell the Farmhand",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -740089,7 +740089,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 172.3,
@@ -740391,14 +740391,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 92.5,
                 "owner": "Isolde_thornfield",
                 "owner_name": "Isolde of Thornfield",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -740657,14 +740657,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 176.1,
                 "owner": "Maud_kettlewick",
                 "owner_name": "Maud of Kettlewick",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -740758,7 +740758,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 179.0,
@@ -740968,14 +740968,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 183.0,
                 "owner": "Joan_brackenford",
                 "owner_name": "Joan of Brackenford",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -741014,7 +741014,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 84.3,
@@ -741344,7 +741344,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 4.0,
@@ -741418,7 +741418,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 92.3,
@@ -741464,7 +741464,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 271.2,
@@ -741546,14 +741546,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 86.6,
                 "owner": "Lettice_wyndham_cross",
                 "owner_name": "Lettice of Wyndham Cross",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -741968,14 +741968,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": -4.9,
                 "owner": "Rowan_copper_rest_cottage",
                 "owner_name": "Rowan the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742023,14 +742023,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 184.1,
                 "owner": "Wat_crow_bank_cottage",
                 "owner_name": "Wat the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742069,14 +742069,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 83.6,
                 "owner": "Wat_crow_bank_cottage",
                 "owner_name": "Wat the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742133,14 +742133,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 181.8,
                 "owner": "Merrick_elm_hold_cottage",
                 "owner_name": "Merrick the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742179,7 +742179,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 273.2,
@@ -742325,14 +742325,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 274.8,
                 "owner": "Wilmot_hare_end_cottage",
                 "owner_name": "Wilmot the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742454,7 +742454,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 276.2,
@@ -742500,7 +742500,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 178.1,
@@ -742628,14 +742628,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 266.4,
                 "owner": "Folk681_red_fold_cottage",
                 "owner_name": "Folk681 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742711,14 +742711,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 93.0,
                 "owner": "Folk685_river_side_cottage",
                 "owner_name": "Folk685 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742830,14 +742830,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 275.2,
                 "owner": "Folk698_stone_bank_wayside_camp",
                 "owner_name": "Folk698 the Wayfarer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -742931,14 +742931,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 186.6,
                 "owner": "Folk702_thorn_hold_cottage",
                 "owner_name": "Folk702 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -743051,7 +743051,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 273.4,
@@ -743179,14 +743179,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": -7.4,
                 "owner": "Folk732_black_mead_cottage",
                 "owner_name": "Folk732 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -743280,7 +743280,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 181.9,
@@ -743463,14 +743463,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 277.1,
                 "owner": "Folk750_crow_croft_cottage",
                 "owner_name": "Folk750 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -743518,7 +743518,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 0.9,
@@ -743564,7 +743564,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 184.0,
@@ -743610,7 +743610,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 85.0,
@@ -743941,14 +743941,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 86.0,
                 "owner": "Folk800_oak_cottage_cottage",
                 "owner_name": "Folk800 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -744133,14 +744133,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 97.2,
                 "owner": "Folk814_raven_cross_farm",
                 "owner_name": "Folk814 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -744197,14 +744197,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": -4.3,
                 "owner": "Folk817_red_grove_wayside_camp",
                 "owner_name": "Folk817 the Wayfarer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -744252,7 +744252,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 179.8,
@@ -744316,7 +744316,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 269.8,
@@ -744426,7 +744426,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 269.1,
@@ -744490,14 +744490,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 174.9,
                 "owner": "Folk843_thorn_rest_farm",
                 "owner_name": "Folk843 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -744738,14 +744738,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": -4.0,
                 "owner": "Folk861_alder_stead_cottage",
                 "owner_name": "Folk861 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -744968,14 +744968,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 269.7,
                 "owner": "Folk880_brook_mead_cottage",
                 "owner_name": "Folk880 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -745069,14 +745069,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 274.3,
                 "owner": "Folk887_cinder_cross_farm",
                 "owner_name": "Folk887 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -745280,14 +745280,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 187.7,
                 "owner": "Folk904_elm_side_cottage",
                 "owner_name": "Folk904 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -745399,14 +745399,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 263.7,
                 "owner": "Folk915_gorse_rest_farm",
                 "owner_name": "Folk915 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -745646,14 +745646,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 262.4,
                 "owner": "Folk930_hollow_field_farm",
                 "owner_name": "Folk930 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -745701,14 +745701,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 176.0,
                 "owner": "Folk937_moor_stead_farm",
                 "owner_name": "Folk937 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -745774,14 +745774,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": -7.6,
                 "owner": "Folk944_oak_end_farm",
                 "owner_name": "Folk944 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -746131,7 +746131,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 262.1,
@@ -746287,14 +746287,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 276.7,
                 "owner": "Folk988_vale_croft_wayside_camp",
                 "owner_name": "Folk988 the Wayfarer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -746333,14 +746333,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 1.5,
                 "owner": "Folk988_vale_croft_wayside_camp",
                 "owner_name": "Folk988 the Wayfarer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -746388,7 +746388,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 276.8,
@@ -746516,7 +746516,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 88.8,
@@ -746644,14 +746644,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 180.2,
                 "owner": "Folk1000_alder_watch_cottage",
                 "owner_name": "Folk1000 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -746772,14 +746772,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 175.8,
                 "owner": "Folk1014_briar_end_wayside_camp",
                 "owner_name": "Folk1014 the Wayfarer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -746827,14 +746827,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 92.9,
                 "owner": "Folk1021_brook_run_farm",
                 "owner_name": "Folk1021 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -746882,7 +746882,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 97.3,
@@ -747010,14 +747010,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 181.7,
                 "owner": "Folk1032_copper_cross_wayside_camp",
                 "owner_name": "Folk1032 the Wayfarer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747138,14 +747138,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 183.2,
                 "owner": "Folk1036_crow_grove_farm",
                 "owner_name": "Folk1036 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747284,14 +747284,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 275.9,
                 "owner": "Folk1053_gorse_side_farm",
                 "owner_name": "Folk1053 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747357,14 +747357,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 5.0,
                 "owner": "Folk1063_hare_rest_cottage",
                 "owner_name": "Folk1063 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747394,14 +747394,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 7.5,
                 "owner": "Folk1067_hazel_bank_cottage",
                 "owner_name": "Folk1067 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747559,14 +747559,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 91.4,
                 "owner": "Folk1078_moor_watch_farm",
                 "owner_name": "Folk1078 the Farmer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747623,14 +747623,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": -6.6,
                 "owner": "Folk1088_old_stead_cottage",
                 "owner_name": "Folk1088 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747669,14 +747669,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": -3.5,
                 "owner": "Folk1092_raven_end_cottage",
                 "owner_name": "Folk1092 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747724,14 +747724,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 7.5,
                 "owner": "Folk1092_raven_end_cottage",
                 "owner_name": "Folk1092 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -747761,7 +747761,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 265.3,
@@ -747807,14 +747807,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 90.2,
                 "owner": "Folk1096_red_run_cottage",
                 "owner_name": "Folk1096 the Cottager",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -748100,14 +748100,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": -2.8,
                 "owner": "Folk1117_vale_fold_wayside_camp",
                 "owner_name": "Folk1117 the Wayfarer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -748384,14 +748384,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 0.1,
                 "owner": "Hollin",
                 "owner_name": "Hollin Brewer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "adept",
                 "lock_key": ""
             },
             "io_connections": []
@@ -748467,14 +748467,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 183.6,
                 "owner": "Oswin",
                 "owner_name": "Oswin the Armourer",
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -748632,12 +748632,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 82.2,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -748955,7 +748955,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 265.4,
@@ -749171,12 +749171,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 269.2,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "expert",
                 "lock_key": ""
             },
             "io_connections": []
@@ -749688,12 +749688,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 265.5,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -750087,7 +750087,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 277.8,
@@ -750874,12 +750874,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 263.8,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -751131,7 +751131,7 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "_furnished": true,
                 "angle": 272.2,
@@ -751292,12 +751292,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 180.1,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -751621,12 +751621,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 6.7,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -752063,12 +752063,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 267.3,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
@@ -753396,12 +753396,12 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_crate.png",
                 "_furnished": true,
                 "angle": 172.0,
                 "io_enabled": true,
-                "lock_difficulty": "novice",
+                "lock_difficulty": "apprentice",
                 "lock_key": ""
             },
             "io_connections": []
