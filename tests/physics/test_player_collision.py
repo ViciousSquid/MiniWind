@@ -335,3 +335,42 @@ def test_solidity_is_decided_once_per_frame_not_once_per_pass(monkeypatch):
     run(player, [floor, wall], steps=1, move=(1.0, 0.0))
 
     assert sorted(calls) == ["floor", "wall"]
+
+
+# ---------------------------------------------------------------------------
+# Rising ground under a ceiling
+# ---------------------------------------------------------------------------
+
+class _Ramp:
+    """Terrain flat at 0 for x < 0, then rising half a unit per unit."""
+
+    def is_solid(self):
+        return True
+
+    def get_height_at_safe(self, x, z):
+        return max(0.0, float(x) * 0.5)
+
+
+def test_rising_ground_never_lifts_the_player_into_a_ceiling():
+    """MiniWind's Smugglers' Cove: swimming up the lake bed under a jetty,
+    the terrain lifted the player's head into the jetty's underside, and
+    from inside it every move in every direction was refused -- a trap with
+    no way out. A lift needs headroom, as a stair lip does."""
+    import glm
+    # Head room of 112 over flat ground for a 100-tall player: the ramp runs
+    # out of it 24 units up, under the slab.
+    slab = box_brush(name="jetty", pos=(200.0, 113.0, 0.0), size=(400.0, 2.0, 400.0))
+    player = player_at(-100.0, 50.0, 0.0)
+    ramp = _Ramp()
+
+    def walk(dx, steps):
+        for _ in range(steps):
+            player.update(1.0 / 60.0, glm.vec3(dx, 0.0, 0.0), False, False, [slab],
+                          terrain=ramp)
+    walk(1.0, 180)
+    top = player.pos.y + player.height * 0.5
+    assert top <= 112.0 + 1e-3, "the ground pushed the head into the jetty"
+    stopped = player.pos.x
+    assert stopped > 0.0, "it walked up the ramp until the head room ran out"
+    walk(-1.0, 60)
+    assert player.pos.x < stopped - 50.0, "and can walk back out"
