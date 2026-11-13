@@ -575,3 +575,55 @@ def test_docked_rolls_are_one_column_of_one_width_on_the_right():
     assert column[0][1] == 200 and all(not e[5] for e in column)  # no pointer tails
     (own,) = [e for g in groups for e in g if e[3] is mine[1]]
     assert abs(own[0] + 100 - 640) < 2                            # yours stays over you
+
+
+def test_your_roll_stays_over_you_when_it_touched_anothers_before_docking():
+    # Found in a co-op game: your box overlapped a party member's, the two
+    # joined one cluster, and docking the other dropped yours entirely.
+    from ..ui import hud
+    theirs = ((560.0, 400.0), _box("Roll to hit"), _layout(190, 122))
+    mine = ((540.0, 400.0), {"result": {"label": "Roll to hit"}, "side": "you"}, _layout(160, 122))
+    groups = hud._stack_roll_boxes([mine, theirs], 1280, 720, floor=620, dock="right", dock_top=200)
+    shown = [e[3] for g in groups for e in g]
+    assert mine[1] in shown and theirs[1] in shown
+
+
+def test_without_a_role_label_the_verdict_sits_right_under_the_dice(monkeypatch):
+    from ..ui import hud
+    roll = {"label": "Roll to hit", "roll_result": 12, "target": 10, "success": True,
+            "dice_notation": "1d20", "roll_details": [12],
+            "components": [{"notation": "1d20", "roll_details": [12]}]}
+    lay = hud._roll_box_layout({"result": roll, "elapsed": 0.0, "seed": 3, "side": "you"}, 1280)
+    assert lay["under"] == hud.ROLL_DICE_GAP < hud.ROLL_ROLE_LINE_H
+    assert lay["h"] == hud.ROLL_BOX_TITLE_H + hud.ROLL_BOX_DIE + hud.ROLL_DICE_GAP + 22 + 10
+
+
+def test_party_members_roll_in_their_own_colour():
+    from PyQt5.QtGui import QColor
+    from ..multiplayer import presentation
+    from ..ui import hud
+
+    def member(pid, boxes):
+        session = SimpleNamespace(live_roll_boxes=lambda: boxes)
+        return SimpleNamespace(player_id=pid, profile={"name": pid}, session=session)
+
+    actor = lambda pid: SimpleNamespace(pos=(0, 0, 0), properties={"multiplayer_player": True, "player_id": pid})
+    wolf = SimpleNamespace(pos=(0, 0, 0), properties={"name": "Wolf"})
+    mine = {"actor": actor("p1"), "side": "you", "player_id": "p1"}
+    theirs = {"actor": actor("p2"), "side": "ally", "player_id": "p2"}
+    foe = {"actor": wolf, "side": "foe", "player_id": "p2"}
+    p1, p2 = member("p1", [mine]), member("p2", [theirs, foe])
+    coop = SimpleNamespace(players={"p1": p1, "p2": p2}, local_players=[p1])
+    session = SimpleNamespace(coop=coop, live_roll_boxes=lambda: [])
+    hud._screen_roll_boxes(session)
+    blue, orange = (QColor(presentation.COLOURS[i]) for i in (0, 1))
+    assert mine["_party_colour"] == (blue.red(), blue.green(), blue.blue())
+    assert theirs["_party_colour"] == (orange.red(), orange.green(), orange.blue())
+    assert foe["_party_colour"] is None            # a wolf is nobody's colour
+    assert presentation.colour_for(coop, "nobody") is None
+
+
+def test_party_cards_are_narrow():
+    from ..multiplayer import presentation
+    rects = presentation.party_rects(1280, 720, 4)
+    assert all(r.width() == presentation.CARD_WIDTH <= 180 for r in rects)

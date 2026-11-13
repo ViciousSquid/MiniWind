@@ -467,6 +467,9 @@ def _draw_bang(painter, x, baseline, height, colour):
 #: stands: room for "*fizzled*", HIT or MISS to rise between them.
 ROLL_BOX_DIE = 40
 ROLL_BOX_TITLE_H = 30
+#: Under the dice: room for a die's role label, or the small gap without one.
+ROLL_ROLE_LINE_H = 20
+ROLL_DICE_GAP = 6
 ROLL_BOX_GAP_PX = FLOAT_RISE_PX + 24.0
 #: Who is rolling, or rolled against, by side: you, an ally, a foe.
 ROLL_SIDE_INK = {"you": (255, 206, 96), "ally": (120, 214, 130), "foe": (238, 104, 88)}
@@ -529,6 +532,7 @@ def _screen_roll_boxes(session):
     coop = getattr(session, "coop", None)
     if coop is None:
         return list(session.live_roll_boxes()) if hasattr(session, "live_roll_boxes") else []
+    from ..multiplayer.presentation import colour_for
     local = {p.player_id for p in coop.local_players}
 
     def name_of(pid):
@@ -554,6 +558,10 @@ def _screen_roll_boxes(session):
             if against and against[1] == "you" and box.get("player_id") not in local:
                 against = (name_of(box.get("player_id")).upper() or against[0], "ally")
             box["_view_side"], box["_view_against"] = side, against
+            # A party member's roll is in their own colour (their card's).
+            pid = (props.get("player_id") if props.get("multiplayer_player")
+                   else box.get("player_id") if box.get("side") == "you" else None)
+            box["_party_colour"] = colour_for(coop, pid) if pid else None
             boxes.append(box)
     return boxes
 
@@ -634,8 +642,10 @@ ROLL_DOCK_W = 210
 #: The docked title's second line.
 ROLL_DOCK_LINE_H = 15
 #: The line joining a docked box to its roller: its width and its dark edge.
-ROLL_LEADER_W = 5.0
-ROLL_LEADER_EDGE = 1.5
+ROLL_LEADER_W = 3.0
+ROLL_LEADER_EDGE = 1.0
+#: How opaque a leader line is (0..1): the world shows through it.
+ROLL_LEADER_ALPHA = 0.5
 
 
 def _is_attack(box) -> bool:
@@ -702,7 +712,10 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
     groups = []
     if dock == "right":
         groups.append(_docked_column(anchored, natural, width, height, dock_top, placed))
-        order = [m for m in order if all(_box_side(anchored[i][1]) == "you" for i in m)]
+        # The docked column takes everyone else's; the player's own stay over
+        # them -- even when one touched another's box before docking.
+        order = [[i for i in m if _box_side(anchored[i][1]) == "you"] for m in order]
+        order = [m for m in order if m]
     for members in order:
         # Attacks on top, then the rest (saves), each in roll order.
         members.sort(key=lambda i: (not _is_attack(anchored[i][1]), i))
@@ -779,8 +792,9 @@ def _draw_leader(painter, box, lay, bx, by, anchor):
     """The thick line from a docked box to its roller's head, in the
     roller's side's colour on a dark edge, ending in a dot on the roller."""
     alpha = lay.get("alpha", 255)
-    ink = QColor(*ROLL_SIDE_INK.get(lay.get("side"), (190, 196, 214)), int(alpha * 0.85))
-    dark = QColor(10, 12, 18, int(alpha * 0.6))
+    rgb = box.get("_party_colour") or ROLL_SIDE_INK.get(lay.get("side"), (190, 196, 214))
+    ink = QColor(*rgb, int(alpha * ROLL_LEADER_ALPHA))
+    dark = QColor(10, 12, 18, int(alpha * ROLL_LEADER_ALPHA * 0.6))
     start = QPointF(bx, by + 24)
     end = QPointF(anchor[0], anchor[1] + 10)
     for pen_w, colour in ((ROLL_LEADER_W + 2 * ROLL_LEADER_EDGE, dark), (ROLL_LEADER_W, ink)):
@@ -836,7 +850,7 @@ def _roll_box_layout(box, width):
     name = "YOU" if side == "you" else str(props.get("display_name")
                                            or props.get("name") or "").upper()
     action = _box_action(result.get("label"), against[0] if against else "")
-    parts = [(name, ROLL_SIDE_INK.get(side, (226, 224, 236))),
+    parts = [(name, box.get("_party_colour") or ROLL_SIDE_INK.get(side, (226, 224, 236))),
              (": " + action, (226, 224, 236))]
     if against and against[0]:
         parts.append((" " + str(against[0]).upper(), ROLL_SIDE_INK.get(against[1], (226, 224, 236))))
@@ -858,10 +872,13 @@ def _roll_box_layout(box, width):
     dm = QFontMetrics(detail_font)
     detail_w = max((dm.horizontalAdvance(t) for t in details), default=0)
     w = int(max(150, title_w + 20, detail_w + 20, len(visuals) * (die + 14) + 26))
-    h = int(ROLL_BOX_TITLE_H + die + 20 + 22 + 18 * len(details) + 10)
+    # Under the dice only a die's role label ("to hit", "damage") needs a
+    # line; without one the verdict sits right below them.
+    under = ROLL_ROLE_LINE_H if any(d.get("role") for d in visuals) else ROLL_DICE_GAP
+    h = int(ROLL_BOX_TITLE_H + die + under + 22 + 18 * len(details) + 10)
     return {"visuals": visuals, "elapsed": elapsed, "alpha": alpha, "side": side,
             "parts": parts, "details": details, "title_font": title_font, "fm": fm,
-            "title_w": title_w, "w": w, "h": h, "result": result}
+            "title_w": title_w, "w": w, "h": h, "result": result, "under": under}
 
 
 def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
@@ -877,6 +894,9 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
     bg = QColor(*ROLL_BOX_BG[kind])
     bg.setAlpha(int(bg.alpha() * alpha / 255))
     edge = QColor(*ROLL_BOX_EDGE[kind])
+    party = box.get("_party_colour")
+    if party:
+        edge = QColor(*party)              # a party member's own colour
     edge.setAlpha(int(edge.alpha() * alpha / 255))
     ax, ay = anchor[0], anchor[1] - gap
     tip = max(bx + 10, min(bx + w - 10, ax))
@@ -885,7 +905,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         # thin line to it.
         painter.setPen(QPen(edge, 1.2))
         painter.drawLine(QPointF(tip, by + h + 9), QPointF(ax, ay))
-    painter.setPen(QPen(edge, 1.5))
+    painter.setPen(QPen(edge, 2.5 if party else 1.5))
     painter.setBrush(bg)
     painter.drawRoundedRect(QRectF(bx, by, w, h), 7, 7)
     if pointer:
@@ -943,7 +963,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
                       DIE_ROLE_LABELS.get(d["role"], ""), size=11,
                       color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
                       bold=True, family="small")
-    line_y = by + ROLL_BOX_TITLE_H + die + 20
+    line_y = by + ROLL_BOX_TITLE_H + die + layout.get("under", ROLL_ROLE_LINE_H)
     # Each line as its die lands: the verdict with the roll's own die, the
     # damage once the damage die has landed too -- never ahead of its dice.
     if first_done:

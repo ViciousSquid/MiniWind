@@ -25,12 +25,16 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
 * **Roll boxes.** A roll shows in a small box: the roller's name in their side's colour (gold you, green an ally,
   red a foe), what the roll is for, the real dice tumbling, the verdict, and —
   for a hit — the damage. Your own rolls sit on a black box; everyone else's
-  (allies, foes, fights between NPCs) on a blue-slate one.
-  Your own roll sits over you. Everyone else's line up in one column down
+  (allies, foes, fights between NPCs) on a blue-slate one. In co-op each
+  player's rolls are in **their own colour** -- the border of their party
+  card: the box's border, their name and the line to them. The verdict sits
+  right under the dice (a line is left only for a die's role label).
+  Your own roll sits over you, even beside someone else's. Everyone else's line up in one column down
   the right edge of the screen, under the weapon panel and above the
   shortcut bar, all one narrow width (the roller's name on one line, what
   they roll for on the next), attacks first, so the fight itself stays in
-  view; a thick line in the roller's colour joins each box to its roller; when more are rolling than the column holds, the ones that don't
+  view; a thin, half-transparent line in the roller's colour joins each box
+  to its roller; when more are rolling than the column holds, the ones that don't
   fit aren't shown. (With the column turned off, each box sits over its
   roller: boxes that overlap more than their margins lock into one stack,
   the attacker's roll on top — Settings › Game › *Stack dialogs* — and a

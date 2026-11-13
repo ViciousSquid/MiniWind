@@ -9,13 +9,26 @@ from ..rpg import heads
 from ..ui import hud_frame, theme
 
 COLOURS = ("#69b6ff", "#ffbf69", "#b1e17d", "#d89fff")
+#: A party card's width (px): head, name, health and who plays it.
+CARD_WIDTH = 172
+
+
+def colour_for(coop, player_id):
+    """A party member's own colour, ``(r, g, b)`` -- their card's border,
+    and their roll boxes' -- or None for anyone not in the party. By party
+    order, so every computer gives each player the same colour."""
+    for index, pid in enumerate(coop.players):
+        if pid == player_id:
+            colour = QColor(COLOURS[index % len(COLOURS)])
+            return colour.red(), colour.green(), colour.blue()
+    return None
 
 
 def party_rects(width, height, count):
     """A compact left column immediately below the minimap's bronze ring."""
     frame = hud_frame.layout(width, height)
     top = frame.cy + frame.R + 8
-    card_width = max(1, min(224, width - 24))
+    card_width = max(1, min(CARD_WIDTH, width - 24))
     return [QRectF(12, top + index * 56, card_width, 52) for index in range(count)]
 
 
