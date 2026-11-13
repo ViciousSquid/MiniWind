@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 
 from .. import burning
-from ..dragon_fire import DEFAULT_SETTING, fire_texture
+from .. import fire_look
 
 
 class _FlameFX:
@@ -32,7 +32,7 @@ def _assert_dragon_fire_visuals(effect):
     assert effect is not None, "Flare must create an engine FIRE Effect"
     props = effect.properties
     assert props["effect_type"] == "FIRE"
-    assert props["fire_texture"] == fire_texture(DEFAULT_SETTING)
+    assert props["fire_texture"] == fire_look.texture()        # every fire's one look
     assert props["fire_texture"] == "assets/textures/effects/fire02.gif"
     assert props["colour"] == [255, 110, 25]
     assert props["intensity"] == 1.0
@@ -78,3 +78,18 @@ def test_flare_burning_actor_follows_with_fire02_and_no_extra_flames():
 
     fires.clear()
     assert flame not in things
+
+
+def test_every_fire_has_the_one_look_settings_ini_names():
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg.read_string("[GAME]\nfire_style = 3\n")
+    assert fire_look.texture(cfg) == "assets/textures/effects/fire03.gif"
+    cfg.read_string("[GAME]\nfire_style = 9\n")                # out of range: the default
+    assert fire_look.texture(cfg) == fire_look.texture_for(fire_look.DEFAULT_STYLE)
+    try:
+        assert fire_look.set_for_session(4)
+        assert fire_look.texture() == "assets/textures/effects/fire04.gif"
+        assert not fire_look.set_for_session(5)
+    finally:
+        fire_look._override = None

@@ -376,7 +376,7 @@ def _graphics(menu):
     menu.handle_key(_key(QtCore.Qt.Key_Return))
     assert [r[0] for r in page.rows()] == ["graphics", "record", "advanced_back"]
     menu.handle_key(_key(QtCore.Qt.Key_Return))
-    assert [r[0] for r in page.rows()] == ["grass", "graphics_back"]
+    assert [r[0] for r in page.rows()] == ["grass", "grass_fire", "graphics_back"]
     return page
 
 
@@ -393,6 +393,20 @@ def test_advanced_graphics_holds_the_grass_and_escape_climbs_back(app):
     assert page.section == "advanced" and menu.page == "options"
     menu.handle_key(_key(QtCore.Qt.Key_Escape))
     assert page.section is None and menu.page == "options"
+
+
+def test_graphics_turns_grass_fires_on_and_off(app):
+    menu = _menu()
+    state = {"on": True}
+    menu.editor.pause_menu_grass_fire = lambda: state["on"]
+    menu.editor.pause_menu_set_grass_fire = lambda on: state.update(on=bool(on))
+    page = _graphics(menu)
+    assert dict((k, v) for k, _l, v, _o in page.rows())["grass_fire"] == "On"
+    _row(page, "grass_fire")
+    menu.handle_key(_key(QtCore.Qt.Key_Return))
+    assert state["on"] is False
+    assert dict((k, v) for k, _l, v, _o in page.rows())["grass_fire"] == "Off"
+    assert "scorches the ground" in page._note("grass_fire")
 
 
 def test_advanced_turns_encounter_recording_on_and_off(app):

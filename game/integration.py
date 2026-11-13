@@ -570,6 +570,10 @@ GAME_SETTINGS = (
      "blows a body apart.", True),
     ("screen_shake", "Screen shake",
      "Killing blows, critical hits and heavy blows taken jolt the screen.", True),
+    ("grass_fire", "Grass fires",
+     "Fire spreads through long grass before the wind and leaves the ground "
+     "scorched, setting alight anyone caught in it. Off: a fire on the ground "
+     "burns where it falls and goes no further.", True),
     ("torch_shadows", "Torch shadows",
      "Carried torches near you (the NEAR simulation distance) are dynamic "
      "lights that cast shadows. Costs some frame time; the renderer's shadow "

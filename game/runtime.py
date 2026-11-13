@@ -918,6 +918,19 @@ class MiniwindSession(SettlementLaw):
         #: Flare's fires: who is burning, and fires on the ground (game/burning.py).
         from .burning import Burning
         self.burning = Burning(self)
+        #: The wind, and fire running through the long grass before it
+        #: (game/wind.py, game/grass_fire.py).
+        from .wind import Wind
+        from .grass_fire import GrassFire
+        self.wind = Wind(random.Random())
+        self.grass_fire = GrassFire(self._grass_fuel, height=self._fire_ground,
+                                    wind=self.wind.vector, rng=random.Random())
+        self._fire_clock = 0.0
+        self._scorch_clock = 0.0
+        #: Grass fire's flames: FIRE Effects spawned where it burns
+        #: (game/flame_spawner.py).
+        from .flame_spawner import FlameSpawner
+        self.flame_spawner = FlameSpawner(self)
         #: Spell bolts in flight that carry a light: Fio tag -> Light, and
         #: where each lit bolt was last published (tag -> (x, y, z)).
         self._bolt_lights = {}
@@ -1057,6 +1070,137 @@ class MiniwindSession(SettlementLaw):
     def screen_shake_enabled(self) -> bool:
         """Killing blows and crits jolt the screen (GAME → "Screen shake")."""
         return self._game_flag("screen_shake")
+
+    def grass_fire_enabled(self) -> bool:
+        """Fire spreads through long grass and scorches the ground
+        (``[GAME] grass_fire``, Settings > Game); on by default. Off, a fire
+        on the ground burns where it fell and goes no further."""
+        return self._game_flag("grass_fire")
+
+    # -- grass fire (game/grass_fire.py) ---------------------------------------
+    #: A man caught in burning grass: how hard it bites and for how long.
+    GRASS_BURN_DPS = 4.0
+    GRASS_BURN_SECONDS = 4.0
+    #: Heat at which burning grass sets someone in it alight.
+    GRASS_CATCH_HEAT = 0.35
+    #: How often the ground behind the fire is blackened, and how many cells
+    #: at a time (each is a stamp into the terrain's paint).
+    SCORCH_EVERY = 0.8
+    SCORCH_BATCH = 24
+    #: The charred-ground stamps (game/tools/make_scorch_art.py).
+    SCORCH_ART = tuple(f"assets/sprites/miniwind/scorch/scorch_{i}.png" for i in range(4))
+
+    def _grass_fuel(self, xs, zs):
+        """How much will burn at each point (0..1), read from the terrain:
+        tall tundra heath and wheat burn hot, ordinary meadow a little; no
+        fuel where the ground is painted (roads, floors, scorch, blood),
+        in the swamp, on sand or snow."""
+        xs = np.asarray(xs, np.float32)
+        zs = np.asarray(zs, np.float32)
+        ter = fio.terrain(self.logic) if self.logic is not None else None
+        if ter is None or not len(xs):
+            return np.zeros(len(xs), np.float32)
+        try:
+            from engine import terrain_biomes as tb
+            w = np.asarray(ter.biome_weights_batch(xs, zs), np.float32)
+            tall = w[:, tb.WHEAT]
+            if w.shape[1] > tb.TUNDRA:
+                tall = np.maximum(tall, w[:, tb.TUNDRA])
+            meadow = 0.12 if getattr(ter, "meadow_grass", False) else 0.0
+            fuel = tall + meadow * (1.0 - tall)
+            fuel = fuel * tb.bare_keep(w) * np.clip(1.0 - w[:, tb.SWAMP] * 2.0, 0.0, 1.0)
+            paint = np.asarray(ter._paint_alpha_batch(xs, zs), np.float32)
+            fuel = np.where(paint < getattr(ter, "GRASS_PAINT_CLEAR", 0.25), fuel, 0.0)
+            return np.clip(fuel, 0.0, 1.0).astype(np.float32)
+        except Exception:
+            return np.zeros(len(xs), np.float32)
+
+    def _fire_ground(self, x, z) -> float:
+        g = fio.ground_height(self.logic, x, z) if self.logic is not None else None
+        if g is None:
+            ter = fio.terrain(self.logic) if self.logic is not None else None
+            g = ter.get_height_at_safe(x, z) if ter is not None else 0.0
+        return float(g or 0.0)
+
+    def ignite_grass(self, pos, by=None) -> bool:
+        """Set the grass at *pos* alight, if grass fires are on and anything
+        there will burn."""
+        if pos is None or not self.grass_fire_enabled():
+            return False
+        return self.grass_fire.ignite(float(pos[0]), float(pos[2]), by=by)
+
+    def _update_grass_fire(self, delta) -> None:
+        """Advance the wind and any grass fire; set alight whoever stands in
+        it; blacken the ground behind it."""
+        self.wind.update(float(delta) * float(getattr(self.clock, "hours_per_second", 1 / 60.0)))
+        fire = self.grass_fire
+        spawner = self.flame_spawner
+        if not fire.burning and not fire.scorch_due:
+            if spawner.flames:
+                spawner.update(fire, None, delta)       # the last of it burnt out
+            return
+        if not self.grass_fire_enabled():
+            fire.extinguish()
+            spawner.clear()
+            return
+        fire.update(delta)
+        ppos = self._player_pos()
+        spawner.update(fire, (ppos[0], ppos[2]) if ppos is not None else None, delta)
+        self._fire_clock += delta
+        if self._fire_clock >= 0.25 and fire.burning:
+            self._fire_clock = 0.0
+            self._catch_in_grass_fire()
+        self._scorch_clock += delta
+        if self._scorch_clock >= self.SCORCH_EVERY and fire.scorch_due:
+            self._scorch_clock = 0.0
+            self._scorch(fire.take_scorch(self.SCORCH_BATCH))
+
+    def _catch_in_grass_fire(self) -> None:
+        from .burning import PLAYER
+        fire, burning = self.grass_fire, self.burning
+        box = fire.bounds()
+        if box is None:
+            return
+        x0, z0, x1, z1 = box
+
+        def inside(p):
+            return x0 <= p[0] <= x1 and z0 <= p[2] <= z1
+
+        ppos = self._player_pos()
+        if ppos is not None and inside(ppos) and not burning.burning(PLAYER):
+            if fire.heat_at(ppos[0], ppos[2]) >= self.GRASS_CATCH_HEAT:
+                burning.ignite(PLAYER, self.GRASS_BURN_DPS, self.GRASS_BURN_SECONDS,
+                               fire.starter(ppos[0], ppos[2]))
+        for actor in (*self._things_of_type("npc"), *self._things_of_type("creature")):
+            p = actor.properties
+            if p.get("dead") or p.get("hidden") or not inside(actor.pos):
+                continue
+            if burning.burning(actor):
+                continue
+            if fire.heat_at(actor.pos[0], actor.pos[2]) >= self.GRASS_CATCH_HEAT:
+                burning.ignite(actor, self.GRASS_BURN_DPS, self.GRASS_BURN_SECONDS,
+                               fire.starter(actor.pos[0], actor.pos[2]))
+
+    def _scorch(self, cells) -> int:
+        """Blacken the ground where *cells* (``(x, z, fuel)``) burnt out: a
+        charred stamp baked into the terrain's paint, which also clears the
+        grass there for good. Returns how many took."""
+        ter = fio.terrain(self.logic) if self.logic is not None else None
+        if ter is None or not cells:
+            return 0
+        from .grass_fire import CELL
+        done = 0
+        for x, z, fuel in cells:
+            seed = (int(x) * 73856093) ^ (int(z) * 19349663)
+            art = self.SCORCH_ART[seed % len(self.SCORCH_ART)]
+            try:
+                if ter.paint_texture_at(x, z, CELL * 0.9, art, feather=0.55,
+                                        opacity=0.55 + 0.4 * float(fuel),
+                                        angle=(seed % 628) / 100.0):
+                    done += 1
+            except Exception:
+                pass
+        return done
 
     def camera_rotation_enabled(self) -> bool:
         """Allow right-stick and bracket-key camera rotation; on by default."""
@@ -1443,6 +1587,9 @@ class MiniwindSession(SettlementLaw):
         self._clear_lingering_lights()
         if getattr(self, "burning", None) is not None:
             self.burning.clear()
+        if getattr(self, "grass_fire", None) is not None:
+            self.grass_fire.clear()
+            self.flame_spawner.clear()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
@@ -2078,6 +2225,7 @@ class MiniwindSession(SettlementLaw):
         self.dragon_fire.update(delta)
         self.windmills.update(delta)
         self.burning.update(delta)
+        self._update_grass_fire(delta)
         self.wildlife.update(delta)
         if self.__dict__.get("_party_due") and self._player_pos() is not None:
             self._party_due = False

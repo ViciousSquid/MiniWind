@@ -86,6 +86,13 @@ class OptionsPage:
         except Exception:
             return False
 
+    def _grass_fire(self) -> bool:
+        reader = getattr(self.menu.actions, "pause_menu_grass_fire", None)
+        try:
+            return bool(reader()) if reader is not None else True
+        except Exception:
+            return True
+
     def _config(self):
         reader = getattr(self.menu.actions, "pause_menu_config", None)
         try:
@@ -142,6 +149,7 @@ class OptionsPage:
             rows = []
             if s is not None:
                 rows.append(("grass", "Grass", launcher.grass_label(s.grass), True))
+            rows.append(("grass_fire", "Grass fires", "On" if self._grass_fire() else "Off", True))
             rows.append(("graphics_back", "Back", "", True))
             return rows
         rows = []
@@ -181,8 +189,11 @@ class OptionsPage:
         if key == "record":
             return ("Keep a record and screenshots of each fight that becomes interesting, "
                     "in saves/encounters.")
+        if key == "grass_fire":
+            return ("Fire spreads through long grass before the wind and scorches the ground. "
+                    "Off: a fire burns where it falls.")
         if key == "graphics":
-            return "Grass, changed while you play."
+            return "Grass and grass fires, changed while you play."
         if key == "volume":
             return "Drag or use ← →.  0% turns the music off."
         if key == "keys":
@@ -239,6 +250,10 @@ class OptionsPage:
             return
         if key == "record":
             self.menu._call_action("pause_menu_set_record_encounters", not self._recording())
+            self.menu.view.update()
+            return
+        if key == "grass_fire":
+            self.menu._call_action("pause_menu_set_grass_fire", not self._grass_fire())
             self.menu.view.update()
             return
         if key == "keys_back":

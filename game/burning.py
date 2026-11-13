@@ -15,10 +15,14 @@ A spell with a ``burn`` effect (``{"kind": "burn", "magnitude": 2,
   where it lands. It burns for :data:`GROUND_FIRE_SECONDS`, fading out the
   same way, and sets alight anyone who walks into it.
 
-The flames are the engine's FIRE effect (:data:`FIRE_TEXTURE`, fire02), one
-per fire, moved with whoever is burning and shrunk as it fades: the same
+The flames are the engine's FIRE effect (the one look every fire has,
+:mod:`game.fire_look`), one per fire, moved with whoever is burning and shrunk as it fades: the same
 flame, size and light as the dragon's breath (game/dragon_fire.py), nothing
 added.
+Either can set long grass alight, and a fire in the grass spreads on its own
+(game/grass_fire.py): the small fire where a bolt falls, and anyone burning
+who runs through it.
+
 Burning is transient: nothing of it is saved.
 """
 
@@ -26,10 +30,8 @@ from __future__ import annotations
 
 import math
 
-from . import fio
+from . import fio, fire_look
 
-#: The fire the flames are drawn with (the engine's FIRE effect, 1..5).
-FIRE_TEXTURE = "assets/textures/effects/fire02.gif"
 #: Over its last this-many seconds a fire dies down rather than going out.
 FADE_SECONDS = 1.5
 #: Burn damage is dealt this often (seconds), in that share of a second's.
@@ -121,6 +123,10 @@ class Burning:
             if self.session.logic is not None else None
         y = float(ground) if ground is not None else float(pos[1]) - 40.0
         at = [float(pos[0]), y, float(pos[2])]
+        # The grass it fell in catches (game/grass_fire.py), if it will burn.
+        catch = getattr(self.session, "ignite_grass", None)
+        if catch is not None:
+            catch(at, by)
         self.fires.append({"pos": at, "left": GROUND_FIRE_SECONDS,
                            "total": GROUND_FIRE_SECONDS, "dps": float(dps),
                            "secs": float(seconds), "by": by,
@@ -151,6 +157,12 @@ class Burning:
             if alive and burn["tick"] <= 0.0:
                 burn["tick"] += BURN_TICK
                 self._hurt(thing, burn["dps"] * BURN_TICK, burn["by"])
+                # Burning, it sets the grass it runs through alight.
+                catch = getattr(self.session, "ignite_grass", None)
+                if catch is not None:
+                    feet = self.session._player_pos() if thing is PLAYER else thing.pos
+                    if feet is not None:
+                        catch(feet, burn["by"])
             k = strength(burn["left"], burn["total"])
             if thing is not PLAYER:
                 pos = self._body(thing)
@@ -244,7 +256,7 @@ class Burning:
         except Exception:
             return None
         props = {"type": "effect", "name": "Burning", "effect_type": "FIRE",
-                 "fire_texture": FIRE_TEXTURE, "preview": False, "silent": True,
+                 "fire_texture": fire_look.texture(), "preview": False, "silent": True,
                  "intensity": 1.0, "colour": [255, 110, 25],
                  "width": size[0], "height": size[1], **FLAME_LIGHT}
         try:

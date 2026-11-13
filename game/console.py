@@ -369,10 +369,11 @@ def cmd_pause(ctx, args):
 
 
 def cmd_dragonfire(ctx, args):
-    """dragonfire 1..5 -- which FIRE setting the dragon's breath is made of.
+    """dragonfire 1..4 -- the look of every fire, for this session.
 
-    The breath is a stream of the engine's FIRE Effects (game/dragon_fire.py);
-    this picks their fire (fire01..fire05). The choice is remembered."""
+    All fire is the engine's FIRE Effect in one look (game/fire_look.py,
+    ``[GAME] fire_style`` in settings.ini); this changes it until the game is
+    closed: the dragon's breath at once, every fire lit from now on."""
     from .dragon_fire import FIRE_SETTINGS
     session = getattr(ctx.logic_thread, "_miniwind", None)
     fire = getattr(session, "dragon_fire", None)
@@ -381,8 +382,9 @@ def cmd_dragonfire(ctx, args):
         debug_log("Error", "dragonfire: Play Mode only.")
         return None
     if not text:
-        current = session.store.get("dragonfire", None)
-        debug_log("Info", f"dragonfire: setting {current or 1} "
+        from . import fire_look
+        current = fire_look.style()
+        debug_log("Info", f"dragonfire: fire style {current} "
                           f"({len(fire.flames)} flames in this map). Use dragonfire 1..{FIRE_SETTINGS}.")
         return None
     try:
@@ -392,7 +394,7 @@ def cmd_dragonfire(ctx, args):
     if not fire.set_setting(setting):
         debug_log("Error", f"dragonfire: pick 1..{FIRE_SETTINGS}.")
         return None
-    msg = f"Dragon fire set to {setting}."
+    msg = f"Fire style set to {setting} for this session."
     debug_log("Info", msg)
     toast = getattr(ctx.main_window, "show_toast", None)
     if toast is not None:
@@ -677,7 +679,7 @@ COMMANDS = (
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
-     "1..5 — Which FIRE setting the dragon breathes (remembered)"),
+     "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,
      "[on|off] — Torches near you cast shadows; no argument toggles (saved)"),
     (("pause", "freeze"), cmd_pause,

@@ -439,6 +439,13 @@ class PauseActions:
     def pause_menu_set_record_encounters(self, on):
         self._set_game_option("record_encounters", bool(on))
 
+    def pause_menu_grass_fire(self):
+        """Whether fire spreads through long grass ([GAME] grass_fire, on by default)."""
+        return str(self._game_option("grass_fire", "True")).lower() in ("1", "true", "yes", "on")
+
+    def pause_menu_set_grass_fire(self, on):
+        self._set_game_option("grass_fire", bool(on))
+
     def pause_menu_travel_check(self, name):
         """``(may_travel, text)`` for fast travel to the place called *name*,
         asked while the game is paused (MiniwindSession.fast_travel_check)."""

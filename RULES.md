@@ -405,6 +405,33 @@ says *Metal armour prevents this*.
 * **Resurrection** (100 magicka, all of it) raises a fallen body as a
   follower, once a day; each body only once; never one blown apart.
 
+### Fire
+
+All fire is the engine's FIRE Effect in one look (`[GAME] fire_style` in
+settings.ini, a developer option: the engine's fire01–fire04, fire02 by
+default; `dragonfire N` changes it for the session). A Flare sets what it
+strikes alight; a bolt that misses leaves a small fire on the ground for 8 s.
+
+**Grass fire** (Settings › Game › *Grass fires*, and the pause menu's
+Graphics; on by default):
+
+* A fire on the ground, anyone burning who runs through grass, and a dragon's
+  breath set long grass alight. The fire then spreads on its own, cell by cell
+  (64 units): tall tundra heath and wheat burn hot, plain meadow barely; roads,
+  paths and painted ground, swamp, sand and snow don't burn, and ground already
+  burnt never burns again.
+* It runs before the wind — about 40 units a second downwind in a fresh wind,
+  barely creeping upwind. The wind's direction and strength wander slowly over
+  the day.
+* Each cell flares up, burns 3–8 s (longer the more fuel) and dies down.
+  Anyone standing in fire that is burning fiercely catches fire (4 damage a
+  second for 4 s, through the ordinary burning rules).
+* Behind it the ground is scorched black and the grass is gone.
+* Never more than 900 cells burn at once. The flames are FIRE Effects spawned
+  on the burning ground nearest you (at most 32, spawned and removed in
+  batches no more than twice a second), each lighting the ground around it.
+  Turned off, a fire on the ground burns where it fell and goes no further.
+
 ---
 
 ## 10. Learning from tutors
