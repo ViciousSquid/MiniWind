@@ -221,3 +221,27 @@ def test_frustum_planes_match_the_tables_convention():
     ahead, behind = (0.0, 150.0, -500.0), (0.0, 150.0, 500.0)
     inside = lambda p: all(a * p[0] + b * p[1] + c * p[2] + d >= 0 for a, b, c, d in planes)
     assert inside(ahead) and not inside(behind)
+
+
+def test_view_ready_says_when_the_ground_around_a_point_is_built(background):
+    """After a jump, chunks stream in over a few frames and the camera sees
+    through the world until they do; ``view_ready`` lets a game wait for the
+    ground before uncovering the view."""
+    terrain = background(seed=7)
+    terrain.set_streaming(True, radius=900.0)
+    cs = terrain.chunk_size
+    far = glm.vec3(terrain.offset_x + (terrain.max_chunk_x - 3) * cs, 0.0,
+                   terrain.offset_z + (terrain.max_chunk_z - 3) * cs)
+    assert not terrain.view_ready(far.x, far.z, 700.0), "nothing is resident there yet"
+    gate = threading.Event()
+    real = terrain._grid_heights
+    terrain._grid_heights = lambda *a: (gate.wait(5.0), real(*a))[1]
+    terrain.advance(far)                        # resident, but not built
+    assert terrain.table.count > 0
+    assert not terrain.view_ready(far.x, far.z, 700.0)
+    gate.set()
+    terrain._grid_heights = real
+    _settle(terrain, far)
+    assert terrain.view_ready(far.x, far.z, 700.0)
+    # A radius beyond the stream radius can never be resident: it is capped.
+    assert terrain.view_ready(far.x, far.z, 50000.0)

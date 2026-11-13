@@ -139,6 +139,14 @@ OFFSCREEN_STRIDE = 4
 #: conditions) run this often rather than every tick.
 PROXIMITY_INTERVAL = 0.1
 NPC_WALK_SPEED = 90.0
+#: The arrival cover (_update_arrival): a jump is a move this far in one tick;
+#: the cover gives up waiting after this long; and fades out over this long.
+ARRIVAL_JUMP = 600.0
+ARRIVAL_MAX_SECONDS = 8.0
+ARRIVAL_FADE_SECONDS = 0.35
+#: The overhead camera's view radius per unit of camera height: the half-
+#: diagonal of a 16:9 view at a 90-degree field of view (~2.04), plus a margin.
+ARRIVAL_VIEW_SCALE = 2.2
 #: What a kill counts as, for a quest's "kill" aim: the victim's name, role,
 #: kind and faction -- so "bandits" counts the archers and the chief as well
 #: as the plain bandits, as the player would expect.
@@ -1975,6 +1983,7 @@ class MiniwindSession(SettlementLaw):
         self._world_index()
         self._ground_actors()
         self._ease_zoom(delta)
+        self._update_arrival()
         self._update_bow_draw(delta)
         self._check_waypoint()
         self._refresh_roads()
@@ -3895,6 +3904,61 @@ class MiniwindSession(SettlementLaw):
             r["t"] -= delta
         self.roll_log = [r for r in self.roll_log if r["t"] > 0]
         self._tick_dice_animation(delta)
+
+    # ---------------------------------------------------------- arrival cover
+    def _update_arrival(self) -> None:
+        """Cover the view after a jump until the ground under it is built.
+
+        A loaded save, a death's restore, a cave mouth or play starting puts
+        the player somewhere the terrain has not streamed in yet, and for a
+        few frames the camera saw straight through the world to the clear
+        colour (a dark blue void with the actors floating in it). A jump is
+        any move of more than :data:`ARRIVAL_JUMP` in one tick; the cover
+        holds until the terrain says every chunk the camera can see is built
+        (``Terrain.view_ready``), then fades out. The world keeps running."""
+        import time as _time
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        arrival = self.__dict__.get("_arrival")
+        last = self.__dict__.get("_arrival_pos")
+        self._arrival_pos = (ppos[0], ppos[2])
+        jumped = last is not None and math.hypot(ppos[0] - last[0], ppos[2] - last[1]) > ARRIVAL_JUMP
+        if arrival is None or jumped:
+            arrival = self._arrival = {"since": _time.monotonic(), "ready_at": None, "checks": 0}
+        if arrival["ready_at"] is not None:
+            return
+        arrival["checks"] += 1
+        if arrival["checks"] % 3:
+            return                          # a few times a second is plenty
+        terrain = fio.terrain(self.logic)
+        ready = terrain is None or terrain.view_ready(ppos[0], ppos[2], self._view_radius())
+        if ready or _time.monotonic() - arrival["since"] > ARRIVAL_MAX_SECONDS:
+            arrival["ready_at"] = _time.monotonic()
+
+    def _view_radius(self) -> float:
+        """How far from the player the overhead camera can see, in world units:
+        the half-diagonal of a 16:9 view at a 90-degree field of view, from the
+        camera's height (the zoom), with a margin."""
+        cam = fio.camera(self.logic)
+        height = getattr(cam, "effective_overhead_height", None)
+        try:
+            h = float(height()) if callable(height) else 800.0
+        except Exception:
+            h = 800.0
+        return h * ARRIVAL_VIEW_SCALE
+
+    def fade_alpha(self) -> float:
+        """The full-screen cover's opacity, 0-255 (game/ui/hud.draw_fade): opaque
+        while the ground is still streaming in after a jump, then fading."""
+        import time as _time
+        arrival = self.__dict__.get("_arrival")
+        if arrival is None:
+            return 0.0
+        if arrival["ready_at"] is None:
+            return 255.0
+        gone = (_time.monotonic() - arrival["ready_at"]) / ARRIVAL_FADE_SECONDS
+        return max(0.0, 255.0 * (1.0 - gone))
 
     def notify(self, text, seconds=3.0):
         # The same message again while it is still up is the same news:

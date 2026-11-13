@@ -1000,6 +1000,38 @@ class Terrain:
         return (self.min_chunk_x, self.max_chunk_x,
                 self.min_chunk_z, self.max_chunk_z)
 
+    def view_ready(self, x: float, z: float, radius: float) -> bool:
+        """Whether the ground within *radius* of world ``(x, z)`` is there to
+        draw: every in-bounds chunk whose nearest point is that close resident
+        and built. After a jump (a loaded save, a level change) the chunks
+        stream in over a few frames, and until they do the camera sees through
+        the world to the clear colour; a game can cover the view until this
+        says the ground is ready. The radius is capped at the stream radius,
+        beyond which chunks are never resident. GL-free; no state changes."""
+        if not self.enabled:
+            return True
+        if self.streaming:
+            radius = min(float(radius), float(self.stream_radius))
+        min_cx, max_cx, min_cz, max_cz = self._chunk_bounds()
+        cs = float(self.chunk_size)
+        px, pz = float(x) - self.offset_x, float(z) - self.offset_z
+        reach = int(math.ceil(radius / cs)) + 1
+        cam_cx, cam_cz = int(math.floor(px / cs)), int(math.floor(pz / cs))
+        lo_x, hi_x = max(min_cx, cam_cx - reach), min(max_cx, cam_cx + reach)
+        lo_z, hi_z = max(min_cz, cam_cz - reach), min(max_cz, cam_cz + reach)
+        if lo_x > hi_x or lo_z > hi_z:
+            return True                     # off the terrain altogether
+        gx, gz = np.meshgrid(np.arange(lo_x, hi_x + 1, dtype=np.int64),
+                             np.arange(lo_z, hi_z + 1, dtype=np.int64), indexing='ij')
+        gx, gz = gx.ravel(), gz.ravel()
+        near = TerrainTable._ring_dist_sq(gx, gz, px, pz, cs) <= radius * radius
+        table = self.table
+        for cx, cz in zip(gx[near].tolist(), gz[near].tolist()):
+            slot = table.slot_of_coord.get((cx, cz))
+            if slot is None or not table.built[slot]:
+                return False
+        return True
+
     def _stream_chunks(self, camera_pos):
         """Keep only the chunks near ``camera_pos`` resident (streaming mode).
 

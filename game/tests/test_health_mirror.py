@@ -64,3 +64,35 @@ def test_a_closed_shop_says_when_it_opens():
         "The shop is closed. Elowen the Trader opens at 09:30."
     session.clock.hour = 22.0
     assert session._shop_closed_text(elowen).endswith("opens at 09:30 tomorrow.")
+
+
+def test_a_jump_covers_the_view_until_the_ground_is_built(monkeypatch):
+    """A loaded save or a cave mouth puts the player where the terrain has not
+    streamed in; the camera saw the clear colour (a blue void) until it did."""
+    import game.fio as fio
+    session = _session([])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    where = {"pos": [0.0, 0.0, 0.0]}
+    ready = {"now": False}
+    monkeypatch.setattr(session, "_player_pos", lambda: list(where["pos"]))
+    terrain = type("T", (), {"view_ready": lambda self, x, z, r: ready["now"]})()
+    monkeypatch.setattr(fio, "terrain", lambda logic: terrain)
+    for _ in range(6):
+        session._update_arrival()
+    assert session.fade_alpha() == 255.0, "play starts covered until the ground is there"
+    ready["now"] = True
+    for _ in range(6):
+        session._update_arrival()
+    assert session.fade_alpha() < 255.0
+    session._arrival["ready_at"] -= 10.0
+    assert session.fade_alpha() == 0.0
+    ready["now"] = False
+    where["pos"] = [9000.0, 0.0, -5000.0]          # a jump
+    session._update_arrival()
+    assert session.fade_alpha() == 255.0
+    where["pos"] = [9010.0, 0.0, -5000.0]          # walking on is not a jump
+    ready["now"] = True
+    for _ in range(6):
+        session._update_arrival()
+    session._arrival["ready_at"] -= 10.0
+    assert session.fade_alpha() == 0.0
