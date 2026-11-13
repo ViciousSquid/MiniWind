@@ -257,12 +257,16 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     class Lefty:
         handed = "left"
 
-    labels = [label for _slot, label, _x, _y in iw.PAPERDOLL]
-    assert "Left hand" in labels and "Right hand" in labels
-    assert "Shield" not in labels and "Weapon" not in labels
-    where = {label: (x, y) for _slot, label, x, y in iw.PAPERDOLL}
-    assert where["Left hand"] == (0.14, 0.50)          # mid-height, left side
-    assert where["Right hand"] == (0.86, 0.50)         # mid-height, right side
+    labels = {slot: label for slot, label, _x, _y in iw.PAPERDOLL}
+    assert labels[iw.HAND_LEFT] == "L" and labels[iw.HAND_RIGHT] == "R"
+    assert "shield" not in labels and "weapon" not in labels
+    where = {slot: (x, y) for slot, _label, x, y in iw.PAPERDOLL}
+    # Mid-height, left and right, a little further out than the other slots
+    # and a little bigger.
+    assert where[iw.HAND_LEFT][1] == where[iw.HAND_RIGHT][1] == 0.50
+    assert where[iw.HAND_LEFT][0] < where["hands"][0]
+    assert where[iw.HAND_RIGHT][0] > where["light"][0]
+    assert iw.HAND_SLOT_SIZE > iw.SLOT_SIZE
     assert iw._hand_slot(Righty(), iw.HAND_RIGHT) == "weapon"
     assert iw._hand_slot(Righty(), iw.HAND_LEFT) == "shield"
     assert iw._hand_slot(Lefty(), iw.HAND_LEFT) == "weapon"

@@ -34,7 +34,7 @@ import time
 
 from PyQt5.QtCore import QPoint, QRect, QRectF, Qt
 from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetrics, QLinearGradient,
-                         QRadialGradient, QPainterPath, QPen, QPixmap)
+                         QRadialGradient, QPainterPath, QPen, QPixmap, QTransform)
 
 from engine.floating_windows import FloatingWindow
 
@@ -76,6 +76,75 @@ def _hand_slot(character, slot):
     return "weapon" if physical == handed else "shield"
 
 
+#: Paperdoll slot sizes: the two hand slots are a little bigger than the
+#: rest, and sit a little further out from the head.
+SLOT_SIZE = 50
+HAND_SLOT_SIZE = 60
+
+#: The faint hand an empty hand slot shows behind its label.
+_HAND_GHOST = QColor(176, 162, 136, 46)
+_HAND_GHOST_EDGE = QColor(196, 182, 150, 60)
+_hand_paths = {}
+
+
+def _hand_path(side):
+    """A bare hand seen from the back, as you see your own, in a unit
+    square: slim fingers spread a little, the thumb out to the side, the
+    wrist narrowing below the palm, all one outline. The left hand's thumb
+    points right (in, toward the body), the right hand's left. Built once
+    per side."""
+    path = _hand_paths.get(side)
+    if path is not None:
+        return path
+
+    def capsule(cx, base_y, width, length, angle):
+        # A finger: a fully rounded bar standing on (cx, base_y), leaning
+        # *angle* degrees (positive leans right).
+        bar = QPainterPath()
+        bar.addRoundedRect(QRectF(-width / 2.0, -length, width, length + width / 2.0),
+                           width / 2.0, width / 2.0)
+        return QTransform().translate(cx, base_y).rotate(angle).map(bar)
+
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0.25, 0.40, 0.44, 0.36), 0.13, 0.13)          # back of hand
+    wrist = QPainterPath()
+    wrist.moveTo(0.31, 0.66)
+    wrist.lineTo(0.61, 0.66)
+    wrist.quadTo(0.58, 0.82, 0.59, 0.99)
+    wrist.lineTo(0.35, 0.99)
+    wrist.quadTo(0.36, 0.82, 0.31, 0.66)
+    wrist.closeSubpath()
+    path = path.united(wrist)
+    # Little, ring, middle and index fingers (left hand: from the left),
+    # fanning out a little from the knuckles.
+    for cx, length, angle in ((0.295, 0.21, -11), (0.395, 0.29, -4),
+                              (0.50, 0.33, 1), (0.605, 0.29, 7)):
+        path = path.united(capsule(cx, 0.47, 0.088, length, angle))
+    # The thumb, from the side of the hand near the wrist, angled out.
+    path = path.united(capsule(0.645, 0.70, 0.10, 0.25, 52))
+    path = path.simplified()
+    if side == "right":
+        path = QTransform(-1, 0, 0, 1, 1, 0).map(path)                       # mirrored
+    _hand_paths[side] = path
+    return path
+
+
+def _draw_hand_ghost(painter, rect, side):
+    """The faint *side* hand an empty hand slot shows, fitted into *rect*."""
+    size = min(rect.width(), rect.height())
+    x = rect.x() + (rect.width() - size) / 2.0
+    y = rect.y() + (rect.height() - size) / 2.0
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.translate(x, y)
+    painter.scale(size, size)
+    painter.setBrush(_HAND_GHOST)
+    pen = QPen(_HAND_GHOST_EDGE, 1.0 / max(1.0, size))
+    painter.setPen(pen)
+    painter.drawPath(_hand_path(side))
+    painter.restore()
+
+
 PAPERDOLL = (
     # The two hands sit mid-height on either side: the left hand on the
     # left, the right hand on the right, each its own slot with its own mouse
@@ -84,12 +153,12 @@ PAPERDOLL = (
     # that takes a shield, a second weapon or a spell.
     ("head", "Head", 0.14, 0.10),
     ("chest", "Chest", 0.14, 0.30),
-    (HAND_LEFT, "Left hand", 0.14, 0.50),
+    (HAND_LEFT, "L", 0.115, 0.50),
     ("hands", "Hands", 0.14, 0.70),
     ("legs", "Legs", 0.14, 0.90),
     ("amulet", "Amulet", 0.86, 0.10),
     ("ring", "Ring", 0.86, 0.30),
-    (HAND_RIGHT, "Right hand", 0.86, 0.50),
+    (HAND_RIGHT, "R", 0.885, 0.50),
     ("light", "Torch", 0.86, 0.70),
     ("feet", "Feet", 0.86, 0.90),
 )
@@ -434,10 +503,11 @@ class InventoryWindow(FloatingWindow):
         painter.drawRoundedRect(rect, 4, 4)
 
     def _slot_box(self, painter, rect, iid, target=None, source=None, label=None,
-                  lit=False, number=None, stack=None):
+                  lit=False, number=None, stack=None, hand=None):
         """One item slot: a sunken frame, its icon and count, its drop state.
         *stack* is what the slot shows when it is not the whole carried stack
-        (one copy of a weapon carried twice)."""
+        (one copy of a weapon carried twice). *hand* ("left" / "right") marks
+        a hand slot: empty, it shows a faint hand behind its label."""
         # Dragged, or picked up by a click: the slots it fits light up.
         dragging = self._drag or drag.offered()
         drag_def = _item(dragging[2]) if dragging else None
@@ -494,6 +564,13 @@ class InventoryWindow(FloatingWindow):
                     painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), 3, 3)
                 except Exception:
                     pass
+        elif hand and not iid:
+            _draw_hand_ghost(painter, rect.adjusted(5, 3, -5, -14), hand)
+            if label:
+                painter.setFont(self.f_small)
+                painter.setPen(QColor(120, 112, 98))
+                _fit(painter, rect.adjusted(1, rect.height() - 15, -1, -1),
+                     Qt.AlignCenter, label)
         elif label and not iid:
             painter.setFont(self.f_small)
             painter.setPen(QColor(120, 112, 98))
@@ -573,17 +650,20 @@ class InventoryWindow(FloatingWindow):
         doll = QRect(inner.x(), inner.y() + 12, inner.width(), 330)
         self._draw_paperdoll_figure(painter, doll)
         worn = self._equipment()
-        s = 50
+        s = SLOT_SIZE
         for slot, label, fx, fy in PAPERDOLL:
-            r = QRect(int(doll.x() + fx * doll.width() - s / 2),
-                      int(doll.y() + fy * doll.height() - s / 2), s, s)
+            hand = {HAND_LEFT: "left", HAND_RIGHT: "right"}.get(slot)
+            size = HAND_SLOT_SIZE if hand else SLOT_SIZE
+            r = QRect(int(doll.x() + fx * doll.width() - size / 2),
+                      int(doll.y() + fy * doll.height() - size / 2), size, size)
             slot = _hand_slot(c, slot)
             iid = worn.get(slot)
             import game.rpg.equipment as eq
             spell = eq.hand_spell(c, "off" if slot == "shield" else "main") \
                 if c is not None and slot in ("weapon", "shield") else None
             self._slot_box(painter, r, iid, target=("equip", slot),
-                           source=("equip", slot, iid) if iid else None, label=label)
+                           source=("equip", slot, iid) if iid else None, label=label,
+                           hand=hand if spell is None else None)
             if spell is not None:
                 self._draw_spell_slot(painter, r, spell,
                                       ("spell_hand", "off" if slot == "shield" else "main", spell.id))
