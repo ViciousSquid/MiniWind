@@ -261,8 +261,8 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     assert labels[iw.HAND_LEFT] == "L" and labels[iw.HAND_RIGHT] == "R"
     assert "shield" not in labels and "weapon" not in labels
     where = {slot: (x, y) for slot, _label, x, y in iw.PAPERDOLL}
-    # Level with the head, left and right, a little further out than the
-    # other slots and a little bigger.
+    # Level with the head, left and right, close beside it, and bigger than
+    # the other slots.
     assert where[iw.HAND_LEFT][1] == where[iw.HAND_RIGHT][1] == iw.HEAD_Y
     assert where[iw.HAND_LEFT][0] < where["hands"][0]
     assert where[iw.HAND_RIGHT][0] > where["ring"][0]
