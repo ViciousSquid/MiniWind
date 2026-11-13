@@ -10212,7 +10212,7 @@ class MiniwindSession(SettlementLaw):
         p = npc.properties
         if str(p.get("aggression")) == "hostile":
             return None
-        tree = p.get("dialogue")
+        tree = authored_dialogue(p)
         for qid in self._quest_ids_in_dialogue(tree):
             if not self.game.quests.is_active(qid) and not self.game.quests.is_complete(qid):
                 return "quest"
@@ -10336,7 +10336,7 @@ class MiniwindSession(SettlementLaw):
             pool = [t for t in near
                     if id(t) in npc_ids and not t.properties.get("dead", False)]
         for npc in pool:
-            if not npc.properties.get("dialogue") and not npc.properties.get("merchant"):
+            if not authored_dialogue(npc.properties) and not npc.properties.get("merchant"):
                 continue
             if str(npc.properties.get("aggression")) == "hostile":
                 continue
@@ -10356,7 +10356,7 @@ class MiniwindSession(SettlementLaw):
             if reason:
                 self.notify(reason)
                 return False
-        tree = npc.properties.get("dialogue")
+        tree = authored_dialogue(npc.properties)
         self.dialogue_selected = 0
         self.dialogue_npc = npc
         if str(npc.properties.get("type", "")).replace("_", "").lower() == "noticeboard":
@@ -11468,6 +11468,15 @@ class MiniwindSession(SettlementLaw):
             self.head_registry.reload()  # a loaded save may replace the store
             self._ensure_player_head()
             self._assign_npc_heads()
+
+
+def authored_dialogue(props):
+    """*props*' dialogue tree, or None when it has no nodes: the editor saves
+    "no dialogue" as ``{"nodes": {}}``, which is a truthy dict -- such an NPC
+    showed a talk bubble and the Talk prompt, and pressing E did nothing (a
+    merchant among them could never trade)."""
+    tree = props.get("dialogue")
+    return tree if isinstance(tree, dict) and tree.get("nodes") else None
 
 
 def _watch_items():

@@ -328,3 +328,23 @@ def test_elowen_calls_out_and_the_chapter_has_a_card():
     assert session.title_card["kicker"] == "Chapter One complete"
     assert session.title_card["title"] == "The Old Mill"
     assert session.title_card["t0"] <= time.monotonic()
+
+
+def test_an_empty_dialogue_tree_is_no_dialogue():
+    """The editor saves "no dialogue" as ``{"nodes": {}}``. That truthy dict
+    gave Millbrook's Head Chef (a merchant) and two archers of the Watch a
+    talk bubble and the Talk prompt, and pressing E opened nothing: the chef
+    could never trade."""
+    chef = entities.NPC(pos=[0, 0, 0], properties={
+        "name": "Head Chef", "display_name": "Head Chef", "merchant": True,
+        "dialogue": {"nodes": {}}})
+    archer = entities.NPC(pos=[40, 0, 0], properties={
+        "name": "Cress of the Watch", "dialogue": {"nodes": {}}})
+    session = _session([chef, archer])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    assert session.start_dialogue(chef, None)
+    texts = [r["text"] for r in session.dialogue.view()["responses"]]
+    assert "Let's trade." in texts
+    session.end_dialogue()
+    assert session.bubble_kind(archer) is None
+    assert session.nearest_talkable([40, 0, 0]) is chef
