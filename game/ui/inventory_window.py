@@ -197,6 +197,11 @@ def _draw_hand_ghost(painter, rect, side) -> bool:
 #: How far in from each side the side columns stand (a share of the doll's
 #: width): close to the head. The hand slots stand further out.
 COLUMN_IN = 0.19
+#: Where the character's head sits in the doll (a share of its height) and
+#: how big it is drawn: the hand slots stand level with it, on either side,
+#: and the chest, legs and feet below it.
+HEAD_Y = 0.285
+HEAD_SIZE = 120
 
 PAPERDOLL = (
     # The two hands sit mid-height on either side: the left hand on the
@@ -207,28 +212,22 @@ PAPERDOLL = (
     # slot (it still takes the off hand: lighting one puts a shield away).
     # Body armour, legs and feet stand in a column below the head, in body
     # order.
-    ("head", "Head", COLUMN_IN, 0.10),
-    ("light", "Torch", COLUMN_IN, 0.30),
-    (HAND_LEFT, "L", 0.115, 0.50),
+    ("head", "Head", COLUMN_IN, 0.09),
+    (HAND_LEFT, "L", 0.115, HEAD_Y),          # beside the head
+    ("light", "Torch", COLUMN_IN, 0.465),
     # Gloves under each hand: one slot (the pair), shown twice, the right
     # one mirrored.
-    ("hands", "Gloves", COLUMN_IN, 0.70),     # gauntlets, bracers, wraps
-    ("amulet", "Amulet", 1.0 - COLUMN_IN, 0.10),
-    ("ring", "Ring", 1.0 - COLUMN_IN, 0.30),
-    (HAND_RIGHT, "R", 0.885, 0.50),
-    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.70),
-    ("chest", "Chest", 0.50, 0.58),
-    ("legs", "Legs", 0.50, 0.755),
-    ("feet", "Feet", 0.50, 0.925),
+    ("hands", "Gloves", COLUMN_IN, 0.645),    # gauntlets, bracers, wraps
+    ("amulet", "Amulet", 1.0 - COLUMN_IN, 0.09),
+    (HAND_RIGHT, "R", 0.885, HEAD_Y),         # beside the head
+    ("ring", "Ring", 1.0 - COLUMN_IN, 0.465),
+    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.645),
+    ("chest", "Chest", 0.50, 0.555),
+    ("legs", "Legs", 0.50, 0.735),
+    ("feet", "Feet", 0.50, 0.915),
 )
 
-#: Where the character's head sits in the doll (a share of its height) and
-#: how big it is drawn: below the Armour Class shield, and high enough for
-#: the chest, legs and feet beneath it.
-HEAD_Y = 0.315
-HEAD_SIZE = 110
-#: The Armour Class shield's centre, in pixels down from the doll's top.
-AC_BADGE_Y = 18
+
 
 #: Pack tabs: (label, categories shown; None = everything).
 TABS = (
@@ -553,7 +552,7 @@ class InventoryWindow(FloatingWindow):
             _fit(painter, r, Qt.AlignCenter, label)
             self._buttons.append((QRect(r), self._set_view(key)))
 
-    def _panel(self, painter, rect, title):
+    def _panel(self, painter, rect, title, title_width=None):
         path = QPainterPath()
         path.addRoundedRect(QRectF(rect), 6, 6)
         g = QLinearGradient(0, rect.y(), 0, rect.bottom())
@@ -569,7 +568,10 @@ class InventoryWindow(FloatingWindow):
         painter.drawLine(bar.bottomLeft(), bar.bottomRight())
         painter.setFont(self.f_title)
         painter.setPen(_GOLD)
-        _fit(painter, bar.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
+        room = bar.adjusted(12, 0, 0, 0)
+        if title_width is not None:
+            room.setWidth(min(room.width(), int(title_width)))
+        _fit(painter, room, Qt.AlignVCenter | Qt.AlignLeft, title)
         return QRect(rect.x() + 10, bar.bottom() + 8, rect.width() - 20,
                      rect.bottom() - bar.bottom() - 16)
 
@@ -721,7 +723,9 @@ class InventoryWindow(FloatingWindow):
 
     def _draw_equipment(self, painter, rect):
         c = self._character()
-        inner = self._panel(painter, rect, getattr(c, "name", "Adventurer") if c else "Adventurer")
+        # The name stops short of the Armour Class shield in the bar's middle.
+        inner = self._panel(painter, rect, getattr(c, "name", "Adventurer") if c else "Adventurer",
+                            title_width=rect.width() // 2 - 40)
         if c is not None:
             try:
                 import game.rpg.classes as classes
@@ -799,16 +803,17 @@ class InventoryWindow(FloatingWindow):
         painter.setPen(_INK)
         _fit(painter, f_left, Qt.AlignLeft | Qt.AlignVCenter,
              "Unarmoured" if weight == "none" else f"{weight.title()} armour")
-        # Directly above the character's head, in the middle.
+        # Right at the top, in the middle, across the title bar's lower edge.
         self._draw_ac_badge(painter, QPoint(inner.x() + inner.width() // 2,
-                                            inner.y() + 12 + AC_BADGE_Y), ar)
+                                            inner.y() - 8), ar)
         painter.setPen(_GOLD)
         _fit(painter, f_mid, Qt.AlignHCenter | Qt.AlignVCenter, f"{gold} gold")
         painter.setPen(_NO if cap and load > cap else _INK)
         _fit(painter, f_right, Qt.AlignRight | Qt.AlignVCenter, f"{load:.0f} / {cap:.0f} wt")
 
     def _draw_ac_badge(self, painter, centre, ac):
-        """Armour Class on a little heater shield, above the paperdoll's head."""
+        """Armour Class on a little heater shield, at the top of the paperdoll,
+        across the title bar."""
         cx, cy = centre.x(), centre.y()
         path = QPainterPath()
         path.moveTo(cx - 20, cy - 22)

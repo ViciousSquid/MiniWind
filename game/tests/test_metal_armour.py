@@ -261,13 +261,15 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     assert labels[iw.HAND_LEFT] == "L" and labels[iw.HAND_RIGHT] == "R"
     assert "shield" not in labels and "weapon" not in labels
     where = {slot: (x, y) for slot, _label, x, y in iw.PAPERDOLL}
-    # Mid-height, left and right, a little further out than the other slots
-    # and a little bigger.
-    assert where[iw.HAND_LEFT][1] == where[iw.HAND_RIGHT][1] == 0.50
+    # Level with the head, left and right, a little further out than the
+    # other slots and a little bigger.
+    assert where[iw.HAND_LEFT][1] == where[iw.HAND_RIGHT][1] == iw.HEAD_Y
     assert where[iw.HAND_LEFT][0] < where["hands"][0]
     assert where[iw.HAND_RIGHT][0] > where["ring"][0]
     # The torch slot sits under the head slot; the glove slot says so.
-    assert labels["light"] == "Torch" and where["light"] == (iw.COLUMN_IN, 0.30)
+    assert labels["light"] == "Torch" and where["light"][0] == iw.COLUMN_IN
+    # Torch and ring below the hands, gloves below them.
+    assert where["light"][1] == where["ring"][1] > where[iw.HAND_LEFT][1]
     assert labels["hands"] == labels[iw.GLOVES_RIGHT] == "Gloves"
     # A glove box under each hand, mirrored about the middle: one slot.
     assert where["hands"][1] == where[iw.GLOVES_RIGHT][1] > where[iw.HAND_LEFT][1]
