@@ -266,11 +266,12 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     assert where[iw.HAND_LEFT][1] == where[iw.HAND_RIGHT][1] == 0.50
     assert where[iw.HAND_LEFT][0] < where["hands"][0]
     assert where[iw.HAND_RIGHT][0] > where["ring"][0]
-    # No torch box (a torch is held in a hand); the glove slot says so.
-    assert "light" not in labels and labels["hands"] == "Gloves"
-    # Legs then feet, centred below the head.
-    assert where["legs"][0] == where["feet"][0] == 0.50
-    assert 0.5 < where["legs"][1] < where["feet"][1]
+    # The torch slot sits under the head slot; the glove slot says so.
+    assert labels["light"] == "Torch" and where["light"] == (0.14, 0.30)
+    assert labels["hands"] == "Gloves"
+    # Body armour, legs, then feet, in a column below the head.
+    assert where["chest"][0] == where["legs"][0] == where["feet"][0] == 0.50
+    assert iw.HEAD_Y < where["chest"][1] < where["legs"][1] < where["feet"][1]
     assert iw.HAND_SLOT_SIZE > iw.SLOT_SIZE
     assert iw._hand_slot(Righty(), iw.HAND_RIGHT) == "weapon"
     assert iw._hand_slot(Righty(), iw.HAND_LEFT) == "shield"
@@ -386,9 +387,9 @@ def test_an_empty_hand_slot_shows_the_paper_hand_mirrored_for_the_left(qt_app):
     assert paper.red() > paper.blue() + 30               # yellowed, not white
 
 
-def test_a_torch_is_held_in_the_off_hand_slot(qt_app):
-    """No torch box: a torch dropped on the off hand's slot is equipped (in
-    its own slot underneath) and shown in that hand slot."""
+def test_a_torch_shows_in_its_own_slot_and_can_be_dropped_on_the_off_hand(qt_app):
+    """A torch takes the off hand: dropped on that hand's slot it is equipped,
+    and it shows in the Torch slot (not twice)."""
     from PyQt5.QtGui import QImage, QPainter
     from ..ui import inventory_window as iw
     from .test_inventory_window import _session
@@ -406,7 +407,7 @@ def test_a_torch_is_held_in_the_off_hand_slot(qt_app):
     win._draw_content(painter, 0, 0, 1300, 860)
     painter.end()
     held = [src for _r, src in win._cells if src[0] == "equip" and src[2] == "torch"]
-    assert held == [("equip", "light", "torch")]        # in the left hand's slot
+    assert held == [("equip", "light", "torch")]        # in the Torch slot only
     # Dragged back to the pack, it is put away.
     assert s.inventory_move(("equip", "light", "torch"), ("pack", None), "torch")
     assert eq.light_source(c) is None
