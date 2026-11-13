@@ -35,7 +35,7 @@ def creature(role, **extra):
 
 # ------------------------------------------------------------ everyone has one
 @pytest.mark.parametrize("role", ["hen", "sheep", "cow", "wolf", "boar", "bear",
-                                  "mudcrab", "skeleton", "guard", "bandit", "villager"])
+                                  "crab", "skeleton", "guard", "bandit", "villager"])
 def test_every_kind_of_creature_has_an_armour_class(role):
     assert ac.of(creature(role)) >= ac.BASE_AC
 

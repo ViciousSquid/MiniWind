@@ -165,14 +165,14 @@ CORE_BASELINE = {
     "skeleton": (45, 50, 5), "skeleton_archer": (40, 45, 5), "wraith": (40, 60, 5),
     "monster": (55, 55, 10), "dragon": (100, 100, 40),
     "wolf": (45, 40, 10), "bear": (75, 70, 10), "boar": (55, 55, 10),
-    "mudcrab": (30, 60, 5), "sheep": (25, 30, 25), "cow": (55, 50, 20),
+    "crab": (30, 60, 5), "sheep": (25, 30, 25), "cow": (55, 50, 20),
     "hen": (10, 20, 20),
 }
 
 #: LUCK a kind is rolled around, where it is not the ordinary 40: everyone
 #: has a Luck, the hen included, and some are born to it (or not).
 LUCK_BASELINE = {
-    "beggar": 25, "mudcrab": 25, "skeleton": 20, "skeleton_archer": 20,
+    "beggar": 25, "crab": 25, "skeleton": 20, "skeleton_archer": 20,
     "merchant": 50, "bandit_chief": 55, "dragon": 60, "hen": 55, "sheep": 30,
 }
 

@@ -101,7 +101,7 @@ Everyone in the world has Strength, Endurance, Charisma and **Luck** — every
 NPC and every animal: rolled once on 3d6 around a baseline for their kind (a
 bear is strong, a hen is not), at half the swing of the player's roll, and
 kept for good (`game/rpg/charisma.py`). Luck's baseline is 40, except: beggar
-and mudcrab 25, skeletons 20, sheep 30, merchant 50, bandit chief 55, hen 55,
+and crab 25, skeletons 20, sheep 30, merchant 50, bandit chief 55, hen 55,
 dragon 60. An authored value always wins.
 
 ---
@@ -217,7 +217,7 @@ Master 100.
 
 **Levelling.** You may level when either track is full: **10 major-skill
 increases**, or **XP ≥ 100 × level** (spent on levelling). XP comes from kills
-(the creature's own value: wolf 8, boar 10, mudcrab 4, bear 25, bandit 14,
+(the creature's own value: wolf 8, boar 10, crab 4, bear 25, bandit 14,
 bandit archer 16, bandit chief 45, cultist 18, skeleton 16, skeleton archer
 18, wraith 40, monster 30; townsfolk and farm animals 0) and from quests.
 
@@ -261,7 +261,7 @@ monster and every animal (`game/rpg/armour_class.py`).
 * **Anyone else's** = an authored `armour_class`, or 10 + the natural armour
   of its kind + its shield + Endurance (one per 10 above 40, at most 4) + one
   per 3 levels above the first. Natural armour: hen, sheep 0 · cow, deer,
-  wolf 1 · boar 2 · bear 3 · mudcrab 5 · skeleton 2 · skeleton archer 1 ·
+  wolf 1 · boar 2 · bear 3 · crab 5 · skeleton 2 · skeleton archer 1 ·
   wraith, monster 3 · dragon 8 · guard 4 · guard archer 3 · bandit, bandit
   archer 1 · bandit chief 4 · blacksmith 1 · other townsfolk 0.
 
@@ -362,7 +362,7 @@ When the fate die fails, the save stands, and the box still shows the die
   hardest screen shake.
 * How much there is of it follows the **size of the body**, never its
   health (a veteran guard is tougher than a farmer, not bigger). Each kind
-  has a size in the bestiary — tiny (a hen), small (a mudcrab, a sheep),
+  has a size in the bestiary — tiny (a hen), small (a crab, a sheep),
   medium (people, wolves, boars), large (a bear, a cow, a Fiend), huge — and
   a map can give one actor its own (`body_size`). Pieces that fly off: a
   hen 2, a small body 3, a person 4, a bear 6, anything huge 8. Every wound
@@ -622,7 +622,7 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
   paper. A worn helmet is drawn over your head — in the paperdoll and in the
   world — with the face showing through the visor; never over a guard's head.
 * **Heads:** every actor's head is drawn at the player's head size (128),
-  except a chicken's (50) and a mudcrab's (half, 64); a dragon's is set larger
+  except a chicken's (50) and a crab's (half, 64); a dragon's is set larger
   in the map. Animals wear their own kind's art, spread evenly over a herd.
 * **No split screen:** F9 does nothing; players on one computer share the
   overhead view through Multiplayer's local co-op.

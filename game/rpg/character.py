@@ -517,7 +517,7 @@ class Character:
         of regaining it."""
         if self.is_dead:
             return
-        # Atronach sign: magicka does not regenerate.
+        # The Golem sign: magicka does not regenerate.
         golem = self.birthsign_id == "golem"
         if not golem and self.max_magicka > 0:
             rate = self.max_magicka * 0.02 * (0.5 + self.attrs.get(attr.ENDURANCE, 40) / 100.0)

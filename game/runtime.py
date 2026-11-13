@@ -4305,7 +4305,7 @@ class MiniwindSession(SettlementLaw):
 
     def fast_travel_check(self, name):
         """``(may_travel, what_to_tell_the_player)`` for travelling to the
-        place called *name*, as Oblivion and Skyrim answer it."""
+        place called *name*: only somewhere already discovered."""
         if getattr(self, "coop", None) is not None:
             return False, "A party travels together, on foot."
         marker = self._location_markers().get(str(name))

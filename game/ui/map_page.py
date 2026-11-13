@@ -13,7 +13,7 @@ to zoom (about the pointer), Space or Home to come back to the player, Esc or
 M to leave. A click (without dragging) puts the player's one waypoint there,
 in orange; a click on it takes it away. A click on a discovered place asks to
 fast travel there (Enter travels, Esc stays); a click on a quest's marker at a
-place not yet found says so, as Oblivion and Skyrim do. Its data comes through the menu's actions
+place not yet found says so. Its data comes through the menu's actions
 (``pause_menu_map_data``), so the page itself knows no session.
 """
 

@@ -166,7 +166,7 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     wolf = _actor("Wolf", kind="creature", role="wolf")
     bear = _actor("Bear", kind="creature", role="bear")
     boar = _actor("Boar", kind="creature", role="boar")
-    crab = _actor("Mudcrab", kind="creature", role="mudcrab")
+    crab = _actor("Crab", kind="creature", role="crab")
     cow = _actor("Cow", kind="creature", role="cow")
     sheep = _actor("Sheep", head="sheep02", kind="creature", role="sheep")
     s = _session([hen, wolf, bear, boar, crab, cow, sheep])
@@ -177,7 +177,7 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     # Hens wear the chickens and wolves the wolves -- never a person's.
     assert hen.properties["head"] in ("chicken", "chicken2", "chicken3")
     assert wolf.properties["head"] in ("wolf01", "wolf02")
-    # Bears and boars wear their own; a mudcrab wears the crabs.
+    # Bears, boars and crabs wear their own.
     assert bear.properties["head"] in ("bear01", "bear02")
     assert bear.properties["custom_idle"] in ("assets/sprites/heads/bear01.png",
                                               "assets/sprites/heads/bear02.png")
@@ -188,7 +188,7 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     # A head set in the map is kept.
     assert sheep.properties["head"] == "sheep02"
     one = (heads.HEAD_SIZE, heads.HEAD_SIZE)
-    half = heads.HEAD_SIZE // 2                     # a mudcrab is half the player's head
+    half = heads.HEAD_SIZE // 2                     # a crab is half the player's head
     assert (crab.properties["sprite_width"], crab.properties["sprite_height"]) == (half, half)
     for animal in (wolf, bear, boar, cow, sheep):
         assert (animal.properties["sprite_width"],

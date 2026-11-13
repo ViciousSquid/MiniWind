@@ -4,7 +4,7 @@
   "name": "Proving Your Steel",
   "giver": "Grunn",
   "faction": "fighters",
-  "desc": "The Fighters Guild will take you on if you prove yourself.",
+  "desc": "The Warrior's Guild will take you on if you prove yourself.",
   "xp": 25,
   "rewards": {
     "gold": 50,
@@ -16,7 +16,7 @@
   "stages": [
     {
       "index": 0,
-      "journal": "Grunn of the Fighters Guild will admit me if I clear the skeletons from Barrow Hill, north of Millbrook.",
+      "journal": "Grunn of the Warrior's Guild will admit me if I clear the skeletons from Barrow Hill, north of Millbrook.",
       "objective": "Destroy 6 skeletons",
       "finishes": false,
       "condition": {
@@ -34,8 +34,8 @@
     },
     {
       "index": 20,
-      "journal": "I am now a member of the Fighters Guild.",
-      "objective": "I am now a member of the Fighters Guild.",
+      "journal": "I am now a member of the Warrior's Guild.",
+      "objective": "I am now a member of the Warrior's Guild.",
       "finishes": true
     }
   ]

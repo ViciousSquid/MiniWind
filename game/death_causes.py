@@ -69,7 +69,7 @@ CREATURE_VERBS = {
     "bear": ["Mauled", "Torn limb from limb", "Hugged to death",
              "Swatted like a fly", "Eaten", "Bear-handled"],
     "boar": ["Gored", "Tusked", "Trampled", "Run down", "Gored and trampled"],
-    "mudcrab": ["Pinched to death", "Snipped to bits", "Clawed to death",
+    "crab": ["Pinched to death", "Snipped to bits", "Clawed to death",
                 "Humiliated", "Nipped to death"],
     "skeleton": ["Rattled to death", "Clawed to death", "Dragged into the dark",
                  "Dragged to the grave", "Pulled into the grave"],

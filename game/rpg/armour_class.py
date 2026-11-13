@@ -34,7 +34,7 @@ BASE_AC = 10
 NATURAL_ARMOUR: Dict[str, int] = {
     # animals
     "hen": 0, "sheep": 0, "cow": 1, "deer": 1, "wolf": 1, "boar": 2,
-    "bear": 3, "mudcrab": 5,
+    "bear": 3, "crab": 5,
     # the dead and the monstrous
     "skeleton": 2, "skeleton_archer": 1, "wraith": 3, "monster": 3, "dragon": 8,
     # people, by what their role wears

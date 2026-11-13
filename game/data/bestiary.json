@@ -47,8 +47,8 @@
     "kind": "creature",
     "size": "medium"
   },
-  "mudcrab": {
-    "name": "Mudcrab",
+  "crab": {
+    "name": "Crab",
     "health": 20,
     "damage": 5,
     "attack_style": "melee",

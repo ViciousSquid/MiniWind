@@ -58,7 +58,7 @@ _ART_ALIAS = {
     "bandit_archer": "bandit", "bandit_chief": "bandit",
     "guard_archer": "guard",
     "skeleton": "monster", "skeleton_archer": "monster", "wraith": "monster",
-    "bear": "wolf", "boar": "wolf", "mudcrab": "wolf",
+    "bear": "wolf", "boar": "wolf", "crab": "wolf",
 }
 # MiniWind art lives under the engine's ``assets/`` tree (namespaced), because
 # every Fio sprite loader — the 3D billboard renderer, the editor 2D icons and

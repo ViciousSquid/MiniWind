@@ -67,11 +67,10 @@ DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
 
 #: Animal roles. Each wears a head of its own kind (see :func:`animal_head`),
 #: never a person's.
-ANIMAL_ROLES = frozenset({"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"})
+ANIMAL_ROLES = frozenset({"wolf", "bear", "boar", "crab", "cow", "sheep", "hen"})
 
-#: Animal roles whose head art goes by another name: a hen wears chicken.png,
-#: a mudcrab crab01.png.
-ANIMAL_HEAD_ALIASES = {"hen": "chicken", "mudcrab": "crab"}
+#: Animal roles whose head art goes by another name: a hen wears chicken.png.
+ANIMAL_HEAD_ALIASES = {"hen": "chicken"}
 
 #: The head an animal wears until its own head image exists.
 PLACEHOLDER_HEAD = "placeholder"
@@ -83,12 +82,12 @@ HEAD_SIZE = 128
 
 
 #: Heads drawn at other than :data:`HEAD_SIZE` by nature, as a fraction of it:
-#: a chicken is a small bird, 50 px of the usual 128; a mudcrab is half the
+#: a chicken is a small bird, 50 px of the usual 128; a crab is half the
 #: player's head. Numbered variants share
 #: their head's scale (``chicken2`` is a chicken). An actor's own
 #: ``head_scale`` wins over this.
 CHICKEN_SIZE = 50
-#: A mudcrab's head is half the player's.
+#: A crab's head is half the player's.
 CRAB_SCALE = 0.5
 HEAD_SCALES = {"chicken": CHICKEN_SIZE / HEAD_SIZE, "crab": CRAB_SCALE}
 

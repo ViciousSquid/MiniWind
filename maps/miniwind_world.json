@@ -673986,9 +673986,9 @@
                 6165.9
             ],
             "properties": {
-                "name": "Mudcrab",
-                "display_name": "Mudcrab",
-                "npc_role": "mudcrab",
+                "name": "Crab",
+                "display_name": "Crab",
+                "npc_role": "crab",
                 "faction": "wildlife",
                 "team": "wildlife",
                 "aggression": "defensive",
@@ -674046,9 +674046,9 @@
                 5811.8
             ],
             "properties": {
-                "name": "Mudcrab",
-                "display_name": "Mudcrab",
-                "npc_role": "mudcrab",
+                "name": "Crab",
+                "display_name": "Crab",
+                "npc_role": "crab",
                 "faction": "wildlife",
                 "team": "wildlife",
                 "aggression": "defensive",
@@ -674106,9 +674106,9 @@
                 5395.5
             ],
             "properties": {
-                "name": "Mudcrab",
-                "display_name": "Mudcrab",
-                "npc_role": "mudcrab",
+                "name": "Crab",
+                "display_name": "Crab",
+                "npc_role": "crab",
                 "faction": "wildlife",
                 "team": "wildlife",
                 "aggression": "defensive",
@@ -674166,9 +674166,9 @@
                 4995.0
             ],
             "properties": {
-                "name": "Mudcrab",
-                "display_name": "Mudcrab",
-                "npc_role": "mudcrab",
+                "name": "Crab",
+                "display_name": "Crab",
+                "npc_role": "crab",
                 "faction": "wildlife",
                 "team": "wildlife",
                 "aggression": "defensive",
@@ -674226,9 +674226,9 @@
                 4685.4
             ],
             "properties": {
-                "name": "Mudcrab",
-                "display_name": "Mudcrab",
-                "npc_role": "mudcrab",
+                "name": "Crab",
+                "display_name": "Crab",
+                "npc_role": "crab",
                 "faction": "wildlife",
                 "team": "wildlife",
                 "aggression": "defensive",
@@ -674286,9 +674286,9 @@
                 4568.5
             ],
             "properties": {
-                "name": "Mudcrab",
-                "display_name": "Mudcrab",
-                "npc_role": "mudcrab",
+                "name": "Crab",
+                "display_name": "Crab",
+                "npc_role": "crab",
                 "faction": "wildlife",
                 "team": "wildlife",
                 "aggression": "defensive",
@@ -674718,7 +674718,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "Fresh from the mere, or near enough. Mind the mudcrabs, they bite.",
+                            "text": "Fresh from the mere, or near enough. Mind the crabs, they bite.",
                             "responses": [
                                 {
                                     "text": "The smugglers are finished.",
@@ -676013,7 +676013,7 @@
             ],
             "properties": {
                 "name": "Grunn",
-                "display_name": "Grunn of the Fighters Guild",
+                "display_name": "Grunn of the Warrior's Guild",
                 "npc_role": "guard",
                 "faction": "villagers",
                 "team": "villagers",

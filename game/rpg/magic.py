@@ -372,13 +372,13 @@ register(Spell("sp_detect", "Detect Life", sk.OCCULT, 16, SELF,
                "Sense living things nearby.", element="magic"))
 # Racial power spells (referenced by races.py)
 register(Spell("sp_woad", "Woad", sk.DEFENSIVE, 0, SELF,
-               [{"kind": "shield", "magnitude": 30, "duration": 30}], "Nord racial shield."))
+               [{"kind": "shield", "magnitude": 30, "duration": 30}], "Highlander's ward."))
 register(Spell("sp_flameshield", "Ancestor's Wrath", sk.DEFENSIVE, 0, SELF,
                [{"kind": "fire_shield", "magnitude": 15, "duration": 20}], "Ashfolk flame cloak."))
 register(Spell("sp_berserk", "Berserk", sk.OFFENSIVE, 0, SELF,
                [{"kind": "berserk", "magnitude": 30, "duration": 20}], "Orc rage."))
 register(Spell("sp_adrenaline", "Adrenaline Rush", sk.DEFENSIVE, 0, SELF,
-               [{"kind": "fortify_speed", "magnitude": 40, "duration": 20}], "Redguard surge."))
+               [{"kind": "fortify_speed", "magnitude": 40, "duration": 20}], "Sunborn surge."))
 register(Spell("sp_restoremagicka", "Highborn", sk.DEFENSIVE, 0, SELF,
                [{"kind": "restore_magicka", "magnitude": 100, "duration": 0}], "Highkin magicka burst."))
 register(Spell("sp_histskin", "Histskin", sk.DEFENSIVE, 0, SELF,

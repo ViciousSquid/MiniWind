@@ -57,15 +57,15 @@ def load() -> None:
     register(Quest(
         "fighters_join", "Proving Your Steel",
         giver="Grunn", faction="fighters", xp=25,
-        desc="The Fighters Guild will take you on if you prove yourself.",
+        desc="The Warrior's Guild will take you on if you prove yourself.",
         rewards={"gold": 50, "rep": ("fighters", 10)},
         stages=[
-            Stage(0, "Grunn of the Fighters Guild will admit me if I clear the "
+            Stage(0, "Grunn of the Warrior's Guild will admit me if I clear the "
                      "skeletons from the barrow.", objective="Clear the barrow",
                   waypoint="skeleton"),
             Stage(10, "The barrow is cleared. I should report to Grunn.",
                   objective="Report to Grunn"),
-            Stage(20, "I am now a member of the Fighters Guild.", finishes=True),
+            Stage(20, "I am now a member of the Warrior's Guild.", finishes=True),
         ],
     ))
 

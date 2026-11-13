@@ -1,5 +1,5 @@
-"""Fast travel from the map, to discovered places only (as Oblivion and
-Skyrim): "You haven't discovered that location yet."."""
+"""Fast travel from the map, to discovered places only: "You haven't
+discovered that location yet."."""
 
 from __future__ import annotations
 

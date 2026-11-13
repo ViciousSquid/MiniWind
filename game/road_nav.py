@@ -50,7 +50,7 @@ JOIN_RADIUS = 3000.0
 #: How many of the nearest nodes are weighed as places to join or leave.
 CANDIDATES = 5
 #: Walking a road costs this much of its length, against 1.0 off it. Low,
-#: so people keep to the roads (as in Morrowind and Oblivion) unless the road
+#: so people keep to the roads (as travellers do) unless the road
 #: is more than 2.5 times further than cutting across country.
 ROAD_COST = 0.4
 #: The road must make the trip at least this much cheaper to be taken.
