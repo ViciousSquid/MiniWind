@@ -432,6 +432,23 @@ class PauseActions:
         if self._session() is not None:
             hits.queue(lambda session: session.toggle_waypoint(x, z, pick))
 
+    def pause_menu_travel_check(self, name):
+        """``(may_travel, text)`` for fast travel to the place called *name*,
+        asked while the game is paused (MiniwindSession.fast_travel_check)."""
+        session = self._session()
+        if session is None:
+            return False, "You cannot travel now."
+        try:
+            return session.fast_travel_check(name)
+        except Exception as exc:
+            return False, f"You cannot travel now ({exc})."
+
+    def pause_menu_fast_travel(self, name):
+        """Travel to *name* on the next game tick, which owns the session."""
+        import game.ui.hits as hits
+        if self._session() is not None:
+            hits.queue(lambda session: session.fast_travel(name))
+
     def pause_menu_to_editor(self):
         """Leave the game and hand the map back to the editor."""
         window = self.window

@@ -672,9 +672,14 @@ def map_features(session):
     for m in markers:
         p = getattr(m, "properties", {}) or {}
         name = str(p.get("place_name") or "").strip()
-        if not name or not p.get("_discovered") or name in seen:
+        if not name or name in seen:
             continue
         seen.add(name)
+        if not p.get("_discovered"):
+            # Never drawn or named: only so a click on a quest's marker there
+            # can say the place is not yet discovered (no fast travel).
+            out.setdefault("unknown", []).append((float(m.pos[0]), float(m.pos[2])))
+            continue
         out["places"].append((name, float(m.pos[0]), float(m.pos[2])))
     try:
         quests = session.game.quests.active_quests()

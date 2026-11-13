@@ -11,7 +11,9 @@ it, with a ring round that objective.
 Driven by the pause menu: drag or the arrow keys to pan, the wheel or + / -
 to zoom (about the pointer), Space or Home to come back to the player, Esc or
 M to leave. A click (without dragging) puts the player's one waypoint there,
-in orange; a click on it takes it away. Its data comes through the menu's actions
+in orange; a click on it takes it away. A click on a discovered place asks to
+fast travel there (Enter travels, Esc stays); a click on a quest's marker at a
+place not yet found says so, as Oblivion and Skyrim do. Its data comes through the menu's actions
 (``pause_menu_map_data``), so the page itself knows no session.
 """
 
@@ -37,6 +39,12 @@ CLICK_SLOP = 5
 WAYPOINT_PICK = 14.0
 #: How long a clicked waypoint is shown before the game's own is read back.
 PENDING_SECONDS = 0.5
+#: How near (screen px) a click must be to a place to ask to travel there.
+PLACE_PICK = 16.0
+#: A quest marker this close (world units) to an undiscovered place is "at" it.
+UNKNOWN_PLACE_REACH = 900.0
+#: How long a "You haven't discovered that location yet." note stays up.
+PROMPT_NOTE_SECONDS = 2.5
 
 _GOLD = QColor(214, 178, 96)
 _GOLD_BRIGHT = QColor(250, 214, 120)
@@ -50,8 +58,18 @@ class MapPage:
     """State, input and painting of the map in Statistics or a PauseMenu."""
 
     def __init__(self, menu=None, *, read_data=None, update=None, on_close=None,
-                 on_waypoint=None):
+                 on_waypoint=None, check_travel=None, on_travel=None):
         self.menu = menu
+        actions = getattr(menu, "actions", None)
+        #: ``check_travel(name) -> (ok, text)`` and ``on_travel(name)``: fast
+        #: travel to a discovered place (MiniwindSession.fast_travel*).
+        self._check_travel = (check_travel if check_travel is not None else
+                              getattr(actions, "pause_menu_travel_check", None))
+        self._on_travel = (on_travel if on_travel is not None else
+                           getattr(actions, "pause_menu_fast_travel", None))
+        #: The fast-travel question on screen: ``{"name", "text", "ok", "at"}``.
+        self.prompt = None
+        self._prompt_buttons = []      # [(QRectF, action)] of the last paint
         #: ``on_waypoint(x, z, pick)``: a click on the map at world (x, z),
         #: *pick* world units being near enough to be on the waypoint.
         self._on_waypoint = (on_waypoint if on_waypoint is not None else
@@ -164,6 +182,14 @@ class MapPage:
 
     # -- input ------------------------------------------------------------
     def handle_key(self, key):
+        if self.prompt is not None:
+            if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Y, Qt.Key_T) and self.prompt["ok"]:
+                self.travel()
+                return
+            if key in (Qt.Key_Escape, Qt.Key_N, Qt.Key_Backspace, Qt.Key_Return, Qt.Key_Enter):
+                self.prompt = None
+                self._update()
+                return
         if key in (Qt.Key_Left, Qt.Key_A):
             self.pan(-1, 0)
         elif key in (Qt.Key_Right, Qt.Key_D):
@@ -213,8 +239,22 @@ class MapPage:
         rect = self._rect
         if rect is None:
             return
-        x, z = self.to_world(rect, QPointF(pos))
+        point = QPointF(pos)
+        if self.prompt is not None:
+            for area, action in self._prompt_buttons:
+                if area.contains(point):
+                    action()
+                    return
+            self.prompt = None              # a click elsewhere: the question goes
+        x, z = self.to_world(rect, point)
         pick = WAYPOINT_PICK / self._scale(rect)
+        place = self._place_at(rect, point)
+        if place is not None:
+            self.ask_travel(place)
+            return
+        if self._unknown_quest_place_at(rect, point):
+            self.prompt = {"name": "", "ok": False, "at": time.monotonic(),
+                           "text": "You haven't discovered that location yet."}
         here = self.features.get("waypoint")
         if here is not None and math.hypot(here[0] - x, here[1] - z) <= pick:
             self.features["waypoint"] = None
@@ -223,6 +263,84 @@ class MapPage:
         self._pending = (self.features["waypoint"], time.monotonic())
         if self._on_waypoint is not None:
             self._on_waypoint(x, z, pick)
+        self._update()
+
+    def _place_at(self, rect, point):
+        """The discovered place whose marker or label is under *point*."""
+        best, best_d = None, PLACE_PICK
+        for name, x, z in self.features.get("places", ()):
+            p = self.to_screen(rect, x, z)
+            d = math.hypot(p.x() - point.x(), (p.y() + 8) - point.y())
+            if d <= best_d:
+                best, best_d = name, d
+        return best
+
+    def _unknown_quest_place_at(self, rect, point) -> bool:
+        """Whether *point* is on a quest's marker at a place not yet found."""
+        for _name, qx, qz, *_ in self.features.get("quests", ()):
+            q = self.to_screen(rect, qx, qz)
+            if math.hypot(q.x() - point.x(), q.y() - point.y()) > PLACE_PICK:
+                continue
+            for ux, uz in self.features.get("unknown", ()):
+                if math.hypot(ux - qx, uz - qz) <= UNKNOWN_PLACE_REACH:
+                    return True
+        return False
+
+    def ask_travel(self, name):
+        """Put the fast-travel question for *name* on screen."""
+        ok, text = (False, "You cannot travel now.")
+        if self._check_travel is not None:
+            try:
+                ok, text = self._check_travel(name)
+            except Exception:
+                ok, text = False, "You cannot travel now."
+        self.prompt = {"name": name, "ok": bool(ok), "text": str(text), "at": time.monotonic()}
+        self._update()
+
+    def travel(self):
+        """Answer yes: travel, and close the map back to the game."""
+        prompt, self.prompt = self.prompt, None
+        if not prompt or not prompt["ok"] or self._on_travel is None:
+            return
+        self._on_travel(prompt["name"])
+        self._close()
+        close_menu = getattr(self.menu, "close", None)
+        if callable(close_menu):
+            close_menu()
+
+    def _draw_prompt(self, painter, rect, text_font):
+        prompt = self.prompt
+        self._prompt_buttons = []
+        if prompt is None:
+            return
+        if not prompt["ok"] and time.monotonic() - prompt["at"] > PROMPT_NOTE_SECONDS:
+            self.prompt = None
+            return
+        painter.setFont(text_font(13))
+        fm = painter.fontMetrics()
+        w = max(360.0, fm.horizontalAdvance(prompt["text"]) + 48.0)
+        h = 92.0 if prompt["ok"] else 56.0
+        box = QRectF(rect.center().x() - w / 2, rect.bottom() - h - 24, w, h)
+        painter.setPen(QPen(_GOLD, 1.5))
+        painter.setBrush(QColor(14, 12, 10, 230))
+        painter.drawRoundedRect(box, 6, 6)
+        painter.setPen(_INK)
+        painter.drawText(QRectF(box.x(), box.y() + 8, w, 34), int(Qt.AlignCenter), prompt["text"])
+        if not prompt["ok"]:
+            self._update()              # keeps painting until the note fades
+            return
+        for i, (label, action) in enumerate((("Travel  (Enter)", self.travel),
+                                             ("Stay  (Esc)", self._dismiss))):
+            b = QRectF(box.center().x() - 150 + i * 160, box.y() + 48, 140, 30)
+            painter.setPen(QPen(_GOLD_BRIGHT if i == 0 else _GOLD, 1.2))
+            painter.setBrush(QColor(60, 44, 20) if i == 0 else QColor(30, 26, 22))
+            painter.drawRoundedRect(b, 4, 4)
+            painter.setPen(_INK)
+            painter.drawText(b, int(Qt.AlignCenter), label)
+            self._prompt_buttons.append((b, action))
+
+    def _dismiss(self):
+        self.prompt = None
         self._update()
 
     def handle_wheel(self, pos, delta):
@@ -266,6 +384,7 @@ class MapPage:
         self._draw_focus(painter, rect)
         self._draw_waypoint(painter, rect)
         self._draw_player(painter, rect)
+        self._draw_prompt(painter, rect, text_font)
         painter.setClipping(False)
 
         painter.setBrush(Qt.NoBrush)
@@ -441,7 +560,8 @@ def _caption() -> str:
     if controls.gamepad():
         return ("A  waypoint      L-stick  move      A held  pan      R-stick  zoom      "
                 "B  back")
-    return "Click  waypoint      Drag  pan      Wheel  zoom      Space  you      Esc  back"
+    return ("Click  waypoint      Click a place  fast travel      Drag  pan      Wheel  zoom      "
+            "Space  you      Esc  back")
 
 
 def _takes_italic(text_font):

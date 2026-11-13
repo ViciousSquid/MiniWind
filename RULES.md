@@ -445,7 +445,20 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 ---
 
-## 14. Trade, talk and charm
+## 14. Fast travel
+
+* A click on a **discovered** place on the map asks "Fast travel to …?";
+  Enter travels, Esc stays. A quest's marker at a place not yet found
+  answers "You haven't discovered that location yet." (the waypoint still
+  goes there).
+* The journey takes the hours walking it would: the road distance at 200
+  units a second, on the game's clock (`FAST_TRAVEL_PACE`, `game/runtime.py`).
+  The world catches up as it does after a night in the gaol; followers come
+  along.
+* Not with a hostile within 1,500 units, while the watch is after you, while
+  over-encumbered, in a party, or within 900 units of the place already.
+
+## 15. Trade, talk and charm
 
 * **Prices:** `factor = 1 − (Mercantile + PER − 40) / 300`; buying costs
   `base × (2 − factor) × like × face`, selling pays `base × factor × 0.8 ÷
@@ -464,7 +477,7 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 ---
 
-## 15. The screen
+## 16. The screen
 
 * **Target panel** (bottom right): who you are fighting — portrait, name,
   Armour Class, your chance to hit, and one thin bar: red health, blue armour

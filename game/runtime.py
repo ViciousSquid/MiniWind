@@ -142,6 +142,21 @@ NPC_WALK_SPEED = 90.0
 #: The arrival cover (_update_arrival): a jump is a move this far in one tick;
 #: the cover gives up waiting after this long; and fades out over this long.
 ARRIVAL_JUMP = 600.0
+#: Fast travel (fast_travel): the walking pace the journey's hours are counted
+#: at, the distance within which you are already there, and how near a
+#: hostile must be to forbid it.
+FAST_TRAVEL_PACE = 200.0
+FAST_TRAVEL_NEAR = 900.0
+FAST_TRAVEL_DANGER = 1500.0
+
+
+def _hours_text(hours: float) -> str:
+    """'Under an hour', 'About an hour', 'About 3 hours'."""
+    if hours < 0.75:
+        return "Under an hour"
+    if hours < 1.5:
+        return "About an hour"
+    return f"About {int(round(hours))} hours"
 ARRIVAL_MAX_SECONDS = 8.0
 ARRIVAL_FADE_SECONDS = 0.35
 #: The overhead camera's view radius per unit of camera height: the half-
@@ -3904,6 +3919,111 @@ class MiniwindSession(SettlementLaw):
             r["t"] -= delta
         self.roll_log = [r for r in self.roll_log if r["t"] > 0]
         self._tick_dice_animation(delta)
+
+    # ------------------------------------------------------------ fast travel
+    def _location_markers(self):
+        """``{place name: marker}`` for every named location in this map."""
+        out = {}
+        for m in self._markers_of_kind("location"):
+            name = str(m.properties.get("place_name") or "").strip()
+            if name and name not in out:
+                out[name] = m
+        return out
+
+    def _travel_hours(self, x, z) -> float:
+        """Game hours a walk from the player to (x, z) takes: along the roads
+        where they help, at walking pace, on the game's own clock."""
+        ppos = self._player_pos()
+        if ppos is None:
+            return 0.0
+        distance = math.hypot(x - ppos[0], z - ppos[2]) * 1.25
+        graph = getattr(self, "_road_graph", None)
+        if graph is not None:
+            try:
+                route = graph.plan((ppos[0], ppos[2]), (x, z))
+            except Exception:
+                route = None
+            if route:
+                points = [(ppos[0], ppos[2]), *route, (x, z)]
+                distance = sum(math.hypot(b[0] - a[0], b[1] - a[1])
+                               for a, b in zip(points, points[1:]))
+        return distance / FAST_TRAVEL_PACE * float(self.clock.hours_per_second)
+
+    def fast_travel_check(self, name):
+        """``(may_travel, what_to_tell_the_player)`` for travelling to the
+        place called *name*, as Oblivion and Skyrim answer it."""
+        if getattr(self, "coop", None) is not None:
+            return False, "A party travels together, on foot."
+        marker = self._location_markers().get(str(name))
+        if marker is None:
+            return False, "There is no such place on this map."
+        if not marker.properties.get("_discovered"):
+            return False, "You haven't discovered that location yet."
+        c = self.game.character
+        if c.is_dead:
+            return False, "You cannot travel now."
+        ppos = self._player_pos()
+        if ppos is None:
+            return False, "You cannot travel now."
+        if math.hypot(marker.pos[0] - ppos[0], marker.pos[2] - ppos[2]) < FAST_TRAVEL_NEAR:
+            return False, f"You are already at {name}."
+        if self._arrest_state or int(c.bounty or 0) and self._arrest_pursuers:
+            return False, "You can't fast travel while the watch is after you."
+        if c.is_overencumbered:
+            return False, "You are carrying too much to fast travel."
+        for t in list(self._things_of_type("creature")) + list(self._things_of_type("npc")):
+            p = t.properties
+            if (p.get("dead") or p.get("hidden") or "_bw_parked_hidden" in p
+                    or str(p.get("aggression")) != "hostile"):
+                continue
+            if math.hypot(t.pos[0] - ppos[0], t.pos[2] - ppos[2]) < FAST_TRAVEL_DANGER:
+                return False, "You can't fast travel when enemies are nearby."
+        hours = self._travel_hours(marker.pos[0], marker.pos[2])
+        return True, f"Fast travel to {name}? {_hours_text(hours)} on the road."
+
+    def fast_travel(self, name) -> bool:
+        """Travel to the discovered place called *name*: arrive there with the
+        hours of the journey gone (the world's clock, the mills and the
+        settlements catch up as they do after a night in the gaol), followers
+        beside you. The arrival cover hides the ground streaming in."""
+        ok, text = self.fast_travel_check(name)
+        if not ok:
+            self.notify(text, 4.0)
+            return False
+        marker = self._location_markers()[str(name)]
+        hours = self._travel_hours(marker.pos[0], marker.pos[2])
+        spot = self._open_spot_near(marker.pos[0], marker.pos[2])
+        ground = fio.ground_height(self.logic, spot[0], spot[1])
+        y = (ground if ground is not None else float(marker.pos[1])) + 60.0
+        self.teleport_player([spot[0], y, spot[1]])
+        followers = [t for t in self._things_of_type("npc")
+                     if t.properties.get("follow_player") and not t.properties.get("dead")]
+        for i, t in enumerate(followers):
+            a = 2.0 * math.pi * i / max(1, len(followers))
+            t.pos = [spot[0] + math.cos(a) * 120.0, y, spot[1] + math.sin(a) * 120.0]
+            t.properties.pop("_dest", None)
+        total = self.clock.hour + hours
+        self.clock.set_time(total % 24, self.clock.day + int(total // 24))
+        self._sim_last_hour = float(self.clock.hour)
+        passed = _hours_text(hours)
+        verb = "pass" if passed.endswith("hours") else "passes"
+        self.notify(f"You travel to {name}. {passed} {verb}.", 5.0)
+        return True
+
+    def _open_spot_near(self, x, z):
+        """The nearest point to (x, z) with room to stand: a place's marker can
+        sit in a market's middle, among stalls."""
+        y = fio.ground_height(self.logic, x, z) or 0.0
+        if not self._blocked_by_wall(x, y + 40.0, z):
+            return (float(x), float(z))
+        for r in (80, 160, 240, 360, 480, 640):
+            for k in range(12):
+                a = 2.0 * math.pi * k / 12
+                px, pz = x + math.cos(a) * r, z + math.sin(a) * r
+                gy = fio.ground_height(self.logic, px, pz) or y
+                if not self._blocked_by_wall(px, gy + 40.0, pz):
+                    return (float(px), float(pz))
+        return (float(x), float(z))
 
     # ---------------------------------------------------------- arrival cover
     def _update_arrival(self) -> None:
