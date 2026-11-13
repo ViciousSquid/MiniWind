@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import PROTOCOL_VERSION
+from . import MAX_PARTY, MAX_PLAYERS, PROTOCOL_VERSION
 from . import friend_code
 from .compatibility import map_hash
 from .model import LATE_ARRIVAL_CLOSED, Lobby, LobbyError, content_signature, map_path
@@ -193,7 +193,7 @@ class LobbyController:
         if campaign:
             if (
                 campaign.get("version") != 1
-                or not 1 <= len(campaign.get("members", [])) <= 4
+                or not 1 <= len(campaign.get("members", [])) <= MAX_PARTY
             ):
                 raise LobbyError("Invalid co-op campaign save.")
             try:
@@ -308,8 +308,8 @@ class LobbyController:
             if self.started
             else {
                 "name": self.lobby.name,
-                "players": len(self.lobby.members),
-                "maximum": 4,
+                "players": self.lobby.humans(),
+                "maximum": MAX_PLAYERS,
                 "signature": self.signature,
                 "map": self.map_name,
             }
@@ -360,7 +360,7 @@ class LobbyController:
                 if self.started and not self.lobby.owned(owner):
                     if not self.lobby.late_arrival:
                         raise LobbyError(LATE_ARRIVAL_CLOSED)
-                    if len(self.lobby.members) >= 4:
+                    if self.lobby.humans() >= MAX_PLAYERS:
                         raise LobbyError("The party is full.")
                 self.peers[peer] = owner
                 self._pending_peers.pop(peer, None)

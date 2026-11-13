@@ -93,7 +93,7 @@ class MultiplayerDialog(QDialog):
     def _build_browser(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        title = QLabel("<b>Play together</b> — up to four players")
+        title = QLabel("<b>Play together</b> — up to four players, and AI companions besides")
         layout.addWidget(title)
         # Join: one box, a friend code (or an address), and Join.
         join_box = QGroupBox("Join a friend")
@@ -539,7 +539,11 @@ class MultiplayerDialog(QDialog):
             if member["player_id"] == selected:
                 self.members.setCurrentItem(item)
         self.members.blockSignals(False)
-        self.lobby_title.setText(f"{state['name']} — {len(state['members'])}/4 players")
+        humans = [m for m in state["members"] if not m.get("bot")]
+        companions = len(state["members"]) - len(humans)
+        self.lobby_title.setText(
+            f"{state['name']} — {len(humans)}/4 players"
+            + (f" + {companions} AI companion{'s' if companions != 1 else ''}" if companions else ""))
         self.start_button.setVisible(self.controller.lobby is not None)
         self.resume_button.setVisible(self.controller.lobby is not None)
         self.resume_button.setEnabled(not state["members"])
@@ -548,9 +552,9 @@ class MultiplayerDialog(QDialog):
             any(m["owner"] == state["host"] and not m.get("bot") for m in connected)
             and all(m["ready"] for m in connected)
         )
-        self.add_button.setEnabled(len(state["members"]) < 4)
+        self.add_button.setEnabled(len(humans) < 4)
         self.bot_button.setVisible(self.controller.lobby is not None)
-        self.bot_button.setEnabled(len(state["members"]) < 4)
+        self.bot_button.setEnabled(companions < 4)
         self.respawn_at_village.blockSignals(True)
         self.respawn_at_village.setChecked(bool(state.get("respawn_at_village", False)))
         self.respawn_at_village.blockSignals(False)

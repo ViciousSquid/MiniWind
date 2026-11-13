@@ -1,12 +1,12 @@
 # Multiplayer and local co-op
 
-Choose **MULTIPLAYER** in the launcher. A party contains up to four characters
+Choose **MULTIPLAYER** in the launcher. A party contains up to four human players
 across any combination of computers and controllers: keyboard plus gamepad,
 two or more gamepads, four network players, or mixed parties such as two plus
 two. Every computer shows the whole party in one shared overhead view.
 
-The host can also add **AI companions** to fill unused slots, including one
-human with three bots. Normal **Play** still starts a single-player game with its existing character
+The host can also add up to four **AI companions** on top of the players: they
+never take a player's place, so a full party is four players and four bots. Normal **Play** still starts a single-player game with its existing character
 creator, controls, quest rules and save slots.
 
 ## Form a party
@@ -35,8 +35,8 @@ Keep `saves/.multiplayer-identity` on a joining machine to retain that identity.
 ## Play with bots
 
 Host a local or network party, add your own character, then choose **Add AI
-companion** for each empty slot you want filled. Bots count toward the four
-character limit and require no keyboard, gamepad or other computer. Select a
+companion** for each one you want (four at most). Bots do not count toward the
+four-player limit and require no keyboard, gamepad or other computer. Select a
 bot in the roster to change its name, head, race, class and birthsign, or remove
 it before starting. Their readiness is automatic; ready your human characters
 and start as usual. A party still needs a human host character.

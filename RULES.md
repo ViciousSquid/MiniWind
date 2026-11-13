@@ -618,7 +618,10 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 ## 17. Playing together
 
-* **Up to four players** in a party, on any mix of computers and controllers.
+* **Up to four players** in a party, on any mix of computers and controllers,
+  and **up to four AI companions on top** (the host adds them in the lobby;
+  they never take a player's place). Each member has their own colour; with
+  more than four, the party cards go compact (name, then health).
 * **Friend codes.** Host game gives a code such as `7K2QD-M4XA9-0RT3V` (Copy
   code); a friend pastes it into Join. It holds the host's Internet address,
   the party's port and a random invitation, with a check character that

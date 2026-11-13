@@ -8,7 +8,13 @@ from PyQt5.QtGui import QColor, QFontMetrics, QPixmap
 from ..rpg import heads
 from ..ui import hud_frame, theme
 
-COLOURS = ("#69b6ff", "#ffbf69", "#b1e17d", "#d89fff")
+#: Each party member's own colour, by party order: four players and up to
+#: four AI companions.
+COLOURS = ("#69b6ff", "#ffbf69", "#b1e17d", "#d89fff",
+           "#ff8f8f", "#6fe0d0", "#f2e36b", "#c4c4cc")
+#: Card height and spacing: roomy for up to four, compact beyond.
+CARD_H, CARD_STEP = 52, 56
+COMPACT_H, COMPACT_STEP = 38, 41
 #: A party card's width (px): head, name, health and who plays it.
 CARD_WIDTH = 172
 
@@ -29,7 +35,8 @@ def party_rects(width, height, count):
     frame = hud_frame.layout(width, height)
     top = frame.cy + frame.R + 8
     card_width = max(1, min(CARD_WIDTH, width - 24))
-    return [QRectF(12, top + index * 56, card_width, 52) for index in range(count)]
+    tall, step = (CARD_H, CARD_STEP) if count <= 4 else (COMPACT_H, COMPACT_STEP)
+    return [QRectF(12, top + index * step, card_width, tall) for index in range(count)]
 
 
 def draw_party(event, coop):
@@ -48,19 +55,23 @@ def draw_party(event, coop):
     painter.save()
     painter.setFont(theme.font(9))
     metrics = QFontMetrics(painter.font())
+    compact = len(cards) > 4
     for index, context in enumerate(coop.players.values()):
         rect = cards[index]
         x, y, card = rect.x(), rect.y(), rect.width()
         c = context.session.game.character
-        painter.setPen(QColor(COLOURS[index % 4]))
+        painter.setPen(QColor(COLOURS[index % len(COLOURS)]))
         painter.setBrush(QColor(20, 22, 28, 220))
         painter.drawRoundedRect(rect, 5, 5)
+        face = 28 if compact else 34
         pix = QPixmap(heads.head_path(context.profile["head"]))
-        painter.drawPixmap(int(x + 5), int(y + 9), 34, 34, pix)
+        painter.drawPixmap(int(x + 5), int(y + (rect.height() - face) / 2), face, face, pix)
+        tx = x + face + 11
+        room = card - (face + 17)
         painter.drawText(
-            QRectF(x + 45, y + 2, card - 51, 17),
+            QRectF(tx, y + 2, room, 17),
             Qt.AlignLeft | Qt.AlignVCenter,
-            metrics.elidedText(context.profile["name"], Qt.ElideRight, int(card - 51)),
+            metrics.elidedText(context.profile["name"], Qt.ElideRight, int(room)),
         )
         status = (
             "Disconnected"
@@ -69,13 +80,7 @@ def draw_party(event, coop):
             if c.is_dead
             else f"HP {int(c.health)}/{int(c.max_health)}"
         )
-        painter.setPen(QColor("#eeeeee"))
-        painter.drawText(
-            QRectF(x + 45, y + 18, card - 51, 16), Qt.AlignLeft | Qt.AlignVCenter,
-            metrics.elidedText(status, Qt.ElideRight, int(card - 51)),
-        )
-        painter.setPen(QColor("#adb4c3"))
-        text = (
+        who = (
             context.task or "AI companion"
             if context.bot
             else "This computer"
@@ -83,11 +88,21 @@ def draw_party(event, coop):
             else "Network player"
         )
         if context.player_id == coop._ui_owner:
-            text += " · UI"
+            who += " · UI"
+        if compact:
+            # Two lines: the name, then health and (for AI) who it is.
+            status += "  · AI" if context.bot else ""
+        painter.setPen(QColor("#eeeeee"))
         painter.drawText(
-            QRectF(x + 45, y + 33, card - 51, 16), Qt.AlignLeft | Qt.AlignVCenter,
-            metrics.elidedText(text, Qt.ElideRight, int(card - 51)),
+            QRectF(tx, y + 18, room, 16), Qt.AlignLeft | Qt.AlignVCenter,
+            metrics.elidedText(status, Qt.ElideRight, int(room)),
         )
+        if not compact:
+            painter.setPen(QColor("#adb4c3"))
+            painter.drawText(
+                QRectF(tx, y + 33, room, 16), Qt.AlignLeft | Qt.AlignVCenter,
+                metrics.elidedText(who, Qt.ElideRight, int(room)),
+            )
     if coop.paused:
         painter.setPen(QColor("#ffde95"))
         painter.drawText(

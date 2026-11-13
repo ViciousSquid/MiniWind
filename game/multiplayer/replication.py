@@ -7,6 +7,7 @@ import math
 import time
 
 from .. import fio
+from . import MAX_PARTY
 from ..rpg.character import Character
 
 FIELDS = frozenset(
@@ -260,7 +261,7 @@ def apply(coop, message):
     entities = message.get("entities")
     if (
         not isinstance(players, dict)
-        or not 1 <= len(players) <= 4
+        or not 1 <= len(players) <= MAX_PARTY
         or not isinstance(entities, list)
     ):
         raise ValueError("Invalid authoritative world frame.")

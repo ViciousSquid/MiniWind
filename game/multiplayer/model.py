@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import MAX_PLAYERS, PROTOCOL_VERSION
+from . import MAX_COMPANIONS, MAX_PLAYERS, PROTOCOL_VERSION
 
 
 class LobbyError(ValueError):
@@ -127,6 +127,13 @@ class Lobby:
             for member in self.members:
                 member.ready = member.bot
 
+    def humans(self) -> int:
+        """Human players in the party (AI companions do not count)."""
+        return sum(1 for m in self.members if not m.bot)
+
+    def companions(self) -> int:
+        return sum(1 for m in self.members if m.bot)
+
     def owned(self, owner):
         return [p for p in self.members if p.owner == owner]
 
@@ -139,7 +146,9 @@ class Lobby:
     def add(self, owner, profile, *, player_id=None, character=None, bot=False):
         if self.started and not self.late_arrival:
             raise LobbyError(LATE_ARRIVAL_CLOSED)
-        if len(self.members) >= MAX_PLAYERS:
+        if bot and self.companions() >= MAX_COMPANIONS:
+            raise LobbyError("The party has all the AI companions it can take (four).")
+        if not bot and self.humans() >= MAX_PLAYERS:
             raise LobbyError("The party is full (four players).")
         if bot:
             if owner != self.host or self.started:
