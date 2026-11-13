@@ -212,6 +212,8 @@ TOP_IN = 0.26
 #: and the chest, legs and feet below it.
 HEAD_Y = 0.285
 HEAD_SIZE = 120
+#: The hand slots' height: beside the head, a little below its middle.
+HAND_Y = 0.32
 
 PAPERDOLL = (
     # The two hands sit mid-height on either side: the left hand on the
@@ -223,13 +225,13 @@ PAPERDOLL = (
     # Body armour, legs and feet stand in a column below the head, in body
     # order.
     ("head", "Head", TOP_IN, 0.09),
-    (HAND_LEFT, "L", HAND_IN, HEAD_Y),        # beside the head
+    (HAND_LEFT, "L", HAND_IN, HAND_Y),        # beside the head
     ("light", "Torch", TORCH_IN, 0.55),
     # Gloves under each hand: one slot (the pair), shown twice, the right
     # one mirrored.
     ("hands", "Gloves", COLUMN_IN, 0.69),     # gauntlets, bracers, wraps
     ("amulet", "Amulet", 1.0 - TOP_IN, 0.09),
-    (HAND_RIGHT, "R", 1.0 - HAND_IN, HEAD_Y), # beside the head
+    (HAND_RIGHT, "R", 1.0 - HAND_IN, HAND_Y), # beside the head
     ("ring", "Ring", 1.0 - TORCH_IN, 0.55),
     (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.69),
     ("chest", "Chest", 0.50, 0.555),

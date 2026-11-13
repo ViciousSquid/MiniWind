@@ -263,7 +263,9 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     where = {slot: (x, y) for slot, _label, x, y in iw.PAPERDOLL}
     # Level with the head, left and right, close beside it, and bigger than
     # the other slots.
-    assert where[iw.HAND_LEFT][1] == where[iw.HAND_RIGHT][1] == iw.HEAD_Y
+    assert where[iw.HAND_LEFT][1] == where[iw.HAND_RIGHT][1] == iw.HAND_Y
+    half_head = iw.HEAD_SIZE / 2.0 / 330.0          # beside it, not above or below
+    assert iw.HEAD_Y - half_head < iw.HAND_Y < iw.HEAD_Y + half_head
     assert where[iw.HAND_LEFT][0] < where["hands"][0]
     assert where[iw.HAND_RIGHT][0] > where["ring"][0]
     # The torch slot sits under the head slot; the glove slot says so.
