@@ -379,3 +379,26 @@ def test_generated_routes_keep_every_smoothed_segment_walkable():
         for a, b in zip([start, *path], path):
             assert nav.line_clear(*a, *b, 0), (seed, a, b)
 
+
+
+def test_a_walker_pressed_into_a_wall_margin_still_finds_its_way():
+    """Bram the Farmer stood against a wall, in a cell the grid calls wall
+    (cell centres are tested with a margin; the mover's exact test let him
+    stand there). Every route out was refused -- the search ended at once,
+    or its first leg out of his own cell failed validation -- so he never
+    moved again. He now sets out from the nearest open cell on his side."""
+    def wall(x, y, z):
+        return math.floor(z / CELL) == 0 and abs(math.floor(x / CELL)) <= 6
+
+    clock = Clock()
+    nav = Navigator(wall, clock, planning_budget=PlanningBudget(max_seconds=math.inf))
+    here, goal = (24.0, 0.0, 40.0), (24.0, 0.0, 1000.0)
+    path = nav.find_path((here[0], here[2]), (goal[0], goal[2]), 0.0)
+    assert path[0] == (24.0, 72.0) and path[-1] == (24.0, 1000.0)
+    way = None
+    for _ in range(3):
+        way = nav.steer("bram", here, goal)
+        clock.now += 0.1
+    assert (way[0], way[2]) == (24.0, 72.0), "out of the margin to the open cell"
+    # From the far side of the same cell, the open cell on that side.
+    assert nav.find_path((24.0, 8.0), (24.0, -1000.0), 0.0)[0] == (24.0, -24.0)

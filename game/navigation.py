@@ -297,14 +297,27 @@ class Navigator:
             goal_cell = self._nearest_open(gx, gz, y)
             if goal_cell is None:
                 return None
-        if (sx, sz) == goal_cell:
-            return [tuple(goal) if goal_cell == (gx, gz)
-                    else ((sx + 0.5) * CELL, (sz + 0.5) * CELL)]
+        start_cell = (sx, sz)
+        from_wall = self._cell_blocked(sx, sz, y)
+        if from_wall:
+            # The walker stands where the grid calls wall (pressed against one,
+            # within the margin a cell centre is tested with): every way out
+            # of its own cell looked blocked, the search ended at once, and it
+            # stayed pinned there for good. Set out from the nearest open cell,
+            # as a blocked goal is reached at the nearest one.
+            start_cell = self._nearest_open_to(start, sx, sz, y)
+            if start_cell is None:
+                return None
+        if start_cell == goal_cell:
+            end = (tuple(goal) if goal_cell == (gx, gz)
+                   else ((goal_cell[0] + 0.5) * CELL, (goal_cell[1] + 0.5) * CELL))
+            if from_wall:
+                return [((start_cell[0] + 0.5) * CELL, (start_cell[1] + 0.5) * CELL), end]
+            return [end]
 
         def h(cx, cz):
             return math.hypot(cx - goal_cell[0], cz - goal_cell[1])
 
-        start_cell = (sx, sz)
         open_ = [(h(sx, sz), 0.0, start_cell)]
         came = {start_cell: None}
         cost = {start_cell: 0.0}
@@ -349,6 +362,10 @@ class Navigator:
         points = [((cx + 0.5) * CELL, (cz + 0.5) * CELL) for cx, cz in cells[1:]]
         if goal_cell == (gx, gz):
             points[-1:] = [tuple(goal)]
+        if from_wall:
+            # Out of the wall's margin to the open cell first, then on.
+            first = ((start_cell[0] + 0.5) * CELL, (start_cell[1] + 0.5) * CELL)
+            return [first] + self._smooth(first, points, y, _metrics=_metrics)
         return self._smooth(tuple(start), points, y, _metrics=_metrics)
 
     def _nearest_open(self, gx, gz, y, reach=4):
@@ -358,6 +375,18 @@ class Navigator:
                     if not self._cell_blocked(gx + ox, gz + oz, y):
                         return (gx + ox, gz + oz)
         return None
+
+    def _nearest_open_to(self, pos, cx, cz, y, reach=2):
+        """The open cell within *reach* of cell (cx, cz) nearest to *pos* (a
+        walker's own point, so the side of the wall it is on), or None."""
+        best, best_d = None, math.inf
+        for ox in range(-reach, reach + 1):
+            for oz in range(-reach, reach + 1):
+                if (ox or oz) and not self._cell_blocked(cx + ox, cz + oz, y):
+                    d = math.hypot((cx + ox + 0.5) * CELL - pos[0], (cz + oz + 0.5) * CELL - pos[1])
+                    if d < best_d:
+                        best, best_d = (cx + ox, cz + oz), d
+        return best
 
     def _smooth(self, start, points, y, *, _metrics=None):
         """Pull the route taut with a forward pass over its turns.
@@ -503,8 +532,10 @@ class Navigator:
                 stats.last_search = dict(plan.metrics, at=now, reason=plan.reason,
                                          outcome="found" if points else "unreachable",
                                          elapsed_ms=plan.seconds * 1000.0)
-            if points and not all(self.line_clear(*a, *b, y)
-                                  for a, b in zip([(x, z), *points], points)):
+            legs = list(zip([(x, z), *points], points)) if points else []
+            if legs and self._cell_blocked(origin[0], origin[1], y):
+                legs = legs[1:]           # the step out of the wall's margin (see the search)
+            if points and not all(self.line_clear(*a, *b, y) for a, b in legs):
                 # The actor or a door may have moved while the frontier waited.
                 # Retry next update; never publish a path through changed walls.
                 return (x, y, z)
