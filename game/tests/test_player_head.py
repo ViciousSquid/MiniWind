@@ -188,7 +188,9 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     # A head set in the map is kept.
     assert sheep.properties["head"] == "sheep02"
     one = (heads.HEAD_SIZE, heads.HEAD_SIZE)
-    for animal in (wolf, bear, boar, crab, cow, sheep):
+    half = heads.HEAD_SIZE // 2                     # a mudcrab is half the player's head
+    assert (crab.properties["sprite_width"], crab.properties["sprite_height"]) == (half, half)
+    for animal in (wolf, bear, boar, cow, sheep):
         assert (animal.properties["sprite_width"],
                 animal.properties["sprite_height"]) == one
     third = heads.CHICKEN_SIZE                     # chickens are small

@@ -83,11 +83,14 @@ HEAD_SIZE = 128
 
 
 #: Heads drawn at other than :data:`HEAD_SIZE` by nature, as a fraction of it:
-#: a chicken is a small bird, 50 px of the usual 128. Numbered variants share
+#: a chicken is a small bird, 50 px of the usual 128; a mudcrab is half the
+#: player's head. Numbered variants share
 #: their head's scale (``chicken2`` is a chicken). An actor's own
 #: ``head_scale`` wins over this.
 CHICKEN_SIZE = 50
-HEAD_SCALES = {"chicken": CHICKEN_SIZE / HEAD_SIZE}
+#: A mudcrab's head is half the player's.
+CRAB_SCALE = 0.5
+HEAD_SCALES = {"chicken": CHICKEN_SIZE / HEAD_SIZE, "crab": CRAB_SCALE}
 
 
 def default_scale(head_id) -> float:
