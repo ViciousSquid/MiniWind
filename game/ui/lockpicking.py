@@ -54,6 +54,23 @@ _PIN_METAL = {
 }
 
 
+#: Where the rendered plates are drawn, in the escutcheon's coordinates
+#: (game/tools/make_lock_art.py renders them to fit these, channel for channel).
+PLATE_RECT = (-12.0, 130.0, 480.0, 320.0)
+PADLOCK_RECT = (100.0, 104.0, 270.0, 392.0)
+_ART = {}
+
+
+def _art(style):
+    """The rendered plate for *style* (assets/ui/lockpicking/<style>.png), or
+    None when it is missing (the drawn fallback is used)."""
+    if style not in _ART:
+        path = Path(__file__).resolve().parents[2] / "assets" / "ui" / "lockpicking" / f"{style}.png"
+        pm = QPixmap(str(path)) if path.exists() else None
+        _ART[style] = pm if pm is not None and not pm.isNull() else None
+    return _ART[style]
+
+
 def lock_style(props) -> str:
     """How the lock on a container with *props* looks: its own ``lock_style``,
     or one that suits it -- a crate's padlock, an abandoned or burial chest's
@@ -184,9 +201,19 @@ def _dial(p, a, style="ornate"):
         p.setRenderHint(p.SmoothPixmapTransform, True)
         p.drawPixmap(QRectF(-12, 130, 480, 320), _PLATE, QRectF(_PLATE.rect()))
     elif style in ("iron", "rusted"):
-        _iron_plate(p, style == "rusted")
+        art = _art(style)
+        if art is not None:
+            p.setRenderHint(p.SmoothPixmapTransform, True)
+            p.drawPixmap(QRectF(*PLATE_RECT), art, QRectF(art.rect()))
+        else:
+            _iron_plate(p, style == "rusted")
     else:
-        _padlock_body(p)
+        art = _art("padlock")
+        if art is not None:
+            p.setRenderHint(p.SmoothPixmapTransform, True)
+            p.drawPixmap(QRectF(*PADLOCK_RECT), art, QRectF(art.rect()))
+        else:
+            _padlock_body(p)
         # Turn the mechanism upright about the pins' centre, into the body.
         p.translate(232, 314)
         p.rotate(-90)
