@@ -1686,10 +1686,14 @@ class MiniwindSession(SettlementLaw):
             p["handed"] = "left" if self.rng.random() < LEFT_HANDED_CHANCE else "right"
 
     def _apply_player_head(self, head_id) -> None:
-        """Force the player's overhead sprite to the chosen head image."""
+        """Force the player's overhead sprite to the chosen head image, with
+        the helmet worn drawn over it (game/head_gear.py)."""
         try:
             import game.rpg.heads as heads
-            path = heads.head_path(head_id)
+            import game.head_gear as head_gear
+            helmet = head_gear.helmet_id(self.game.character)
+            path = head_gear.sprite_path(heads.head_path(head_id), helmet)
+            self._head_gear_shown = (str(head_id), helmet)
             # The viewport reads this to point its overhead sprite renderer at
             # the head (a single static frame, no animation).
             setattr(self.logic, "player_head_sprite", path)
@@ -1712,10 +1716,21 @@ class MiniwindSession(SettlementLaw):
         self.world_index.rebuild(list(actors))
         self._wi_live = True
 
+    def _sync_head_gear(self) -> None:
+        """Put on or take off a helmet and the overhead sprite follows: one
+        comparison a tick, the sprite rebuilt only when head or helmet
+        changes."""
+        c = self.game.character
+        equipment = getattr(c, "equipment", None) or {}
+        now = (str(getattr(c, "head", "") or ""), equipment.get("head") or None)
+        if now[0] and now != self.__dict__.get("_head_gear_shown"):
+            self._apply_player_head(now[0])
+
     def tick(self, delta: float) -> None:
         # Rebuild the actor index once, then resolve it once here rather than
         # through an attribute chain at each of the tens of thousands of asks a
         # settlement tick makes.
+        self._sync_head_gear()
         self._rebuild_world_index()
         self._wi_cache = None
         self._world_index()

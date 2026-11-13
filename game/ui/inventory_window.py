@@ -716,6 +716,8 @@ class InventoryWindow(FloatingWindow):
         if rig is not None:
             eye_rig.draw(painter, rig, cx - rig.head.width() // 2,
                          cy - rig.head.height() // 2, hits.pointer)
+            self._draw_worn_helmet(painter, c, head, cx, cy, rig.head.width(),
+                                   rig.head.height())
             return
         pm = self._doll.get(head)
         if pm is None:
@@ -732,12 +734,37 @@ class InventoryWindow(FloatingWindow):
             self._doll[head] = pm
         if pm is not None and not pm.isNull():
             painter.drawPixmap(cx - pm.width() // 2, cy - pm.height() // 2, pm)
+            self._draw_worn_helmet(painter, c, head, cx, cy, pm.width(), pm.height())
+
+    def _draw_worn_helmet(self, painter, c, head, cx, cy, w, h):
+        """The helmet in the head slot, over the head drawn *w* x *h* about
+        (*cx*, *cy*) -- placed as on the overhead sprite (game/head_gear.py)."""
+        try:
+            import game.head_gear as head_gear
+            import game.rpg.heads as heads
+            helmet = head_gear.helmet_id(c)
+            if not helmet:
+                return
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            size = max(w, h)
+            head_gear.draw_helmet(painter, os.path.join(root, heads.any_head_path(head)),
+                                  helmet, cx - size / 2.0, cy - size / 2.0, size)
+        except Exception:
+            pass
 
     def _draw_equipment(self, painter, rect):
         c = self._character()
         # The name stops short of the Armour Class shield in the bar's middle.
         inner = self._panel(painter, rect, getattr(c, "name", "Adventurer") if c else "Adventurer",
                             title_width=rect.width() // 2 - 40)
+        if c is not None:
+            # Current experience, in the title bar's right half, above the
+            # level and class: small, as it grows large.
+            painter.setFont(self.f_small)
+            painter.setPen(_GOLD)
+            _fit(painter, QRect(rect.center().x() + 40, rect.y() + 2,
+                                rect.right() - 12 - (rect.center().x() + 40), 28),
+                 Qt.AlignRight | Qt.AlignVCenter, f"{int(getattr(c, 'xp', 0) or 0)} XP")
         if c is not None:
             try:
                 import game.rpg.classes as classes

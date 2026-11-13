@@ -446,3 +446,47 @@ def test_both_glove_boxes_are_the_one_pair(qt_app):
     assert worn == [("equip", "hands", "leather_gauntlets")] * 2   # shown in both
     assert s.inventory_move(worn[1], ("pack", None), "leather_gauntlets")
     assert eq.equipped_id(c, "hands") is None              # off from either
+
+
+# ------------------------------------------------------------ helmet on head
+def test_a_worn_helmet_is_drawn_over_the_head_in_play(qt_app, tmp_path, monkeypatch):
+    """The overhead sprite is the head with the helmet drawn on; taking the
+    helmet off goes back to the bare head."""
+    import os
+    import game.head_gear as head_gear
+    from ..rpg import heads
+    from .test_cast_controls import _Logic
+    from ..runtime import MiniwindSession
+    monkeypatch.setattr(head_gear, "_CACHE_DIR", str(tmp_path))
+    s = MiniwindSession(_Logic(), cfg={})
+    c = s.game.character
+    c.head = "head13"
+    s._apply_player_head("head13")
+    bare = heads.head_path("head13")
+    assert s.logic.player_head_sprite == bare
+    inv.add_item(c.inventory, items.make("iron_helmet"))
+    eq.equip(c, "iron_helmet")
+    s._sync_head_gear()
+    worn = s.logic.player_head_sprite
+    assert worn != bare and os.path.isfile(worn) and "iron_helmet" in worn
+    s._sync_head_gear()                                   # nothing changed:
+    assert s.logic.player_head_sprite == worn             # no rebuild
+    eq.unequip(c, items.SLOT_HEAD)
+    s._sync_head_gear()
+    assert s.logic.player_head_sprite == bare
+
+
+def test_the_helmet_sits_on_top_of_the_head(qt_app, tmp_path, monkeypatch):
+    import os
+    import game.head_gear as head_gear
+    from PyQt5.QtGui import QImage
+    from ..rpg import heads
+    monkeypatch.setattr(head_gear, "_CACHE_DIR", str(tmp_path))
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    head_abs = os.path.join(root, heads.head_path("head01"))
+    out = head_gear.sprite_path(heads.head_path("head01"), "plate_helm")
+    head, both = QImage(head_abs), QImage(out)
+    assert both.size() == head.size()
+    top = sum(head.pixel(x, 60) != both.pixel(x, 60) for x in range(head.width()))
+    assert top > head.width() // 3                        # the crown is covered
+    assert head_gear.sprite_path(heads.head_path("head01"), None) == heads.head_path("head01")
