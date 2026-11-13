@@ -624,18 +624,29 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
   and **up to four AI companions on top** (the host adds them in the lobby;
   they never take a player's place). Each member has their own colour; with
   more than four, the party cards go compact (name, then health).
-* **Friend codes.** Host game gives a code such as `7K2QD-M4XA9-0RT3V` (Copy
-  code); a friend pastes it into Join. It holds the host's Internet address,
-  the party's port and a random invitation, with a check character that
-  catches a mistyped letter or two swapped. The address comes from the
-  router (which also opens the port, by UPnP), else a STUN server
-  (`[Multiplayer] stun_server`; empty turns it off), else the computer's own
-  network address (LAN or VPN only). Nothing is sent until you host.
+* **Friend codes** are the main way to play together. Host game gives a
+  code such as `7K2QD-M4XA9-0RT3V` (Copy code); a friend pastes it into
+  Join, lands in the lobby and makes their character there. The code holds
+  the host's Internet address, the party's port and a random invitation,
+  with a check character that catches a mistyped letter or two swapped.
+  It connects over **UDP**, which gets through home routers: the joiner's
+  knocking opens their own router, and the host's opens by UPnP, a
+  forwarded UDP port, or -- if a friend still can't get in -- the friend's
+  **reply code** (shown to them after a few seconds of knocking), which the
+  host pastes into *Let in*. The address comes from the router, else a STUN
+  server asked from the game's own socket (`[Multiplayer] stun_server`;
+  empty turns it off), else the computer's own network address (LAN or VPN
+  only). Nothing is sent until you host or join.
+* **TCP still works**: a typed address (`1.2.3.4[:port]`) and games found on
+  the local network join over TCP, on the same port.
 * **The code is the key.** A joiner from outside the host's own network must
   show the party's invitation; New code makes a fresh one (friends already
   in stay in). Eight different wrong codes in a minute close the door to new
   code joiners for a minute. Players on the host's own network, and members
-  rejoining, need no code. A typed address (`1.2.3.4[:port]`) still works.
+  rejoining, need no code.
+* **Small on the wire.** The world goes to each player 20 times a second as
+  only what changed since a frame they hold (a 770 KB world frame becomes
+  about 1 KB), over UDP and TCP alike.
 * **Late arrival** (the host's choice in the lobby, on by default): players
   may join while the adventure is running, while there is room. Off, they
   join only in the lobby before Start; anyone new afterwards is told "Game

@@ -125,6 +125,13 @@ def decode(text: str):
     return ip, port, invitation
 
 
+def looks_like_code(text: str) -> bool:
+    """Whether *text* is written as a friend code (else a typed address)."""
+    compact = "".join(_READ_AS.get(ch, ch) for ch in str(text).upper() if ch not in " -_\t")
+    return len(compact) == LENGTH and all(ch in ALPHABET for ch in compact) or not (
+        "." in str(text) or ":" in str(text))
+
+
 def parse(text: str):
     """A friend code, or a typed ``host[:port]``: ``(host, port, invitation)``
     (invitation 0 for an address)."""
@@ -260,12 +267,14 @@ def local_address() -> str:
 
 
 def find_public_address(port, config=None, upnp_module=None, stun=stun_lookup):
-    """Where friends can reach a party on TCP *port*: ``(ip, how, mapping)``.
+    """Where friends can reach a party on *port*: ``(ip, port, how, mapping)``.
 
-    *how* is ``"router"`` (UPnP gave the address and opened the port),
-    ``"stun"`` (the address is right; the port may need forwarding) or
-    ``"local"`` (this network or a VPN only). *mapping* is the UPnP mapping
-    to remove on leaving, or None."""
+    *how* is ``"router"`` (UPnP gave the address and opened the port; the
+    port is the party's own), ``"stun"`` (a STUN server saw this computer at
+    that address and port -- asked from the game's own UDP socket, so it is
+    the port the router really maps for it) or ``"local"`` (this network or
+    a VPN only). *mapping* is the UPnP mapping to remove on leaving, or
+    None."""
     use_upnp = True
     if config is not None:
         try:
@@ -280,7 +289,7 @@ def find_public_address(port, config=None, upnp_module=None, stun=stun_lookup):
         except Exception:
             mapping = None
         if mapping is not None and mapping.external_ip and not trusted_address(mapping.external_ip):
-            return mapping.external_ip, "router", mapping
+            return mapping.external_ip, int(port), "router", mapping
         if mapping is not None:
             try:
                 mapping.close()
@@ -290,5 +299,11 @@ def find_public_address(port, config=None, upnp_module=None, stun=stun_lookup):
     if server is not None:
         found = stun(server)
         if found and not trusted_address(found[0]):
-            return found[0], "stun", None
-    return local_address(), "local", None
+            return found[0], int(found[1] or port), "stun", None
+    return local_address(), int(port), "local", None
+
+
+def reply_code(ip, port) -> str:
+    """A joiner's *reply code*: their own public address, for a host whose
+    router keeps them out to let them in with. It carries no invitation."""
+    return encode(ip, port, 0)

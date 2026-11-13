@@ -53,8 +53,9 @@ class MultiplayerDialog(QDialog):
         self._revision = -1
         self._loaded_player = None
         self._last_search = 0.0
+        self._knock_started = 0.0
         self.setWindowTitle("MiniWind — Multiplayer")
-        self.resize(820, 720)
+        self.resize(840, 800)
         self.setMinimumSize(620, 540)
         self.setStyleSheet(
             (parent.styleSheet() if parent is not None else "")
@@ -97,7 +98,8 @@ class MultiplayerDialog(QDialog):
         layout.addWidget(title)
         # Join: one box, a friend code (or an address), and Join.
         join_box = QGroupBox("Join a friend")
-        join_layout = QHBoxLayout(join_box)
+        join_frame = QVBoxLayout(join_box)
+        join_layout = QHBoxLayout()
         self.code_entry = QLineEdit()
         self.code_entry.setObjectName("friendCodeEntry")
         self.code_entry.setPlaceholderText("Paste a friend code — e.g. 7K2QD-M4XA9-0RT3V")
@@ -107,7 +109,28 @@ class MultiplayerDialog(QDialog):
         join.setObjectName("joinWithCode")
         join.clicked.connect(self._join_code)
         join_layout.addWidget(join)
+        join_outer = join_frame
+        join_outer.addLayout(join_layout)
+        self.join_tcp = QCheckBox("Connect over TCP instead (the host forwards TCP port 39745)")
+        self.join_tcp.setObjectName("joinOverTcp")
+        self.join_tcp.setToolTip("Friend codes normally connect over UDP, which gets through home "
+                                 "routers. TCP needs the host's router to forward the port.")
+        join_outer.addWidget(self.join_tcp)
         layout.addWidget(join_box)
+        # While knocking: this computer's reply code, for a host whose
+        # router keeps it out.
+        self.reply_box = QWidget()
+        reply_row = QHBoxLayout(self.reply_box)
+        reply_row.setContentsMargins(0, 0, 0, 0)
+        self.reply_label = QLabel()
+        self.reply_label.setWordWrap(True)
+        reply_row.addWidget(self.reply_label, 1)
+        self.reply_copy = QPushButton("Copy reply code")
+        self.reply_copy.setObjectName("copyReplyCode")
+        self.reply_copy.clicked.connect(self._copy_reply)
+        reply_row.addWidget(self.reply_copy)
+        self.reply_box.setVisible(False)
+        layout.addWidget(self.reply_box)
         # Host: one press, and the code appears in the lobby to copy.
         host_box = QGroupBox("Start a party")
         host_layout = QVBoxLayout(host_box)
@@ -172,10 +195,22 @@ class MultiplayerDialog(QDialog):
         self.code_note = QLabel()
         self.code_note.setWordWrap(True)
         code_layout.addWidget(self.code_note)
+        # A friend whose knocking does not get through sends a reply code.
+        row = QHBoxLayout()
+        self.reply_entry = QLineEdit()
+        self.reply_entry.setObjectName("replyCodeEntry")
+        self.reply_entry.setPlaceholderText("A friend's reply code")
+        self.reply_entry.returnPressed.connect(self._let_in)
+        row.addWidget(self.reply_entry, 1)
+        let_in = QPushButton("Let in")
+        let_in.setObjectName("letInFriend")
+        let_in.clicked.connect(self._let_in)
+        row.addWidget(let_in)
+        code_layout.addLayout(row)
         self.code_box.setVisible(False)
         layout.addWidget(self.code_box)
         self.members = QListWidget()
-        self.members.setMaximumHeight(145)
+        self.members.setMaximumHeight(118)
         self.members.currentRowChanged.connect(self._select_member)
         layout.addWidget(self.members)
         self.resume_button = QPushButton("Resume a co-op campaign / copy a solo save")
@@ -356,7 +391,7 @@ class MultiplayerDialog(QDialog):
     # -- friend codes ------------------------------------------------------------
     _CODE_NOTES = {
         "router": "Your router opened the way: friends can join with this code from anywhere.",
-        "stun": "If friends cannot join, forward TCP port {port} on your router to this computer.",
+        "stun": "Friend can't get in? Paste their reply code below, or forward UDP port {port}.",
         "local": "No Internet address was found: this code works on your own network or a VPN.",
     }
 
@@ -385,12 +420,44 @@ class MultiplayerDialog(QDialog):
         self.controller.new_code()
         self._show_code()
 
+    def _let_in(self):
+        text = self.reply_entry.text().strip()
+        if not text:
+            return
+        if self._try(lambda: self.controller.let_in(text)):
+            self.reply_entry.clear()
+            self.status.setText("Letting your friend in: they should be in the party in a moment.")
+
+    def _copy_reply(self):
+        code = getattr(self.controller, "reply", "")
+        if not code:
+            return
+        board = QApplication.clipboard()
+        board.setText(code)
+        if board.supportsSelection():
+            board.setText(code, board.Selection)
+        self.reply_copy.setText("Copied")
+        QTimer.singleShot(2000, lambda: self.reply_copy.setText("Copy reply code"))
+
+    def _show_reply(self):
+        """Still knocking after a few seconds: offer the reply code."""
+        knocking = (self.controller.state is None and self._knock_started
+                    and time.monotonic() - self._knock_started > 4.0)
+        code = getattr(self.controller, "reply", "") if knocking else ""
+        self.reply_box.setVisible(bool(code))
+        if code:
+            self.reply_label.setText(
+                f"Still knocking… If your friend's router keeps you out, send them your reply "
+                f"code and they can let you in:  <b>{code}</b>")
+
     def _join_code(self):
         text = self.code_entry.text().strip()
         if not text:
             self.status.setText("Paste the friend code your host sent you, or pick a game on this network.")
             return
-        if self._try(lambda: self.controller.join_code(text)):
+        tcp = self.join_tcp.isChecked()
+        if self._try(lambda: self.controller.join_code(text, tcp=tcp)):
+            self._knock_started = time.monotonic()
             self.status.setText("Connecting…")
 
     def _resume(self):
@@ -575,6 +642,7 @@ class MultiplayerDialog(QDialog):
         self.controller.poll()
         if self.code_box.isVisible():
             self._show_code()
+        self._show_reply()
         if self.controller.errors:
             self.status.setText(self.controller.errors.pop(0))
         if self.controller.state is not None:

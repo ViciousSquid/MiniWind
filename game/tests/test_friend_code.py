@@ -163,22 +163,23 @@ class _FakeUpnp:
 
 def test_the_router_is_asked_first_and_opens_the_port():
     router = _FakeUpnp(_FakeMapping("198.51.100.4"))
-    ip, how, mapping = fc.find_public_address(39745, upnp_module=router,
-                                              stun=lambda _s: pytest.fail("no STUN needed"))
-    assert (ip, how) == ("198.51.100.4", "router") and router.ports == [39745]
+    ip, port, how, mapping = fc.find_public_address(39745, upnp_module=router,
+                                                    stun=lambda _s: pytest.fail("no STUN needed"))
+    assert (ip, port, how) == ("198.51.100.4", 39745, "router") and router.ports == [39745]
     assert mapping is router.mapping
 
 
 def test_without_a_router_stun_gives_the_address():
-    ip, how, mapping = fc.find_public_address(39745, upnp_module=_FakeUpnp(None),
-                                              stun=lambda _s: ("203.0.113.50", 1234))
-    assert (ip, how, mapping) == ("203.0.113.50", "stun", None)
+    ip, port, how, mapping = fc.find_public_address(39745, upnp_module=_FakeUpnp(None),
+                                                    stun=lambda _s: ("203.0.113.50", 1234))
+    # The port the router maps for the game's socket, as STUN saw it.
+    assert (ip, port, how, mapping) == ("203.0.113.50", 1234, "stun", None)
 
 
 def test_a_router_behind_another_router_is_not_trusted_for_the_address():
     inner = _FakeMapping("192.168.0.1")
-    ip, how, _m = fc.find_public_address(39745, upnp_module=_FakeUpnp(inner),
-                                         stun=lambda _s: ("203.0.113.50", 1234))
+    ip, _port, how, _m = fc.find_public_address(39745, upnp_module=_FakeUpnp(inner),
+                                                stun=lambda _s: ("203.0.113.50", 1234))
     assert how == "stun" and inner.closed
 
 
@@ -186,9 +187,9 @@ def test_with_nothing_found_the_code_is_for_this_network():
     import configparser
     config = configparser.ConfigParser()
     config["Multiplayer"] = {"stun_server": "", "upnp": "false"}
-    ip, how, mapping = fc.find_public_address(39745, config,
-                                              upnp_module=_FakeUpnp(_FakeMapping("1.2.3.4")),
-                                              stun=lambda _s: pytest.fail("STUN is off"))
+    ip, _port, how, mapping = fc.find_public_address(39745, config,
+                                                     upnp_module=_FakeUpnp(_FakeMapping("1.2.3.4")),
+                                                     stun=lambda _s: pytest.fail("STUN is off"))
     assert how == "local" and mapping is None
 
 
@@ -230,10 +231,13 @@ def test_upnp_maps_the_port_and_takes_it_down_again(monkeypatch):
         monkeypatch.setattr(upnp, "discover", lambda timeout=0: [url])
         mapping = upnp.open_port(39745)
         assert mapping is not None and mapping.external_ip == "198.51.100.77"
-        add = next(d for a, d in calls if a == "AddPortMapping")
-        assert "<NewExternalPort>39745</NewExternalPort>" in add and "<NewProtocol>TCP</NewProtocol>" in add
+        adds = [d for a, d in calls if a == "AddPortMapping"]
+        assert all("<NewExternalPort>39745</NewExternalPort>" in d for d in adds)
+        assert {p for p in ("UDP", "TCP") if any(f"<NewProtocol>{p}</NewProtocol>" in d for d in adds)} \
+            == {"UDP", "TCP"}            # friend codes over UDP, typed addresses over TCP
         mapping.close()
-        assert calls[-1][0] == "DeletePortMapping"
+        deletes = [d for a, d in calls if a == "DeletePortMapping"]
+        assert len(deletes) == 2
     finally:
         server.shutdown()
 
@@ -253,7 +257,7 @@ def outside(monkeypatch):
 def _party():
     server = host()
     server.invitation = fc.new_invitation()
-    server.find_code(finder=lambda: ("203.0.113.7", "stun", None), wait=True)
+    server.find_code(finder=lambda: ("203.0.113.7", server.network.port, "stun", None), wait=True)
     return server
 
 
@@ -328,9 +332,15 @@ def test_join_code_reads_the_code_and_shows_its_invitation():
     from game.multiplayer.lobby import LobbyController
     client = LobbyController(ROOT, "maps/miniwind_world.json", identity="c" * 64)
     client.opened = True
-    seen = []
-    client.join = lambda address, port: seen.append((address, port))
+    udp, tcp = [], []
+    client.network.join_udp = lambda address, port: udp.append((address, port))
+    client.join = lambda address, port: tcp.append((address, port))
+    client.find_reply_code = lambda finder=None: None
     client.join_code(fc.encode("203.0.113.7", 40001, 4242))
-    assert seen == [("203.0.113.7", 40001)] and client.join_invitation == 4242
+    assert udp == [("203.0.113.7", 40001)] and client.join_invitation == 4242   # codes: UDP
+    client.join_code("192.168.1.9:40002")
+    assert tcp == [("192.168.1.9", 40002)]                                     # typed: TCP
     with pytest.raises(LobbyError, match="typo"):
         client.join_code("AAAAA-AAAAA-AAAAB")
+    with pytest.raises(LobbyError, match="reply code"):
+        client.join_code(fc.reply_code("203.0.113.8", 5000))

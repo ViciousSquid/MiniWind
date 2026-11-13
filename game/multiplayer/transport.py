@@ -82,8 +82,13 @@ class Decoder:
 
 
 class Connection:
-    def __init__(self, sock, events, peer):
+    def __init__(self, sock, events, peer, cache=None):
+        from .delta import FrameReceiver, FrameSender
         self.sock, self.events, self.peer = sock, events, peer
+        # World frames (replace=True) travel as patches against the last one
+        # sent: TCP delivers every byte in order, so the peer holds it.
+        self.frames_out = FrameSender(cache)
+        self.frames_in = FrameReceiver()
         self.outgoing = queue.Queue(maxsize=128)
         self._latest = None
         self._lock = threading.Lock()
@@ -92,6 +97,8 @@ class Connection:
         self.closed = False
         #: The far end's IP address ('' when not known).
         self.address = ""
+        #: Bytes on the wire each way (for the bandwidth report).
+        self.stats = {"sent": 0, "received": 0}
 
     def start(self):
         self.sock.setblocking(False)
@@ -102,13 +109,13 @@ class Connection:
         self.thread.start()
 
     def send(self, message, *, replace=False):
-        data = encode(message)
         if self.closed:
             return False
         if replace:
             with self._lock:
-                self._latest = data
+                self._latest = message      # encoded (as a patch) when sent
             return True
+        data = encode(message)
         try:
             self.outgoing.put_nowait(data)
             return True
@@ -137,7 +144,13 @@ class Connection:
                         pending = self.outgoing.get_nowait()
                     except queue.Empty:
                         with self._lock:
-                            pending, self._latest = self._latest or b"", None
+                            latest, self._latest = self._latest, None
+                        if latest is not None:
+                            packet = self.frames_out.make(latest)
+                            self.frames_out.ack(packet["id"])
+                            pending = encode(packet)
+                        else:
+                            pending = b""
                     if not pending and now - last_ping > 3:
                         pending = encode({"type": "ping"})
                         last_ping = now
@@ -148,14 +161,20 @@ class Connection:
                     raw = self.sock.recv(65536)
                     if not raw:
                         break
+                    self.stats["received"] += len(raw)
                     last_received = now
                     for message in decoder.feed(raw):
+                        if message["type"] == "_frame":
+                            message, _fid = self.frames_in.take(message)
+                            if message is None:
+                                continue
                         if message["type"] != "ping":
                             self._event(message)
                 if writable:
                     sent = self.sock.send(pending[:65536])
                     if not sent:
                         break
+                    self.stats["sent"] += sent
                     pending = pending[sent:]
         except (OSError, ValueError, UnicodeError, RecursionError, zlib.error) as exc:
             try:
@@ -200,6 +219,11 @@ class NetworkService:
         self._accept_thread = None
         self._connecting = None
         self._stop = threading.Event()
+        #: The UDP socket (game.multiplayer.udp): the host's beside its TCP
+        #: listener, or a joiner's when joining with a friend code.
+        self.udp = None
+        from .delta import PatchCache
+        self.patch_cache = PatchCache()
         self._discovery_stop = threading.Event()
         self._lock = threading.Lock()
         self._last_search = 0.0
@@ -292,6 +316,11 @@ class NetworkService:
                 udp.close()
             udp = None  # Direct joining still works when LAN discovery is unavailable.
         self._host_discovery = udp
+        # The same port on UDP, for friend codes (game.multiplayer.udp).
+        try:
+            self._open_udp(host=True, address=address, port=self.port)
+        except OSError:
+            self.udp = None             # TCP joining still works
         self._accept_thread = threading.Thread(
             target=self._accept, name="MiniWind host", daemon=True
         )
@@ -321,7 +350,7 @@ class NetworkService:
                         except queue.Full:
                             sock.close()    # too busy to take anyone now
                             continue
-                        connection = Connection(sock, self.events, peer)
+                        connection = Connection(sock, self.events, peer, self.patch_cache)
                         connection.address = source[0] if source else ""
                         self.connections[peer] = connection
                         connection.start()
@@ -387,7 +416,7 @@ class NetworkService:
                             return
                         self._pending_socket = None
                         self.events.put_nowait(("host", {"type": "connected"}))
-                        connection = Connection(sock, self.events, "host")
+                        connection = Connection(sock, self.events, "host", self.patch_cache)
                         self.connections["host"] = connection
                         connection.start()
                     return
@@ -409,6 +438,51 @@ class NetworkService:
             target=connect, name="MiniWind join", daemon=True
         )
         self._connecting.start()
+
+    # -- UDP (friend codes) -------------------------------------------------
+    def _open_udp(self, *, host, address="", port=0):
+        from .udp import UdpEndpoint
+
+        def admit():
+            with self._lock:
+                return (not self._stop.is_set()
+                        and sum(not c.closed for c in self.connections.values()) < 8)
+
+        def on_peer(peer):
+            with self._lock:
+                self.connections[peer.peer] = peer
+
+        self.udp = UdpEndpoint(self.events, host=host, address=address, port=port,
+                               admit=admit, on_peer=on_peer)
+        return self.udp
+
+    def join_udp(self, address, port=GAME_PORT):
+        """Join a party over UDP (a friend code): knock until the host lets
+        us in. Lobby and game see the same events as over TCP."""
+        if self._stop.is_set():
+            raise ValueError("This multiplayer section has closed.")
+        if self._connecting is not None and self._connecting.is_alive():
+            raise ValueError("Already connecting.")
+        if any(not c.closed for c in self.connections.values()):
+            raise ValueError("Already connected. Leave this party before joining another.")
+        if self.udp is None:
+            self._open_udp(host=False)
+
+        def connect():
+            try:
+                self.udp.connect(address, port)
+            except (OSError, ValueError, IndexError) as exc:
+                if not self._stop.is_set():
+                    self.events.put_nowait(
+                        ("host", {"type": "connection_error", "message": str(exc)[:200]}))
+
+        self._connecting = threading.Thread(target=connect, name="MiniWind UDP join", daemon=True)
+        self._connecting.start()
+
+    def let_in(self, address, port):
+        """Open this computer's router to a joiner (their reply code)."""
+        if self.udp is not None:
+            self.udp.punch(address, port)
 
     def send(self, peer, message, *, replace=False):
         with self._lock:
@@ -479,4 +553,6 @@ class NetworkService:
         if self._host_discovery is not None:
             self._host_discovery.close()
             self._host_discovery = None
+        if self.udp is not None:
+            self.udp.close()
         self.advertisement = None

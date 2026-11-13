@@ -34,10 +34,11 @@ LEASE_SECONDS = 4 * 3600
 class Mapping:
     """A forwarded port: close() takes it down."""
 
-    def __init__(self, control_url, service, port, internal_ip, external_ip):
+    def __init__(self, control_url, service, port, internal_ip, external_ip, protocols=("TCP",)):
         self.control_url = control_url
         self.service = service
         self.port = port
+        self.protocols = tuple(protocols)
         self.internal_ip = internal_ip
         self.external_ip = external_ip
         self.closed = False
@@ -46,11 +47,12 @@ class Mapping:
         if self.closed:
             return
         self.closed = True
-        try:
-            _soap(self.control_url, self.service, "DeletePortMapping",
-                  (("NewRemoteHost", ""), ("NewExternalPort", self.port), ("NewProtocol", "TCP")))
-        except Exception:
-            pass
+        for protocol in self.protocols:
+            try:
+                _soap(self.control_url, self.service, "DeletePortMapping",
+                      (("NewRemoteHost", ""), ("NewExternalPort", self.port), ("NewProtocol", protocol)))
+            except Exception:
+                pass
 
 
 def discover(timeout=DISCOVER_SECONDS):
@@ -122,8 +124,9 @@ def _local_ip_towards(url) -> str:
         sock.close()
 
 
-def open_port(port, timeout=DISCOVER_SECONDS):
-    """Forward TCP *port* to this machine; the :class:`Mapping`, or None."""
+def open_port(port, timeout=DISCOVER_SECONDS, protocols=("UDP", "TCP")):
+    """Forward *port* (UDP for friend codes, TCP for typed addresses) to this
+    machine; the :class:`Mapping`, or None when the router would not."""
     for url in discover(timeout):
         try:
             found = control_for(url)
@@ -131,11 +134,20 @@ def open_port(port, timeout=DISCOVER_SECONDS):
                 continue
             control, service = found
             internal = _local_ip_towards(control)
-            _soap(control, service, "AddPortMapping", (
-                ("NewRemoteHost", ""), ("NewExternalPort", int(port)), ("NewProtocol", "TCP"),
-                ("NewInternalPort", int(port)), ("NewInternalClient", internal),
-                ("NewEnabled", 1), ("NewPortMappingDescription", DESCRIPTION),
-                ("NewLeaseDuration", LEASE_SECONDS)))
+            mapped = []
+            for protocol in protocols:
+                try:
+                    _soap(control, service, "AddPortMapping", (
+                        ("NewRemoteHost", ""), ("NewExternalPort", int(port)),
+                        ("NewProtocol", protocol), ("NewInternalPort", int(port)),
+                        ("NewInternalClient", internal), ("NewEnabled", 1),
+                        ("NewPortMappingDescription", DESCRIPTION),
+                        ("NewLeaseDuration", LEASE_SECONDS)))
+                    mapped.append(protocol)
+                except Exception:
+                    continue
+            if not mapped:
+                continue
             external = ""
             try:
                 reply = _soap(control, service, "GetExternalIPAddress", ())
@@ -143,7 +155,7 @@ def open_port(port, timeout=DISCOVER_SECONDS):
                 external = match.group(1).decode().strip() if match else ""
             except Exception:
                 external = ""
-            return Mapping(control, service, int(port), internal, external)
+            return Mapping(control, service, int(port), internal, external, mapped)
         except Exception:
             continue
     return None

@@ -75,6 +75,8 @@ class LobbyController:
         self.public_ip = ""
         self.mapping = None
         self.join_invitation = 0
+        self.public_port = 0
+        self.reply = ""                 # a joiner's reply code, once found
         self._wrong_invitations = []    # (time, invitation)
         self._code_thread = None
 
@@ -115,14 +117,15 @@ class LobbyController:
         if self.lobby is None or self.local_only or not self.invitation:
             return
         port = int(getattr(self.network, "port", GAME_PORT))
-        finder = finder or (lambda: friend_code.find_public_address(port, self.config))
+        finder = finder or (lambda: friend_code.find_public_address(
+            port, self.config, stun=self._stun_from_game_socket))
         self.code, self.code_how = "", ""
 
         def work():
             try:
-                ip, how, mapping = finder()
+                ip, code_port, how, mapping = finder()
             except Exception:
-                ip, how, mapping = friend_code.local_address(), "local", None
+                ip, code_port, how, mapping = friend_code.local_address(), port, "local", None
             if self.lobby is None:            # left while it was finding
                 if mapping is not None:
                     mapping.close()
@@ -130,8 +133,8 @@ class LobbyController:
             if self.mapping is not None and self.mapping is not mapping:
                 self.mapping.close()
             self.mapping = mapping
-            self.public_ip = ip
-            self.code = friend_code.encode(ip, port, self.invitation)
+            self.public_ip, self.public_port = ip, int(code_port)
+            self.code = friend_code.encode(ip, self.public_port, self.invitation)
             self.code_how = how
 
         self._code_thread = threading.Thread(target=work, name="MiniWind friend code", daemon=True)
@@ -147,17 +150,69 @@ class LobbyController:
         self.invitation = friend_code.new_invitation()
         self._wrong_invitations.clear()
         if self.public_ip:
-            port = int(getattr(self.network, "port", GAME_PORT))
-            self.code = friend_code.encode(self.public_ip, port, self.invitation)
+            self.code = friend_code.encode(self.public_ip, self.public_port, self.invitation)
 
-    def join_code(self, text):
-        """Join the party a friend code (or a typed address) points at."""
+    def _stun_from_game_socket(self, server):
+        """Ask the STUN server from the game's own UDP socket, so the port it
+        reports is the one the router maps for the game."""
+        udp = getattr(self.network, "udp", None)
+        return udp.stun(server) if udp is not None else friend_code.stun_lookup(server)
+
+    def join_code(self, text, tcp=False):
+        """Join the party a friend code points at -- over UDP, which gets
+        through home routers, or over TCP with *tcp* (the host must have its
+        TCP port forwarded) -- or a typed address, over TCP."""
         try:
             address, port, invitation = friend_code.parse(text)
         except friend_code.FriendCodeError as exc:
             raise LobbyError(str(exc)) from exc
+        typed = not friend_code.looks_like_code(text)
+        if not typed and not invitation:
+            raise LobbyError("That is a reply code: give it to your host, who lets you in with it.")
         self.join_invitation = invitation
-        self.join(address, port)
+        if typed or tcp:
+            self.join(address, port)
+            return
+        if not self.opened:
+            raise LobbyError("Open Multiplayer before joining.")
+        self.owner = hashlib.sha256(self.identity.encode()).hexdigest()
+        self.network.join_udp(address, port)
+        self.find_reply_code()
+
+    def find_reply_code(self, finder=None):
+        """While knocking, work out this computer's reply code (its public
+        address, from the game's UDP socket) in case the host's router keeps
+        it out: the host can then let it in (:meth:`let_in`)."""
+        self.reply = ""
+        server = friend_code.stun_server(self.config)
+        if finder is None and server is None:
+            return
+
+        def work():
+            try:
+                found = finder() if finder is not None else self._stun_from_game_socket(server)
+            except Exception:
+                found = None
+            if found and found[1]:
+                self.reply = friend_code.reply_code(found[0], int(found[1]))
+
+        threading.Thread(target=work, name="MiniWind reply code", daemon=True).start()
+
+    def let_in(self, text):
+        """The host lets in a friend whose router -- or this one -- keeps
+        them out: *text* is the friend's reply code."""
+        if self.lobby is None or self.local_only:
+            raise LobbyError("Host a party first.")
+        try:
+            address, port, invitation = friend_code.decode(text)
+        except friend_code.FriendCodeError as exc:
+            raise LobbyError(str(exc)) from exc
+        if invitation:
+            raise LobbyError("That is a friend code for joining a party, not a reply code.")
+        let = getattr(self.network, "let_in", None)
+        if let is None:
+            raise LobbyError("This party cannot let players in that way.")
+        let(address, port)
 
     def _admit(self, peer, owner, invitation):
         """Whether a joiner may in: anyone on the host's own network; a
@@ -174,6 +229,8 @@ class LobbyController:
         guessing = len({i for _t, i in self._wrong_invitations}) >= friend_code.WRONG_ALLOWED
         if guessing:
             raise LobbyError("The party is not taking new players for a minute. Try again shortly.")
+        if not invitation:
+            raise LobbyError("From outside the host's network, join with the host's friend code.")
         if invitation != self.invitation:
             self._wrong_invitations.append((now, invitation))
             raise LobbyError("That friend code is out of date: ask the host for the new one.")

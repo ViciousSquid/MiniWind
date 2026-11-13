@@ -4,12 +4,14 @@ Real multiplayer across separate game instances (one OS process each).
     xvfb-run -a python -m game.tools.mp_instances --out /tmp/mp --clients 2 --late-client
 
 The host process opens a party, gets a friend code and writes it to the
-output folder; each client process reads the code, joins with it, makes a
+output folder; each client process reads the code, joins with it (over UDP;
+``--tcp`` joins with the same code over TCP instead), makes a
 character and readies up; the host starts the adventure; then every
 instance loads the world (its own MiniWind, its own window) and plays for a
 while, walking its own character. Each instance writes what it saw --
-every party member's position, on its own screen -- to ``<role>.json``
-and a screenshot to ``<role>.png``.
+every party member's position, on its own screen, the transport and the
+bytes a second each way -- to ``<role>.json`` and a screenshot to
+``<role>.png``.
 
 Options:
 
@@ -111,6 +113,13 @@ def _play(app, controller, out, role, seconds, keys):
     app.processEvents()
     session.view.grabFramebuffer().save(str(Path(out) / f"{role}.png"))
     coop = getattr(gs, "coop", None)
+    elapsed = max(0.001, time.monotonic() - start)
+    wire = {"sent": 0, "received": 0}
+    kinds = set()
+    for connection in list(controller.network.connections.values()):
+        kinds.add(type(connection).__name__)
+        for key in wire:
+            wire[key] += int(getattr(connection, "stats", {}).get(key, 0))
     result = {
         "role": role,
         "host": controller.lobby is not None,
@@ -120,6 +129,9 @@ def _play(app, controller, out, role, seconds, keys):
         "last": seen[-1] if seen else None,
         "errors": list(controller.errors),
         "coop_players": len(getattr(coop, "players", {}) or {}),
+        "transport": sorted(kinds),
+        "kb_per_second_in": round(wire["received"] / 1024 / elapsed, 1),
+        "kb_per_second_out": round(wire["sent"] / 1024 / elapsed, 1),
     }
     (Path(out) / f"{role}.json").write_text(json.dumps(result, indent=1))
     _log(out, role, "done")
@@ -137,11 +149,13 @@ def host_main(args):
     controller.open()
     controller.host("Instances party", port=0)
     controller.request("late_arrival", enabled=not args.no_late_arrival)
-    controller.find_code(finder=lambda: ("127.0.0.1", "local", None), wait=True)
+    controller.find_code(finder=lambda: ("127.0.0.1", controller.network.port, "local", None),
+                         wait=True)
     stale = controller.code
     controller.new_code()                       # the first code is now stale
     (Path(out) / "stale_code.txt").write_text(stale)
     (Path(out) / "code.txt").write_text(controller.code)
+    (Path(out) / "address.txt").write_text(f"127.0.0.1:{controller.network.port}")
     _log(out, role, f"code {controller.code} (stale {stale})")
     controller.request("add", profile=_profile(0))
     expected = 1 + args.clients
@@ -175,8 +189,8 @@ def client_main(args):
     import hashlib
     controller = LobbyController(ROOT, MAP, identity=hashlib.sha256(role.encode()).hexdigest())
     controller.open()
-    controller.join_code(code)
-    _log(out, role, f"joining with {code}")
+    controller.join_code(code, tcp=args.tcp)
+    _log(out, role, f"joining with {code}" + (" over TCP" if args.tcp else " over UDP"))
     if role == "bad":
         _pump(controller, lambda: bool(controller.errors) or controller.state is not None, 30, out, role)
         result = {"role": role, "admitted": controller.state is not None, "errors": list(controller.errors)}
@@ -221,6 +235,8 @@ def orchestrate(args):
         base.append("--late-client")
     if args.bad_code:
         base.append("--bad-code")
+    if args.tcp:
+        base.append("--tcp")
     logs = []
 
     def spawn(role, index=0):
@@ -264,6 +280,8 @@ def main(argv=None):
     parser.add_argument("--late-client", action="store_true")
     parser.add_argument("--no-late-arrival", action="store_true")
     parser.add_argument("--bad-code", action="store_true")
+    parser.add_argument("--tcp", action="store_true",
+                        help="clients join with the friend code over TCP instead of UDP")
     args = parser.parse_args(argv)
     if args.role == "host":
         return host_main(args)

@@ -117,7 +117,7 @@ The party travels once every connected, conscious member has joined.
 | --- | --- |
 | Hosting and game traffic | TCP 39745; configurable when hosting |
 | LAN discovery | UDP 39744 |
-| Internet joining | A friend code from the host (or a typed host IP[:port]) |
+| Internet joining | A friend code from the host (UDP), or a typed host IP[:port] (TCP) |
 
 Network services are dormant during launcher construction and ordinary Play.
 Showing Multiplayer starts LAN discovery; hosting starts the TCP listener.
@@ -130,18 +130,45 @@ The operating system may ask for firewall access when Multiplayer is first
 opened or a network game is hosted. MiniWind does not install firewall rules or
 request administrator privileges. Allow the game on the network you use.
 
-**Friend codes.** Host game shows a code (`XXXXX-XXXXX-XXXXX`, Copy code);
-friends paste it into Join. The code is the address -- the host's public IPv4
-address, the party's TCP port and a random invitation, with a check character
--- so there is no server to look anything up on. To find the address, hosting
-asks the router by UPnP (which also forwards the port for the party's
-lifetime, and removes it on leaving), then a STUN server (`[Multiplayer]
-stun_server`, default `stun.l.google.com:19302`; empty disables it), then
-falls back to the LAN address. `[Multiplayer] upnp = false` skips the router
-and `[Multiplayer] port` sets the TCP port (default 39745). When the router
-does not forward the port, the host forwards TCP 39745 by hand, or uses a VPN.
-A joiner from outside the host's network must present the code's invitation;
-New code rotates it. There is still no public directory or relay server.
+**Friend codes (UDP).** Host game shows a code (`XXXXX-XXXXX-XXXXX`, Copy
+code); friends paste it into Join, enter the lobby and set up their characters
+there, exactly as on a LAN. The code is the address -- the host's public IPv4
+address, the party's port and a random invitation, with a check character --
+so there is no server to look anything up on. Friend codes connect over UDP
+(`game/multiplayer/udp.py`), which gets through home routers the way TCP
+cannot: the joiner's packets open the joiner's own router, and the host's
+router opens by UPnP (hosting asks it to forward the party's port, UDP and
+TCP, for the party's lifetime), a forwarded UDP port, or the joiner's **reply
+code**: after a few seconds of knocking the joiner is shown it, sends it to
+the host, and the host pastes it into *Let in*, which sends a few packets
+that open the host's router to that joiner. Symmetric NATs (rare on home
+routers; some mobile networks) need a forwarded port or a VPN.
+
+To find the address, hosting asks the router by UPnP, then a STUN server
+(`[Multiplayer] stun_server`, default `stun.l.google.com:19302`; empty disables
+it) from the game's own UDP socket -- so the port in the code is the one the
+router really maps -- then falls back to the LAN address. `[Multiplayer] upnp =
+false` skips the router and `[Multiplayer] port` sets the port (default 39745,
+used for both UDP and TCP). A joiner from outside the host's network must
+present the code's invitation; New code rotates it. There is still no public
+directory or relay server.
+
+**TCP** remains for typed addresses (`1.2.3.4[:port]`) and LAN games.
+
+**Bandwidth.** The host sends the world to each player 20 times a second. A
+frame of the Vale is about 770 KB of JSON (125 KB compressed); it travels as a
+patch against a frame the player is known to hold (`game/multiplayer/delta.py`):
+over TCP the last one sent, over UDP the newest one the player acknowledged.
+Only what changed goes -- typically under 1 KB compressed. Over UDP the first
+frame (or one after the player lost its baselines) goes whole on the reliable
+channel; patches go unreliably and a lost one is replaced by the next.
+
+The UDP channel: one socket per computer; lobby messages, input and actions are
+reliable and in order (numbered pieces of at most 1150 bytes, resent until
+acknowledged, delivered exactly once); pings measure the round trip; 20 s of
+silence ends a connection. Standard library only, so it behaves the same on
+Windows (where the socket's ICMP "connection reset" reports are turned off),
+macOS and Linux, and in Nuitka builds.
 
 **Late arrival** (host, in the lobby; on by default) lets players join while
 the adventure runs. Off, a newcomer after Start is refused with "Game has
@@ -150,7 +177,8 @@ already started and does not allow late arrival".
 **Testing with real instances.** `game/tools/mp_instances.py` runs a host and
 up to three clients as separate game processes on one machine: they join by
 friend code, make characters, ready up, play and walk, and each writes what it
-saw (every member's position) and a screenshot. `--late-client` adds a
+saw (every member's position, the transport, bytes a second each way) and a
+screenshot; `--tcp` joins by typed address instead of the code. `--late-client` adds a
 player after Start, `--no-late-arrival` closes the party at Start (that player
 must be refused), `--bad-code` tries a stale code first:
 
