@@ -49,7 +49,8 @@ stage advanced only by dialogue `advance_quest`):
 
 - `talk`  — `target` = NPC name/role
 - `fetch` — `target` = item id, `count` = how many to hold
-- `kill`  — `target` = monster_type / role / name, `count` = how many
+- `kill`  — `target` = monster_type / role / name / faction, `count` = how many
+  (a faction such as `bandits` counts every member: bandits, archers, chiefs)
 - `visit` — `target` = a location marker's name
 - `roll`  — `notation` = dice expression, `target` = minimum total
 

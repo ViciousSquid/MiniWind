@@ -139,6 +139,10 @@ OFFSCREEN_STRIDE = 4
 #: conditions) run this often rather than every tick.
 PROXIMITY_INTERVAL = 0.1
 NPC_WALK_SPEED = 90.0
+#: What a kill counts as, for a quest's "kill" aim: the victim's name, role,
+#: kind and faction -- so "bandits" counts the archers and the chief as well
+#: as the plain bandits, as the player would expect.
+KILL_FIELDS = ("name", "npc_role", "monster_type", "faction")
 
 #: A provoked fighter remembers its opponent well beyond initial perception.
 #: Only retaliation applies this limit; ordinary detection stays at 1024.
@@ -3162,10 +3166,10 @@ class MiniwindSession(SettlementLaw):
         p = getattr(target, "properties", {}) or {}
         coop = getattr(self, "coop", None)
         if coop is not None:
-            coop.party_quests.record("kill", [p.get(k) for k in ("id","name","npc_role","monster_type")],
+            coop.party_quests.record("kill", [p.get(k) for k in ("id",) + KILL_FIELDS],
                                      self._thing_id(target), self.player_id)
             return
-        for field in ("name", "npc_role", "monster_type"):
+        for field in KILL_FIELDS:
             v = str(p.get(field, "") or "").strip()
             if not v:
                 continue
@@ -3593,8 +3597,8 @@ class MiniwindSession(SettlementLaw):
     #: Fields a quest target may be named by, and the subset that names an
     #: actor for a 'kill' objective.
     _NAME_FIELDS = ("name", "display_name", "npc_role", "monster_type",
-                    "item_id", "place_name")
-    _ACTOR_FIELDS = ("name", "npc_role", "monster_type")
+                    "item_id", "place_name", "faction")
+    _ACTOR_FIELDS = KILL_FIELDS
 
     def _name_index(self):
         """slug -> [(thing, field)] for every thing in the scene.

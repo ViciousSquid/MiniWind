@@ -37,10 +37,10 @@
       "finishes": false,
       "condition": {
         "kind": "kill",
-        "target": "bandit",
+        "target": "bandits",
         "count": 4
       },
-      "waypoint": "bandit"
+      "waypoint": "bandits"
     },
     {
       "index": 20,

@@ -253,3 +253,19 @@ def test_a_return_to_the_giver_stage_points_at_the_giver():
     assert session._objective_world_pos(q) == [9000, 0, 6000]
     session.game.quests.set_stage("arrow_home", 20)
     assert session._objective_world_pos(q) is None
+
+
+def test_a_bandit_archer_counts_toward_killing_bandits():
+    """'Kill 4 bandits at the mill': the camp's archers are bandits too. Only
+    the plain 'bandit' role used to count, so an archer read SLAIN on screen
+    and the objective stayed at 0/4."""
+    session = _session([])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.game.quests.start("mill_bandits")
+    session.game.quests.set_stage("mill_bandits", 10)
+    stage = quests.get("mill_bandits").stage(10)
+    assert stage.condition_target() == "bandits"
+    archer = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "bandit_archer"})
+    assert archer.properties["faction"] == "bandits"
+    session.record_kill(archer)
+    assert session.store.get("kills.bandits") in (1, "1")
