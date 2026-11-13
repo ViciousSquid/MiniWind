@@ -278,7 +278,8 @@ def test_the_character_window_has_a_left_and_a_right_hand_and_no_shield_slot():
     # Body armour, legs, then feet, in a column below the head.
     assert where["chest"][0] == where["legs"][0] == where["feet"][0] == 0.50
     assert iw.HEAD_Y < where["chest"][1] < where["legs"][1] < where["feet"][1]
-    assert iw.HAND_SLOT_SIZE > iw.SLOT_SIZE
+    assert iw.HAND_SLOT_SIZE > iw.SLOT_SIZE > iw.SMALL_SLOT_SIZE
+    assert set(iw.SMALL_SLOTS) == {"light", "ring", "hands", iw.GLOVES_RIGHT}
     assert iw._hand_slot(Righty(), iw.HAND_RIGHT) == "weapon"
     assert iw._hand_slot(Righty(), iw.HAND_LEFT) == "shield"
     assert iw._hand_slot(Lefty(), iw.HAND_LEFT) == "weapon"

@@ -86,6 +86,9 @@ def _hand_slot(character, slot):
 #: rest, and sit a little further out from the head.
 SLOT_SIZE = 50
 HAND_SLOT_SIZE = 60
+#: Torch, ring and gloves: a little smaller than the rest.
+SMALL_SLOT_SIZE = 42
+SMALL_SLOTS = ("light", "ring", "hands", "hands_right")
 
 #: The faint hand an empty hand slot shows behind its label.
 _HAND_GHOST = QColor(176, 162, 136, 46)
@@ -214,14 +217,14 @@ PAPERDOLL = (
     # order.
     ("head", "Head", COLUMN_IN, 0.09),
     (HAND_LEFT, "L", 0.115, HEAD_Y),          # beside the head
-    ("light", "Torch", COLUMN_IN, 0.465),
+    ("light", "Torch", COLUMN_IN, 0.535),
     # Gloves under each hand: one slot (the pair), shown twice, the right
     # one mirrored.
-    ("hands", "Gloves", COLUMN_IN, 0.645),    # gauntlets, bracers, wraps
+    ("hands", "Gloves", COLUMN_IN, 0.705),    # gauntlets, bracers, wraps
     ("amulet", "Amulet", 1.0 - COLUMN_IN, 0.09),
     (HAND_RIGHT, "R", 0.885, HEAD_Y),         # beside the head
-    ("ring", "Ring", 1.0 - COLUMN_IN, 0.465),
-    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.645),
+    ("ring", "Ring", 1.0 - COLUMN_IN, 0.535),
+    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.705),
     ("chest", "Chest", 0.50, 0.555),
     ("legs", "Legs", 0.50, 0.735),
     ("feet", "Feet", 0.50, 0.915),
@@ -743,7 +746,8 @@ class InventoryWindow(FloatingWindow):
         for slot, label, fx, fy in PAPERDOLL:
             hand = {HAND_LEFT: "left", HAND_RIGHT: "right"}.get(slot)
             mirror = slot == GLOVES_RIGHT
-            size = HAND_SLOT_SIZE if hand else SLOT_SIZE
+            size = (HAND_SLOT_SIZE if hand else
+                    SMALL_SLOT_SIZE if slot in SMALL_SLOTS else SLOT_SIZE)
             r = QRect(int(doll.x() + fx * doll.width() - size / 2),
                       int(doll.y() + fy * doll.height() - size / 2), size, size)
             slot = _hand_slot(c, slot)
