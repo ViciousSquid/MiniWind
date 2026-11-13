@@ -9406,13 +9406,40 @@ class MiniwindSession(SettlementLaw):
         return False
 
     def use_health_potion(self):
+        """The quick-heal key: the strongest healing potion carried, or else
+        something to eat. Health does not come back on its own, so a wounded
+        player with no potions used to be told "No healing potions" while
+        carrying bread that heals."""
+        c = self.game.character
         for pid in ("potion_heal", "potion_heal_minor"):
-            if inv.has_item(self.game.character.inventory, pid):
+            if inv.has_item(c.inventory, pid):
                 self.game.use_item(pid)
                 self.notify("Drank a healing potion")
                 return True
-        self.notify("No healing potions")
+        food = self._healing_food()
+        if food is not None:
+            if c.health >= c.max_health:
+                self.notify("You are not hurt")
+                return False
+            self.game.use_item(food.id)
+            self.notify(f"Ate {food.name.lower()}")
+            return True
+        self.notify("No healing potions or food")
         return False
+
+    def _healing_food(self):
+        """The cheapest food carried that heals, or None (eat the bread before
+        the flour)."""
+        best = None
+        for stack in self.game.character.inventory:
+            d = rpg_items.get(stack.get("id")) if isinstance(stack, dict) else None
+            if d is None or not d.get("food") or int(stack.get("qty", 0) or 0) <= 0:
+                continue
+            if not any(e.get("kind") == "restore_health" for e in d.get("effects", []) or ()):
+                continue
+            if best is None or d.value < best.value:
+                best = d
+        return best
 
     # -- overhead speech bubbles -------------------------------------------
     def _quest_ids_in_dialogue(self, tree) -> List[str]:

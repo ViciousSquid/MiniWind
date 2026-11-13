@@ -220,7 +220,10 @@ Each level adds +25% magnitude, +12.5% duration and +10% cost.
 * **Max stamina** = (STR + 3 × END) × 0.5 + gains + birthsign.
 * **Regeneration per second:** magicka `max × 0.02 × (0.5 + END/100)` (none
   under the Golem); stamina `max × 0.15` (not while sprinting). Health does
-  not regenerate — only spells, potions and levelling restore it.
+  not regenerate — only spells, potions, food (bread and flour, 8 each) and
+  levelling restore it. The quick-heal key (**H**) drinks the strongest
+  healing potion carried, or, with none left, eats the cheapest food that
+  heals (never while unhurt).
 * **Sprinting** costs 12 stamina a second; at 0 you are **winded** and cannot
   sprint again until back to 30%. Winded fighters take −2 to hit.
 * **Stamina costs:** a swing or an arrow 6; a shield bash its own cost.

@@ -96,3 +96,22 @@ def test_a_jump_covers_the_view_until_the_ground_is_built(monkeypatch):
         session._update_arrival()
     session._arrival["ready_at"] -= 10.0
     assert session.fade_alpha() == 0.0
+
+
+def test_the_quick_heal_key_eats_bread_when_the_potions_are_gone():
+    from ..rpg import inventory as inv, items as rpg_items
+    session = _session([])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    c = session.game.character
+    c.inventory[:] = [s for s in c.inventory if "heal" not in str(s.get("id"))]
+    c.health = 20.0
+    assert not session.use_health_potion()
+    inv.add_item(c.inventory, rpg_items.make("flour", 1))
+    inv.add_item(c.inventory, rpg_items.make("bread", 2))
+    assert session.use_health_potion()
+    assert c.health == 28.0
+    assert inv.quantity(c.inventory, "bread") == 1, "the cheaper food is eaten first"
+    assert inv.quantity(c.inventory, "flour") == 1
+    c.health = c.max_health
+    assert not session.use_health_potion(), "not hurt: nothing eaten"
+    assert inv.quantity(c.inventory, "bread") == 1

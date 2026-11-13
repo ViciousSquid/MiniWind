@@ -39,7 +39,7 @@ Guild.
 | **WASD** | Move | **E** (use) | Talk / interact |
 | **Y** | Cycle die type | **D** | Roll selected die |
 | **X** | Cycle active spell | **B** (hold) | Block |
-| **V** | Toggle sneak | **H** | Quick-drink a healing potion |
+| **V** | Toggle sneak | **H** | Quick-heal: a healing potion, else food |
 | **I** | Inventory & equipment | **C** | Character sheet |
 | **J** | Quest journal | **P** | Spellbook (click a spell to ready it) |
 | **L** | Level up (when available) | **1–9 / Esc** | Dialogue choices / close |
