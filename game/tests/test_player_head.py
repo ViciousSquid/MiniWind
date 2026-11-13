@@ -165,9 +165,11 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     hen = _actor("Hen", kind="creature", role="hen")
     wolf = _actor("Wolf", kind="creature", role="wolf")
     bear = _actor("Bear", kind="creature", role="bear")
+    boar = _actor("Boar", kind="creature", role="boar")
+    crab = _actor("Mudcrab", kind="creature", role="mudcrab")
     cow = _actor("Cow", kind="creature", role="cow")
     sheep = _actor("Sheep", head="sheep02", kind="creature", role="sheep")
-    s = _session([hen, wolf, bear, cow, sheep])
+    s = _session([hen, wolf, bear, boar, crab, cow, sheep])
 
     s.begin_new_character("Tester", "imperial", "warrior", "none", "male",
                           head="head13")
@@ -175,15 +177,18 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     # Hens wear the chickens and wolves the wolves -- never a person's.
     assert hen.properties["head"] in ("chicken", "chicken2", "chicken3")
     assert wolf.properties["head"] in ("wolf01", "wolf02")
-    # No bear head has been drawn yet: the placeholder.
-    assert bear.properties["head"] == heads.PLACEHOLDER_HEAD
-    assert bear.properties["custom_idle"] == "assets/sprites/heads/placeholder.png"
+    # Bears and boars wear their own; a mudcrab wears the crabs.
+    assert bear.properties["head"] in ("bear01", "bear02")
+    assert bear.properties["custom_idle"] in ("assets/sprites/heads/bear01.png",
+                                              "assets/sprites/heads/bear02.png")
+    assert boar.properties["head"] in ("boar01", "boar02")
+    assert crab.properties["head"] in ("crab01", "crab02")
     # Cows have their own heads (cow01, cow02).
     assert cow.properties["head"] in ("cow01", "cow02")
     # A head set in the map is kept.
     assert sheep.properties["head"] == "sheep02"
     one = (heads.HEAD_SIZE, heads.HEAD_SIZE)
-    for animal in (wolf, bear, cow, sheep):
+    for animal in (wolf, bear, boar, crab, cow, sheep):
         assert (animal.properties["sprite_width"],
                 animal.properties["sprite_height"]) == one
     third = heads.CHICKEN_SIZE                     # chickens are small

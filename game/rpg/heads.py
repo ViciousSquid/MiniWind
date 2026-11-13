@@ -69,8 +69,9 @@ DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
 #: never a person's.
 ANIMAL_ROLES = frozenset({"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"})
 
-#: Animal roles whose head art goes by another name: a hen wears chicken.png.
-ANIMAL_HEAD_ALIASES = {"hen": "chicken"}
+#: Animal roles whose head art goes by another name: a hen wears chicken.png,
+#: a mudcrab crab01.png.
+ANIMAL_HEAD_ALIASES = {"hen": "chicken", "mudcrab": "crab"}
 
 #: The head an animal wears until its own head image exists.
 PLACEHOLDER_HEAD = "placeholder"
