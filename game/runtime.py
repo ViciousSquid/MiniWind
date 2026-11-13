@@ -993,6 +993,9 @@ class MiniwindSession(SettlementLaw):
         #: The blood in the world: sprays, splats, pools, gibs (game/gore_fx.py).
         from .gore_fx import GoreFX
         self.gore = GoreFX()
+        # Crabs come out of the water for gibs (game/crab_frenzy.py).
+        from .crab_frenzy import CrabFrenzy
+        self.crab_frenzy = CrabFrenzy(self.rng)
         self.gore.stamp = self._stamp_blood
         # Blood not stamped lies on the floor it fell on, built or not.
         self.gore.ground = lambda x, y, z: fio.ground_height(self.logic, x, z, below=y + 80.0)
@@ -1590,6 +1593,7 @@ class MiniwindSession(SettlementLaw):
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
         self.fire_aftermath.restore()  # scorch and bare fields from fires before
+        self.crab_frenzy.purge(self)   # a feast saved mid-way is simply over
         try:
             self.weather.restore(json.loads(self.store.get("weather", "") or "{}"))
         except (TypeError, ValueError):
@@ -1803,6 +1807,8 @@ class MiniwindSession(SettlementLaw):
                 # Blown apart: the body's own picture in pieces, and blood.
                 self.gore.gib(feet, damage, away, sprite=self._body_picture(target),
                               body=float(p.get("sprite_width", 96) or 96), mass=mass)
+                # Near water, crabs come for the pieces.
+                self.crab_frenzy.gibbed(self, feet, mass)
                 if crit_kill:
                     # A critical killing blow: blown apart, and then some.
                     self.gore.gib(feet, damage, away, mass=mass)
@@ -4269,6 +4275,7 @@ class MiniwindSession(SettlementLaw):
         self.floaters = [f for f in self.floaters if f["t"] > 0]
         # Blood lands, and what has settled is stamped into the ground.
         self.gore.update()
+        self.crab_frenzy.update(self, delta)
         for r in self.roll_log:
             r["t"] -= delta
         self.roll_log = [r for r in self.roll_log if r["t"] > 0]

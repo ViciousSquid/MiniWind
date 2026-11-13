@@ -2195,6 +2195,15 @@ def _draw_piece(painter, p, sp, k, deg, opacity):
     for q in pts[1:]:
         shard.lineTo(q)
     shard.closeSubpath()
+    bites = p.get("bites")
+    if bites:
+        # Bitten (crabs feeding): chunks of the picture gone, not shrunk.
+        eaten = QPainterPath()
+        for bu, bv, br in bites:
+            eaten.addEllipse(QPointF((bu - cu) * side, (bv - cv) * side), br * side, br * side)
+        shard = shard.subtracted(eaten)
+        if shard.isEmpty():
+            return
     painter.save()
     painter.translate(sp[0], sp[1])
     painter.rotate(deg)

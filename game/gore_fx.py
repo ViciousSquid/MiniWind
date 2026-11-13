@@ -48,6 +48,13 @@ GIB_CHUNKS = 9
 GIB_POOLS = 7
 PIECE_REST = 7.0
 PIECE_FADE = 2.0
+#: A bite out of a piece (crabs feeding, game/crab_frenzy.py): a circle of
+#: the piece's picture this big (a share of the whole picture's width), and
+#: the share of the piece that may be left when it counts as eaten.
+BITE_RADIUS = (0.07, 0.11)
+EATEN_LEFT = 0.08
+#: Points sampled across a piece (per side) to tell how much is left.
+_SAMPLES = 9
 #: Seconds a pool takes to spread to its full size.
 POOL_SPREAD = 2.5
 #: Most splats stamped into the ground per update (each costs a little).
@@ -91,6 +98,56 @@ def _small(mass) -> float:
     """Scale for blood that a person sheds in full: less from a smaller body,
     never more from a bigger one."""
     return min(1.0, math.sqrt(max(0.0, float(mass))))
+
+
+def _rest_from(p) -> float:
+    """When a piece's rest counts from: its landing, or -- while something
+    feeds on it -- so that it starts fading only when the hold runs out."""
+    held = p.get("held_until", 0.0)
+    return max(p["rest"], held - (PIECE_REST - PIECE_FADE)) if held else p["rest"]
+
+
+def _inside(quad, u, v) -> bool:
+    """Whether (u, v) lies in the convex *quad* (the piece's outline)."""
+    sign = 0
+    for i in range(4):
+        (au, av), (bu, bv) = quad[i], quad[(i + 1) % 4]
+        cross = (bu - au) * (v - av) - (bv - av) * (u - au)
+        if cross:
+            if sign and (cross > 0) != (sign > 0):
+                return False
+            sign = 1 if cross > 0 else -1
+    return True
+
+
+def _remaining_points(p):
+    """Sample points of piece *p* not yet bitten away: ``[(u, v, edge)]``,
+    *edge* true where a neighbouring sample is gone or outside."""
+    quad, bites = p["quad"], p.get("bites", ())
+    us = [q[0] for q in quad]
+    vs = [q[1] for q in quad]
+    u0, u1, v0, v1 = min(us), max(us), min(vs), max(vs)
+    n = _SAMPLES
+    step_u, step_v = (u1 - u0) / n, (v1 - v0) / n
+
+    def there(i, j):
+        u, v = u0 + (i + 0.5) * step_u, v0 + (j + 0.5) * step_v
+        if not _inside(quad, u, v):
+            return None
+        for bu, bv, br in bites:
+            if (u - bu) ** 2 + (v - bv) ** 2 <= br * br:
+                return None
+        return u, v
+
+    grid = {(i, j): there(i, j) for i in range(n) for j in range(n)}
+    out = []
+    for (i, j), point in grid.items():
+        if point is None:
+            continue
+        edge = any(grid.get((i + di, j + dj)) is None
+                   for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+        out.append((point[0], point[1], edge))
+    return out
 
 
 class GoreFX:
@@ -202,12 +259,51 @@ class GoreFX:
                     "rest": None, "seed": rng.random()})
             del self.pieces[:-64]
 
+    # ---------------------------------------------------------- feeding
+    def hold(self, pos, radius, seconds):
+        """Keep the pieces within *radius* of *pos* lying where they are, not
+        fading, for *seconds* (something is coming to eat them); the pieces."""
+        now = self.clock()
+        held = []
+        with self._lock:
+            for p in self.pieces:
+                x, _y, z = (p["rest_pose"][:3] if p.get("rest") is not None
+                            else self.position(p, now))
+                if math.hypot(x - pos[0], z - pos[2]) <= radius:
+                    p["held_until"] = max(p.get("held_until", 0.0), now + seconds)
+                    held.append(p)
+        return held
+
+    def bite(self, p) -> bool:
+        """Take a bite out of piece *p*: a chunk of its picture gone, from an
+        edge already bitten or open. True once (almost) nothing is left --
+        it is then gone."""
+        rng = self.rng
+        with self._lock:
+            if p not in self.pieces:
+                return True
+            left = _remaining_points(p)
+            if not left:
+                self.pieces.remove(p)
+                return True
+            full = p.setdefault("_whole", len(left))
+            # Nibble from the outside in: a point next to what is already
+            # gone (or the outline), not from the middle.
+            edge = [pt for pt in left if pt[2]] or left
+            u, v, _edge = rng.choice(edge)
+            p.setdefault("bites", []).append((u, v, rng.uniform(*BITE_RADIUS)))
+            if len(_remaining_points(p)) <= EATEN_LEFT * full:
+                self.pieces.remove(p)
+                return True
+            return False
+
     def piece_pose(self, p, now=None):
         """``(x, y, z, degrees, opacity)`` of a piece: in flight, tumbling;
-        landed, still; fading at the end of its rest; None once gone."""
+        landed, still; fading at the end of its rest (held a while if
+        something is feeding on it); None once gone."""
         now = self.clock() if now is None else now
         if p.get("rest") is not None:
-            age = now - p["rest"]
+            age = now - _rest_from(p)
             if age >= PIECE_REST:
                 return None
             x, y, z, deg = p["rest_pose"]
@@ -289,7 +385,7 @@ class GoreFX:
                         p["rest"] = now
                         p["rest_pose"] = (x, p["gy"], z, p["spin"] * t)
                         landed.append(dict(p, kind="chunk", size=p["body"] / GIB_GRID * 0.5))
-                elif now - p["rest"] >= PIECE_REST:
+                elif now - _rest_from(p) >= PIECE_REST:
                     continue
                 kept.append(p)
             self.pieces = kept
