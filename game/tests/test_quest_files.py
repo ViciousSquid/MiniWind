@@ -262,10 +262,56 @@ def test_a_bandit_archer_counts_toward_killing_bandits():
     session = _session([])
     session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
     session.game.quests.start("mill_bandits")
-    session.game.quests.set_stage("mill_bandits", 10)
-    stage = quests.get("mill_bandits").stage(10)
+    session.game.quests.set_stage("mill_bandits", 30)
+    stage = quests.get("mill_bandits").stage(30)
     assert stage.condition_target() == "bandits"
     archer = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "bandit_archer"})
     assert archer.properties["faction"] == "bandits"
     session.record_kill(archer)
     assert session.store.get("kills.bandits") in (1, "1")
+
+
+# --- chapter one: the opening ------------------------------------------------
+def _speak(session, npc):
+    """The line *npc* opens a conversation with, and the talk recorded."""
+    tree = session._with_quest_lines(npc.properties.get("dialogue") or
+                                     {"start": "greet", "nodes": {"greet": {"text": "Hello.", "responses": []}}},
+                                     npc)
+    session.record_talk(npc)
+    return tree["nodes"][tree["start"]]["text"]
+
+
+def test_a_new_character_begins_with_elowen_and_the_flour():
+    """Trouble at the Old Mill starts with a new game: talk to Elowen, who
+    reads her own shelf, then Mara, who reads her windmill's stock."""
+    elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen", "display_name": "Elowen the Trader",
+                                                      "inventory": [{"id": "flour", "qty": 2}]})
+    mara = entities.NPC(pos=[10, 0, 0], properties={"name": "Mara"})
+    session = _session([elowen, mara])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    log = session.game.quests
+    assert log.is_active("mill_bandits") and log.stage_of("mill_bandits") == 0
+    assert log.current_objective("mill_bandits") == "Talk to Elowen"
+
+    # Talking to Mara first does nothing for a stage that isn't hers yet.
+    assert "hopper" not in _speak(session, mara)
+    line = _speak(session, elowen)
+    assert "2 sacks of flour on the shelf" in line
+    session._tick_quests()
+    assert log.stage_of("mill_bandits") == 10
+
+    # Mara was spoken to before: this stage still wants a word now.
+    session._tick_quests()
+    assert log.stage_of("mill_bandits") == 10
+    line = _speak(session, mara)
+    assert "no wheat in the hopper" in line          # no windmill in this scene
+    session._tick_quests()
+    assert log.stage_of("mill_bandits") == 20
+    assert log.current_objective("mill_bandits") == "Find the Old Mill"
+
+
+def test_an_empty_shelf_is_said_plainly():
+    elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen"})
+    session = _session([elowen])
+    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    assert "Today I've no flour on the shelf" in _speak(session, elowen)

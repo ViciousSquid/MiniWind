@@ -1,9 +1,10 @@
 {
   "id": "mill_bandits",
   "name": "Trouble at the Old Mill",
-  "giver": "Aldric",
+  "giver": "Elowen",
   "faction": "town",
-  "desc": "Bandits have seized the old mill north-east of Millbrook.",
+  "starts_on_new_game": true,
+  "desc": "Millbrook has no flour, and Elowen wants to know why.",
   "xp": 40,
   "rewards": {
     "gold": 150,
@@ -21,7 +22,31 @@
   "stages": [
     {
       "index": 0,
-      "journal": "Aldric the Reeve at Hollin's Cross asked me to clear the bandits out of the old mill north-east of Millbrook.",
+      "journal": "Elowen the Trader called me over in Millbrook square. Something about flour.",
+      "objective": "Talk to Elowen",
+      "finishes": false,
+      "condition": {
+        "kind": "talk",
+        "target": "Elowen",
+        "count": 1
+      },
+      "say": "You, new face. Have you got a minute? Eight sacks a week, I sell. Today I've {shelf_flour} on the shelf, and it isn't for want of asking. Ever since bandits took the Old Mill, the Cross sends its runner to Mara's windmill, and Millbrook gets whatever's left. Ask Mara. She'll tell you."
+    },
+    {
+      "index": 10,
+      "journal": "Elowen has no flour to sell. Since bandits took the Old Mill, Hollin's Cross buys from Mara's windmill and Millbrook goes short. She told me to ask Mara.",
+      "objective": "Ask Mara about the flour",
+      "finishes": false,
+      "condition": {
+        "kind": "talk",
+        "target": "Mara",
+        "count": 1
+      },
+      "say": "Sails don't turn on wind alone. They turn on wheat, and nobody's bringing me enough. There's {mill_wheat} wheat in the hopper and {mill_flour} flour in the loft, and the Cross's man is first in line for it. The Old Mill, north-east of here, used to grind for the Cross. Bandits sit in it now. Get them out, and the carts go back where they belong."
+    },
+    {
+      "index": 20,
+      "journal": "Mara's windmill can't grind for two villages. The Old Mill north-east of Millbrook used to take the Cross's grain, until bandits moved in.",
       "objective": "Find the Old Mill",
       "finishes": false,
       "condition": {
@@ -31,8 +56,8 @@
       }
     },
     {
-      "index": 10,
-      "journal": "I found the mill. Bandits everywhere.",
+      "index": 30,
+      "journal": "I found the Old Mill. Bandits everywhere.",
       "objective": "Kill 4 bandits at the mill",
       "finishes": false,
       "condition": {
@@ -43,15 +68,21 @@
       "waypoint": "bandits"
     },
     {
-      "index": 20,
-      "journal": "The bandits at the mill are dead. I should return to Aldric.",
-      "objective": "Return to Aldric",
-      "finishes": false
+      "index": 40,
+      "journal": "The bandits at the Old Mill are dead. Aldric the Reeve keeps the tolls at Hollin's Cross. He should hear the mill is clear.",
+      "objective": "Tell Aldric at Hollin's Cross",
+      "finishes": false,
+      "condition": {
+        "kind": "talk",
+        "target": "Aldric",
+        "count": 1
+      },
+      "say": "The Old Mill? Clear? Then the carts can roll again, and the Cross can buy its own flour instead of taking Millbrook's. The Cross thanks you, and so does my purse, reluctantly."
     },
     {
-      "index": 30,
-      "journal": "Aldric thanked me and paid me for clearing the mill.",
-      "objective": "Aldric thanked me and paid me for clearing the mill.",
+      "index": 50,
+      "journal": "Aldric paid me for clearing the Old Mill. Hollin's Cross will grind its own grain again, and Millbrook's shelves should fill.",
+      "objective": "Aldric paid me for clearing the Old Mill.",
       "finishes": true
     }
   ]

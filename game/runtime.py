@@ -1729,6 +1729,18 @@ class MiniwindSession(SettlementLaw):
         self.open_screen = None
         self._sync_engine_health(full=True)
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
+        self._start_opening_quests()
+
+    def _start_opening_quests(self) -> None:
+        """Start every quest marked ``starts_on_new_game``: a new character
+        always has somewhere to begin (its first objective is on the HUD and
+        the arrow points at it)."""
+        log = self.game.quests
+        for q in list(_quests.QUESTS.values()):
+            if q.starts_on_new_game and not log.state_of(q.id):
+                if log.start(q.id):
+                    obj = log.current_objective(q.id)
+                    self.notify(f"{q.name}: {obj}" if obj else q.name, 6.0)
 
     def _ensure_player_head(self) -> str:
         """Make sure the player is a head, and show it; returns the head id.
@@ -3191,6 +3203,10 @@ class MiniwindSession(SettlementLaw):
         npc_id = self._thing_id(npc)
         if npc_id:
             self.store.set(f"talked.{self._slug(npc_id)}", "1")
+        # A 'talk' stage is met by a conversation held while on it, not one
+        # from before the quest began.
+        for q, st in self._talk_stages_for(npc):
+            self.store.set(f"quest.{q.id}.talked.{st.index}", "1")
         # A first introduction warms an NPC to the player a touch (once).
         disp.remember(self.store, getattr(npc, "properties", {}) or {}, "greeted")
 
@@ -3222,6 +3238,75 @@ class MiniwindSession(SettlementLaw):
         name = str(p.get("name", "") or "").strip()
         if name:
             self.store.set("killed_by_player." + name, "1")
+
+    def _is_named(self, npc, target: str) -> bool:
+        """True when *npc* answers to *target* (a slug): its name, display
+        name, role or entity id."""
+        p = getattr(npc, "properties", {}) or {}
+        return bool(target) and target in (
+            self._slug(p.get("name", "")), self._slug(p.get("display_name", "")),
+            self._slug(p.get("npc_role", "")), self._slug(self._thing_id(npc)))
+
+    def _talk_stages_for(self, npc):
+        """``(quest, stage)`` for every active quest whose current stage is
+        'talk to *npc*'."""
+        log = getattr(getattr(self, "game", None), "quests", None)
+        if log is None:
+            return []
+        out = []
+        for q in list(log.active_quests()):
+            st = q.stage(log.stage_of(q.id))
+            if st is not None and st.condition_kind() == _quests.COND_TALK \
+                    and self._is_named(npc, self._slug(st.condition_target())):
+                out.append((q, st))
+        return out
+
+    def _with_quest_lines(self, tree, npc):
+        """*tree* opening with what *npc* has to tell the player for a quest
+        on a 'talk to me' stage with a ``say`` line -- a copy; the line's
+        tokens read the world (:meth:`_quest_line`)."""
+        lines = [self._quest_line(st.say, npc) for _q, st in self._talk_stages_for(npc) if st.say]
+        if not lines or not isinstance(tree, dict):
+            return tree
+        start = tree.get("start")
+        if start not in (tree.get("nodes") or {}):
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        nodes = tree["nodes"]
+        key = start
+        for i, line in reversed(list(enumerate(lines))):
+            node_id = f"_quest_say_{i}"
+            nodes[node_id] = {"text": line, "responses": [{"text": "Go on.", "goto": key}]}
+            key = node_id
+        tree["start"] = key
+        return tree
+
+    def _quest_line(self, text: str, npc) -> str:
+        """*text* with its tokens filled from the world as it is now:
+        ``{shelf_flour}`` (flour on *npc*'s own shelf), ``{mill_wheat}`` and
+        ``{mill_flour}`` (in the working windmill nearest *npc*)."""
+        from .windmills import item_stock
+
+        def amount(n, one, many):
+            n = max(0, int(n or 0))
+            return "no" if n == 0 else f"{n} {one if n == 1 else many} of"
+
+        tokens = {}
+        if "{shelf_flour}" in text:
+            n = item_stock(npc, "flour")
+            tokens["shelf_flour"] = "no flour" if n == 0 else (
+                "one sack of flour" if n == 1 else f"{n} sacks of flour")
+        if "{mill_wheat}" in text or "{mill_flour}" in text:
+            mills = getattr(self, "windmills", None)
+            mill = mills.nearest(npc.pos) if mills is not None else None
+            wheat = item_stock(mill, "wheat") if mill is not None else 0
+            flour = item_stock(mill, "flour") if mill is not None else 0
+            tokens["mill_wheat"] = amount(wheat, "measure", "measures")
+            tokens["mill_flour"] = amount(flour, "sack", "sacks")
+        for k, v in tokens.items():
+            text = text.replace("{" + k + "}", v)
+        return text
 
     def _condition_met(self, stage, qid: Optional[str] = None) -> bool:
         """True when *stage*'s completion condition is satisfied right now."""
@@ -3256,6 +3341,9 @@ class MiniwindSession(SettlementLaw):
             raw = str(stage.condition_target()).strip()
             return inv.has_item(self.game.character.inventory, raw, count)
         if kind == _quests.COND_TALK:
+            if qid:
+                key = f"quest.{qid}.talked.{stage.index}"
+                return str(self.store.get(key, "")) in ("1", "true")
             return str(self.store.get(f"talked.{target}", "")) in ("1", "true")
         if kind == _quests.COND_VISIT:
             return str(self.store.get(f"visited.{target}", "")) in ("1", "true")
@@ -9809,6 +9897,7 @@ class MiniwindSession(SettlementLaw):
         tree = self._with_mind_topic(tree, npc)
         tree = self._with_training_topics(tree, npc)
         tree = self._with_fortune_topics(tree, npc)
+        tree = self._with_quest_lines(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
             give_item=lambda item: inv.add_item(self.game.character.inventory, item),

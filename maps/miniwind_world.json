@@ -677154,32 +677154,6 @@
                             "text": "I keep the peace, the books and the tolls at Hollin's Cross. Mostly the tolls.",
                             "responses": [
                                 {
-                                    "text": "The mill is clear.",
-                                    "goto": "handin_mill_bandits",
-                                    "actions": [
-                                        {
-                                            "op": "complete_quest",
-                                            "quest": "mill_bandits"
-                                        },
-                                        {
-                                            "op": "advance_quest",
-                                            "quest": "mill_bandits"
-                                        }
-                                    ],
-                                    "condition": {
-                                        "key": "quest.mill_bandits.stage",
-                                        "equals": "20"
-                                    }
-                                },
-                                {
-                                    "text": "Any work going? (Trouble at the Old Mill)",
-                                    "goto": "offer_mill_bandits",
-                                    "condition": {
-                                        "key": "quest.mill_bandits.state",
-                                        "equals": "false"
-                                    }
-                                },
-                                {
                                     "text": "What's the Cross?",
                                     "goto": "cross"
                                 },
@@ -677194,34 +677168,6 @@
                             "responses": [
                                 {
                                     "text": "Charming.",
-                                    "goto": "greeting"
-                                }
-                            ]
-                        },
-                        "handin_mill_bandits": {
-                            "text": "Then the carts can roll again. The Cross thanks you \u2014 and so does my purse, reluctantly.",
-                            "responses": [
-                                {
-                                    "text": "Glad to help.",
-                                    "goto": "END"
-                                }
-                            ]
-                        },
-                        "offer_mill_bandits": {
-                            "text": "Bandits hold the old mill north-east of Millbrook \u2014 the grain for three villages sits under their boots. Clear them out and the Cross will pay you well.",
-                            "responses": [
-                                {
-                                    "text": "I'll do it.",
-                                    "goto": "END",
-                                    "actions": [
-                                        {
-                                            "op": "start_quest",
-                                            "quest": "mill_bandits"
-                                        }
-                                    ]
-                                },
-                                {
-                                    "text": "Not right now.",
                                     "goto": "greeting"
                                 }
                             ]

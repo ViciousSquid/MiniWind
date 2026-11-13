@@ -32,7 +32,8 @@ COND_KINDS = [COND_NONE, COND_FETCH, COND_TALK, COND_KILL, COND_VISIT, COND_ROLL
 
 class Stage:
     def __init__(self, index: int, journal: str, finishes: bool = False,
-                 objective: str = "", condition=None, waypoint: str = ""):
+                 objective: str = "", condition=None, waypoint: str = "",
+                 say: str = ""):
         self.index = index
         self.journal = journal
         self.finishes = finishes
@@ -48,6 +49,11 @@ class Stage:
         # stage has no machine-readable condition (e.g. "clear the mill"). When
         # empty, the arrow falls back to the quest giver.
         self.waypoint = str(waypoint or "").strip()
+        # Optional line the stage's ``talk`` target opens the conversation
+        # with while the quest is on this stage -- what they tell the player
+        # (game.runtime._with_quest_lines; ``{shelf_flour}``-style tokens read
+        # the world, see quests/README.md).
+        self.say = str(say or "").strip()
 
     def condition_kind(self) -> str:
         c = self.condition or {}
@@ -78,7 +84,8 @@ class Stage:
 
 class Quest:
     def __init__(self, qid, name, stages, giver="", desc="", rewards=None,
-                 faction="", xp=0, coop_scope="party", coop_shared_items=None):
+                 faction="", xp=0, coop_scope="party", coop_shared_items=None,
+                 starts_on_new_game=False):
         self.id = qid
         self.name = name
         self.stages: List[Stage] = stages
@@ -91,6 +98,8 @@ class Quest:
         # admission, allegiance and other character-specific work personal.
         self.coop_scope = "personal" if coop_scope == "personal" else "party"
         self.coop_shared_items = tuple(str(i) for i in (coop_shared_items or ()))
+        # Started for every new character, so the journal is never empty.
+        self.starts_on_new_game = bool(starts_on_new_game)
 
     def stage(self, index: int) -> Optional[Stage]:
         for s in self.stages:
@@ -140,7 +149,8 @@ def quest_from_dict(data: Dict) -> Optional[Quest]:
         stages.append(Stage(int(s.get("index", i * 10)), s.get("journal", ""),
                             bool(s.get("finishes", False)), s.get("objective", ""),
                             condition=s.get("condition"),
-                            waypoint=s.get("waypoint", "")))
+                            waypoint=s.get("waypoint", ""),
+                            say=s.get("say", "")))
     if not stages:
         stages = [Stage(0, data.get("desc", "A new quest."))]
     rewards = dict(data.get("rewards", {}) or {})
@@ -152,7 +162,8 @@ def quest_from_dict(data: Dict) -> Optional[Quest]:
                  giver=data.get("giver", ""), desc=data.get("desc", ""),
                  rewards=rewards, faction=data.get("faction", ""),
                  xp=int(data.get("xp", 0)), coop_scope=data.get("coop_scope", "party"),
-                 coop_shared_items=data.get("coop_shared_items"))
+                 coop_shared_items=data.get("coop_shared_items"),
+                 starts_on_new_game=data.get("starts_on_new_game") is True)
 
 
 def offer_dialogue_branch(dialogue, qid, name, desc=""):

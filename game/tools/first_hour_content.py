@@ -18,6 +18,8 @@ or anything it does not name.
 * **Locked chests.** Only 14 of 330 containers were locked. Chests and
   hoards are now locked nine times in ten and crates half the time, with a
   lock as hard as what they guard; sacks, barrels and urns have none.
+* **Aldric is the turn-in.** The mill quest starts with Elowen, so his
+  hand-written offer and old-stage hand-in go.
 * **Real names.** 81 generated townsfolk were called "Folk908 the Farmer",
   and Millbrook's two archers "Town Archer", in roll boxes, barks and
   conversation. Each gets a given name, kept in their title ("Edda the
@@ -260,9 +262,31 @@ def lock_the_chests(world, log):
         log.append(f"locked {locked} chests and crates")
 
 
+def aldric_is_the_turn_in(world, log):
+    """Trouble at the Old Mill now starts with Elowen in Millbrook and ends
+    with Aldric (quests/mill_bandits.quest, whose stage tells him what to
+    say). His hand-written offer and his hand-in, keyed to the old stage
+    numbers, would offer a quest already begun and pay out at the wrong
+    step: both go, the rest of what he says stays."""
+    for t in _by_name(world["things"], "Aldric"):
+        dlg = t["properties"].get("dialogue")
+        if not isinstance(dlg, dict):
+            continue
+        nodes = dlg.get("nodes") or {}
+        start = nodes.get(dlg.get("start")) or {}
+        before = len(start.get("responses") or [])
+        start["responses"] = [r for r in start.get("responses") or []
+                              if r.get("goto") not in ("offer_mill_bandits", "handin_mill_bandits")]
+        gone = [k for k in ("offer_mill_bandits", "handin_mill_bandits") if k in nodes]
+        for k in gone:
+            del nodes[k]
+        if gone or len(start["responses"]) != before:
+            log.append("Aldric: no longer offers or hands in the Old Mill by hand")
+
+
 STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
          send_stray_skeletons_home, rename_their_chests, place_first_locks,
-         lock_the_chests)
+         lock_the_chests, aldric_is_the_turn_in)
 
 
 def apply(world):

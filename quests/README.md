@@ -41,13 +41,22 @@ One quest per file, named `<id>.quest`. Example (`a_word_with_wick.quest`):
 | `xp`       | XP awarded on completion.                                            |
 | `rewards`  | `gold`, `items` (`[["item_id", qty], ...]`), `rep` (`["faction", n]`). |
 | `stages`   | Ordered stages; each has an `index`, `journal`, `objective`, and an optional completion `condition`. A stage with `"finishes": true` completes the quest. |
+| `starts_on_new_game` | Optional. `true` starts the quest for every new character, so the journal and the quest arrow have somewhere to begin. *Trouble at the Old Mill* is the only one. |
+
+### Stage extras
+
+| Field      | Meaning                                                              |
+|------------|---------------------------------------------------------------------|
+| `waypoint` | Where the quest arrow points on a stage with no machine-readable target (a place, NPC, monster type or item id). Never advances the quest. |
+| `say`      | On a `talk` stage: the line the person you were sent to opens the conversation with while you are on that stage ("Go on." then leads to their usual talk). Tokens read the world as it is: `{shelf_flour}` (flour on the speaker's own shelf: "no flour", "one sack of flour", "3 sacks of flour"), `{mill_wheat}` and `{mill_flour}` (in the working windmill nearest the speaker: "no", "12 measures of", "1 sack of"). |
 
 ### Stage conditions
 
 A stage auto-advances when its `condition` is met (leave `kind` as `none` for a
 stage advanced only by dialogue `advance_quest`):
 
-- `talk`  — `target` = NPC name/role
+- `talk`  — `target` = NPC name/role; met by a conversation held *while on
+  the stage* (having spoken to them before the quest began does not count)
 - `fetch` — `target` = item id, `count` = how many to hold
 - `kill`  — `target` = monster_type / role / name / faction, `count` = how many
   (a faction such as `bandits` counts every member: bandits, archers, chiefs)
