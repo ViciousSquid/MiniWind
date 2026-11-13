@@ -672733,7 +672733,7 @@
                 "dialogue": {
                     "nodes": {}
                 },
-                "display_name": "Town Archer",
+                "display_name": "Benedict of the Watch",
                 "npc_role": "guard_archer",
                 "faction": "guards",
                 "aggression": "defensive",
@@ -672859,7 +672859,7 @@
                 "dialogue": {
                     "nodes": {}
                 },
-                "display_name": "Town Archer",
+                "display_name": "Cress of the Watch",
                 "npc_role": "guard_archer",
                 "faction": "guards",
                 "aggression": "defensive",
@@ -673255,9 +673255,9 @@
                 "name": "CreatureSpawn_1",
                 "id": "0ee42360-1eeb-4982-bd83-326d0c79bd4f",
                 "spawn_kind": "creature",
-                "creature_role": "monster",
-                "faction": "monsters",
-                "count": 2,
+                "creature_role": "wolf",
+                "faction": "wildlife",
+                "count": 3,
                 "spawn_radius": 128.0,
                 "inventory": [
                     {
@@ -674021,7 +674021,7 @@
                         "weight": 0.0
                     }
                 ],
-                "respawn": true,
+                "respawn": false,
                 "hidden_in_game": true,
                 "custom_idle": "assets/sprites/logic_spawner.png",
                 "io_enabled": true
@@ -708278,7 +708278,7 @@
             ],
             "properties": {
                 "name": "Folk667_oak_cross_farm",
-                "display_name": "Folk667 the Farmer",
+                "display_name": "Edda the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -708932,7 +708932,7 @@
             ],
             "properties": {
                 "name": "Folk677_raven_yard_cottage",
-                "display_name": "Folk677 the Cottager",
+                "display_name": "Joss the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -709182,7 +709182,7 @@
             ],
             "properties": {
                 "name": "Folk681_red_fold_cottage",
-                "display_name": "Folk681 the Cottager",
+                "display_name": "Alys the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -709432,7 +709432,7 @@
             ],
             "properties": {
                 "name": "Folk685_river_side_cottage",
-                "display_name": "Folk685 the Cottager",
+                "display_name": "Bennet the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -709692,7 +709692,7 @@
             ],
             "properties": {
                 "name": "Folk689_rowan_croft_cottage",
-                "display_name": "Folk689 the Cottager",
+                "display_name": "Cicely the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -710252,7 +710252,7 @@
             ],
             "properties": {
                 "name": "Folk698_stone_bank_wayside_camp",
-                "display_name": "Folk698 the Wayfarer",
+                "display_name": "Dickon the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -710512,7 +710512,7 @@
             ],
             "properties": {
                 "name": "Folk702_thorn_hold_cottage",
-                "display_name": "Folk702 the Cottager",
+                "display_name": "Emmot the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -711844,7 +711844,7 @@
             ],
             "properties": {
                 "name": "Folk723_ash_end_wayside_camp",
-                "display_name": "Folk723 the Wayfarer",
+                "display_name": "Fennel the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -711968,7 +711968,7 @@
             ],
             "properties": {
                 "name": "Folk725_alder_run_cottage",
-                "display_name": "Folk725 the Cottager",
+                "display_name": "Gilly the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -712134,7 +712134,7 @@
             ],
             "properties": {
                 "name": "Folk728_barley_cottage_wayside_camp",
-                "display_name": "Folk728 the Wayfarer",
+                "display_name": "Hob the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -712384,7 +712384,7 @@
             ],
             "properties": {
                 "name": "Folk732_black_mead_cottage",
-                "display_name": "Folk732 the Cottager",
+                "display_name": "Idony the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -712823,7 +712823,7 @@
             ],
             "properties": {
                 "name": "Folk739_briar_cross_farm",
-                "display_name": "Folk739 the Farmer",
+                "display_name": "Jankin the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -712989,7 +712989,7 @@
             ],
             "properties": {
                 "name": "Folk742_cold_fold_wayside_camp",
-                "display_name": "Folk742 the Wayfarer",
+                "display_name": "Kate the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -713249,7 +713249,7 @@
             ],
             "properties": {
                 "name": "Folk746_copper_side_farm",
-                "display_name": "Folk746 the Farmer",
+                "display_name": "Lambert the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -713499,7 +713499,7 @@
             ],
             "properties": {
                 "name": "Folk750_crow_croft_cottage",
-                "display_name": "Folk750 the Cottager",
+                "display_name": "Mabel the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -713749,7 +713749,7 @@
             ],
             "properties": {
                 "name": "Folk754_elm_rest_cottage",
-                "display_name": "Folk754 the Cottager",
+                "display_name": "Nicol the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -714594,7 +714594,7 @@
             ],
             "properties": {
                 "name": "Folk767_gorse_hold_farm",
-                "display_name": "Folk767 the Farmer",
+                "display_name": "Orrin the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -715045,7 +715045,7 @@
             ],
             "properties": {
                 "name": "Folk774_green_watch_farm",
-                "display_name": "Folk774 the Farmer",
+                "display_name": "Parnel the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -715295,7 +715295,7 @@
             ],
             "properties": {
                 "name": "Folk778_hare_field_cottage",
-                "display_name": "Folk778 the Cottager",
+                "display_name": "Rafe the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -715545,7 +715545,7 @@
             ],
             "properties": {
                 "name": "Folk782_hazel_stead_cottage",
-                "display_name": "Folk782 the Cottager",
+                "display_name": "Sibbe the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -715996,7 +715996,7 @@
             ],
             "properties": {
                 "name": "Folk789_hollow_end_farm",
-                "display_name": "Folk789 the Farmer",
+                "display_name": "Tibbot the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -716435,7 +716435,7 @@
             ],
             "properties": {
                 "name": "Folk796_moor_run_farm",
-                "display_name": "Folk796 the Farmer",
+                "display_name": "Ursel the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -716685,7 +716685,7 @@
             ],
             "properties": {
                 "name": "Folk800_oak_cottage_cottage",
-                "display_name": "Folk800 the Cottager",
+                "display_name": "Walt the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -717124,7 +717124,7 @@
             ],
             "properties": {
                 "name": "Folk807_old_mead_farm",
-                "display_name": "Folk807 the Farmer",
+                "display_name": "Avice the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -717563,7 +717563,7 @@
             ],
             "properties": {
                 "name": "Folk814_raven_cross_farm",
-                "display_name": "Folk814 the Farmer",
+                "display_name": "Bartle the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -717729,7 +717729,7 @@
             ],
             "properties": {
                 "name": "Folk817_red_grove_wayside_camp",
-                "display_name": "Folk817 the Wayfarer",
+                "display_name": "Collet the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -717979,7 +717979,7 @@
             ],
             "properties": {
                 "name": "Folk821_river_yard_cottage",
-                "display_name": "Folk821 the Cottager",
+                "display_name": "Davy the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -718812,7 +718812,7 @@
             ],
             "properties": {
                 "name": "Folk834_silver_side_farm",
-                "display_name": "Folk834 the Farmer",
+                "display_name": "Ellot the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -718936,7 +718936,7 @@
             ],
             "properties": {
                 "name": "Folk836_stone_croft_cottage",
-                "display_name": "Folk836 the Cottager",
+                "display_name": "Fritha the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -719387,7 +719387,7 @@
             ],
             "properties": {
                 "name": "Folk843_thorn_rest_farm",
-                "display_name": "Folk843 the Farmer",
+                "display_name": "Gib the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -719637,7 +719637,7 @@
             ],
             "properties": {
                 "name": "Folk847_vale_bank_cottage",
-                "display_name": "Folk847 the Cottager",
+                "display_name": "Hawise the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -719887,7 +719887,7 @@
             ],
             "properties": {
                 "name": "Folk851_west_hold_cottage",
-                "display_name": "Folk851 the Cottager",
+                "display_name": "Ibbot the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -720137,7 +720137,7 @@
             ],
             "properties": {
                 "name": "Folk855_willow_watch_farm",
-                "display_name": "Folk855 the Farmer",
+                "display_name": "Jacomin the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -720387,7 +720387,7 @@
             ],
             "properties": {
                 "name": "Folk859_ash_field_cottage",
-                "display_name": "Folk859 the Cottager",
+                "display_name": "Larkin the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -720511,7 +720511,7 @@
             ],
             "properties": {
                 "name": "Folk861_alder_stead_cottage",
-                "display_name": "Folk861 the Cottager",
+                "display_name": "Magot the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -720962,7 +720962,7 @@
             ],
             "properties": {
                 "name": "Folk868_barley_end_farm",
-                "display_name": "Folk868 the Farmer",
+                "display_name": "Nan the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -721222,7 +721222,7 @@
             ],
             "properties": {
                 "name": "Folk872_black_run_cottage",
-                "display_name": "Folk872 the Cottager",
+                "display_name": "Ottilie the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -721724,7 +721724,7 @@
             ],
             "properties": {
                 "name": "Folk880_brook_mead_cottage",
-                "display_name": "Folk880 the Cottager",
+                "display_name": "Perkin the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -722175,7 +722175,7 @@
             ],
             "properties": {
                 "name": "Folk887_cinder_cross_farm",
-                "display_name": "Folk887 the Farmer",
+                "display_name": "Rohese the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -722341,7 +722341,7 @@
             ],
             "properties": {
                 "name": "Folk890_cold_grove_wayside_camp",
-                "display_name": "Folk890 the Wayfarer",
+                "display_name": "Simkin the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -722985,7 +722985,7 @@
             ],
             "properties": {
                 "name": "Folk900_crow_fold_farm",
-                "display_name": "Folk900 the Farmer",
+                "display_name": "Tace the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -723235,7 +723235,7 @@
             ],
             "properties": {
                 "name": "Folk904_elm_side_cottage",
-                "display_name": "Folk904 the Cottager",
+                "display_name": "Watkin the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -723485,7 +723485,7 @@
             ],
             "properties": {
                 "name": "Folk908_fox_croft_farm",
-                "display_name": "Folk908 the Farmer",
+                "display_name": "Amice the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -723924,7 +723924,7 @@
             ],
             "properties": {
                 "name": "Folk915_gorse_rest_farm",
-                "display_name": "Folk915 the Farmer",
+                "display_name": "Brice the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -724048,7 +724048,7 @@
             ],
             "properties": {
                 "name": "Folk917_green_bank_cottage",
-                "display_name": "Folk917 the Cottager",
+                "display_name": "Clemence the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -724172,7 +724172,7 @@
             ],
             "properties": {
                 "name": "Folk919_hare_hold_cottage",
-                "display_name": "Folk919 the Cottager",
+                "display_name": "Drew the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -724422,7 +724422,7 @@
             ],
             "properties": {
                 "name": "Folk923_hazel_watch_cottage",
-                "display_name": "Folk923 the Cottager",
+                "display_name": "Elyn the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -724883,7 +724883,7 @@
             ],
             "properties": {
                 "name": "Folk930_hollow_field_farm",
-                "display_name": "Folk930 the Farmer",
+                "display_name": "Floss the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -725322,7 +725322,7 @@
             ],
             "properties": {
                 "name": "Folk937_moor_stead_farm",
-                "display_name": "Folk937 the Farmer",
+                "display_name": "Goody the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -725783,7 +725783,7 @@
             ],
             "properties": {
                 "name": "Folk944_oak_end_farm",
-                "display_name": "Folk944 the Farmer",
+                "display_name": "Hick the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -726234,7 +726234,7 @@
             ],
             "properties": {
                 "name": "Folk951_old_run_farm",
-                "display_name": "Folk951 the Farmer",
+                "display_name": "Isot the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -726484,7 +726484,7 @@
             ],
             "properties": {
                 "name": "Folk955_raven_cottage_cottage",
-                "display_name": "Folk955 the Cottager",
+                "display_name": "Jeb the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -726734,7 +726734,7 @@
             ],
             "properties": {
                 "name": "Folk959_red_mead_cottage",
-                "display_name": "Folk959 the Cottager",
+                "display_name": "Lovet the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -727362,7 +727362,7 @@
             ],
             "properties": {
                 "name": "Folk969_rowan_grove_cottage",
-                "display_name": "Folk969 the Cottager",
+                "display_name": "Mild the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -727990,7 +727990,7 @@
             ],
             "properties": {
                 "name": "Folk979_stone_fold_cottage",
-                "display_name": "Folk979 the Cottager",
+                "display_name": "Ned the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -728550,7 +728550,7 @@
             ],
             "properties": {
                 "name": "Folk988_vale_croft_wayside_camp",
-                "display_name": "Folk988 the Wayfarer",
+                "display_name": "Orrick the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -728800,7 +728800,7 @@
             ],
             "properties": {
                 "name": "Folk992_west_rest_cottage",
-                "display_name": "Folk992 the Cottager",
+                "display_name": "Petronel the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -728924,7 +728924,7 @@
             ],
             "properties": {
                 "name": "Folk994_willow_bank_cottage",
-                "display_name": "Folk994 the Cottager",
+                "display_name": "Randal the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -729174,7 +729174,7 @@
             ],
             "properties": {
                 "name": "Folk998_ash_hold_cottage",
-                "display_name": "Folk998 the Cottager",
+                "display_name": "Sefton the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -729298,7 +729298,7 @@
             ],
             "properties": {
                 "name": "Folk1000_alder_watch_cottage",
-                "display_name": "Folk1000 the Cottager",
+                "display_name": "Tamar the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -730116,7 +730116,7 @@
             ],
             "properties": {
                 "name": "Folk1014_briar_end_wayside_camp",
-                "display_name": "Folk1014 the Wayfarer",
+                "display_name": "Wenna the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -730555,7 +730555,7 @@
             ],
             "properties": {
                 "name": "Folk1021_brook_run_farm",
-                "display_name": "Folk1021 the Farmer",
+                "display_name": "Abel the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -730805,7 +730805,7 @@
             ],
             "properties": {
                 "name": "Folk1025_cinder_cottage_cottage",
-                "display_name": "Folk1025 the Cottager",
+                "display_name": "Basset the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -731055,7 +731055,7 @@
             ],
             "properties": {
                 "name": "Folk1029_cold_mead_cottage",
-                "display_name": "Folk1029 the Cottager",
+                "display_name": "Colyn the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -731221,7 +731221,7 @@
             ],
             "properties": {
                 "name": "Folk1032_copper_cross_wayside_camp",
-                "display_name": "Folk1032 the Wayfarer",
+                "display_name": "Dulcie the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -731471,7 +731471,7 @@
             ],
             "properties": {
                 "name": "Folk1036_crow_grove_farm",
-                "display_name": "Folk1036 the Farmer",
+                "display_name": "Ebbe the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -732099,7 +732099,7 @@
             ],
             "properties": {
                 "name": "Folk1046_fox_fold_cottage",
-                "display_name": "Folk1046 the Cottager",
+                "display_name": "Femmy the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -732550,7 +732550,7 @@
             ],
             "properties": {
                 "name": "Folk1053_gorse_side_farm",
-                "display_name": "Folk1053 the Farmer",
+                "display_name": "Garth the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -733204,7 +733204,7 @@
             ],
             "properties": {
                 "name": "Folk1063_hare_rest_cottage",
-                "display_name": "Folk1063 the Cottager",
+                "display_name": "Hester the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -733454,7 +733454,7 @@
             ],
             "properties": {
                 "name": "Folk1067_hazel_bank_cottage",
-                "display_name": "Folk1067 the Cottager",
+                "display_name": "Jessop the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -733704,7 +733704,7 @@
             ],
             "properties": {
                 "name": "Folk1071_hollow_hold_cottage",
-                "display_name": "Folk1071 the Cottager",
+                "display_name": "Kenelm the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -734155,7 +734155,7 @@
             ],
             "properties": {
                 "name": "Folk1078_moor_watch_farm",
-                "display_name": "Folk1078 the Farmer",
+                "display_name": "Lark the Farmer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -734809,7 +734809,7 @@
             ],
             "properties": {
                 "name": "Folk1088_old_stead_cottage",
-                "display_name": "Folk1088 the Cottager",
+                "display_name": "Merry the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -735059,7 +735059,7 @@
             ],
             "properties": {
                 "name": "Folk1092_raven_end_cottage",
-                "display_name": "Folk1092 the Cottager",
+                "display_name": "Noll the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -735309,7 +735309,7 @@
             ],
             "properties": {
                 "name": "Folk1096_red_run_cottage",
-                "display_name": "Folk1096 the Cottager",
+                "display_name": "Pip the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -735559,7 +735559,7 @@
             ],
             "properties": {
                 "name": "Folk1100_river_cottage_cottage",
-                "display_name": "Folk1100 the Cottager",
+                "display_name": "Quenna the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -735819,7 +735819,7 @@
             ],
             "properties": {
                 "name": "Folk1104_rowan_mead_cottage",
-                "display_name": "Folk1104 the Cottager",
+                "display_name": "Roger the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -736447,7 +736447,7 @@
             ],
             "properties": {
                 "name": "Folk1114_thorn_yard_cottage",
-                "display_name": "Folk1114 the Cottager",
+                "display_name": "Saffy the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -736613,7 +736613,7 @@
             ],
             "properties": {
                 "name": "Folk1117_vale_fold_wayside_camp",
-                "display_name": "Folk1117 the Wayfarer",
+                "display_name": "Tom the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -736779,7 +736779,7 @@
             ],
             "properties": {
                 "name": "Folk1120_west_side_wayside_camp",
-                "display_name": "Folk1120 the Wayfarer",
+                "display_name": "Wiliam the Wayfarer",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
@@ -737029,7 +737029,7 @@
             ],
             "properties": {
                 "name": "Folk1124_willow_croft_cottage",
-                "display_name": "Folk1124 the Cottager",
+                "display_name": "Aveline the Cottager",
                 "npc_role": "farmer",
                 "faction": "villagers",
                 "team": "villagers",
