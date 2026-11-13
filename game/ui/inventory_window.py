@@ -222,14 +222,14 @@ PAPERDOLL = (
     # order.
     ("head", "Head", TOP_IN, 0.09),
     (HAND_LEFT, "L", HAND_IN, HEAD_Y),        # beside the head
-    ("light", "Torch", COLUMN_IN, 0.535),
+    ("light", "Torch", COLUMN_IN, 0.55),
     # Gloves under each hand: one slot (the pair), shown twice, the right
     # one mirrored.
-    ("hands", "Gloves", COLUMN_IN, 0.705),    # gauntlets, bracers, wraps
+    ("hands", "Gloves", COLUMN_IN, 0.69),     # gauntlets, bracers, wraps
     ("amulet", "Amulet", 1.0 - TOP_IN, 0.09),
     (HAND_RIGHT, "R", 1.0 - HAND_IN, HEAD_Y), # beside the head
-    ("ring", "Ring", 1.0 - COLUMN_IN, 0.535),
-    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.705),
+    ("ring", "Ring", 1.0 - COLUMN_IN, 0.55),
+    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.69),
     ("chest", "Chest", 0.50, 0.555),
     ("legs", "Legs", 0.50, 0.735),
     ("feet", "Feet", 0.50, 0.915),
