@@ -418,7 +418,7 @@ def _draw_bang(painter, x, baseline, height, colour):
 #: How a roll box's dice are drawn, and how far above the head its bottom
 #: stands: room for "*fizzled*", HIT or MISS to rise between them.
 ROLL_BOX_DIE = 40
-ROLL_BOX_TITLE_H = 24
+ROLL_BOX_TITLE_H = 30
 ROLL_BOX_GAP_PX = FLOAT_RISE_PX + 24.0
 #: Who is rolling, or rolled against, by side: you, an ally, a foe.
 ROLL_SIDE_INK = {"you": (255, 206, 96), "ally": (120, 214, 130), "foe": (238, 104, 88)}
@@ -632,9 +632,7 @@ def _roll_box_layout(box, width):
         details.append(str(companion.get("detail") or
                            f"{companion.get('dice_notation', 'die')}: rolled "
                            f"{companion.get('roll_result', '?')}"))
-    for extra in box.get("followups", ()) or ():
-        if "critical" in str(extra.get("label", "")).lower() and extra.get("success"):
-            details.append("CRITICAL HIT")
+    # (A critical needs no line here: "Crit!" floats just under the box.)
     die = ROLL_BOX_DIE
     # Small text in the small-text face (Texturina Light), never under 11px.
     title_font = T.font(12, bold=True, family="small")
@@ -644,7 +642,7 @@ def _roll_box_layout(box, width):
     dm = QFontMetrics(detail_font)
     detail_w = max((dm.horizontalAdvance(t) for t in details), default=0)
     w = int(max(150, title_w + 20, detail_w + 20, len(visuals) * (die + 14) + 26))
-    h = int(ROLL_BOX_TITLE_H + die + 14 + 18 + 15 * len(details) + 6)
+    h = int(ROLL_BOX_TITLE_H + die + 20 + 22 + 18 * len(details) + 10)
     return {"visuals": visuals, "elapsed": elapsed, "alpha": alpha, "side": side,
             "parts": parts, "details": details, "title_font": title_font, "fm": fm,
             "title_w": title_w, "w": w, "h": h, "result": result}
@@ -681,7 +679,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
     x = bx + (w - layout["title_w"]) / 2.0
     for text, ink in parts:
         painter.setPen(QColor(*ink, alpha))
-        painter.drawText(QPointF(x, by + 17), text)
+        painter.drawText(QPointF(x, by + 20), text)
         x += fm.horizontalAdvance(text)
     settled = True
     for index, d in enumerate(visuals):
@@ -705,7 +703,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
                       "TO HIT" if d["role"] == "hit" else "DAMAGE", size=11,
                       color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
                       bold=True, family="small")
-    line_y = by + ROLL_BOX_TITLE_H + die + 14
+    line_y = by + ROLL_BOX_TITLE_H + die + 20
     if settled:
         verdict, passed = _box_verdict(result)
         ink = (_verdict_color(passed, alpha) if passed is not None
@@ -716,7 +714,7 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         T.text_in(painter, QRect(bx, line_y, w, 18), verdict, size=13, color=ink,
                   align=T.ALIGN_CENTER, bold=True, family="small")
         for k, text in enumerate(details):
-            T.text_in(painter, QRect(bx, line_y + 18 + 15 * k, w, 15), text, size=11,
+            T.text_in(painter, QRect(bx, line_y + 22 + 18 * k, w, 16), text, size=11,
                       color=QColor(200, 196, 214, alpha), align=T.ALIGN_CENTER,
                       family="small")
     else:
