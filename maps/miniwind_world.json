@@ -703205,7 +703205,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -703843,7 +703843,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -704093,7 +704093,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -704353,7 +704353,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -705769,7 +705769,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -705893,7 +705893,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -706143,7 +706143,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -706393,7 +706393,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -706627,7 +706627,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -706877,7 +706877,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -707328,7 +707328,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -707452,7 +707452,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -707913,7 +707913,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -708557,7 +708557,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -708807,7 +708807,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -709067,7 +709067,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -709317,7 +709317,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -709887,7 +709887,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Keep to the road after dark. The wilds aren't kind to strangers.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -710137,7 +710137,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -711469,7 +711469,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Keep to the road after dark. The wilds aren't kind to strangers.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -711593,7 +711593,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -711759,7 +711759,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "I've walked from the coast. Every mile of it uphill, I'd swear.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -712009,7 +712009,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -712448,7 +712448,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -712624,7 +712624,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "I've walked from the coast. Every mile of it uphill, I'd swear.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -712874,7 +712874,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -713124,7 +713124,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -713374,7 +713374,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -714219,7 +714219,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -714670,7 +714670,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -714920,7 +714920,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -715170,7 +715170,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -715621,7 +715621,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The beasts want watering before dusk. Don't let me keep you.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -716060,7 +716060,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -716310,7 +716310,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -716749,7 +716749,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The beasts want watering before dusk. Don't let me keep you.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -717188,7 +717188,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -717354,7 +717354,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Roads are long and the inns are few. Sit a while, if you like.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -717604,7 +717604,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -718437,7 +718437,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The beasts want watering before dusk. Don't let me keep you.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -718561,7 +718561,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -719012,7 +719012,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -719262,7 +719262,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -719512,7 +719512,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -719762,7 +719762,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Good year for barley, if the rain holds off.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -720012,7 +720012,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -720136,7 +720136,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -720597,7 +720597,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Good year for barley, if the rain holds off.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -720847,7 +720847,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -721349,7 +721349,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -721800,7 +721800,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -721966,7 +721966,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Roads are long and the inns are few. Sit a while, if you like.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -722610,7 +722610,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Good year for barley, if the rain holds off.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -722860,7 +722860,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -723110,7 +723110,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -723549,7 +723549,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Good year for barley, if the rain holds off.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -723673,7 +723673,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -723797,7 +723797,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -724057,7 +724057,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -724508,7 +724508,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -724957,7 +724957,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -725408,7 +725408,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -725859,7 +725859,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "If it isn't the crows it's the weather. That's farming.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -726109,7 +726109,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -726359,7 +726359,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -726987,7 +726987,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -727615,7 +727615,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -728175,7 +728175,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Just resting my feet before the next stretch of road.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -728425,7 +728425,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -728549,7 +728549,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -728799,7 +728799,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -728923,7 +728923,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -729741,7 +729741,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "I've walked from the coast. Every mile of it uphill, I'd swear.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -730180,7 +730180,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The beasts want watering before dusk. Don't let me keep you.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -730430,7 +730430,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -730680,7 +730680,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -730846,7 +730846,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Just resting my feet before the next stretch of road.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -731096,7 +731096,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -731724,7 +731724,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Not much out here but the hens and the weather. Suits me.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -732185,7 +732185,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -732829,7 +732829,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -733079,7 +733079,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -733329,7 +733329,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -733790,7 +733790,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "The soil's thin up here, but it feeds us.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -734434,7 +734434,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -734684,7 +734684,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -734934,7 +734934,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -735194,7 +735194,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -735444,7 +735444,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Mind the fence -- the hens are out if you so much as look at it.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -736072,7 +736072,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Long walk to market from here. Longer back, with a full basket.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -736238,7 +736238,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Keep to the road after dark. The wilds aren't kind to strangers.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -736404,7 +736404,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Roads are long and the inns are few. Sit a while, if you like.",
                             "responses": [
                                 {
                                     "text": "Farewell.",
@@ -736654,7 +736654,7 @@
                     "start": "greeting",
                     "nodes": {
                         "greeting": {
-                            "text": "If you're after work, Hobb's the one to ask. I just dig.",
+                            "text": "Quiet spot, this. The wolves keep to the woods, mostly.",
                             "responses": [
                                 {
                                     "text": "Farewell.",

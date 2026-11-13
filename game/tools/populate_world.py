@@ -69,6 +69,35 @@ FOLK = ("Aldous", "Berta", "Cedric", "Dorcas", "Edwin", "Freya", "Godric", "Hild
         "Cuthbert", "Elsie", "Fulk", "Gwen", "Hamon", "Isolde", "Jory", "Kit", "Lettice",
         "Merrick", "Odo", "Piers", "Rosamund", "Sim", "Tobias", "Wat", "Wilmot")
 
+#: What a countryside cottager, farmer or wayfarer says (``_person``'s
+#: *title*), picked by name. The prototype they are copied from is a
+#: farmhand at Oakridge Farm whose own line ("Hobb's the one to ask") made
+#: no sense in the mouth of a wayfarer at the far end of the Vale.
+TITLE_LINES = {
+    "Cottager": ("Not much out here but the hens and the weather. Suits me.",
+                 "Mind the fence -- the hens are out if you so much as look at it.",
+                 "Quiet spot, this. The wolves keep to the woods, mostly.",
+                 "Long walk to market from here. Longer back, with a full basket."),
+    "Farmer": ("The soil's thin up here, but it feeds us.",
+               "If it isn't the crows it's the weather. That's farming.",
+               "The beasts want watering before dusk. Don't let me keep you.",
+               "Good year for barley, if the rain holds off."),
+    "Wayfarer": ("Just resting my feet before the next stretch of road.",
+                 "Roads are long and the inns are few. Sit a while, if you like.",
+                 "Keep to the road after dark. The wilds aren't kind to strangers.",
+                 "I've walked from the coast. Every mile of it uphill, I'd swear."),
+}
+
+
+def title_line(title, display_name):
+    """The line for *title*, the same for the same name every run (a stable
+    hash, not the tool's random stream, which the rest of the world shares)."""
+    lines = TITLE_LINES.get(title)
+    if not lines:
+        return None
+    return lines[sum(map(ord, str(display_name))) % len(lines)]
+
+
 HOUSES = (("house01.png", 390, 260), ("house04.png", 340, 292), ("house05.png", 400, 200),
           ("house06.png", 300, 225), ("house01.png", 330, 220), ("house06.png", 340, 255))
 STALLS = (("market01.png", 200, 200), ("market03.png", 200, 200), ("shop01.png", 180, 180),
@@ -293,6 +322,7 @@ class Populator(Expander):
                   "custom_idle": f"assets/sprites/heads/{head}.png",
                   "custom_shoot": f"assets/sprites/heads/{head}.png",
                   "quest_flags": {}, "relationships": {}})
+        line = line or title_line(title, p["display_name"])
         if line:
             p["dialogue"] = {"start": "greeting", "nodes": {"greeting": {
                 "text": line, "responses": [{"text": "Farewell.", "goto": "END"}]}}}

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 
@@ -94,3 +95,31 @@ def test_most_chests_are_locked_and_locks_vary(world):
         p = t["properties"]
         if t.get("type") == "container" and p.get("container_kind") in ("sack", "barrel", "urn"):
             assert not p.get("locked"), "a sack has nothing to lock: " + str(p.get("name"))
+
+
+def test_a_greeting_that_names_a_neighbour_is_said_near_them(world):
+    """populate_world copied Oakridge's farmhand, line and all, into 93
+    cottagers, farmers and wayfarers: "If you're after work, Hobb's the one to
+    ask" was said all over the Vale, nowhere near Hobb. Each countryside
+    title now has lines of its own (populate_world.TITLE_LINES)."""
+    from ..tools import populate_world
+    npcs = [t for t in world["things"] if t["properties"].get("type") == "npc"]
+    first = {}
+    for t in npcs:
+        name = str(t["properties"].get("display_name") or "").split(" ")[0]
+        if len(name) > 2:
+            first.setdefault(name, []).append(t["pos"])
+    far = []
+    for t in npcs:
+        tree = t["properties"].get("dialogue") or {}
+        start = (tree.get("nodes") or {}).get(tree.get("start")) or {}
+        text = str(start.get("text") or "")
+        own = str(t["properties"].get("display_name") or "").split(" ")[0]
+        for name, places in first.items():
+            if name == own or not re.search(rf"\b{re.escape(name)}\b", text):
+                continue
+            if min(math.hypot(t["pos"][0] - p[0], t["pos"][2] - p[2]) for p in places) > 3000:
+                far.append((t["properties"].get("display_name"), name))
+    assert not far
+    assert populate_world.title_line("Wayfarer", "Tom the Wayfarer") in \
+        populate_world.TITLE_LINES["Wayfarer"]
