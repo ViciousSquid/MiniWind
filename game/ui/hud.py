@@ -2097,6 +2097,54 @@ def _blob(painter, cx, cy, r, seed, color, alpha):
                             r * rng.uniform(0.08, 0.22), r * rng.uniform(0.08, 0.2))
 
 
+#: The pictures bodies blown apart are broken from, by path.
+_PIECE_PIXMAPS = {}
+
+
+def _piece_pixmap(path):
+    pix = _PIECE_PIXMAPS.get(path)
+    if pix is None:
+        from PyQt5.QtGui import QPixmap
+        full = path if os.path.isabs(path) else os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), path)
+        pix = QPixmap(full)
+        if len(_PIECE_PIXMAPS) > 64:
+            _PIECE_PIXMAPS.clear()
+        _PIECE_PIXMAPS[path] = pix
+    return pix
+
+
+def _draw_piece(painter, p, sp, k, deg, opacity):
+    """One piece of a body blown apart (game/gore_fx.py): its jagged shard
+    of the body's own picture, at *sp*, turned *deg*, darkened with blood."""
+    pix = _piece_pixmap(p["sprite"])
+    if pix.isNull():
+        return
+    side = p["body"] * k                       # the whole picture, on screen
+    if side < 2:
+        return
+    from PyQt5.QtGui import QPainterPath
+    cu, cv = p["cu"], p["cv"]
+    shard = QPainterPath()
+    pts = [QPointF((u - cu) * side, (v - cv) * side) for u, v in p["quad"]]
+    shard.moveTo(pts[0])
+    for q in pts[1:]:
+        shard.lineTo(q)
+    shard.closeSubpath()
+    painter.save()
+    painter.translate(sp[0], sp[1])
+    painter.rotate(deg)
+    painter.setOpacity(opacity)
+    painter.setClipPath(shard)
+    painter.drawPixmap(QRectF(-cu * side, -cv * side, side, side), pix,
+                       QRectF(0, 0, pix.width(), pix.height()))
+    painter.setClipping(False)
+    painter.setBrush(QColor(110, 0, 0, 90))     # bloodied
+    painter.setPen(QPen(QColor(70, 0, 0, 200), max(1.0, side * 0.025)))
+    painter.drawPath(shard)
+    painter.restore()
+
+
 def draw_gore(painter, session, viewport, width, height):
     """The blood in the air (game/gore_fx.py), over the world and under the
     HUD: droplets and chunks in flight, the red flash of a kill, and the
@@ -2126,6 +2174,17 @@ def draw_gore(painter, session, viewport, width, height):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     painter.setPen(Qt.NoPen)
+    pieces = gore.pieces_snapshot() if hasattr(gore, "pieces_snapshot") else []
+    for p in pieces:
+        pose = gore.piece_pose(p, now)
+        if pose is None:
+            continue
+        x, y, z, deg, opacity = pose
+        sp = to_screen(x, y, z)
+        k = px_per_unit(x, y, z)
+        if sp is None or k is None:
+            continue
+        _draw_piece(painter, p, sp, k, deg, opacity)
     for p in particles:
         x, y, z = gore.position(p, now)
         sp = to_screen(x, y, z)

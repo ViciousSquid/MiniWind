@@ -1555,6 +1555,16 @@ class MiniwindSession(SettlementLaw):
         half = float(p.get("sprite_height", 112) or 112) * 0.5
         return [float(thing.pos[0]), float(thing.pos[1]) - half, float(thing.pos[2])]
 
+    @staticmethod
+    def _body_picture(target):
+        """The picture *target* was drawn with alive (its head, its own
+        sprite or its role's art), for the pieces it is blown into."""
+        try:
+            from .entities import _actor_2d_sprite_path
+            return _actor_2d_sprite_path(target) or None
+        except Exception:
+            return None
+
     def _gore_hit(self, target, damage, *, crit=False, killed=False, magical=False,
                   source=None, by_player=True, crit_kill=False) -> None:
         """Blood for a blow that landed on *target*, and -- for the player's
@@ -1575,17 +1585,21 @@ class MiniwindSession(SettlementLaw):
             feet = self._feet(target)
             top = _gore.max_health(p) if not killed else max(
                 float(p.get("_max_health", 0) or 0), _gore.max_health(p), float(damage))
+            from .rpg.bestiary import body_mass
+            mass = body_mass(p)                 # how big a body, not how tough
             if gibbed and not magical:
-                self.gore.gib(feet, damage, away)
+                # Blown apart: the body's own picture in pieces, and blood.
+                self.gore.gib(feet, damage, away, sprite=self._body_picture(target),
+                              body=float(p.get("sprite_width", 96) or 96), mass=mass)
                 if crit_kill:
                     # A critical killing blow: blown apart, and then some.
-                    self.gore.gib(feet, damage, away)
-                    self.gore.wound(feet, damage, top, away, crit=True)
-                    self.gore.kill(feet, top * 1.6)
+                    self.gore.gib(feet, damage, away, mass=mass)
+                    self.gore.wound(feet, damage, top, away, crit=True, mass=mass)
+                    self.gore.kill(feet, top * 1.6, mass=mass)
             elif not (gibbed and magical):      # a disintegration leaves nothing
-                self.gore.wound(feet, damage, top, away, crit=crit)
+                self.gore.wound(feet, damage, top, away, crit=crit, mass=mass)
                 if killed:
-                    self.gore.kill(feet, top)
+                    self.gore.kill(feet, top, mass=mass)
         if by_player and (killed or crit):
             strength, seconds = ((CRIT_KILL_SHAKE if crit_kill else
                                   GIB_SHAKE if gibbed else KILL_SHAKE) if killed

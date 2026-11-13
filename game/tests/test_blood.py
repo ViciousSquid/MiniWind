@@ -278,3 +278,43 @@ def test_the_hud_draws_no_blood_lying_on_the_ground(qt_app):
     hud.draw_gore(painter, type("S", (), {"gore": g})(), _View(), 200, 200)
     painter.end()
     assert image.pixelColor(100, 100).alpha() == 0
+
+
+# --- how much body there is to blow apart ---------------------------------
+def _gibbed(mass, sprite=None):
+    import random
+    from ..gore_fx import GoreFX
+    g = GoreFX(rng=random.Random(4), clock=lambda: 0.0)
+    g.gib((0.0, 0.0, 0.0), 80.0, sprite=sprite, body=64.0, mass=mass)
+    parts, pools, _screen = g.snapshot()
+    return g, parts, pools
+
+
+def test_a_hen_bursts_into_a_few_scraps_a_bear_into_a_mess():
+    from ..rpg.bestiary import body_mass
+    hen, person, bear = (body_mass({"npc_role": r}) for r in ("hen", "bandit", "bear"))
+    assert hen < person < bear
+    counts = [len(_gibbed(m)[1]) for m in (hen, person, bear)]
+    assert counts[0] * 5 < counts[1] < counts[2]
+    # Mostly blood: far more droplets than flying chunks.
+    import random
+    from ..gore_fx import GoreFX
+    g = GoreFX(rng=random.Random(4), clock=lambda: 0.0)
+    g.gib((0.0, 0.0, 0.0), 80.0, mass=person)
+    drops = sum(1 for p in g.snapshot()[0] if p["kind"] == "drop")
+    chunks = sum(1 for p in g.snapshot()[0] if p["kind"] == "chunk")
+    assert drops >= 10 * chunks
+    pools = [len(_gibbed(m)[2]) for m in (hen, person, bear)]
+    assert pools[0] == 1 and pools[0] < pools[1] < pools[2]
+    pieces = [len(_gibbed(m, sprite="x.png")[0].pieces) for m in (hen, person, bear)]
+    assert pieces == [2, 4, 6]               # only a few come off whole
+
+
+def test_size_is_not_health():
+    """A veteran guard has twice a farmer's health and is no bigger; a map
+    can still say an actor is bigger than its kind."""
+    from ..rpg.bestiary import body_size, body_mass
+    assert body_size({"npc_role": "guard", "max_health": 120}) == "medium"
+    assert body_mass({"npc_role": "guard"}) == body_mass({"npc_role": "farmer"})
+    assert body_size({"npc_role": "wolf", "body_size": "large"}) == "large"
+    assert body_size({"name": "Someone"}) == "medium"
