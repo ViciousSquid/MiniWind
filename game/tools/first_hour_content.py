@@ -107,7 +107,36 @@ def name_the_unnamed(world, log):
         log.append(f"named {len(folk)} generated townsfolk and {len(archers)} archers")
 
 
-STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed)
+#: Barrow Hill, where Grunn's quest sends the player to clear the skeletons.
+BARROW_HILL = (-4048.0, -15688.0)
+
+
+def send_stray_skeletons_home(world, log):
+    """Two hostile skeletons, left by the editor ("Creature_2", "Creature_2_644"),
+    stood just outside Millbrook: one at Bryn's pasture and one at the
+    windmill, where they killed the farmers who work there. They belong to
+    the barrow."""
+    import math
+    barrow = [t for t in world["things"] if t.get("type") == "creature"
+              and t["properties"].get("npc_role") == "skeleton"
+              and math.hypot(t["pos"][0] - BARROW_HILL[0], t["pos"][2] - BARROW_HILL[1]) < 1200]
+    ground_y = float(barrow[0]["pos"][1]) if barrow else 510.0
+    moved = 0
+    for i, name in enumerate(("Creature_2", "Creature_2_644")):
+        for t in _by_name(world["things"], name):
+            p = t["properties"]
+            if p.get("npc_role") != "skeleton":
+                continue
+            x, z = BARROW_HILL[0] + 260.0 * (i - 0.5), BARROW_HILL[1] + 300.0
+            t["pos"] = [x, ground_y, z]
+            p["name"] = f"barrow_skeleton_{i + 1}"
+            moved += 1
+    if moved:
+        log.append(f"moved {moved} stray skeletons from Millbrook's fields to Barrow Hill")
+
+
+STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
+         send_stray_skeletons_home)
 
 
 def apply(world):

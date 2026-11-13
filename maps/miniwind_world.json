@@ -673168,9 +673168,9 @@
         {
             "type": "creature",
             "pos": [
-                -544.0,
-                256,
-                -4480.0
+                -4178.0,
+                462.3,
+                -15388.0
             ],
             "properties": {
                 "display_name": "Skeleton",
@@ -673182,7 +673182,7 @@
                 "loot": "skeleton",
                 "respawn": false,
                 "type": "creature",
-                "name": "Creature_2",
+                "name": "barrow_skeleton_1",
                 "id": "3e946732-607b-4b2f-b875-1709486da541",
                 "monster_type": "human",
                 "monster_id": 0,
@@ -706680,9 +706680,9 @@
         {
             "type": "creature",
             "pos": [
-                3273.4,
-                222.1,
-                -22.2
+                -3918.0,
+                462.3,
+                -15388.0
             ],
             "properties": {
                 "display_name": "Skeleton",
@@ -706694,7 +706694,7 @@
                 "loot": "skeleton",
                 "respawn": false,
                 "type": "creature",
-                "name": "Creature_2_644",
+                "name": "barrow_skeleton_2",
                 "id": "cbc19be3-e068-4c8a-be5f-6f062bcac80d",
                 "monster_type": "human",
                 "monster_id": 0,

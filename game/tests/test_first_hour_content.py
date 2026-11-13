@@ -39,3 +39,11 @@ def test_bryns_pasture_has_wolves_and_the_old_mill_stays_cleared(world):
               and t["properties"].get("name") in ("Creature_19", "Creature_20")]
     assert not fiends
     assert by["BanditSpawner"]["respawn"] is False
+
+
+def test_no_hostile_skeleton_stands_in_millbrooks_fields(world):
+    import math
+    near = [t["properties"].get("name") for t in world["things"]
+            if t["properties"].get("npc_role") == "skeleton"
+            and math.hypot(t["pos"][0], t["pos"][2]) < 7000]
+    assert not near, near
