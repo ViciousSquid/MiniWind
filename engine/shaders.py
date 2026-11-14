@@ -1959,7 +1959,7 @@ vec3 applyBiomes(vec3 base, highp vec3 p, float slope, float flatness) {
         float turn = hash(cell + 4.2) * 3.14159;
         highp float along = dot(p.xz, vec2(cos(turn), sin(turn)));
         float row = 0.5 + 0.5 * sin(along * 0.28);
-        vec3 gold = mix(vec3(0.84, 0.70, 0.16), vec3(0.98, 0.87, 0.32), noise(p.xz * 0.012))
+        vec3 gold = mix(vec3(0.70, 0.54, 0.22), vec3(0.90, 0.76, 0.38), noise(p.xz * 0.012))
                   * mix(0.86, 1.04, row);
         float a = smoothstep(0.35, 0.6, w.a + (grain - 0.5) * 0.08);
         col = mix(col, gold, a);

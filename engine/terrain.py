@@ -1493,7 +1493,7 @@ class Terrain:
         lo, hi = terrain_biomes.WHEAT_SIZE
         data[:, 3] = rng.uniform(lo, hi, count) * height * self._biome_size_scale()
         data[:, 4] = rng.uniform(0.0, 6.2831853, count)
-        data[:, 5] = rng.uniform(0.9, 1.1, count)
+        data[:, 5] = rng.uniform(*terrain_biomes.WHEAT_BRIGHTNESS, count)
         ripe = rng.random(count)[:, None]
         gold = (terrain_biomes.WHEAT_COLOUR[None, :] * (1.0 - ripe * 0.5)
                 + terrain_biomes.WHEAT_TIP[None, :] * ripe * 0.5)
