@@ -52,17 +52,20 @@ jobs:
       - name: Install headless runtime baseline
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest "numpy==2.5.3" "PyGLM==2.8.3" "pygame-ce==2.5.8" "Pillow==13.0.0"
+          python -m pip install pytest "numpy==2.5.3" "PyGLM==2.8.3" "pygame-ce==2.5.8" "Pillow==13.0.0" "PyOpenGL==3.1.10"
       - name: Verify headless dependency versions
         run: |
           python - <<'PY'
           import numpy
           import pygame
+          from OpenGL import GL
 
           assert numpy.__version__ == "2.5.3"
           assert pygame.version.ver == "2.5.8"
+          assert GL is not None
           print("NumPy:", numpy.__version__)
           print("pygame-ce:", pygame.version.ver)
+          print("PyOpenGL import: OK")
           PY
       - name: Run all core tests that do not need Qt or a GPU
         env:

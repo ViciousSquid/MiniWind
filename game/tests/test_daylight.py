@@ -39,12 +39,20 @@ def test_one_real_minute_is_one_game_hour():
 def test_every_shipped_map_keeps_the_24_minute_day():
     import glob
     import json
+
+    def check_day_length(value, path):
+        if isinstance(value, dict):
+            if "minutes_per_day" in value:
+                assert value["minutes_per_day"] == 24.0, path
+            for child in value.values():
+                check_day_length(child, path)
+        elif isinstance(value, list):
+            for child in value:
+                check_day_length(child, path)
+
     for path in glob.glob("maps/*.json"):
-        with open(path, "rb") as f:
-            raw = f.read()
-        if b'"minutes_per_day"' not in raw:
-            continue
-        assert b'"minutes_per_day": 24.0' in raw, path
+        with open(path, encoding="utf-8") as f:
+            check_day_length(json.load(f), path)
 
 
 def test_the_sky_runs_from_day_through_dusk_to_night_and_back():

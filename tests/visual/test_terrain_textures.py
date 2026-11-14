@@ -154,7 +154,8 @@ def test_textured_terrain_shows_no_chunk_seams(context):
                                  fov=50.0)
     plain_x, plain_z = border_step_ratio(views[False])
     tex_x, tex_z = border_step_ratio(views[True])
-    # Untextured still has the per-chunk colour seam (B2, not fixed yet): the
-    # test would be meaningless if the corner were not on a chunk border.
-    assert plain_x > 5 and plain_z > 5, (plain_x, plain_z)
+    # The shared height range removed the colour seam on the X border.
+    # The legacy triangle variation is still indexed by local iz, leaving
+    # the Z border as a control. Textured terrain must suppress both seams.
+    assert plain_z > 5, (plain_x, plain_z)
     assert tex_x < 2 and tex_z < 2, f"textured chunk seam: {tex_x:.2f}, {tex_z:.2f}"
