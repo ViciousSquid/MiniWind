@@ -652,11 +652,13 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
   fight that starts mid-conversation, or draws your partner in, breaks it
   off. Notice boards can still be read, and a guard's arrest order is
   still given.
-* **Prices:** `factor = 1 − (Mercantile + PER − 40) / 300`; buying costs
+* **Prices:** `factor = 1 − Mercantile / 300`; buying costs
   `base × (2 − factor) × like × face`, selling pays `base × factor × 0.8 ÷
   like × face`. *Like* is `1 − (disposition − 50) × 0.0035` (0.85–1.15);
   *face* by Charisma: repulsive (under 15) 1.5, ugly (under 30) 1.22, plain
   (under 55) 1.0, fair (under 72) 0.96, striking 0.9 (inverted when selling).
+  Charisma counts once in a price, as the face; *factor* is Mercantile
+  alone. (Disposition, which Charisma nudges, is the merchant's liking.)
 * **Disposition** = base + (PER − 40) × 0.5 + 15 for faction-mates − the
   bounty's weight.
 * **Persuade:** `(Speechcraft + LUCK × 0.2)%`, 5–95%; success +8
@@ -789,4 +791,3 @@ Places where the code does not yet do what something in the game describes:
   and **Alchemy** are neither trained nor read.
 * Sneak-attack damage applies whenever sneaking is on, even if the target has
   already seen you.
-* **Charisma** counts twice in prices.

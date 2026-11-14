@@ -139,3 +139,28 @@ def test_carrying_too_much_slows_the_player_to_a_third():
     s._update_encumbrance()
     assert player.move_speed_scale == ENCUMBERED_SPEED
     assert s.notifications[-1]["text"] == "You are encumbered!"
+
+
+def test_charisma_counts_once_in_prices():
+    """Prices: factor = 1 - Mercantile / 300 (no Charisma); Charisma's only
+    say is the face multiplier. Two plain faces pay the same; a striking one
+    pays the face's 0.9 once, not twice."""
+    from ..runtime import MiniwindSession
+    from ..rpg import attributes as attr, charisma as cha
+    from ..rpg.character import Character
+
+    def prices(charisma):
+        s = MiniwindSession.__new__(MiniwindSession)
+        c = Character.create("Trader", "valian", "warrior")
+        c.skills["mercantile"] = 30
+        c.attrs[attr.PERSONALITY] = charisma
+        s.game = type("G", (), {"character": c})()
+        return s._price(1000, True), s._price(1000, False)
+
+    factor = 1.0 - 30 / 300.0
+    assert prices(40) == prices(54)                  # both plain: Charisma is the face only
+    assert prices(40) == (int(1000 * (2.0 - factor)), int(1000 * factor * 0.8))
+    buy, sell = prices(80)                           # striking
+    assert cha.tier(80) == cha.STRIKING
+    assert buy == int(1000 * (2.0 - factor) * 0.9)
+    assert sell == int(1000 * factor * 0.8 / 0.9)

@@ -11378,13 +11378,13 @@ class MiniwindSession(SettlementLaw):
             from .flour_supply import shelf_price
             base_value = shelf_price(npc)
         c = self.game.character
-        merc = c.skill("mercantile")
-        pers = c.attrs.get("personality", 40)
-        factor = 1.0 - (merc + (pers - 40)) / 300.0
+        # Haggling is Mercantile alone. Charisma counts once, in *face* below
+        # (it used to count here as well).
+        factor = 1.0 - c.skill("mercantile") / 300.0
         # A trader who likes the player shaves coin off the asking price and
         # pays a little more for goods; a wary one does the opposite.
         like = disp.price_factor(c, npc.properties, self.store) if npc is not None else 1.0
-        # What the merchant thinks of your face, on top of everything else.
+        # What the merchant thinks of your face: Charisma's one say in prices.
         face = rpg_cha.price_multiplier(rpg_cha.charisma_of(c), buying)
         if buying:
             return max(1, int(base_value * (2.0 - factor) * like * face))
