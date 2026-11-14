@@ -536,8 +536,11 @@ the sky, fading in as weather does):
   64 drops on the glass); everything dries off when the rain stops, the
   smallest first. Moving the camera fast pushes the drops back across the
   glass, big ones most. Each drop has no colour of its own: it shows the
-  world behind it upside-down, mirrored and much smaller, with a thin dark
-  edge. None of it ever covers the HUD.
+  world behind it upside-down, mirrored and much smaller. The camera is
+  focused on the world, not its glass, so every drop is out of focus: a
+  soft smudge with no outline, fading out from its middle, the view
+  through it blurred, lighter below (the sky it turns over) and a little
+  darker on top. None of it ever covers the HUD.
 
 **The sky** is only ever seen in water (the camera looks down). Open water
 reflects a real one: a layer of clouds high above the world, drifting with

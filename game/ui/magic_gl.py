@@ -200,7 +200,14 @@ void main() {
 #: upside-down, mirrored and much smaller (nearly the whole view in each
 #: drop), with a dark edge and a faint highlight -- over the finished frame.
 #: Beads are egg-shaped, wider at the bottom; a running drop is drawn long,
-#: rounded at the bottom and narrowing above.
+#: rounded at the bottom and narrowing above. The camera is focused on the
+#: world, not its own glass, so every drop is well out of focus, as MotoGP's
+#: lens drops are: a soft, faint smudge with no outline, fading out from its
+#: middle, the view through it heavily blurred.
+WET_SOFT = 0.65              # share of a drop's radius its edge fades over
+WET_OPACITY = 0.9            # how much of the view a drop's middle replaces
+WET_SIZE = 1.7              # drawn this much bigger than its wet core (the soft fringe)
+WET_BLUR = 0.03              # blur of the view through a drop (share of height)
 _WET_FRAG = """#version 330 core
 in vec2 uv;
 uniform sampler2D scene;
@@ -208,15 +215,25 @@ uniform vec4 drops[64];      // xy centre (uv, y up), z radius (uv height), w we
 uniform float stretch[64];   // 1 round .. longer as it runs
 uniform int count;
 uniform float aspect;
+uniform float soft;          // out of focus: share of the radius the edge fades over
+uniform float opacity;       // how much of the view a drop's middle replaces
+uniform float size;          // drawn this much bigger than its wet core
+uniform float blur;          // and how blurred the view through it
 out vec4 frag;
+// A disc of taps for the defocus blur (golden-angle spiral).
+const vec2 TAPS[12] = vec2[](
+    vec2(0.20, 0.00), vec2(-0.27, 0.25), vec2(0.04, -0.44), vec2(0.35, 0.39),
+    vec2(-0.58, -0.10), vec2(0.55, -0.35), vec2(-0.20, 0.68), vec2(-0.37, -0.65),
+    vec2(0.80, 0.18), vec2(-0.78, 0.38), vec2(0.30, -0.85), vec2(0.38, 0.89));
 void main() {
     vec2 at = uv;
     float shade = 1.0;
     float shine = 0.0;
+    float cover = 0.0;
     for (int i = 0; i < 64; i++) {
         if (i >= count) break;
         vec2 c = drops[i].xy;
-        float R = max(drops[i].z, 1e-4);
+        float R = max(drops[i].z, 1e-4) * size;
         float s = stretch[i];
         vec2 d = uv - c;
         d.x *= aspect;
@@ -226,24 +243,41 @@ void main() {
         float k = clamp(d.y / R, -1.0, 1.0);
         d.x *= 1.0 + (0.16 + 0.5 * (s - 1.0)) * k;
         float r = length(d) / R;
-        if (r >= 1.0) continue;
-        float w = drops[i].w;
-        float h = sqrt(1.0 - r * r);       // the drop's dome
+        if (r >= 1.0 + soft * 0.3) continue;
+        // No outline: it fades out from its middle.
+        float a = drops[i].w * opacity * (1.0 - smoothstep(1.0 - soft, 1.0 + soft * 0.3, r));
+        float rr = min(r, 1.0);
+        float h = sqrt(1.0 - rr * rr);     // the drop's dome
         // Through the drop the world is seen turned over and mirrored, and
         // much smaller: across a drop, most of the view.
         vec2 look = -(d / R) * (0.30 - 0.12 * h);
         look.x /= aspect;
-        at = mix(at, c + look, w);
-        // No colour of its own: only a thin dark edge where the glass
-        // bends the light away, and a faint glint of the sky.
-        float edge = smoothstep(0.80, 1.0, r);
-        shade *= mix(1.0, 1.0 - 0.45 * edge, w);
+        at = mix(at, c + look, a);
+        cover = max(cover, a);
+        // No colour of its own, but the bright sky above the camera, turned
+        // over by the drop, lights its lower part and leaves its top a
+        // little darker (MotoGP's drops), with a faint blurred glint.
+        float below = clamp(-d.y / R, -1.0, 1.0);
+        shade *= mix(1.0, 1.0 - 0.32 * smoothstep(0.0, 1.0, -below), a);
+        shine += a * (0.08 + 0.30 * smoothstep(-0.3, 0.9, below));
         vec2 hl = d / R - vec2(-0.30, 0.42);
-        shine += w * 0.35 * exp(-dot(hl, hl) * 60.0);
+        shine += a * 0.12 * exp(-dot(hl, hl) * 8.0);
     }
-    vec3 col = texture(scene, clamp(at, vec2(0.001), vec2(0.999))).rgb * shade;
-    frag = vec4(col + vec3(shine), 1.0);
+    vec3 sharp = texture(scene, uv).rgb;
+    if (cover <= 0.0) {
+        frag = vec4(sharp, 1.0);
+        return;
+    }
+    // Out of focus: the view through the drops, blurred.
+    vec3 seen = texture(scene, clamp(at, vec2(0.001), vec2(0.999))).rgb;
+    for (int t = 0; t < 12; t++) {
+        vec2 o = TAPS[t] * vec2(blur / aspect, blur);
+        seen += texture(scene, clamp(at + o, vec2(0.001), vec2(0.999))).rgb;
+    }
+    seen /= 13.0;
+    frag = vec4(mix(sharp, seen * shade + vec3(shine), cover), 1.0);
 }"""
+
 
 #: Effects are hidden by walls in front of them.
 DEPTH_TEST = True
@@ -308,7 +342,7 @@ def _init(gl) -> bool:
         _S.lens_vao = gl.glGenVertexArrays(1)
         _S.wet_prog = _compile(gl, _LENS_VERT, _WET_FRAG)
         _S.wet_loc = {n: gl.glGetUniformLocation(_S.wet_prog, n)
-                      for n in ("scene", "drops", "stretch", "count", "aspect")}
+                      for n in ("scene", "drops", "stretch", "count", "aspect", "soft", "opacity", "size", "blur")}
         _S.ok = True
     except Exception as exc:
         print(f"[MiniWind] magic effects unavailable: {exc}")
@@ -520,6 +554,10 @@ def draw_wet_lens(drops) -> int:
                 shape[i] = drop[4]
         gl.glUniform4fv(loc["drops"], 64, data)
         gl.glUniform1fv(loc["stretch"], 64, shape)
+        gl.glUniform1f(loc["soft"], WET_SOFT)
+        gl.glUniform1f(loc["opacity"], WET_OPACITY)
+        gl.glUniform1f(loc["size"], WET_SIZE)
+        gl.glUniform1f(loc["blur"], WET_BLUR)
         gl.glUniform1i(loc["count"], n)
         gl.glUniform1f(loc["aspect"], w / float(h))
         gl.glBindVertexArray(_S.lens_vao)
