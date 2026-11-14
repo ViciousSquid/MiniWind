@@ -13,9 +13,17 @@ remains where a water surface lies above the ground (so the sea brush under
 the whole land does not count). Crabs walk sideways, as crabs do: each faces
 across the way it is going.
 
+While they feed, crabs **attack anything near the feast** -- the player,
+people, any animal but another crab: the nearest within :data:`AGGRO` (and
+not beyond :data:`LEASH` of the remains) is swarmed and nipped. One nip is
+nothing (:data:`NIP_DAMAGE`); six crabs nipping together are a real threat.
+Leaving crabs no longer bite. Nips go through the engine's own damage paths
+(the player's armour and the game's mitigation apply; a bitten villager or
+wolf fights back).
+
 The crabs are ordinary creatures for the moment they live (they can be
-fought, and are passive unless struck), marked ``_frenzy`` so a save never
-keeps them: one restored mid-feast is simply gone.
+fought), marked ``_frenzy`` so a save never keeps them: one restored
+mid-feast is simply gone.
 """
 
 from __future__ import annotations
@@ -52,6 +60,18 @@ GONE_DISTANCE = 1500.0
 LEAVE_SECONDS = 12.0
 #: A feast that has gone on this long ends anyway.
 FEAST_SECONDS = 50.0
+#: In the frenzy: anything this near a crab is attacked, but not chased
+#: further than LEASH from the remains; a nip reaches NIP_RANGE and does
+#: NIP_DAMAGE (tiny alone). Each crab nips once in every NIP_PERIOD, at a
+#: random moment in it -- a swarm's bites fall all through the second, not
+#: together -- and not at all if what it is after is out of reach then.
+AGGRO = 260.0
+LEASH = 480.0
+NIP_RANGE = 52.0
+NIP_DAMAGE = 2
+NIP_PERIOD = 1.0
+#: How often the feast looks round for something to attack (seconds).
+LOOK_EVERY = 0.25
 
 
 class CrabFrenzy:
@@ -129,14 +149,16 @@ class CrabFrenzy:
             if thing is None:
                 continue
             crabs.append({"thing": thing, "wait": self.rng.uniform(*EMERGE), "piece": None,
-                          "bite": 0.0, "leaving": None, "jitter": (self.rng.uniform(-14, 14),
-                                                                 self.rng.uniform(-14, 14))})
+                          "bite": 0.0, "nip_clock": 0.0, "nip_at": self.rng.random() * NIP_PERIOD,
+                          "nipped": False, "leaving": None,
+                          "jitter": (self.rng.uniform(-14, 14), self.rng.uniform(-14, 14))})
         if not crabs:
             return 0
         things = fio.things(session.logic)
         things.extend(c["thing"] for c in crabs)
         _rebuild(session)
-        self.feasts.append({"pos": tuple(pos), "pieces": pieces, "crabs": crabs, "age": 0.0})
+        self.feasts.append({"pos": tuple(pos), "pieces": pieces, "crabs": crabs, "age": 0.0,
+                            "prey": [], "look": 0.0})
         return len(crabs)
 
     # -- every tick -------------------------------------------------------------------
@@ -151,6 +173,10 @@ class CrabFrenzy:
             present = {id(p) for p in session.gore.pieces}
             feast["pieces"] = [p for p in feast["pieces"] if id(p) in present]
             done = not feast["pieces"] or feast["age"] > FEAST_SECONDS
+            feast["look"] -= dt
+            if not done and feast["look"] <= 0.0:
+                feast["look"] = LOOK_EVERY
+                feast["prey"] = self._prey(session, feast, player)
             for crab in feast["crabs"]:
                 if self._step(session, feast, crab, dt, done, player):
                     gone.append((feast, crab))
@@ -188,6 +214,26 @@ class CrabFrenzy:
                 ax, az, far = 1.0, 0.0, 1.0
             self._walk(session, thing, ax / far, az / far, LEAVE_SPEED * dt, dt)
             return False
+        # Anything near the feast is attacked first. One nip a period, at
+        # its own random moment in it.
+        crab["nip_clock"] += dt
+        if crab["nip_clock"] >= NIP_PERIOD:
+            crab["nip_clock"] -= NIP_PERIOD
+            crab["nip_at"] = self.rng.random() * NIP_PERIOD
+            crab["nipped"] = False
+        target = self._target(thing, feast["prey"])
+        if target is not None:
+            tpos, victim = target
+            dx, dz = tpos[0] - thing.pos[0], tpos[2] - thing.pos[2]
+            dist = math.hypot(dx, dz)
+            if dist > NIP_RANGE * 0.8:
+                self._walk(session, thing, dx / dist, dz / dist,
+                           min(dist - NIP_RANGE * 0.6, SPEED * 1.15 * dt), dt)
+            if not crab["nipped"] and crab["nip_clock"] >= crab["nip_at"]:
+                crab["nipped"] = True       # this period's moment: bite, or miss it
+                if dist <= NIP_RANGE:
+                    self._nip(session, thing, victim)
+            return False
         piece = crab["piece"]
         if piece is None or not any(piece is q for q in feast["pieces"]):
             piece = crab["piece"] = self._choose(feast, thing)
@@ -207,6 +253,54 @@ class CrabFrenzy:
             if session.gore.bite(piece):
                 crab["piece"] = None
         return False
+
+    def _prey(self, session, feast, player):
+        """``[(pos, victim)]`` near the feast to attack: the player (victim
+        None) and every living actor but a crab within :data:`LEASH`."""
+        fx, fz = feast["pos"][0], feast["pos"][2]
+        prey = []
+        if player is not None and not _player_dead(session) \
+                and math.hypot(player[0] - fx, player[2] - fz) <= LEASH:
+            prey.append((player, None))
+        for t in fio.monster_things(session.logic):
+            p = getattr(t, "properties", None) or {}
+            if (p.get("dead") or p.get("hidden") or p.get("_frenzy")
+                    or str(p.get("npc_role", "")).lower() == "crab"
+                    or p.get("multiplayer_player")):
+                continue
+            pos = getattr(t, "pos", None)
+            if pos is not None and math.hypot(pos[0] - fx, pos[2] - fz) <= LEASH:
+                prey.append((pos, t))
+        return prey
+
+    @staticmethod
+    def _target(thing, prey):
+        """The nearest prey within :data:`AGGRO` of this crab, or None."""
+        best, best_d = None, AGGRO
+        for pos, victim in prey:
+            if victim is not None and victim.properties.get("dead"):
+                continue
+            d = math.hypot(pos[0] - thing.pos[0], pos[2] - thing.pos[2])
+            if d <= best_d:
+                best, best_d = (pos, victim), d
+        return best
+
+    @staticmethod
+    def _nip(session, crab, victim):
+        """One nip: tiny alone, through the engine's own damage paths."""
+        logic = session.logic
+        if victim is None:
+            runtime = getattr(logic, "player_runtime", None)
+            triggers = getattr(logic, "trigger_runtime", None)
+            if triggers is None:
+                return
+            if runtime is not None:
+                runtime.damage_source = tuple(crab.pos)   # the damage indicator
+            triggers._apply_player_damage(NIP_DAMAGE, "physical", source=crab, cause="crab")
+            return
+        ai = getattr(logic, "monster_ai", None)
+        if ai is not None:
+            ai._apply_monster_damage(victim, NIP_DAMAGE, attacker=crab)
 
     def _choose(self, feast, thing):
         """The nearest piece of the feast fewer than :data:`PER_PIECE` crabs
@@ -244,6 +338,11 @@ class CrabFrenzy:
         if stale:
             _rebuild(session)
         return len(stale)
+
+
+def _player_dead(session) -> bool:
+    runtime = getattr(session.logic, "player_runtime", None)
+    return bool(getattr(runtime, "player_dead", False))
 
 
 def _piece_xz(session, piece):

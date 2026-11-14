@@ -375,8 +375,13 @@ When the fate die fails, the save stands, and the box still shows the die
   pieces wait for them instead of fading; the crabs scuttle up (sideways),
   crowd them two to a piece and eat them bite by bite -- chunks gone out of
   each piece, never shrunk -- until nothing is left, then scuttle off out of
-  sight and are gone. They are passive unless struck, and a save never keeps
-  them.
+  sight and are gone. A save never keeps them.
+* **A feeding frenzy bites.** While they feed, crabs attack anything near the
+  remains -- you, people, any animal but a crab: whatever is within 260 of a
+  crab (and 480 of the remains) is swarmed. Each crab nips once a second, at
+  its own random moment in it, for 2 damage (armour applies) -- nothing
+  alone, a real danger from six; a bitten villager or wolf fights back.
+  Crabs leaving the feast no longer bite.
 
 ### Screen shake
 

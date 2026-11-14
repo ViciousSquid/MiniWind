@@ -149,3 +149,97 @@ def test_a_person_brings_six_crabs(monkeypatch):
     session, clock = _session(monkeypatch)
     _land_pieces(session.gore, clock, pos=(0.0, 0.0, -150.0))
     assert cf.CrabFrenzy(random.Random(1)).gibbed(session, (0.0, 0.0, -150.0), mass=1.0) == 6
+
+
+# -- the frenzy bites -----------------------------------------------------------------
+class _Hurt:
+    def __init__(self):
+        self.player = []
+        self.actors = []
+
+    def _apply_player_damage(self, damage, kind="physical", source=None, cause=None):
+        self.player.append((damage, cause, source))
+
+    def _apply_monster_damage(self, victim, damage, attacker=None):
+        self.actors.append((victim, damage, attacker))
+        victim.properties["health"] = victim.properties.get("health", 30) - damage
+
+
+def _armed(monkeypatch, player_at, actors=()):
+    session, clock = _session(monkeypatch)
+    hurt = _Hurt()
+    session.logic.trigger_runtime = hurt
+    session.logic.monster_ai = hurt
+    session.logic.player_runtime = SimpleNamespace(damage_source=None, player_dead=False)
+    session.logic.world_runtime = SimpleNamespace(monster_things=list(actors))
+    session._player_pos = lambda: list(player_at)
+    _land_pieces(session.gore, clock, pos=(0.0, 0.0, -150.0), count=3)
+    return session, clock, hurt
+
+
+def _run(session, clock, frenzy, seconds):
+    for _ in range(int(seconds / 0.05)):
+        clock.now += 0.05
+        session.gore.update()
+        frenzy.update(session, 0.05)
+
+
+def test_the_frenzy_swarms_the_player_and_each_nip_is_small(monkeypatch):
+    session, clock, hurt = _armed(monkeypatch, player_at=(30.0, 0.0, -150.0))
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    crabs = frenzy.gibbed(session, (0.0, 0.0, -150.0), mass=1.0)
+    _run(session, clock, frenzy, 6.0)
+    assert hurt.player, "the crabs never bit"
+    assert all(d == cf.NIP_DAMAGE and cause == "crab" for d, cause, _s in hurt.player)
+    assert cf.NIP_DAMAGE <= 3                                    # one nip is nothing
+    biters = {id(src) for _d, _c, src in hurt.player}
+    assert len(biters) >= crabs // 2                             # but many crabs bite
+    assert sum(d for d, _c, _s in hurt.player) >= 15             # a real threat
+
+
+def test_people_and_animals_near_the_feast_are_attacked_but_not_crabs(monkeypatch):
+    from ..entities import Creature
+    villager = SimpleNamespace(pos=[60.0, 0.0, -120.0], properties={"npc_role": "villager", "health": 30})
+    other_crab = SimpleNamespace(pos=[-60.0, 0.0, -120.0], properties={"npc_role": "crab", "health": 8})
+    session, clock, hurt = _armed(monkeypatch, player_at=(0.0, 0.0, 3000.0),
+                                  actors=[villager, other_crab])
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    frenzy.gibbed(session, (0.0, 0.0, -150.0), mass=1.0)
+    _run(session, clock, frenzy, 6.0)
+    bitten = {id(v) for v, _d, _a in hurt.actors}
+    assert id(villager) in bitten and id(other_crab) not in bitten
+    assert not hurt.player                                       # the player is far away
+
+
+def test_leaving_crabs_no_longer_bite(monkeypatch):
+    session, clock, hurt = _armed(monkeypatch, player_at=(0.0, 0.0, 3000.0))
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    frenzy.gibbed(session, (0.0, 0.0, -150.0), mass=1.0)
+    _run(session, clock, frenzy, 40.0)                           # everything eaten: off they go
+    assert not session.gore.pieces
+    session._player_pos = lambda: [frenzy.feasts[0]["crabs"][0]["thing"].pos[0], 0.0,
+                                   frenzy.feasts[0]["crabs"][0]["thing"].pos[2]] \
+        if frenzy.feasts else [0.0, 0.0, 3000.0]
+    before = len(hurt.player)
+    _run(session, clock, frenzy, 2.0)
+    assert len(hurt.player) == before
+
+
+def test_each_crab_nips_once_a_second_at_a_random_moment(monkeypatch):
+    session, clock, hurt = _armed(monkeypatch, player_at=(30.0, 0.0, -150.0))
+    times = []
+    real = hurt._apply_player_damage
+    hurt._apply_player_damage = lambda *a, **k: (times.append((clock.now, id(k.get("source")))), real(*a, **k))
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    frenzy.gibbed(session, (0.0, 0.0, -150.0), mass=1.0)
+    _run(session, clock, frenzy, 10.0)
+    by_crab = {}
+    for t, crab in times:
+        by_crab.setdefault(crab, []).append(t)
+    for bites in by_crab.values():
+        gaps = [b - a for a, b in zip(bites, bites[1:])]
+        assert all(g > 0.04 for g in gaps)                     # never twice at once
+        assert len(bites) <= 10 / cf.NIP_PERIOD + 1             # at most one a second
+    # The swarm's bites are spread through the second, not in step.
+    phases = {round((t % cf.NIP_PERIOD), 1) for t, _c in times}
+    assert len(phases) >= 4
