@@ -194,6 +194,13 @@ def can_perceive(observer, event_pos, loudness: float, hour: float = 12.0,
         return None
 
     asleep = _is_asleep(props)
+    if visible and props.get("view_cone"):
+        # Nobody sees what is in their blind spot (engine.monster_facing).
+        from engine.monster_facing import in_view_cone
+        try:
+            visible = in_view_cone(observer, float(event_pos[0]), float(event_pos[2]))
+        except (TypeError, ValueError, IndexError, AttributeError):
+            pass
     if not asleep and visible:
         srange = sight_range(props, hour) * stealth_factor(actor_props, kind)
         if srange > 0.0 and d <= srange:

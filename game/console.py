@@ -434,6 +434,34 @@ def cmd_dragonfire(ctx, args):
     return None
 
 
+def _toggle_overlay(ctx, key, what):
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None or not hasattr(session, "toggle_debug_overlay"):
+        debug_log("Error", f"{what}: Play Mode only.")
+        return None
+    on = session.toggle_debug_overlay(key)
+    msg = f"{what.capitalize()} {'shown' if on else 'hidden'}."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
+def cmd_viewcone(ctx, args):
+    """viewcone -- show or hide every head's view cone (yellow) and so its
+    blind spot; settings.ini ``[developer] view_cones = true`` starts with
+    them shown."""
+    return _toggle_overlay(ctx, "view_cones", "view cones")
+
+
+def cmd_showsound(ctx, args):
+    """showsound -- show or hide the noise you make (a light blue circle: how
+    far off you can be heard), and shouts and fights around you; settings.ini
+    ``[developer] show_sound = true`` starts with it shown."""
+    return _toggle_overlay(ctx, "show_sound", "sound")
+
+
 def cmd_storyteller(ctx, args):
     """storyteller -- open the resizable Studio: live sensors, lever editing and outcomes."""
     if not ctx.play_mode:
@@ -712,6 +740,10 @@ COMMANDS = (
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("weather",), cmd_weather,
      "[sunny|overcast|rain|storm] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
+    (("viewcone", "viewcones"), cmd_viewcone,
+     "— Show/hide every head's view cone and blind spot (debug; settings.ini: [developer] view_cones)"),
+    (("showsound",), cmd_showsound,
+     "— Show/hide how far your noise carries, and shouts and fights near you (debug; settings.ini: [developer] show_sound)"),
     (("dragonfire",), cmd_dragonfire,
      "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,

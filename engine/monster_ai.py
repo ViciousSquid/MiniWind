@@ -25,6 +25,7 @@ from .change_journal import JOURNAL, STATE, set_positions, touch
 from . import monster_table
 from .monster_constants import (MONSTER_EYE_RISE, monster_body_rise,
                                 monster_eye_rise)
+from . import monster_facing
 from .monster_facing import face_direction
 from .spatial import TIER_DORMANT, tier_of
 from .brush_placement import world_bounds
@@ -521,6 +522,13 @@ all accumulated time when it runs, so simulation time is not lost.
             seen = (d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2]) <= sight_sq
             if hunts is not None:
                 seen &= hunts[watching]          # the player wakes only hunters
+            # A monster with a view cone does not see the player in its blind
+            # spot (engine.monster_facing.in_view_cone).
+            for i in np.flatnonzero(seen):
+                row = int(watching[i])
+                if (props[row].get(monster_facing.VIEW_CONE_KEY)
+                        and not monster_facing.in_view_cone(monsters[row], px, pz)):
+                    seen[i] = False
             woke = seen.copy()
             teamed = ~seen & (t.team[:n][watching] >= 0)
             if teamed.any():
@@ -990,7 +998,9 @@ all accumulated time when it runs, so simulation time is not lost.
                 dist_to_player_sq = glm.dot(diff_to_player, diff_to_player)
                 wake_range = self._player_wake_range()
                 if (dist_to_player_sq <= wake_range * wake_range
-                        and self._hunts_player(thing)):
+                        and self._hunts_player(thing)
+                        and monster_facing.in_view_cone(
+                            thing, float(player_pos[0]), float(player_pos[2]))):
                     woke_reason = 'sight'
                 else:
                     # Sight of an enemy-team monster

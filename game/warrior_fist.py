@@ -113,7 +113,7 @@ def strike(session, charge: float) -> bool:
     s._attack_anim_time = 0.2 + 0.2 * charge
     for t, nx, nz in struck:
         res = s.game.attack_creature(t.properties, guaranteed=True, power=power,
-                                     noticed=s.has_noticed_you(t))
+                                     noticed=s.has_noticed_you(t), from_behind=s.behind(t))
         s._land_player_hit(t, res, heavy=charge >= 0.6)
         if res.get("hit") and charge > 0.2 and not t.properties.get("dead"):
             push = KNOCKBACK * charge

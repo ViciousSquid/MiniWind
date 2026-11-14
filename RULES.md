@@ -654,6 +654,31 @@ It does nothing for anything else you do, and hearing is unchanged.
 
 ---
 
+* **View cones.** Every head faces the way it looks and sees 120° to either
+  side of it (a 240° cone); the 120° behind it are its blind spot. Nobody
+  sees what is in their blind spot (a crime done there is only heard), and
+  a sleeping hostile does not wake to the sight of you there; closer than
+  64 units, anyone knows you are there whatever way they face.
+* **From behind.** A blow (melee, arrow, a warrior's fist) struck from the
+  target's blind spot rolls for double damage: a d20 check at 50%, in the
+  roll box. A sneak attack's bigger multiplier stands instead when it
+  applies. Enemies' blows on you from your own blind spot roll the same,
+  in their roll box over them.
+* **Noise.** What you do makes noise, as far as a standard ear (1,024
+  units) would hear it: footsteps (walking 160, running 340, sneaking 50,
+  standing still nothing; ×0.7 on grass and earth, ×1.4 on a built floor),
+  a blow struck or taken (480; your own swing 288), a shout from anyone
+  ("Get them!", "Help me!": 950), and every deed the world hears at its
+  loudness (a theft 90, an attack 700). Enemies hear it within their own
+  hearing × radius / 1,024: it wakes a sleeper and sends an awake one to
+  look. Your noise jumps to the loudest at once and dies away at 320
+  units a second.
+* **Debug overlays** (never in the game's settings): `viewcone` in the
+  console, or settings.ini `[developer] view_cones = true`, draws every
+  head's view cone in yellow; `showsound`, or `[developer] show_sound =
+  true`, draws your noise as a light blue circle and shouts and fights
+  near you as fading rings.
+
 ## 12. Loot and rarity
 
 * Each loot entry drops on a d20 at `chance + (LUCK − 40) × 0.2%`.

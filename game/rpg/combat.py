@@ -193,11 +193,37 @@ def has_noticed(target_props: Dict, you=()) -> bool:
             and bool(p.get("awake")) and side != "player")
 
 
+#: A blow struck from behind -- from the target's blind spot -- rolls for
+#: double damage: a d20 check at this chance (a sneak attack's bigger
+#: multiplier stands instead, when it applies).
+BEHIND_CHANCE = 0.5
+BEHIND_DAMAGE = 2.0
+
+
+def roll_from_behind(dice, rng, against: str, *, quiet: bool = False, detail: bool = False):
+    """Roll whether a blow from behind *against* someone does double damage
+    (a d20 check at :data:`BEHIND_CHANCE`, on *dice* when given). Returns
+    whether it does, or with *detail* ``(does, roll or None)``."""
+    if dice is None:
+        hit = (rng or random).random() < BEHIND_CHANCE
+        return (hit, None) if detail else hit
+    context = {"against_name": against}
+    if quiet:
+        context.update(quiet=True, npc=True)
+    label = f"Roll to strike {against} from behind" if against else "Roll to strike from behind"
+    roll = roll_check(dice, BEHIND_CHANCE, label, source="combat.behind",
+                      why=f"From the blind spot: {BEHIND_CHANCE * 100:.0f}% chance of "
+                          f"x{BEHIND_DAMAGE:g} damage", context=context)
+    hit = bool(roll["success"])
+    return (hit, roll) if detail else hit
+
+
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
                   draw: float = 1.0, rng: Optional[random.Random] = None,
                   dice: Optional[DiceRoller] = None,
                   guaranteed_hit: bool = False, power: float = 1.0,
-                  hand: str = "main", noticed: Optional[bool] = None) -> Dict:
+                  hand: str = "main", noticed: Optional[bool] = None,
+                  from_behind: bool = False) -> Dict:
     """Resolve a player attack against a creature's ``properties`` dict.
 
     Returns a result dict::
@@ -307,6 +333,11 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
             mult = 6.0
         dmg *= mult
         result["sneak"] = True
+    elif from_behind:
+        # Struck from the target's blind spot: a roll for double damage.
+        if roll_from_behind(dice, rng, _target_name(target_props)):
+            dmg *= BEHIND_DAMAGE
+            result["behind"] = True
 
     # --- critical (luck-weighted) ---
     crit_chance = critical_chance(character)

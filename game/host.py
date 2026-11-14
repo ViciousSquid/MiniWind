@@ -1396,6 +1396,9 @@ class MiniwindGame:
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 # Blood on the world, under the night and the HUD.
                 hud.draw_gore(painter, session, viewport, w, h)
+                # Debug overlays, when asked for (view cones, noise).
+                import game.ui.debug_overlays as debug_overlays
+                debug_overlays.draw(painter, session, viewport, w, h)
                 hud.draw_time_tint(painter, session, w, h, viewport)
                 # The weather over the world, under the HUD (game/ui/rain.py).
                 weather = getattr(session, "weather", None)

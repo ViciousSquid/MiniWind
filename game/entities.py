@@ -174,6 +174,11 @@ def _actor_2d_pixmap(actor, icon=False):
 _AUTO_NAME = re.compile(r"(?:Creature|NPC|Monster|Npc)_\d+")
 
 
+#: Every actor's view cone (degrees): it sees 120 degrees to either side of
+#: the way it faces; the 120 degrees behind it are its blind spot.
+VIEW_CONE_DEGREES = 240.0
+
+
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
     """Fill the properties both actor entities share, from the bestiary template.
 
@@ -246,6 +251,15 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     p.setdefault("creature_level", tmpl.level if tmpl else 1)
     p.setdefault("xp_value", tmpl.xp if tmpl else 0)
     p.setdefault("move_speed", tmpl.speed if tmpl else 90.0)
+    # Heads face a way, so they have a view cone and a blind spot behind
+    # (engine.monster_facing.in_view_cone; game/rpg/combat.py's strike from
+    # behind).
+    p.setdefault("view_cone", VIEW_CONE_DEGREES)
+    # Enemies hear: footsteps, blows and shouts within their hearing range
+    # wake a sleeper and send an awake one to look (game/noise.py, Fio's
+    # monster AI ``can_hear``).
+    if str(p.get("aggression", "")).lower() == "hostile":
+        p.setdefault("can_hear", True)
     for kind, frac in (tmpl.resistances if tmpl else {}).items():
         p.setdefault(f"resist_{kind}", frac)
 

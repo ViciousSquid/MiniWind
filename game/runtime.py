@@ -1058,6 +1058,12 @@ class MiniwindSession(SettlementLaw):
             sight_test=self._witness_sees, region_for=self._law_region,
             on_gossip=self._on_gossip)
         self.director.rumour_decay = self._rumour_decay
+        # How much noise the player makes (game/noise.py): footsteps, blows,
+        # deeds -- heard by anyone within their hearing, shown on request.
+        from .noise import PlayerNoise
+        self.player_noise = PlayerNoise()
+        self.director.on_player_noise = lambda loudness: self.make_noise(
+            self._player_pos(), loudness, "deed", player=True)
         # The player's crimes and kindnesses move their alignment.
         self.director.bus.subscribe(self._alignment_event)
         #: Accumulated game-hours since the last simulation tick, so rumour
@@ -1212,6 +1218,7 @@ class MiniwindSession(SettlementLaw):
         self._update_lightning(delta, storm)
         self._update_storm_howl(delta, storm)
         self._check_tutorial_tips(delta)
+        self._update_player_noise(delta)
         # The clouds the water reflects ride the wind (game/sky.py).
         import game.sky as sky
         wx, wz = self.wind.vector()
@@ -1279,6 +1286,73 @@ class MiniwindSession(SettlementLaw):
         if math.hypot(vx, vz) > self.LENS_JUMP_SPEED:
             return (0.0, 0.0)
         return (vx / self.LENS_FAST_SPEED, vz / self.LENS_FAST_SPEED)
+
+    # ------------------------------------------------------------- noise
+    def make_noise(self, pos, radius: float, source: str, player: bool = False) -> None:
+        """A noise at *pos* that a standard ear hears *radius* away: Fio's
+        monster AI hears it within each monster's own hearing range scaled
+        to it (waking a sleeper, sending an awake one to look), and the debug
+        circles show it. *player*: the player made it."""
+        if pos is None or not radius or radius <= 0:
+            return
+        from .noise import STANDARD_EAR
+        if player:
+            self.player_noise.hear(radius)
+        else:
+            import time as _time
+            rings = self.__dict__.setdefault("noise_rings", [])
+            rings.append((tuple(float(c) for c in pos[:3]), float(radius), _time.monotonic()))
+            del rings[:-24]
+        combat = getattr(self.logic, "combat_runtime", None)
+        emit = getattr(combat, "_emit_noise_event", None)
+        if emit is not None:
+            try:
+                emit(list(pos[:3]), source, float(radius) / STANDARD_EAR)
+            except Exception:
+                pass
+
+    def _update_player_noise(self, delta) -> None:
+        """Footsteps: louder running, muffled sneaking, none standing still,
+        softer on grass and earth than on a built floor (game/noise.py). Each
+        step is a noise others can hear."""
+        from . import noise
+        pos = self._player_pos()
+        last = self.__dict__.get("_noise_last_pos")
+        self._noise_last_pos = pos
+        if pos is None or last is None or delta <= 1e-6:
+            self.player_noise.update(delta, 0.0)
+            return
+        speed = math.hypot(pos[0] - last[0], pos[2] - last[2]) / delta
+        if speed > 1500.0:                       # a teleport, not a step
+            speed = 0.0
+        sneaking = bool(getattr(self.game, "sneaking", False))
+        sprinting = bool(getattr(self, "sprint_held", False)) and not sneaking
+        steps = noise.footstep_noise(speed, sneaking=sneaking, sprinting=sprinting)
+        if steps > 0.0:
+            steps *= self._underfoot(pos)
+        self.player_noise.update(delta, steps)
+        if steps <= 0.0:
+            self._step_clock = 0.0
+            return
+        self._step_clock = self.__dict__.get("_step_clock", 0.0) + delta
+        every = noise.SPRINT_STEP_SECONDS if sprinting else noise.STEP_SECONDS
+        if self._step_clock >= every:
+            self._step_clock = 0.0
+            self.make_noise(pos, steps, "footstep", player=True)
+
+    def _underfoot(self, pos) -> float:
+        """How the ground carries a step: a built floor (a brush standing
+        above the terrain) loud, grass and earth soft."""
+        from . import noise
+        ter = fio.terrain(self.logic)
+        try:
+            soil = ter.get_height_at_safe(float(pos[0]), float(pos[2])) if ter is not None else None
+        except Exception:
+            soil = None
+        top = fio.ground_height(self.logic, pos[0], pos[2], below=pos[1] + 40.0)
+        if top is not None and (soil is None or top > soil + 1.0):
+            return noise.HARD_FLOOR
+        return noise.SOFT_GROUND
 
     TIP_CHECK_SECONDS = 0.5
 
@@ -1371,6 +1445,37 @@ class MiniwindSession(SettlementLaw):
             except Exception:
                 pass
         return done
+
+    #: Debug overlays (game/ui/debug_overlays.py), each on from settings.ini
+    #: ``[developer] <key> = true`` or toggled in the console: never in the
+    #: game's own settings.
+    DEBUG_OVERLAYS = {"view_cones": "viewcone", "show_sound": "showsound"}
+
+    def debug_overlay(self, key: str) -> bool:
+        """Whether a debug overlay (``view_cones``, ``show_sound``) is on: the
+        console's toggle this session, else settings.ini's ``[developer]``."""
+        over = self.__dict__.get("_debug_" + key)
+        if over is not None:
+            return bool(over)
+        cached = self.__dict__.setdefault("_debug_config", {})
+        if key not in cached:
+            value = False
+            try:
+                config = self._editor_config()
+                for section in ("developer", "Developer", "DEVELOPER"):
+                    if config is not None and config.has_option(section, key):
+                        value = config.getboolean(section, key, fallback=False)
+                        break
+            except Exception:
+                value = False
+            cached[key] = value
+        return cached[key]
+
+    def toggle_debug_overlay(self, key: str) -> bool:
+        """Flip a debug overlay for this session; returns whether it is on."""
+        on = not self.debug_overlay(key)
+        self.__dict__["_debug_" + key] = on
+        return on
 
     def tutorial_enabled(self) -> bool:
         """The experimental tutorial after character creation: only when
@@ -1730,6 +1835,30 @@ class MiniwindSession(SettlementLaw):
                 return True
         return False
 
+    def behind(self, target, pos=None) -> bool:
+        """Whether *pos* (the player, by default) is in *target*'s blind spot:
+        behind it, outside its view cone (engine.monster_facing)."""
+        from engine import monster_facing
+        pos = pos if pos is not None else self._player_pos()
+        if pos is None or getattr(target, "pos", None) is None:
+            return False
+        return monster_facing.in_blind_spot(
+            monster_facing.heading(target), monster_facing.view_cone(target),
+            float(pos[0]) - float(target.pos[0]), float(pos[2]) - float(target.pos[2]))
+
+    def player_behind(self, attacker) -> bool:
+        """Whether *attacker* stands in the player's own blind spot: the
+        player's head faces the way the engine player is turned."""
+        from engine import monster_facing
+        from .entities import VIEW_CONE_DEGREES
+        player = fio.player(self.logic)
+        if player is None or getattr(attacker, "pos", None) is None:
+            return False
+        return monster_facing.in_blind_spot(
+            float(getattr(player, "angle", 0.0) or 0.0), VIEW_CONE_DEGREES,
+            float(attacker.pos[0]) - float(player.pos[0]),
+            float(attacker.pos[2]) - float(player.pos[2]))
+
     def has_noticed_you(self, actor) -> bool:
         """Whether *actor* has noticed the player, so a sneak attack on it
         is no sneak attack (combat.has_noticed): it is fleeing, fighting
@@ -2029,9 +2158,22 @@ class MiniwindSession(SettlementLaw):
         elif worn == "medium":
             c.use_skill("heavy_armor", 0.5)
             c.use_skill("light_armor", 0.5)
+        if attacker is not None:
+            from .noise import FIGHT_NOISE
+            self.make_noise(list(attacker.pos), FIGHT_NOISE, "fight")
         if res.get("deflected"):
             self.add_floater("Deflected", kind="miss")
             return 0.0
+        if attacker is not None and self.player_behind(attacker):
+            # Struck from the player's blind spot: a roll for double damage,
+            # in the attacker's roll box.
+            from .rpg.combat import BEHIND_DAMAGE, roll_from_behind
+            hit, roll = roll_from_behind(self.game.dice, self.dice_rng, "you", quiet=True,
+                                         detail=True)
+            if roll is not None:
+                self.show_roll_box(attacker, roll, against=("YOU", "you"))
+            if hit:
+                final *= BEHIND_DAMAGE
         final = self._lucky_escape(c, final)
         c.damage(final)
         if final > 0:
@@ -6136,6 +6278,15 @@ class MiniwindSession(SettlementLaw):
         import time as _time
         barks = self.__dict__.setdefault("barks", {})
         barks[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds))
+        # A shout ("Get them!", "Help me!") carries: anyone who can hear it
+        # within earshot comes to look (game/noise.py), once in a while.
+        if str(text).rstrip().endswith("!") and thing is not self.player_actor:
+            now = _time.monotonic()
+            props = getattr(thing, "properties", None)
+            if isinstance(props, dict) and now >= props.get("_yelled_at", 0.0) + 3.0:
+                props["_yelled_at"] = now
+                from .noise import YELL_NOISE
+                self.make_noise(list(thing.pos), YELL_NOISE, "yell")
 
     def bark_later(self, thing, text, delay: float) -> None:
         """Have *thing* say *text* after *delay* seconds -- the reply in an
@@ -8212,6 +8363,8 @@ class MiniwindSession(SettlementLaw):
         A lone weapon's swing at a close, faced target always connects; a dual
         wielder's two blades each roll to hit, so an unpractised fighter can
         land one and miss with the other."""
+        from .noise import FIGHT_NOISE
+        self.make_noise(self._player_pos(), FIGHT_NOISE * 0.6, "fight", player=True)
         c = self.game.character
         if eq.hand_spell(c, hand) is not None:
             return self.do_cast(aim="facing", hand=hand)
@@ -8264,7 +8417,8 @@ class MiniwindSession(SettlementLaw):
         # d20 + attack bonus against the target's Armour Class, like every
         # attack. Two weapons are two attacks, each rolling for itself.
         res = self.game.attack_creature(target.properties, hand=hand,
-                                        noticed=self.has_noticed_you(target))
+                                        noticed=self.has_noticed_you(target),
+                                        from_behind=self.behind(target))
         self._land_player_hit(target, res)
         return True
 
@@ -8402,7 +8556,8 @@ class MiniwindSession(SettlementLaw):
 
         def _on_hit(hit_monster):
             res = game.resolve_arrow_hit(hit_monster.properties, hand=hand,
-                                         noticed=self.has_noticed_you(hit_monster))
+                                         noticed=self.has_noticed_you(hit_monster),
+                                         from_behind=self.behind(hit_monster))
             _journal(hit_monster)
             self._present_player_blow(hit_monster, res)
 

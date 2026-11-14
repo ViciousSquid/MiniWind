@@ -274,6 +274,9 @@ class Director:
         self.on_bounty = on_bounty
         self.on_message = on_message
         self.on_witness = on_witness
+        #: ``on_player_noise(loudness)``: the player just did something the
+        #: world can hear, this far off (game/noise.py).
+        self.on_player_noise = None
         self.sight_test = sight_test
         self.region_for = region_for
         #: ``on_gossip(speaker, listener, fact)``: somebody just told somebody
@@ -381,6 +384,8 @@ class Director:
             target=tkey, target_name=actor_name(target, tkey or ""),
             pos=pos, day=day, hour=hour, data=data)
         self.bus.emit(event)
+        if is_player_key(event.actor) and self.on_player_noise is not None:
+            self.on_player_noise(float(getattr(event, "loudness", 0.0) or 0.0))
         percepts = self.dispatch(event, observers, actor_thing=actor, target_thing=target)
         if (event.is_crime and is_player_key(event.actor) and percepts
                 and self.on_witness is not None):

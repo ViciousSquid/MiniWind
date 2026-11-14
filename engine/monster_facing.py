@@ -89,3 +89,52 @@ def turn_toward(thing, dx: float, dz: float, delta=None, rate=None) -> float:
 def face_direction(thing, direction, delta=None) -> float:
     """:func:`turn_toward` for a 3-vector movement or attack direction."""
     return turn_toward(thing, direction[0], direction[2], delta)
+
+
+# ---------------------------------------------------------------------------
+# View cones: what an actor facing a way can see, and its blind spot.
+# ---------------------------------------------------------------------------
+#: An actor whose properties carry ``view_cone`` (degrees, the whole cone)
+#: sees only within that many degrees of its heading: the rest is its blind
+#: spot. None of Fio's stock monsters has one (they see all round).
+VIEW_CONE_KEY = 'view_cone'
+#: Closer than this (world units) an actor knows you are there whatever way
+#: it faces: it hears you breathe, feels the floor give.
+VIEW_CONE_NEAR = 64.0
+
+
+def angle_off(heading_radians: float, dx: float, dz: float) -> float:
+    """How far (radians, 0..pi) the direction ``(dx, dz)`` is from a
+    heading."""
+    if dx == 0.0 and dz == 0.0:
+        return 0.0
+    return abs(wrap(math.atan2(dx, dz) - float(heading_radians)))
+
+
+def view_cone(thing):
+    """*thing*'s view cone in degrees, or None when it sees all round."""
+    try:
+        cone = float((getattr(thing, 'properties', None) or {}).get(VIEW_CONE_KEY) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    return cone if 0.0 < cone < 360.0 else None
+
+
+def in_view_cone(thing, x: float, z: float, near: float = VIEW_CONE_NEAR) -> bool:
+    """Whether the point ``(x, z)`` is where *thing* can see it: inside its
+    view cone, or too close to miss. Always True for one without a cone."""
+    cone = view_cone(thing)
+    if cone is None:
+        return True
+    dx, dz = float(x) - float(thing.pos[0]), float(z) - float(thing.pos[2])
+    if dx * dx + dz * dz <= near * near:
+        return True
+    return angle_off(heading(thing), dx, dz) <= math.radians(cone) * 0.5
+
+
+def in_blind_spot(heading_radians: float, cone_degrees, dx: float, dz: float) -> bool:
+    """Whether the direction ``(dx, dz)`` lies in the blind spot of a cone of
+    *cone_degrees* along a heading (False for no cone)."""
+    if cone_degrees is None or not 0.0 < float(cone_degrees) < 360.0:
+        return False
+    return angle_off(heading_radians, dx, dz) > math.radians(float(cone_degrees)) * 0.5
