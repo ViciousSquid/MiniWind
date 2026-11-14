@@ -11,7 +11,7 @@ import os
 import numpy as np
 
 from engine import terrain_stamp
-from engine.renderer.core.terrain_gl import TerrainGL
+from engine.terrain_frame import paint_chain, paint_mip, paint_mip_levels
 from engine.terrain import Terrain
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -127,9 +127,9 @@ def test_the_integer_paint_mip_matches_the_float_one():
         paint[road & (rng.random((side, side)) < 0.2), 3] = 0
         paint[paint[..., 3] == 0, :3] = 0
         a = b = paint
-        for _ in range(TerrainGL.paint_mip_levels(side)):
-            a, b = TerrainGL._paint_mip(a), _float_mip(b)
+        for _ in range(paint_mip_levels(side)):
+            a, b = paint_mip(a), _float_mip(b)
             assert np.array_equal(a, b)
-    assert TerrainGL.paint_mip_levels(256) == 3
-    assert TerrainGL.paint_mip_levels(512) == 4
-    assert len(TerrainGL.paint_chain(np.zeros((512, 512, 4), np.uint8), 512)) == 5
+    assert paint_mip_levels(256) == 3
+    assert paint_mip_levels(512) == 4
+    assert len(paint_chain(np.zeros((512, 512, 4), np.uint8), 512)) == 5

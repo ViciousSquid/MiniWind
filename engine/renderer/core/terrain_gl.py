@@ -27,7 +27,8 @@ from OpenGL.GL.shaders import compileProgram, compileShader
 
 from engine import shaders
 from engine.renderer.core import grass_wind
-from engine.terrain_frame import grass_vertex_count, heightfield_indices
+from engine.terrain_frame import (grass_vertex_count, heightfield_indices, paint_chain,
+                                  paint_mip_levels)
 from engine.terrain_table import GRID_BORDER, STORED_GRID
 
 
@@ -758,20 +759,6 @@ class TerrainGL:
         self._placeholder_cubemap = tex
         return self._placeholder_cubemap
 
-    #: Side of a paint page's smallest mip level. Enough levels that paint
-    #: in the distance does not shimmer; few enough that a chunk's edge
-    #: texels are not averaged far into its neighbour's missing ones. (Three
-    #: levels at 256 a chunk, four at 512.)
-    PAINT_MIP_FLOOR = 32
-
-    @classmethod
-    def paint_mip_levels(cls, side: int) -> int:
-        """Mip levels a paint page of *side* texels has beyond the first."""
-        side = int(side)
-        if side <= cls.PAINT_MIP_FLOOR:
-            return 0
-        return int(round(math.log2(side / float(cls.PAINT_MIP_FLOOR))))
-
     def _ensure_paint_page(self, page: int) -> int:
         if not self._paint_page_layers:
             limit = int(gl.glGetIntegerv(gl.GL_MAX_ARRAY_TEXTURE_LAYERS))
@@ -781,7 +768,7 @@ class TerrainGL:
             gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, tex)
             side = int(self.frame.paint_resolution)
             levels = 0
-            for level in range(self.paint_mip_levels(side) + 1):
+            for level in range(paint_mip_levels(side) + 1):
                 if side >> level < 1:
                     break
                 gl.glTexImage3D(
@@ -842,63 +829,6 @@ class TerrainGL:
         self._paint_layers_free = []
         self._paint_layers_used = 0
 
-    #: Side of the tiles :meth:`_paint_mip` skips when they hold no paint.
-    PAINT_MIP_TILE = 32
-
-    @staticmethod
-    def _paint_mip_block(paint):
-        """:meth:`_paint_mip` of a block of paint with even sides."""
-        alpha = paint[..., 3].astype(np.uint32)
-        weighted = paint[..., :3].astype(np.uint32) * alpha[..., None]
-        weight = alpha[0::2, 0::2] + alpha[1::2, 0::2] + alpha[0::2, 1::2] + alpha[1::2, 1::2]
-        colour = (weighted[0::2, 0::2] + weighted[1::2, 0::2]
-                  + weighted[0::2, 1::2] + weighted[1::2, 1::2])
-        out = np.zeros(weight.shape + (4,), dtype=np.uint8)
-        some = weight > 0
-        w = weight[some][:, None]
-        out[..., :3][some] = ((colour[some] + (w >> 1)) // w).astype(np.uint8)
-        out[..., 3] = ((weight + 2) >> 2).astype(np.uint8)
-        return out
-
-    @classmethod
-    def _paint_mip(cls, paint):
-        """*paint* (n, n, 4 uint8) at half the side, colour weighted by alpha
-        (an unpainted texel is black, and must not darken its neighbours).
-
-        Integer arithmetic, and only the rows of tiles that hold paint (a
-        road crosses a fraction of a chunk): the same texels as the float
-        version it replaced at a quarter of the time (19.5 against 4.5 ms
-        a 512 chain)."""
-        n2 = paint.shape[0]
-        out = np.zeros((n2 // 2, n2 // 2, 4), dtype=np.uint8)
-        t = min(cls.PAINT_MIP_TILE, n2)
-        k = n2 // t
-        if k * t != n2:
-            return cls._paint_mip_block(paint[:n2 // 2 * 2, :n2 // 2 * 2])
-        alive = paint[..., 3].reshape(k, t, k, t).any(axis=(1, 3))
-        rows, cols = np.nonzero(alive)
-        for r in np.unique(rows).tolist():
-            here = cols[rows == r]
-            c0, c1 = int(here.min()) * t, (int(here.max()) + 1) * t
-            out[r * t // 2:(r + 1) * t // 2, c0 // 2:c1 // 2] = cls._paint_mip_block(
-                paint[r * t:(r + 1) * t, c0:c1])
-        return out
-
-    @classmethod
-    def paint_chain(cls, paint, side):
-        """*paint* and its mip levels, each C-contiguous uint8, ready to
-        upload (a chunk streaming in, or its paint changing). 4.5 ms for a
-        512 road chunk, as much as 256 cost with the float mip it replaced:
-        see :meth:`_paint_mip`."""
-        data = np.ascontiguousarray(paint, dtype=np.uint8)
-        chain = [data]
-        for level in range(1, cls.paint_mip_levels(side) + 1):
-            if side >> level < 1:
-                break
-            data = np.ascontiguousarray(cls._paint_mip(data))
-            chain.append(data)
-        return chain
-
     def _paint_source(self, coord):
         paint = self.frame.paint_display.get(coord)
         if paint is None:
@@ -910,6 +840,11 @@ class TerrainGL:
         self._sync_gl_columns()
         slot = int(slot)
         coord = (int(table.coord[slot, 0]), int(table.coord[slot, 1]))
+        if (coord in (self.frame.paint_chains_pending or ())
+                and coord not in self.frame.paint_display):
+            # Its mip chain is being made on the terrain's builder thread:
+            # uploaded when it is published, a frame or two from now.
+            return
         paint = self._paint_source(coord)
         if paint is None:
             self._paint_gpu_version[slot] = 0
@@ -928,7 +863,9 @@ class TerrainGL:
         page, layer = divmod(number, self._paint_page_layers)
         tex = self._ensure_paint_page(page)
         side = int(self.frame.paint_resolution)
-        chain = self.paint_chain(paint, side)
+        published = (self.frame.paint_chains or {}).get(coord)
+        chain = (published[1] if published is not None and published[0] is paint
+                 else paint_chain(paint, side))
         gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, tex)
         gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 4)
         gl.glPixelStorei(gl.GL_UNPACK_ROW_LENGTH, 0)

@@ -113,3 +113,37 @@ def test_a_bake_made_while_packing_is_never_undone(painted, made, texture):
     assert newer is not baked
     terrain._store_packed(packed)
     assert dict.get(terrain.texture_paint_maps, (0, 0)) is newer
+
+
+def test_resident_paint_gets_its_mip_chain_from_the_builder(painted, made):
+    """A renderer only uploads: the chain of each resident chunk's paint is
+    made on the builder thread, published with the array it was made from,
+    and while it is being made the frame says so (the renderer waits)."""
+    from engine.terrain_frame import paint_chain
+    data, arrays = painted
+    terrain = made()
+    terrain.from_dict(data)
+    terrain.set_streaming(True, radius=terrain.chunk_size)
+    callers = []
+    import engine.terrain as terrain_module
+    real = terrain_module.paint_chain
+    terrain_module.paint_chain = lambda *a: callers.append(threading.current_thread().name) or real(*a)
+    try:
+        camera = glm.vec3(terrain.chunk_size * 0.5, 0.0, terrain.chunk_size * 0.5)
+        terrain.advance(camera)
+        assert (0, 0) in terrain.publish().paint_chains_pending
+        deadline = time.time() + 10.0
+        while (0, 0) not in terrain._paint_chains and time.time() < deadline:
+            terrain.advance(camera)
+            time.sleep(0.005)
+    finally:
+        terrain_module.paint_chain = real
+    frame = terrain.publish()
+    array, chain = frame.paint_chains[(0, 0)]
+    assert array is terrain.texture_paint_maps[(0, 0)]
+    expected = paint_chain(arrays[(0, 0)], terrain.TERRAIN_PAINT_RESOLUTION)
+    assert len(chain) == len(expected)
+    assert all(np.array_equal(a, b) for a, b in zip(chain, expected))
+    assert (0, 0) not in frame.paint_chains_pending
+    assert set(callers) == {'TerrainBuilder'}
+    assert FAR not in frame.paint_chains

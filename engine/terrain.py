@@ -16,7 +16,7 @@ import queue
 import threading
 from .terrain_frame import (                      # noqa: F401
     TerrainFrame, TerrainProducts, grass_vertex_count, heightfield_indices,
-    new_publication_key, read_only)
+    new_publication_key, paint_chain, read_only)
 from .terrain_table import GRID_BORDER, STORED_GRID, TerrainTable
 
 
@@ -581,6 +581,11 @@ class Terrain:
         # The chunks resident when paint was last packed and unpacked for
         # them (_settle_paint).
         self._paint_resident = None
+        # Resident chunks' paint mip chains, made on the builder thread:
+        # chunk -> (the paint array, [levels]); and chunk -> the array whose
+        # chain is being made.
+        self._paint_chains = {}
+        self._chaining = {}
         # Editor-only: selected stamps draw tinted from _paint_display, which
         # overrides texture_paint_maps for the chunks they touch.
         self.selected_stamp_ids: set = set()
@@ -1960,6 +1965,8 @@ class Terrain:
             grass_blade_width=self.GRASS_BLADE_WIDTH,
             paint_display=read_only(self._paint_display),
             paint_maps=read_only(self.texture_paint_maps),
+            paint_chains=read_only(self._paint_chains),
+            paint_chains_pending=frozenset(self._chaining),
             paint_versions=read_only(self._paint_map_versions),
             paint_epoch=self._paint_epoch,
             paint_resolution=self.TERRAIN_PAINT_RESOLUTION,
@@ -2032,6 +2039,7 @@ class Terrain:
         self._collect_built()
         if self.BACKGROUND_BUILDS:
             self._settle_paint()
+            self._request_paint_chains()
         slots = table.live_slots()
         cam_x = float(camera_pos.x)
         cam_z = float(camera_pos.z)
@@ -2048,7 +2056,7 @@ class Terrain:
         #: Work this frame left for later frames: chunks still to build at
         #: their wanted detail (or in flight on the builder) and grass still
         #: to grow in view. 0 once the view is complete (warm_up_play).
-        self.work_due = int(len(queue_slots))
+        self.work_due = int(len(queue_slots)) + len(self._chaining)
         if self.BACKGROUND_BUILDS:
             self._request_builds(queue_slots, queue_res)
         else:
@@ -2190,6 +2198,15 @@ class Terrain:
                 if packed:
                     results.put(('paint', packed))
                 continue
+            if job[0] == 'chain':
+                _kind, coord, source, side = job
+                try:
+                    array = source.unpack() if type(source) is _PackedPaint else source
+                    chain = paint_chain(array, side)
+                except Exception:
+                    array = chain = None        # made by the renderer instead
+                results.put(('chain', coord, source, array, chain))
+                continue
             if job[0] == 'grass':
                 _kind, slot, order, row = job
                 try:
@@ -2221,6 +2238,9 @@ class Terrain:
                 continue
             if result[0] == 'paint':
                 self._store_packed(result[1])
+                continue
+            if result[0] == 'chain':
+                self._collect_chain(*result[1:])
                 continue
             slot, order, resolution, heights = result
             if self._building.get(slot) == order:
@@ -2294,6 +2314,42 @@ class Terrain:
         self._build_requests.put(('paint', fresh, unpack))
         self._start_builder()
 
+    def _request_paint_chains(self):
+        """Ask the builder thread for the mip chain of each resident chunk's
+        paint that has none for its current array, so a renderer only
+        uploads (the chain is ~4.5 ms of NumPy a 512 chunk). Chains of
+        chunks that left are dropped."""
+        maps = self.texture_paint_maps
+        resident = self._paint_resident or frozenset()
+        chains = self._paint_chains
+        for coord in [c for c in chains if c not in resident]:
+            del chains[coord]
+        side = int(self.TERRAIN_PAINT_RESOLUTION)
+        asked = False
+        for coord in resident:
+            value = dict.get(maps, coord)
+            if value is None or coord in self._chaining:
+                continue
+            array = value.array if type(value) is _PackedPaint else value
+            have = chains.get(coord)
+            if have is not None and array is not None and have[0] is array:
+                continue
+            self._chaining[coord] = value
+            self._build_requests.put(('chain', coord, value, side))
+            asked = True
+        if asked:
+            self._start_builder()
+
+    def _collect_chain(self, coord, source, array, chain):
+        """Publish a mip chain the builder made, if the chunk is still
+        resident and its paint is still the array it was made from."""
+        if self._chaining.get(coord) is source:
+            del self._chaining[coord]
+        value = dict.get(self.texture_paint_maps, coord)
+        current = value.array if type(value) is _PackedPaint else value
+        if chain is not None and current is array and coord in (self._paint_resident or ()):
+            self._paint_chains[coord] = (array, chain)
+
     def _start_builder(self):
         if self._builder is None or not self._builder.is_alive():
             self._builder_stop = False
@@ -2336,6 +2392,7 @@ class Terrain:
             if slot < table.capacity and table.live[slot] and int(table.order[slot]) == order:
                 table.grass_dirty[slot] = True
         self._growing.clear()
+        self._chaining.clear()
 
     def builds_pending(self) -> int:
         """Grids asked of the builder thread and not yet stored."""
