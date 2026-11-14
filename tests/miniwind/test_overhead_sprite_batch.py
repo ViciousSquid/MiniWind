@@ -111,3 +111,23 @@ def test_nothing_collected_draws_nothing():
         assert renderer.begin(glm.mat4(1.0), glm.mat4(1.0))
         assert renderer.end() == 0
         assert renderer._batch is None
+
+
+def test_every_renderer_in_a_context_shares_its_shader_programs():
+    """The player's, the floor objects', the arrows' and the blood's overhead
+    sprites compile their two programs once a GL context, not once each."""
+    from engine import overhead_sprite
+    from engine.overhead_sprite import OverheadSpriteRenderer
+    import glm
+    with GLTestContext(32, 32):
+        first, second = OverheadSpriteRenderer(), OverheadSpriteRenderer()
+        assert first.begin(glm.mat4(1.0), glm.mat4(1.0)) and first.end() == 0
+        assert second.begin(glm.mat4(1.0), glm.mat4(1.0)) and second.end() == 0
+        assert first._prog == second._prog and first._prog
+        assert first._batch_prog == second._batch_prog and first._batch_prog
+        assert first._vao != second._vao              # VAOs are never shared
+        assert len(overhead_sprite._PROGRAMS) >= 1
+    with GLTestContext(32, 32):                       # a new context: its own
+        third = OverheadSpriteRenderer()
+        assert third.begin(glm.mat4(1.0), glm.mat4(1.0)) and third.end() == 0
+        assert third._prog

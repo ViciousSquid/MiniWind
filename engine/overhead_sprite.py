@@ -271,6 +271,43 @@ class _OverheadLayers:
         return Layers(max_size=256, min_size=16, source=source)
 
 
+#: GL context -> {name: program}: the overhead sprites' shader programs,
+#: compiled once per context and shared by every OverheadSpriteRenderer drawn
+#: in it (the player's, the floor objects', the arrows', the blood's ...).
+_PROGRAMS = {}
+
+
+def _shared_program(name, build):
+    """The program *name* of the current GL context, built by *build* the
+    first time any renderer in that context asks for it."""
+    from PyQt5.QtGui import QOpenGLContext
+    context = QOpenGLContext.currentContext()
+    if context is None:
+        return build()
+    programs = _PROGRAMS.get(context)
+    if programs is None:
+        programs = _PROGRAMS[context] = {}
+        context.aboutToBeDestroyed.connect(lambda: _PROGRAMS.pop(context, None))
+    if name not in programs:
+        programs[name] = build()
+    return programs[name]
+
+
+def _link(gl, compile_shader, vertex_source, fragment_source):
+    """A linked program from two shader sources (the shaders deleted)."""
+    vertex = compile_shader(vertex_source, gl.GL_VERTEX_SHADER)
+    fragment = compile_shader(fragment_source, gl.GL_FRAGMENT_SHADER)
+    program = gl.glCreateProgram()
+    gl.glAttachShader(program, vertex)
+    gl.glAttachShader(program, fragment)
+    gl.glLinkProgram(program)
+    gl.glDeleteShader(vertex)
+    gl.glDeleteShader(fragment)
+    if not gl.glGetProgramiv(program, gl.GL_LINK_STATUS):
+        raise RuntimeError(gl.glGetProgramInfoLog(program))
+    return program
+
+
 def _assets_root() -> str:
     return os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -409,19 +446,8 @@ class OverheadSpriteRenderer:
                     raise RuntimeError(gl.glGetShaderInfoLog(shader))
                 return shader
 
-            vertex = compile_shader(_SPRITE_VERT, gl.GL_VERTEX_SHADER)
-            fragment = compile_shader(_SPRITE_FRAG, gl.GL_FRAGMENT_SHADER)
-
-            program = gl.glCreateProgram()
-            gl.glAttachShader(program, vertex)
-            gl.glAttachShader(program, fragment)
-            gl.glLinkProgram(program)
-
-            if not gl.glGetProgramiv(program, gl.GL_LINK_STATUS):
-                raise RuntimeError(gl.glGetProgramInfoLog(program))
-
-            gl.glDeleteShader(vertex)
-            gl.glDeleteShader(fragment)
+            program = _shared_program('sprite', lambda: _link(
+                gl, compile_shader, _SPRITE_VERT, _SPRITE_FRAG))
 
             self._prog = program
             self._mvp_loc = gl.glGetUniformLocation(program, "mvp")
@@ -547,16 +573,8 @@ class OverheadSpriteRenderer:
 
     def _init_batch_gl(self, compile_shader) -> None:
         gl = self._gl
-        vertex = compile_shader(_SPRITE_VERT_BATCH, gl.GL_VERTEX_SHADER)
-        fragment = compile_shader(_SPRITE_FRAG_BATCH, gl.GL_FRAGMENT_SHADER)
-        program = gl.glCreateProgram()
-        gl.glAttachShader(program, vertex)
-        gl.glAttachShader(program, fragment)
-        gl.glLinkProgram(program)
-        gl.glDeleteShader(vertex)
-        gl.glDeleteShader(fragment)
-        if not gl.glGetProgramiv(program, gl.GL_LINK_STATUS):
-            raise RuntimeError(gl.glGetProgramInfoLog(program))
+        program = _shared_program('batch', lambda: _link(
+            gl, compile_shader, _SPRITE_VERT_BATCH, _SPRITE_FRAG_BATCH))
         self._batch_loc = {name: gl.glGetUniformLocation(program, name)
                            for name in ("vp", "instances", "base", "tex")}
         self._batch_buffer = gl.glGenBuffers(1)
