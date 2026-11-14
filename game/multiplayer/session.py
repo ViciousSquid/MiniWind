@@ -440,6 +440,7 @@ class CoopSession:
             handed=c.handed,
             sneaking=context.session.game.sneaking,
             stealth=perception.sneak_stealth(c.skill("sneak"), context.session.game.sneaking),
+            sleight=perception.sleight(c.skill("light_fingers")),
             alignment=float(getattr(c, "alignment", 0)),
             _attack_anim=context.session._attack_anim_time,
             _offhand_anim=context.session._offhand_anim_time,

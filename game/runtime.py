@@ -451,6 +451,8 @@ AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is at
 WORLD_EDGE_MARGIN = 900.0
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
+#: Light Fingers practice (skill-use difficulty) each theft earns.
+THEFT_PRACTICE = 1.0
 #: Spawn points' actors are given ids from this namespace and their spawner
 #: and slot, so each keeps the same uuid every time its map is entered.
 SPAWN_ID_NAMESPACE = uuid.UUID("6f1c2a8e-3b7d-4e59-9a0c-5d2e8b7f4a11")
@@ -561,6 +563,11 @@ class _PlayerActor:
                 s.game.character.skill("sneak"), p["sneaking"])
         except Exception:
             p["stealth"] = 0.0
+        # Light Fingers: a theft is harder to see done.
+        try:
+            p["sleight"] = sim_perception.sleight(s.game.character.skill("light_fingers"))
+        except Exception:
+            p["sleight"] = 0.0
         p["dead"] = bool(getattr(s.logic, "player_dead", False))
         return self
 
@@ -3432,6 +3439,7 @@ class MiniwindSession(SettlementLaw):
                     sim_own.mark_stolen(stack, sim_own.owner_of(p),
                                         sim_own.owner_name_of(p))
                     self.notify(f"Stole {name}")
+                    self._practise_theft()
                 elif iid != rpg_items.GOLD:
                     self.notify(f"Picked up {name}")
                 if iid == rpg_items.GOLD:
@@ -11148,6 +11156,11 @@ class MiniwindSession(SettlementLaw):
             return f"{self.corpse_name(t)} (dead)"
         return str(t.properties.get("display_name") or "Container")
 
+    def _practise_theft(self) -> None:
+        """Every theft, seen or not, trains Light Fingers
+        (:data:`THEFT_PRACTICE`)."""
+        self.game.character.use_skill("light_fingers", THEFT_PRACTICE)
+
     def container_take_is_theft(self) -> bool:
         if self.container_thing is None:
             return False
@@ -11177,6 +11190,7 @@ class MiniwindSession(SettlementLaw):
             pos=list(self.container_thing.pos) if self.container_thing else None)
         if event is not None and event.kind == "theft":
             self.notify(f"Stole {name}")
+            self._practise_theft()
         else:
             if stack.get("id") != rpg_items.GOLD:
                 self.notify(f"Took {name}")

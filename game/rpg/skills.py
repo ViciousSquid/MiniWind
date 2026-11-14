@@ -115,7 +115,8 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
     SkillDef(ACROBATICS, "Acrobatics", STEALTH, attr.SPEED,
              "Jumping and cushioning falls."),
     SkillDef(LIGHT_FINGERS, "Light Fingers", STEALTH, attr.ENDURANCE,
-             "Pickpocketing and sleight of hand."),
+             "Sleight of hand: a theft is harder to see done. Every theft "
+             "trains it."),
 ]}
 
 SKILL_IDS: List[str] = list(SKILLS.keys())

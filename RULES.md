@@ -218,6 +218,7 @@ Master 100.
 | Spell cast / fizzle | 1.5 + cost/30 · 1 + cost/60 |
 | Staff | Offensive 1.0 |
 | Lockpicking | 1 + 0.5 × pins |
+| Theft (seen or not) | Light Fingers 1.0 |
 | Trading | Mercantile 0.5 |
 | Persuading | Speechcraft 1.0 |
 | Skill book | 5.0 (first read only) |
@@ -614,6 +615,11 @@ lock's onlookers and a sleeping hostile creature, which wakes when you come
 within 1,024 units × the factor. An observer without a torch at night sees
 45% as far. Sneak attacks multiply damage (see §7).
 
+**Light Fingers** hides the act of stealing: a theft is seen at
+`× (1 − 0.003 × Light Fingers)` of an observer's sight — ×0.85 at 50, ×0.7
+at 100 — on top of sneaking (a master thief sneaking at Sneak 0: ×0.35).
+It does nothing for anything else you do, and hearing is unchanged.
+
 ---
 
 ## 12. Loot and rarity
@@ -804,5 +810,4 @@ within 1,024 units × the factor. An observer without a torch at night sees
 
 Places where the code does not yet do what something in the game describes:
 
-* **Acrobatics**, **Light Fingers** and **Alchemy** are neither trained nor
-  read.
+* **Acrobatics** and **Alchemy** are neither trained nor read.
