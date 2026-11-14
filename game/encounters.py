@@ -104,7 +104,10 @@ class Encounter:
 
     def summary(self) -> str:
         names = ", ".join(sorted({f["who"] for f in self.foes.values()})) or "no one"
-        how = "fell" if self.fell else f"won, down to {int(self.lowest * 100)}% health"
+        # Won only with every foe dead: a dragon left alive in its cave (the
+        # player walked out) was "won" too.
+        outcome = "won" if self.foes and len(self.kills) >= len(self.foes) else "came away"
+        how = "fell" if self.fell else f"{outcome}, down to {int(self.lowest * 100)}% health"
         where = f"At {self.place}" if self.place else "In the wilds"
         return f"{where}: {names}. The player {how}."
 

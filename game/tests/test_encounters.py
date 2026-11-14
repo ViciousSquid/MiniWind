@@ -298,3 +298,25 @@ def test_an_encounter_keeps_the_worlds_time_and_ends_with_the_map(monkeypatch):
         monkeypatch.setattr(session, name, lambda *a, **k: None)
     MiniwindGame.on_play_stop(NS(_host=None), logic)
     assert rec.current is None and len(rec.chronicle) == 2
+
+
+def test_won_only_when_every_foe_is_dead():
+    """Walking out of Whisperdeep with Vharzul alive was recorded as "The
+    player won"."""
+    session = _session([])
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    rec, clock = _recorder(session)
+    bosses = [entities.Creature(pos=[0, 0, 0], properties={
+        "npc_role": "dragon", "display_name": f"Wyrm {i}"}) for i in range(3)]
+    for b in bosses:
+        rec.engage(b)
+    rec.kill(bosses[0])
+    rec.close()
+    assert rec.chronicle[-1]["summary"].endswith("The player came away, down to 100% health.")
+    for b in bosses:
+        rec.engage(b)
+    for b in bosses:
+        rec.kill(b)
+    clock.t += 20
+    rec.tick()
+    assert rec.chronicle[-1]["summary"].endswith("The player won, down to 100% health.")
