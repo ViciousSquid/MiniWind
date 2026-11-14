@@ -16,7 +16,7 @@ from PyQt5.QtGui import QColor, QLinearGradient, QPainterPath, QPen, QPixmap
 from engine.floating_windows import CallbackWindow
 from . import hits, theme as T
 from ..rpg import inventory as inv
-from ..rpg.lockpicking import shear_chance
+from ..rpg.lockpicking import shear_risk
 from ..sim import ownership
 
 
@@ -350,7 +350,7 @@ def draw(p, session, x, y, w, h):
     p.setPen(QPen(RED, 1))
     p.drawLine(QPointF(462 + 312 * .65, 341), QPointF(462 + 312 * .65, 359))
     _text(p, (462, 365, 315, 33), a.message, 10, MUTED)
-    risk = shear_chance(a.security)
+    risk = shear_risk(a.security)
     if risk:
         _text(p, (462, 404, 315, 54),
               f"INEXPERIENCED · {risk:.0%} shear risk on snap\nSheared tip: only Knock can open this lock.", 10, RED)

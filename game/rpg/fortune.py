@@ -50,6 +50,21 @@ OPTIONS: Dict[str, tuple] = {
 }
 
 
+#: What each response tries, as its roll is named ("Charm & Luck: haggle
+#: with Thalen the Smith"): the roll box shows it, then the NPC's name.
+VERBS: Dict[str, str] = {
+    "haggle": "haggle with",
+    "pardon": "charm a pardon from",
+    "rumours": "ask rumours of",
+    "favour": "charm a favour from",
+}
+
+
+def roll_label(option: str, name: str) -> str:
+    """The roll's name, for the log and the roll box."""
+    return f"Charm & Luck: {VERBS.get(option, option)} {name}"
+
+
 def score(character) -> int:
     """The character's fortune: the mean of Charisma and Luck."""
     a = getattr(character, "attrs", {}) or {}

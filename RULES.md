@@ -42,6 +42,16 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
   box ever hides another's words.) A character
   with a roll box over its head says nothing (speech bubbles, barks and
   thoughts wait).
+* **Rolls outside a fight** use the same boxes, with every rule above:
+  talking someone round (§15), a snapped pick (§12), being noticed while
+  sneaking (§11) and searching for loot (§12). The boxes still show over a
+  conversation, trade, a container and the lockpicking window (never over
+  any other menu); a box the window, or a toast, would cover moves just
+  beside, above or below it, its line still pointing to the roller (a box
+  below its roller points up); where the window fills the middle (the
+  lock), the box goes narrow, as in the right-hand column, at the edge of
+  the screen beside it. What a roll decides there -- an answer, a
+  toast -- is told when its die lands, as in a fight.
 * **Who rolls where it can be seen.** Only actors in the NEAR simulation tier
   roll dice on screen; anyone further out (ACTIVE, DISTANT, DORMANT), and
   anyone Big World has parked, never does.
@@ -52,7 +62,8 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
     numbers, or red with gold numbers.
   * *Everyone else's:* always greyscale, each die a random finish — black with
     white numbers, charcoal, slate, light grey, or white with black numbers.
-  * The dice of one roll are never the same colour.
+  * The dice of one roll are never the same colour (a search, with more
+    dice than finishes, uses every finish before it repeats one).
 * **Co-op.** "You" is whoever plays on your machine (the local client). Your
   rolls are in colour under YOU; every other client's player is a party
   member, and their rolls show on your screen too — under their name in
@@ -629,11 +640,35 @@ within 1,024 units × the factor. An observer without a torch at night sees
 at 100 — on top of sneaking (a master thief sneaking at Sneak 0: ×0.35).
 It does nothing for anything else you do, and hearing is unchanged.
 
+* **Being noticed.** While you sneak, someone with you in plain sight (within
+  their halved sight, nothing in the way) must roll to notice you before
+  they count as having seen you: a d20 at `1 − 0.7 × distance ÷ their
+  sight` (95% up close, 30% at its edge; `notice_chance`,
+  `game/sim/perception.py`), in a
+  roll box over them ("CRESS OF THE WATCH: ROLL TO NOTICE YOU"). Their roll
+  stands for 6 s (`NOTICE_MEMORY`, `game/law.py`); still in sight after
+  that, they roll again. It is rolled when being seen matters: a witness
+  to a crime of yours (picking a lock included) and the watch looking for
+  you while you are wanted. Standing, you are simply seen. Being caught --
+  the toast, the writ -- is told when their die lands.
+
 ---
 
 ## 12. Loot and rarity
 
 * Each loot entry drops on a d20 at `chance + (LUCK − 40) × 0.2%`.
+* **One box per search.** Every "Roll to find …" of one search (a kill of
+  yours, or the first look at a body) shows in one roll box over you: a
+  small d20 for every find, nine to a row, each that missed dimmed once it
+  lands; then "FOUND 2 OF 15" (or "NOTHING FOUND", once every die is down)
+  and what was found. A search made with the killing blow waits until that
+  blow's box has been up 2.2 s (`QUEUED_ROLL_AFTER`, `game/runtime.py`).
+* **The log lists only what a search finds**: each find that comes up, a
+  special that comes up, and how many -- told when the box's dice land. A
+  miss is shown in the box alone. (Every combat roll is logged, hit or
+  miss, since each is the outcome of something someone did; a missed find
+  is nothing happening, and the fifteen of a bandit buried the fight's
+  lines.) With dice not shown, the same lines are logged at once.
 * A weapon or armour may be special: `6% + level × 1% + (LUCK − 40) × 0.1%`;
   if special, it is Fabled 15%, Rare 35%, Fine 50%.
 
@@ -645,6 +680,11 @@ It does nothing for anything else you do, and hearing is unchanged.
 | Fabled | ×6.0 | ×1.7 |
 
 * Luck 60 or more finds 10% more gold.
+* **Locks** are picked by hand, not by dice (docs/lockpicking.md). Below
+  Security 15 a snapped pick is a d20 save, `1 − 25% × (15 − Security) ÷
+  15`, in your roll box ("YOU: ROLL TO SAVE THE SNAPPED PICK"): fail it and
+  the tip shears off, jamming the lock (only Knock opens it). The lock
+  window shows the risk the die rolls (`game/rpg/lockpicking.py`).
 
 ---
 
@@ -697,11 +737,14 @@ It does nothing for anything else you do, and hearing is unchanged.
   alone. (Disposition, which Charisma nudges, is the merchant's liking.)
 * **Disposition** = base + (PER − 40) × 0.5 + 15 for faction-mates − the
   bounty's weight.
-* **Persuade:** `(Speechcraft + LUCK × 0.2)%`, 5–95%; success +8
-  disposition, failure −4.
-* **Charm & Luck options** open at fortune 45: `0.45 + (fortune − 45) ×
-  0.012 − difficulty` (haggle 0.10, pardon 0.30, rumours 0, favour 0.20),
-  each once a day per person.
+* **Persuade:** a d20 check at `(Speechcraft + LUCK × 0.2)%`, 5–95%, in
+  your roll box ("YOU: PERSUADE ANN", their name in their side's colour);
+  success +8 disposition, failure −4, told when the die lands.
+* **Charm & Luck options** open at fortune 45: a d20 check at `0.45 +
+  (fortune − 45) × 0.012 − difficulty` (haggle 0.10, pardon 0.30, rumours
+  0, favour 0.20), each once a day per person, in your roll box ("YOU:
+  HAGGLE WITH MABEL"). They hesitate ("...") until the die lands, then
+  answer.
 * A repulsive face: merchants refuse unless disposition is 60+, and hostile
   people may decline to fight (up to 70% at Charisma 0).
 
@@ -819,4 +862,6 @@ It does nothing for anything else you do, and hearing is unchanged.
 
 Places where the code does not yet do what something in the game describes:
 
-* None known.
+* **Monsters and animals** (Fio's monster AI) do not roll to notice a
+  sneaking player: Sneak shortens how far they see you, but within that they
+  see you at once.

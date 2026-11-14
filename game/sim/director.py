@@ -396,8 +396,14 @@ class Director:
         when you have been robbed even if you never saw who did it, and that
         asymmetry is what lets a theft be discovered later."""
         _day, hour = self._now()
-        percepts = perception.witnesses(event, observers or (), hour=hour,
-                                        actor_thing=actor_thing, sight_test=self.sight_test)
+        # The event being perceived, for a sight test that asks (a sneaking
+        # player's crime: each witness rolls to notice them).
+        self.dispatching = event
+        try:
+            percepts = perception.witnesses(event, observers or (), hour=hour,
+                                            actor_thing=actor_thing, sight_test=self.sight_test)
+        finally:
+            self.dispatching = None
         learned = 0
         for pc in percepts:
             key = actor_key(pc.observer)

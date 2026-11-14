@@ -167,6 +167,16 @@ def stealth_factor(actor_props: Optional[Dict], kind: str = "") -> float:
     return max(0.05, factor)
 
 
+def notice_chance(distance: float, reach: float) -> float:
+    """The chance an observer within *reach* (its sight range against a
+    sneaking actor) notices them at *distance*: the clarity it would see
+    them with -- near certain up close, 30% at the edge. Rolled on a d20 by
+    the game (RULES.md §11)."""
+    if reach <= 0.0 or distance > reach:
+        return 0.0
+    return _falloff(distance, reach)
+
+
 def can_perceive(observer, event_pos, loudness: float, hour: float = 12.0,
                  actor_props: Optional[Dict] = None, visible: bool = True,
                  kind: str = "") -> Optional[Percept]:

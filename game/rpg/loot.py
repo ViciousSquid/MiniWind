@@ -3,8 +3,11 @@ Loot tables & leveled lists.
 
 When a creature dies or a container is opened, a loot table is rolled to produce
 item stacks. Tables are *leveled*: entries can gate on the player level so that
-higher-level foes drop better gear. Gold ranges
-and drop chances are per entry.
+higher-level foes drop better gear. Gold ranges and drop chances are per entry.
+
+Every chance is a d20 check through the shared dice service; the session shows
+one search's "Roll to find ..." dice together in a roll box over the player and
+logs only what was found (RULES.md §12).
 """
 
 from __future__ import annotations
@@ -84,7 +87,7 @@ def _roll_range(lo: int, hi: int, rng, dice, table_id: str, item_id: str) -> int
         what = "gold" if item_id == "gold" else _item_name(item_id)
         result = dice.request_roll(
             f"1d{span}", source="loot.quantity",
-            context={"table": table_id, "item_id": item_id,
+            context={"table": table_id, "item_id": item_id, "low": lo,
                      "label": f"Roll for how much {what}",
                      "why": f"between {lo} and {hi}"})
         return lo + result["roll_result"] - 1

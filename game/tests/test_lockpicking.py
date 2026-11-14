@@ -1,9 +1,11 @@
 """Lock progress, real resource losses and the Knock-only jam exception."""
 import json
+import random
 from types import SimpleNamespace
 
 import pytest
 
+from ..diceroll import DiceRoller
 from ..rpg.lockpicking import LOCKS, LockpickAttempt, shear_chance
 from ..rpg import inventory as inv, items, magic, skills
 from .test_corpse_loot import _Thing, _Logic
@@ -192,9 +194,19 @@ def test_last_pick_break_disables_tension_and_the_player_can_leave():
     assert s.open_screen is None
 
 
+class _Die(random.Random):
+    """A d20 that always lands on *face*."""
+    def __init__(self, face):
+        super().__init__(0)
+        self.face = face
+
+    def randint(self, low, high):
+        return max(low, min(high, self.face))
+
+
 def test_low_skill_snap_can_shear_and_a_key_cannot_bypass_the_saved_jam(monkeypatch):
     s, chest = _picking(skill=0)
-    monkeypatch.setattr(s.game.rng, "random", lambda: 0)
+    s.game.dice = DiceRoller(rng=_Die(1))        # the save fails: the tip shears
     _snap(s)
     assert chest.properties["lock_jammed"]
     assert s.open_screen is None
@@ -212,7 +224,7 @@ def test_low_skill_snap_can_shear_and_a_key_cannot_bypass_the_saved_jam(monkeypa
 
 def test_a_non_shearing_snap_does_not_jam_and_can_be_retried(monkeypatch):
     s, chest = _picking(skill=0)
-    monkeypatch.setattr(s.game.rng, "random", lambda: .99)
+    s.game.dice = DiceRoller(rng=_Die(20))       # the save holds
     _snap(s)
     assert not chest.properties.get("lock_jammed")
     s.lockpick_action("tension_on")

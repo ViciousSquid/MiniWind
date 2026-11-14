@@ -72,15 +72,15 @@ def test_a_panel_is_held_on_screen():
 
 def test_a_collapsed_panel_draws_nothing_and_leaves_a_tab(fresh):
     _config, saves = fresh
-    _draw("dice")
-    layout.toggle("dice")
+    _draw("status")
+    layout.toggle("status")
     assert saves                                   # saved at once
-    assert _draw("dice") == []
-    assert not layout.visible("dice")
-    tab = layout.tab_rect("dice", W, H)
-    assert layout.hit(tab.center(), W, H) == ("toggle", "dice")
-    layout.toggle("dice")
-    assert _draw("dice") == [(0, 0)]
+    assert _draw("status") == []
+    assert not layout.visible("status")
+    tab = layout.tab_rect("status", W, H)
+    assert layout.hit(tab.center(), W, H) == ("toggle", "status")
+    layout.toggle("status")
+    assert _draw("status") == [(0, 0)]
 
 
 def test_the_collapse_button_is_on_the_panels_corner_while_it_shows():
@@ -157,7 +157,7 @@ def test_the_chrome_paints(qt_app):
     image.fill(0)
     painter = QtGui.QPainter(image)
     try:
-        _draw("dice")
+        _draw("status")
         layout.toggle("rolls")
         layout.draw_chrome(painter, W, H)
         layout.arranging = True

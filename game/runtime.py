@@ -292,6 +292,14 @@ DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
 #: How long an explained roll stays in the HUD's roll log, and how many it keeps.
 ROLL_LOG_SECONDS = 8.0
 ROLL_LOG_MAX = 6
+#: A search's dice (game/rpg/loot.py): every "Roll to find ..." of one search
+#: in one box; the special and how-many rolls that come with them.
+LOOT_FIND_SOURCE = "loot.drop"
+LOOT_SOURCES = (LOOT_FIND_SOURCE, "loot.rarity", "loot.quantity")
+#: A roll that waits for the player's box (a search made with the killing
+#: blow) takes it once the roll before has been thrown this long: every die
+#: has landed (no roll lasts past 1.2 s) and its verdict has been read.
+QUEUED_ROLL_AFTER = 2.2
 
 #: Probability an NPC/creature with no authored handedness is left-handed. Left
 #: handedness is deliberately rare, so most actors wield on the right.
@@ -1043,10 +1051,11 @@ class MiniwindSession(SettlementLaw):
             disposition=self._sim_disposition,
             on_bounty=self._sim_on_bounty,
             on_message=self.game.message,
-            on_witness=lambda event, seen: self.notify(
-                "Someone witnessed your crime." if seen else
-                "Someone heard the disturbance.", 4.0),
-            sight_test=self._law_visible, region_for=self._law_region,
+            on_witness=lambda event, seen: self._after_dice(
+                self._notice_wait(), lambda: self.notify(
+                    "Someone witnessed your crime." if seen else
+                    "Someone heard the disturbance.", 4.0)),
+            sight_test=self._witness_sees, region_for=self._law_region,
             on_gossip=self._on_gossip)
         self.director.rumour_decay = self._rumour_decay
         # The player's crimes and kindnesses move their alignment.
@@ -1406,7 +1415,19 @@ class MiniwindSession(SettlementLaw):
         owner = getattr(coop, "players", {}).get(getattr(self, "player_id", None))
         companion = owner is not None and owner.bot
         npc = bool(context.get("npc"))
-        if result.get("label") or companion or npc:
+        loot = _source in LOOT_SOURCES
+        # A search lists in the log only what it finds: a find, or a special,
+        # that fails is shown in the search's roll box alone (RULES.md §12).
+        unlogged = loot and result.get("success") is False
+        shown = not (companion or npc or context.get("quiet")) \
+            and self._visualise_dice_rolls_enabled()
+        if loot and shown:
+            # Gathered into one box for the whole search (_show_search), and
+            # logged when its dice land.
+            self.__dict__.setdefault("_loot_search", []).append(
+                (_source, result, context, not unlogged))
+            return
+        if (result.get("label") or companion or npc) and not unlogged:
             line = describe_roll(result)
             if companion and not npc and not line.startswith(owner.profile["name"] + ":"):
                 line = owner.profile["name"] + ": " + line
@@ -1419,14 +1440,11 @@ class MiniwindSession(SettlementLaw):
                     if member.connected and not member.bot:
                         sinks[id(member.session)] = member.session
             for session in sinks.values():
-                session.game.message(line)
-                session.roll_log.append({"text": line, "why": str(result.get("why", "")),
-                                         "success": good, "t": ROLL_LOG_SECONDS})
-                del session.roll_log[:-ROLL_LOG_MAX]
+                session._log_roll(line, result, good)
         if companion:
             self.dice_animation = None
             return
-        if npc or context.get("quiet") or not self._visualise_dice_rolls_enabled():
+        if not shown:
             return
         current = self.dice_animation
         if current is not None and current.get("elapsed", 0.0) == 0.0:
@@ -1435,29 +1453,109 @@ class MiniwindSession(SettlementLaw):
                 current["companion"] = result
                 return
             # Rolled in the same instant as the one about to be shown (a hit
-            # and its critical, a kill's loot): listed under it, not over it.
+            # and its critical): kept with it, not shown over it.
             current.setdefault("followups", []).append(result)
             return
         if current is not None:
             # Attacking again before the last roll has landed: it is told at
             # once, and the new roll takes its place. Nobody waits on dice.
             self._hurry_dice()
-        self.dice_animation = {
+        against = None
+        if context.get("against_name"):
+            against = (str(context["against_name"]), str(context.get("against_side") or "foe"))
+        self.dice_animation = self._own_roll_box(result, against)
+        return
+
+    def _log_roll(self, line, result, good) -> None:
+        """Put an explained roll in the message log and the HUD's roll log."""
+        self.game.message(line)
+        self.roll_log.append({"text": line, "why": str(result.get("why", "")),
+                              "success": good, "t": ROLL_LOG_SECONDS})
+        del self.roll_log[:-ROLL_LOG_MAX]
+
+    def _show_own_box(self, box) -> None:
+        """*box* takes the player's roll box now; a search's log lines are
+        told when its dice land."""
+        self.dice_animation = box
+        lines = box.pop("_log", None)
+        if lines:
+            def tell():
+                for line, result in lines:
+                    self._log_roll(line, result, result.get("success"))
+            self._after_dice(self._reveal_delay(self.player_actor, every_die=True), tell)
+
+    def _show_search(self) -> None:
+        """Put the search just made (its "Roll to find ..." dice, gathered by
+        _on_dice_roll) in one roll box over the player: a d20 for every find,
+        the misses dimmed once landed, "FOUND 2 OF 15" and what was found.
+        If the player's box is busy (the killing blow's dice) it waits its
+        turn (QUEUED_ROLL_AFTER)."""
+        search = self.__dict__.get("_loot_search")
+        if not search:
+            return
+        self._loot_search = []
+        log = [(describe_roll(r), r) for _src, r, _ctx, logged in search if logged]
+        finds = [(r, ctx) for src, r, ctx, _logged in search if src == LOOT_FIND_SOURCE]
+        if not finds:
+            for line, r in log:
+                self._log_roll(line, r, r.get("success"))
+            return
+        amounts = {ctx.get("item_id"): int(ctx.get("low", 1)) + int(r.get("roll_result", 1)) - 1
+                   for src, r, ctx, _logged in search if src == "loot.quantity"}
+        special = {ctx.get("item_id") for src, r, ctx, _logged in search
+                   if src == "loot.rarity" and r.get("success")}
+        found, names = [], []
+        for r, ctx in finds:
+            found.append(bool(r.get("success")))
+            if not r.get("success"):
+                continue
+            name = str(r.get("label", "")).replace("Roll to find ", "", 1)
+            item = ctx.get("item_id")
+            if item in special:
+                name = "special " + name
+            if item in amounts:
+                name += f" ×{amounts[item]}"
+            names.append(name)
+        n, k = len(found), sum(found)
+        result = {
+            "label": "Roll to find loot",
+            "dice_notation": f"{n}d20",
+            "components": [{"notation": "1d20", "roll_details": [int(r["roll_result"])],
+                            "roll_result": int(r["roll_result"])} for r, _ctx in finds],
+            "roll_details": [int(r["roll_result"]) for r, _ctx in finds],
+            "roll_result": k,
+            "success": k > 0,
+            "finds": found,
+            "verdict": f"FOUND {k} OF {n}" if k else "NOTHING FOUND",
+            "found_items": names,
+        }
+        box = self._own_roll_box(result)
+        box["_log"] = log
+        current = self.dice_animation
+        if current is None or current.get("actor") is None:
+            self._show_own_box(box)
+            return
+        older = self.__dict__.get("_queued_roll")
+        for line, r in (older or {}).get("_log", ()):
+            self._log_roll(line, r, r.get("success"))     # replaced unseen: told now
+        self._queued_roll = box
+
+    def _own_roll_box(self, result, against=None) -> Dict:
+        """The player's own roll box for *result*: shown over the player
+        (draw_roll_boxes); *against* is ``(name, side)`` of whom it is
+        rolled against, named in their side's colour."""
+        return {
             "result": result,
             "elapsed": 0.0,
             "duration": DICE_DISPLAY_DURATION,
-            # Shown in a box over the player (draw_roll_boxes); a roll
-            # against someone names them in their side's colour.
             "actor": self.player_actor, "side": "you", "kind": "party",
-            "against": ((str(context["against_name"]), "foe")
-                        if context.get("against_name") else None),
+            "against": against,
             # Whose roll it is in co-op: "you" only on that player's own machine.
             "player_id": getattr(self, "player_id", None),
             # The dice's tumble and finishes come from this, so every co-op
             # client sees the same throw (never from a memory address).
             "seed": self.rng.randint(1, 1 << 15),
         }
-        return
 
     # ------------------------------------------------------------ roll boxes
     def side_of(self, thing) -> str:
@@ -1507,6 +1605,23 @@ class MiniwindSession(SettlementLaw):
         if result.get("fate"):
             self._tell_fate(actor, result)
         return box
+
+    def _notice_wait(self) -> float:
+        """Seconds until the last of the notice rolls on screen lands (what
+        they saw is told then), 0 with none."""
+        boxes = (self.__dict__.get("roll_boxes") or {}).values()
+        return max([self._reveal_delay(b["actor"]) for b in boxes
+                    if (b.get("result") or {}).get("notice")], default=0.0)
+
+    def _witness_sees(self, observer, pos) -> bool:
+        """The director's sight test: a clear line from *observer* to *pos*;
+        and, for a crime of the sneaking player's, noticing them."""
+        if not self._law_visible(observer, pos):
+            return False
+        event = getattr(self.director, "dispatching", None)
+        if event is not None and event.is_crime and event.actor == self.player_key:
+            return self.notices_sneaking_player(observer)
+        return True
 
     def _tell_fate(self, actor, roll) -> None:
         """Luck turned *actor*'s saving throw (game/rpg/luck.py): once its
@@ -1721,6 +1836,8 @@ class MiniwindSession(SettlementLaw):
         self.notifications = []
         self.floaters = []
         self.dice_animation = None
+        self._queued_roll = None
+        self._loot_search = []
         self.roll_log = []
         self.gore.clear()
         self._deaths_seen = set()
@@ -4315,14 +4432,10 @@ class MiniwindSession(SettlementLaw):
                                          event=event, context=context)
 
     def roll_dice(self, dice_notation: Optional[str] = None) -> Dict:
-        """Roll dice and start the native HUD shake/roll/fade presentation."""
+        """Roll dice and show them in the player's roll box."""
         notation = dice_notation or f"1{self.selected_dice_type}"
         result = self.game.roll_dice(notation)
-        self.dice_animation = {
-            "result": result,
-            "elapsed": 0.0,
-            "duration": DICE_DISPLAY_DURATION,
-        }
+        self.dice_animation = self._own_roll_box(result)
         return result
 
     def _tick_dice_animation(self, delta: float) -> None:
@@ -4332,11 +4445,16 @@ class MiniwindSession(SettlementLaw):
             box["elapsed"] += max(0.0, float(delta))
             if box["elapsed"] >= box["duration"]:
                 del boxes[key]
-        if self.dice_animation is None:
-            return
-        self.dice_animation["elapsed"] += max(0.0, float(delta))
-        if self.dice_animation["elapsed"] >= self.dice_animation["duration"]:
-            self.dice_animation = None
+        self._show_search()
+        if self.dice_animation is not None:
+            self.dice_animation["elapsed"] += max(0.0, float(delta))
+            if self.dice_animation["elapsed"] >= self.dice_animation["duration"]:
+                self.dice_animation = None
+        queued = self.__dict__.get("_queued_roll")
+        if queued is not None and (self.dice_animation is None
+                                   or self.dice_animation["elapsed"] >= QUEUED_ROLL_AFTER):
+            self._queued_roll = None
+            self._show_own_box(queued)
 
     def escape_closes_modal(self) -> bool:
         """Would Escape close whatever the game currently has on screen?
@@ -4368,8 +4486,11 @@ class MiniwindSession(SettlementLaw):
 
     def tick_ui(self, delta: float) -> None:
         """Age only the transient HUD (toasts/floaters) while the world is paused
-        (a menu or character creation is open). No clock, NPC or combat sim."""
+        (a menu or character creation is open). No clock, NPC or combat sim.
+        A roll made there (talking someone round) is still told once its die
+        lands."""
         self._announce_skill_raises()
+        self._run_reveals()
         self._age_lists(delta)
         self._check_pack()          # a satchel sold over the counter
 
@@ -5367,8 +5488,10 @@ class MiniwindSession(SettlementLaw):
         if not self.law.charge(region, event.id, amount, self._law_now(), grave=grave):
             return
         self.game.character.bounty = self.law.total
-        self.notify(f"Word reaches the watch of {region}: a writ for {amount} gold "
-                    f"({event.kind}).", 5.0)
+        writ = (f"Word reaches the watch of {region}: a writ for {amount} gold "
+                f"({event.kind}).")
+        # Seen sneaking? Told once their roll to notice has landed.
+        self._after_dice(self._notice_wait(), lambda: self.notify(writ, 5.0))
         self.game.message(f"The watch of {region} records the {event.kind}: +{amount} gold.")
         if grave:
             self._raise_hue_and_cry(region, reporter_key, event)
@@ -10610,22 +10733,27 @@ class MiniwindSession(SettlementLaw):
         p = npc.properties
         text, _difficulty, win, lose = rpg_fortune.OPTIONS[option]
         name = p.get("display_name") or p.get("name") or "them"
+        # A d20 the player watches in their roll box, over them, the NPC
+        # named in their side's colour (RULES.md §1).
         roll = roll_check(self.game.dice, rpg_fortune.chance(c, option),
-                          f"Charm & Luck: {name}", source="dialogue.fortune",
-                          why=rpg_fortune.why(c), context={"option": option})
+                          rpg_fortune.roll_label(option, name), source="dialogue.fortune",
+                          why=rpg_fortune.why(c),
+                          context={"option": option, "against_name": name,
+                                   "against_side": self.side_of(npc)})
         self.store.set(self._fortune_key(npc, option), str(self.clock.day))
         line = win if roll["success"] else lose
+        told = []                       # toasts, once the die has landed
         if roll["success"]:
             if option == "haggle":
                 disp.remember(self.store, p, "charmed")
             elif option == "pardon":
                 region = self._law_region(npc.pos, npc)
                 forgiven = self.law.forgive(region, 0.5)
-                self.notify(f"Bounty reduced by {forgiven} gold.", 4.0)
+                told.append((f"Bounty reduced by {forgiven} gold.", 4.0))
             elif option == "favour":
                 gold = self.rng.randint(5, 25)
                 c.gold += gold
-                self.notify(f"{name} gave you {gold} gold.", 3.5)
+                told.append((f"{name} gave you {gold} gold.", 3.5))
             elif option == "rumours":
                 heard = []
                 for fact in self._facts_about_player(npc)[:3]:
@@ -10638,8 +10766,17 @@ class MiniwindSession(SettlementLaw):
                         else lose)
         node = (self.dialogue.tree.get("nodes") or {}).get("_fortune") \
             if self.dialogue is not None else None
+        # What they answer, and what it won, are told when the die lands --
+        # never ahead of it (RULES.md §1): until then they only hesitate.
         if node is not None:
-            node["text"] = line
+            node["text"] = "..."
+
+        def tell():
+            if node is not None:
+                node["text"] = line
+            for text, seconds in told:
+                self.notify(text, seconds)
+        self._after_dice(self._reveal_delay(self.player_actor), tell)
 
     def _with_first_impression(self, tree, npc):
         """*tree* with the NPC's reaction to the player's face put in front of
@@ -10794,8 +10931,12 @@ class MiniwindSession(SettlementLaw):
             self.end_dialogue()
             self.open_screen = "trade"
         elif op == "persuade":
-            r = guilds.persuade(self.game.character, npc.properties, self.rng)
-            self.notify("They warm to you." if r["success"] else "That didn't help.")
+            r = guilds.persuade(self.game.character, npc.properties, self.rng,
+                                dice=self.game.dice, side=self.side_of(npc))
+            said = "They warm to you." if r["success"] else "That didn't help."
+            # Told once the die has landed, never before (RULES.md §1).
+            self._after_dice(self._reveal_delay(self.player_actor),
+                             lambda: self.notify(said))
         elif op == "start_quest":
             self.game.start_quest(action.get("quest", action.get("value", "")))
             disp.remember(self.store, npc.properties, "quest_accepted")
@@ -11069,7 +11210,7 @@ class MiniwindSession(SettlementLaw):
             self.lockpick_thing.properties["lockpick_state"] = self.lockpick_attempt.snapshot()
 
     def tick_lockpicking(self, delta):
-        from .rpg.lockpicking import shear_chance
+        from .rpg.lockpicking import shear_chance, keep_chance
         a, thing = self.lockpick_attempt, self.lockpick_thing
         if self.open_screen != "lockpicking" or a is None or thing is None:
             return
@@ -11104,14 +11245,25 @@ class MiniwindSession(SettlementLaw):
             inv.remove_item(self.game.character.inventory, "lockpick", 1)
             if not inv.has_item(self.game.character.inventory, "lockpick"):
                 self._forget_in_slots("lockpick")
-            chance = shear_chance(a.security)
-            if chance and self.game.rng.random() < chance:
+            sheared = False
+            if shear_chance(a.security) and self.game.dice is not None:
+                # An inexperienced hand's d20 save, in the player's roll box:
+                # fail it and the tip shears off in the lock (RULES.md §12).
+                from .diceroll import roll_check
+                keep = keep_chance(a.security)
+                save = roll_check(self.game.dice, keep, "Roll to save the snapped pick",
+                                  source="lockpick.shear",
+                                  why=f"Security {int(a.security)} — {keep * 100:.0f}%")
+                sheared = not save["success"]
+            if sheared:
                 p["lock_jammed"] = True
                 p["locked"] = True
                 self.close_lockpicking()
-                self.notify("The pick sheared off. Only the Knock spell can open this container now.", 7.0)
+                said = ("The pick sheared off. Only the Knock spell can open this container now.", 7.0)
             else:
-                self.notify("Lockpick snapped. Your set pins are still latched.", 3.0)
+                said = ("Lockpick snapped. Your set pins are still latched.", 3.0)
+            self._after_dice(self._reveal_delay(self.player_actor),
+                             lambda: self.notify(*said))
         elif event == "unlocked":
             p["locked"] = False
             p.pop("lockpick_state", None)
@@ -11145,6 +11297,8 @@ class MiniwindSession(SettlementLaw):
                 target = glm.vec3(*player.pos) + glm.vec3(0, 36, 0)
                 if not grid.has_line_of_sight(eye, target):
                     continue
+            if not self.notices_sneaking_player(npc, seen.distance):
+                continue                 # sneaking: they rolled and missed you
             observers.append(npc)
         if not observers:
             return False
@@ -11155,7 +11309,8 @@ class MiniwindSession(SettlementLaw):
         self.director.resolve_reports(observers)
         self.close_lockpicking()
         name = observers[0].properties.get("display_name") or "Someone"
-        self.notify(f"{name} caught you picking the lock!", 5.0)
+        self._after_dice(self._notice_wait(),
+                         lambda: self.notify(f"{name} caught you picking the lock!", 5.0))
         return True
 
     def close_lockpicking(self, save_progress=True):
