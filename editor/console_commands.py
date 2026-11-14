@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtCore import QTimer
 
 from editor.debug_console import debug_log
+from editor.loading_overlay import overlay_for
 from editor.portal_links import set_group_active, sync_group_to
 from engine.change_journal import touch
 from engine.items import ITEM_IDS
@@ -2721,7 +2722,9 @@ entity to drive them from the I/O system.</i><br>
             if os.path.isfile(map_path) or _archived(map_path):
                 # Cancelled at the unsaved-changes prompt, or the map failed
                 # to load: the save belongs to that map, so stop here.
-                if not self.main_window.open_level_file(map_path):
+                with overlay_for(self.main_window).share(0, 40):
+                    opened = self.main_window.open_level_file(map_path)
+                if not opened:
                     return
             else:
                 debug_log("Warning",
@@ -2733,7 +2736,8 @@ entity to drive them from the I/O system.</i><br>
 
         # Enter play mode (needs a PlayerStart in the scene).
         try:
-            self.main_window.enter_play_mode()
+            with overlay_for(self.main_window).share(40, 100):
+                self.main_window.enter_play_mode()
         except Exception as exc:
             debug_log("Error", f"load: could not enter play mode: {exc}")
             return

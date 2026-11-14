@@ -244,7 +244,8 @@ class PauseActions:
         except Exception as exc:
             self._toast(f"{label.capitalize()} cannot be read ({exc}).", error=True)
             return False
-        with self._busy(f"Loading {label}", "Stopping the game"):
+        with self._busy(f"Loading {label}",
+                        "Stopping the game" if self._playing() else "Reading the save"):
             if isinstance(block, dict) and isinstance(block.get('values'), dict):
                 if self._playing():
                     self.window._exit_play_mode()
