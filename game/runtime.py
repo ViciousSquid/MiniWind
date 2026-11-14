@@ -2051,6 +2051,7 @@ class MiniwindSession(SettlementLaw):
         self.flour_supply.install()
         self._show_prison_signs()      # the gaol is marked in the world
         self._refresh_roads(force=True)  # the road graph, built before anyone walks
+        self._update_season()          # the wheat at its stage before grass is grown
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -6793,7 +6794,6 @@ class MiniwindSession(SettlementLaw):
         ter = fio.terrain(self.logic)
         if ter is None or not hasattr(ter, "set_grass_pushers"):
             return
-        from engine import terrain_biomes
         ppos = self._player_pos()
         pushers = []
         if ppos is not None:
@@ -6813,6 +6813,19 @@ class MiniwindSession(SettlementLaw):
             near.sort(key=lambda n: n[0])
             pushers += [row for _d, row in near[:GRASS_PUSHERS - 1]]
         ter.set_grass_pushers(pushers)
+        self._update_season(ter)
+
+    def _update_season(self, ter=None) -> None:
+        """Grow the terrain's wheat to the clock's point in the farming year.
+
+        Also called as the session installs, under the loading bar: the grass
+        is then first grown at the right stage, rather than full-grown and
+        regrown on the first tick of play (four chunks, ~0.3 s of the frame
+        the world first appears in)."""
+        ter = ter if ter is not None else fio.terrain(self.logic)
+        if ter is None or not hasattr(ter, "set_season"):
+            return
+        from engine import terrain_biomes
         days = float(self.clock.day) + float(self.clock.hour) / 24.0
         ter.set_season(YEAR_START + days / terrain_biomes.YEAR_DAYS)
 
