@@ -61,6 +61,8 @@ ap.add_argument('--seconds', type=float, default=60.0)
 ap.add_argument('--route', default='millbrook', choices=('millbrook', 'country', 'still'))
 ap.add_argument('--sprint', action='store_true')
 ap.add_argument('--continue', dest='cont', action='store_true')
+ap.add_argument('--launch-continue', action='store_true',
+                help="answer the launcher's CONTINUE (the newest save) instead of PLAY")
 ap.add_argument('--noclip', action='store_true',
                 help="the player's physics off (the console's noclip): the route is followed through "
                      "walls and fences, for streaming and drawing costs; tick costs are then not representative")
@@ -140,10 +142,15 @@ def span(owner, name, label, count_bytes=None):
             spans[label].append(((started - T0) * 1e3, (end - started) * 1e3,
                                  threading.current_thread().name))
             if end - started > 0.002:
-                # Which one: the first string argument of a slow call.
+                # Which one: the first string argument of a slow call, and
+                # who asked for it (three callers up).
                 what = next((x for x in a if isinstance(x, str)), '')
+                callers, frame = [], sys._getframe(1)
+                while frame is not None and len(callers) < 3:
+                    callers.append(f'{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}')
+                    frame = frame.f_back
                 slow_calls.append((round((started - T0) * 1e3, 1), label, what[-60:],
-                                   round((end - started) * 1e3, 1)))
+                                   round((end - started) * 1e3, 1), ' < '.join(callers)))
 
     timed.__wrapped__ = real
     setattr(owner, name, timed)
@@ -653,8 +660,9 @@ def session_of(window):
 def on_kiosk_ready(window):
     """The map is loaded and play started: wait for the first world frame."""
     mark('play started (enter_kiosk_mode returned)')
-    driver.first_frame_cb = lambda: (mark('first in-world frame (new game: character creation)'),
-                                     after(500, lambda: make_character(window)))
+    label = ('first in-world frame (CONTINUE: the save loaded)' if args.launch_continue
+             else 'first in-world frame (new game: character creation)')
+    driver.first_frame_cb = lambda: (mark(label), after(500, lambda: make_character(window)))
 
 
 def make_character(window):
@@ -662,6 +670,8 @@ def make_character(window):
     if session is None:
         return finish('no game session')
     report['needs_char_creation'] = bool(session.needs_char_creation)
+    if not session.needs_char_creation:
+        return after_opening(window)
     mark('character created (begin_new_character)')
     if session.needs_char_creation:
         session.begin_new_character('Audit', 'human', 'warrior')
@@ -781,6 +791,12 @@ def patch_launcher():
         dialog.repaint()
         mark('menu: launcher painted')
         dialog.close()
+        if args.launch_continue:
+            found = launcher.resume_save(root_dir) if hasattr(launcher, 'resume_save') else None
+            if not found:
+                finish('--launch-continue: there is no save to continue')
+            launcher._resume = found[0]
+            report['launch_continue'] = found[0]
         return launcher.PLAY
 
     launcher.launch = launch
