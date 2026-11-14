@@ -122,10 +122,23 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
 
 SKILL_IDS: List[str] = list(SKILLS.keys())
 
-#: Skills grouped by specialisation, for the character sheet.
+#: Skills kept off the character sheet, the creator and trainers until a rule
+#: reads them. They stay in every character's block (saves, races and
+#: classes still name them) but nothing trains or uses them. Acrobatics is
+#: "jumping and cushioning falls", and MiniWind has neither.
+HIDDEN = frozenset({ACROBATICS})
+
+
+def is_shown(skill_id: str) -> bool:
+    """Whether *skill_id* is shown to the player (not :data:`HIDDEN`)."""
+    return skill_id not in HIDDEN
+
+
+#: Skills grouped by specialisation, for the character sheet (shown ones only).
 BY_SPEC: Dict[str, List[str]] = {}
 for _sid, _sd in SKILLS.items():
-    BY_SPEC.setdefault(_sd.spec, []).append(_sid)
+    if is_shown(_sid):
+        BY_SPEC.setdefault(_sd.spec, []).append(_sid)
 
 
 def fold(skill_id: str) -> str:

@@ -248,7 +248,7 @@ def _draw_charcreate(painter, session, w, h):
         _cc_list(painter, inner.x(), ty, list_w, ids, s["class"],
                  lambda i: classes.get(i).label, field="class")
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
-        majors = ", ".join(sk.label(m) for m in k.major_skills)
+        majors = ", ".join(sk.label(m) for m in k.major_skills if sk.is_shown(m))
         no_magic = "" if k.magic else f"\n\n{classes.NO_MAGIC_NOTE}"
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    k.label, k.desc + f"\n\nSpecialisation: {k.specialisation}"

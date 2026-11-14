@@ -93,7 +93,7 @@ Six attributes, base **40**, range 0–100 (`game/rpg/attributes.py`):
 | **Strength** | melee damage (×(0.7 + STR/100)); melee attack bonus; carry weight (STR × 5); a creature's blows (×(0.7 + STR × 0.006)) |
 | **Endurance** | health (END × 2); stamina; Armour Class (lightly armoured); magicka regeneration; casting; magic resistance |
 | **Intelligence** | magicka (INT × 1.5) |
-| **Speed** | your pace (§5); governs Light Armor, Athletics and Acrobatics |
+| **Speed** | your pace (§5); governs Light Armor and Athletics (and the hidden Acrobatics) |
 | **Personality** (shown as *Charisma*) | prices, disposition, how strangers react to your face |
 | **Luck** | critical hits; attack bonus (both ways); saving throws at the extremes (the fate die); loot; skill learning; casting |
 
@@ -200,9 +200,14 @@ for a class that works magic."
 
 **Skills** (`game/rpg/skills.py`): Combat — Blade, Blunt, Marksman, Block,
 Heavy Armor, Light Armor, Athletics. Magic — Offensive, Defensive, Occult,
-Alchemy. Stealth — Sneak, Security, Light Fingers, Mercantile, Speechcraft,
-Acrobatics. Ranks: Novice 0, Apprentice 25, Journeyman 50, Expert 75,
-Master 100.
+Alchemy. Stealth — Sneak, Security, Light Fingers, Mercantile, Speechcraft.
+Ranks: Novice 0, Apprentice 25, Journeyman 50, Expert 75, Master 100.
+
+**Acrobatics is hidden** (`skills.HIDDEN`): it is "jumping and cushioning
+falls", and MiniWind has neither, so no rule trains or reads it. The
+character sheet, the skill tree, the creator's major skills and the
+trainers leave it out. It stays in every character's skills (races and
+classes still name it: a hidden major never rises) until a rule needs it.
 
 **Skills rise with use.** Each use earns `difficulty × (1 + (LUCK − 40) ×
 0.002)` skill XP; a point costs `1 + 0.05 L² + 0.5 L` at level *L*.
@@ -814,4 +819,4 @@ It does nothing for anything else you do, and hearing is unchanged.
 
 Places where the code does not yet do what something in the game describes:
 
-* **Acrobatics** is neither trained nor read.
+* None known.

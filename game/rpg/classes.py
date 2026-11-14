@@ -185,6 +185,6 @@ def make_custom(label: str, spec: str, favored_attrs: List[str],
     for s in sk.SKILL_IDS:
         if len(majors) >= 7:
             break
-        if s not in majors:
+        if s not in majors and sk.is_shown(s):
             majors.append(s)
     return CharClass("custom", label or "Adventurer", desc, spec, fav, majors)

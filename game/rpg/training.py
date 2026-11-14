@@ -134,7 +134,8 @@ def trainer_of(props: Dict) -> Optional[Dict]:
     skills = []
     for skill_id in _ids(t.get("skills", t.get("skill", []))):
         skill_id = sk.fold(str(skill_id).strip().lower())
-        if skill_id in sk.SKILLS and skill_id not in skills:
+        # A hidden skill (sk.HIDDEN) does nothing yet: nobody teaches it.
+        if skill_id in sk.SKILLS and sk.is_shown(skill_id) and skill_id not in skills:
             skills.append(skill_id)
     if not skills:
         return None
