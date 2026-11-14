@@ -79,6 +79,8 @@ _TX_TRANSLATE = QTransform.TxTranslate
 #: Pixmaps of HUD pieces that look the same frame after frame, by key.
 _SPRITES = {}
 _SPRITE_LIMIT = 256
+#: slot -> the key of the one picture kept for it (sprite(slot=...)).
+_SPRITE_SLOTS = {}
 
 
 def device_ratio(painter) -> float:
@@ -89,7 +91,7 @@ def device_ratio(painter) -> float:
         return 1.0
 
 
-def sprite(painter, key, w, h, paint):
+def sprite(painter, key, w, h, paint, slot=None):
     """A cached pixmap, *w* x *h* logical pixels, painted by ``paint(p)``.
 
     For a HUD piece that is redrawn identically frame after frame (a bar at
@@ -100,6 +102,11 @@ def sprite(painter, key, w, h, paint):
 
     None when *painter* scales or rotates (a blit would resample the
     picture); the caller then draws directly.
+
+    *slot* names a piece whose picture changes for good as time passes (the
+    clock: a new face every game minute): only its newest picture is kept,
+    so old faces neither pile up nor fill the cache -- which, full, is
+    emptied, and every panel painted again in the same frame.
     """
     if painter.transform().type() > _TX_TRANSLATE:
         return None
@@ -121,6 +128,10 @@ def sprite(painter, key, w, h, paint):
             p.end()
         if len(_SPRITES) >= _SPRITE_LIMIT:
             _SPRITES.clear()
+            _SPRITE_SLOTS.clear()
+        if slot is not None:
+            _SPRITES.pop(_SPRITE_SLOTS.get(slot), None)
+            _SPRITE_SLOTS[slot] = full
         _SPRITES[full] = pm
     return pm
 

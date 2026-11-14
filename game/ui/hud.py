@@ -1453,7 +1453,7 @@ def _draw_clock(painter, session, width):
     w, h = radius * 2 + 40, radius * 2 + 2 + 3 + 34
     pm = T.sprite(painter, ("clock", h_int, m_int, day_line), w, h,
                   lambda p: _paint_clock(p, radius + 20, radius + 2, radius,
-                                         h_int, m_int, day_line))
+                                         h_int, m_int, day_line), slot="clock")
     if pm is not None:
         painter.drawPixmap(left, top, pm)
     else:
