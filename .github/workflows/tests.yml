@@ -80,7 +80,7 @@ jobs:
                               ("/tmp/write_sites.json", write_sites)):
               with open(path, "w", encoding="utf-8") as handle:
                   json.dump(value, handle, indent=1, sort_keys=True)
-                  handle.write("\\n")
+                  handle.write("\n")
           PY
       - uses: actions/upload-artifact@v7
         if: matrix.python == '3.14'
