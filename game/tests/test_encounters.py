@@ -99,7 +99,7 @@ def test_only_a_name_of_its_own_counts_as_named():
     spiders = [foe("monster", "Giant Spider") for _ in range(2)]
     wrexa = foe("bandit_chief", "Smuggler Captain Wrexa")
     session = _session(smugglers + raiders + spiders + [wrexa])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     rec, _clock = _recorder(session)
     for actor in smugglers + raiders + spiders[:1]:
         rec.engage(actor)
@@ -113,7 +113,7 @@ def test_the_chronicle_survives_a_new_map_and_a_load():
     """Every map (a cave, the way out, a loaded save) starts a new session:
     the chronicle used to start empty each time, forgetting every fight."""
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     rec, clock = _recorder(session)
     session.encounters = rec
     for i in range(3):
@@ -136,7 +136,7 @@ def test_a_killing_blow_closes_the_encounter_as_a_fall(monkeypatch):
     that killed the player was never remembered."""
     from .. import fio, runtime
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     rec, _clock = _recorder(session)
     session.encounters = rec
     chief = entities.Creature(pos=[0, 0, 0], properties={
@@ -186,7 +186,7 @@ def test_bounty_hunters_count_as_sent_for_the_player():
     sent for the player's bounty never scored as sent."""
     from types import SimpleNamespace as NS
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     journey = NS(kind="hunters", origin="ashby", dest="thornfield", cause=None)
     session.living = NS(board=NS(journeys={"j7": journey}, nearest_place=lambda x, z: "ashby"),
                         places={"ashby": {"name": "Ashby"}, "thornfield": {"name": "Thornfield"}})
@@ -214,7 +214,7 @@ def test_an_encounter_is_named_for_the_place_it_happens():
     assert _place(world, (9000.0, 0.0, 0.0)) == ""
     cave = _session([])
     cave.underground, cave.region_name = True, "The Bonepit"
-    cave.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    cave.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     rec, clock = _recorder(cave)
     for i in range(3):
         rec.engage(entities.Creature(pos=[0, 0, 0], properties={
@@ -233,7 +233,7 @@ def test_one_picture_of_the_lowest_moment(tmp_path):
     02-lowest ... 07-lowest, most never taken (one capture is pending at a
     time). The lowest moment is one file, taken again at each new low."""
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     rec, clock = _recorder(session, recording=True, root=str(tmp_path))
     for i in range(3):
         rec.engage(entities.Creature(pos=[0, 0, 0], properties={

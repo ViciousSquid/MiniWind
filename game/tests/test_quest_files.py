@@ -341,7 +341,7 @@ def test_an_empty_dialogue_tree_is_no_dialogue():
     archer = entities.NPC(pos=[40, 0, 0], properties={
         "name": "Cress of the Watch", "dialogue": {"nodes": {}}})
     session = _session([chef, archer])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     assert session.start_dialogue(chef, None)
     texts = [r["text"] for r in session.dialogue.view()["responses"]]
     assert "Let's trade." in texts
