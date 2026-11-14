@@ -246,3 +246,26 @@ def test_one_picture_of_the_lowest_moment(tmp_path):
     rec.tick()
     (record,) = rec.chronicle
     assert record["screenshots"] == ["01-interesting.png", "02-lowest.png", "03-end.png"]
+
+
+def test_a_queen_is_a_boss_whatever_her_kind():
+    """BOSS_ROLES named "giant_spider_queen", "warboss", "yeti" and
+    "necromancer", roles nothing in the Vale has: the Spider Queen is a
+    "monster", the Ashen Hierophant a "cultist", the Den Mother a "wolf",
+    and none counted as a boss. A named foe far tougher than its kind is."""
+    def foe(role, name, health):
+        return entities.Creature(pos=[0, 0, 0], properties={
+            "npc_role": role, "name": name, "display_name": name, "health": health})
+    queen = foe("monster", "Spider Queen", 170)
+    mother = foe("wolf", "Den Mother", 75)
+    archers = [foe("bandit_archer", "Bandit Archer", 100) for _ in range(2)]
+    spider = foe("monster", "Webwood Spinner", 60)
+    session = _session([queen, mother, spider] + archers)
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    rec, _clock = _recorder(session)
+    rec.engage(queen)
+    rec.engage(mother)
+    assert rec.current.reasons["boss"] == 8
+    for actor in archers + [spider]:      # tough but nameless; named but ordinary
+        rec.engage(actor)
+    assert rec.current.reasons["boss"] == 8

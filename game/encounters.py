@@ -8,7 +8,7 @@ and closes once :data:`QUIET_SECONDS` pass with no blow, roll or kill in it
 =====================================  ======
 Each foe in it                           +1
 A named foe (not just "Wolf")            +2
-A chief, a wraith, a dragon...           +4
+A chief, a wraith, a dragon, a queen      +4
 A foe sent by a vendetta or an order     +6
 The player under half health             +2
 The player under a quarter               +4
@@ -23,6 +23,10 @@ A foe is *named* when it goes by a name of its own ("Smuggler Captain
 Wrexa", "Nils the Brigand"): never a kind's name from the bestiary, and never
 one another actor in the world answers to -- four "Smuggler"s or a raid of
 "Greenskin Raider"s are what they are, not who.
+
+A foe is a *boss* by its kind (:data:`BOSS_ROLES`), or when it has a name of
+its own and :data:`BOSS_TOUGHNESS` times its kind's health: the Spider Queen
+is a "monster", the Ashen Hierophant a "cultist", the Den Mother a "wolf".
 
 Once the score reaches the threshold (``[GAME] encounter_threshold``,
 default :data:`THRESHOLD`) the encounter is *interesting*: it joins the
@@ -64,8 +68,9 @@ CHRONICLE_SIZE = 20
 #: The session store key the chronicle is kept under.
 STORE_KEY = "encounters.chronicle"
 #: Roles that are a fight in themselves.
-BOSS_ROLES = ("bandit_chief", "wraith", "dragon", "yeti", "warboss", "giant_spider_queen",
-              "necromancer", "bear")
+BOSS_ROLES = ("bandit_chief", "wraith", "dragon", "bear")
+#: A named foe with this many times its kind's health is a boss too.
+BOSS_TOUGHNESS = 1.75
 #: Journey kinds that came *for* the player (game/living/journeys.KINDS):
 #: bounty hunters, and a faction's raid (which always carries its cause).
 SENT_KINDS = ("hunters", "faction_raid")
@@ -200,9 +205,10 @@ class EncounterRecorder:
         prov = provenance.of(self.session, foe)
         enc.foes[key] = prov
         enc.add("foe")
-        if _named(self.session, foe, prov["who"]):
+        named = _named(self.session, foe, prov["who"])
+        if named:
             enc.add("named")
-        if prov.get("role") in BOSS_ROLES:
+        if prov.get("role") in BOSS_ROLES or (named and _towers(foe, prov.get("role"))):
             enc.add("boss")
         if prov.get("kind") == "journey" and (prov.get("journey_kind") in SENT_KINDS
                                               or prov.get("cause")):
@@ -347,6 +353,18 @@ class EncounterRecorder:
                 pass
             self.capture_due = (end_shot, "end")
         self.persist()
+
+
+def _towers(foe, role) -> bool:
+    """Whether *foe* has :data:`BOSS_TOUGHNESS` times its kind's health."""
+    try:
+        from .rpg import bestiary
+        tmpl = bestiary.get(str(role or ""))
+        props = foe.properties
+        health = float(props.get("max_health") or props.get("health") or 0)
+    except Exception:
+        return False
+    return tmpl is not None and health >= BOSS_TOUGHNESS * float(tmpl.health)
 
 
 def _named(session, foe, who: str) -> bool:
