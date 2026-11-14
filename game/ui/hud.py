@@ -500,6 +500,8 @@ def _box_action(label, against_name):
     low = text.lower()
     if "rolls to hit" in low or low.startswith("roll to hit"):
         return "ROLL TO HIT"
+    if " rolls to " in low:            # "Ann rolls to notice you": ROLL TO NOTICE
+        text = "Roll to " + text[low.index(" rolls to ") + len(" rolls to "):]
     if ":" in text:
         text = text.split(":", 1)[1].strip()
     text = text.replace("saving throw", "save")

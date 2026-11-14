@@ -257,3 +257,95 @@ def test_beside_a_window_that_fills_the_middle_the_box_goes_narrow():
     (x, y, _sp, _box, placed, _pointer), = group
     assert placed["docked"] and placed["w"] == hud.ROLL_DOCK_W
     assert x + placed["w"] <= 230 or x >= 230 + 820
+
+
+# ------------------------------------------------------ noticed while sneaking
+def _watched(face, sneaking=True, distance=100.0):
+    from ..diceroll import DiceRoller
+    ann = _Thing("Ann", (distance, 0.0, 0.0), type="npc", sight_range=1024)
+    s = _session(ann)
+    s._player_pos = lambda: [0.0, 0.0, 0.0]
+    s.rolls_dice = lambda actor: True
+    s.game.dice = DiceRoller(rng=_Die(face))
+    s.game.add_roll_listener(s._on_dice_roll)
+    s.game.sneaking = sneaking
+    s.player_actor.properties["sneaking"] = sneaking
+    return s, ann
+
+
+def test_standing_you_are_simply_seen():
+    s, ann = _watched(1, sneaking=False)
+    assert s.notices_sneaking_player(ann)
+    assert not s.roll_boxes
+
+
+@pytest.mark.parametrize("face, seen", [(20, True), (1, False)])
+def test_sneaking_they_roll_to_notice_you_in_a_box_over_them(face, seen):
+    s, ann = _watched(face)
+    assert s.notices_sneaking_player(ann) is seen
+    box = s.roll_boxes[id(ann)]
+    roll = box["result"]
+    assert roll["label"] == "Ann rolls to notice you" and roll["dice_notation"] == "1d20"
+    assert box["actor"] is ann and box["against"] == ("YOU", "you")
+    assert s.dice_animation is None                      # not the player's roll
+    # In the log like an attack on you: their success is bad news.
+    assert s.roll_log[-1]["text"].startswith("Ann rolls to notice you: ")
+    assert s.roll_log[-1]["success"] is (not seen)
+
+
+def test_a_notice_roll_stands_a_while(monkeypatch):
+    from .. import law as rt
+    s, ann = _watched(1)
+    clock = [100.0]
+    monkeypatch.setattr(rt.time, "monotonic", lambda: clock[0])
+    assert not s.notices_sneaking_player(ann)
+    s.game.dice.rng.face = 20
+    clock[0] += rt.NOTICE_MEMORY - 0.5
+    assert not s.notices_sneaking_player(ann)           # the same roll, no new one
+    assert len(s.roll_log) == 1
+    clock[0] += 1.0
+    assert s.notices_sneaking_player(ann)               # rolled again
+    assert len(s.roll_log) == 2
+
+
+def test_beyond_their_sneak_shortened_sight_nobody_rolls():
+    s, ann = _watched(20, distance=900.0)            # 1024 halved by sneaking
+    assert not s.notices_sneaking_player(ann)
+    assert not s.roll_boxes and not s.roll_log
+
+
+def test_the_nearer_they_are_the_likelier_they_notice():
+    from ..sim import perception
+    assert perception.notice_chance(0.0, 512.0) == pytest.approx(1.0)
+    assert perception.notice_chance(256.0, 512.0) == pytest.approx(0.65)
+    assert perception.notice_chance(512.0, 512.0) == pytest.approx(0.3)
+    assert perception.notice_chance(600.0, 512.0) == 0.0
+
+
+def test_a_witness_to_a_sneaking_crime_must_notice_you(monkeypatch):
+    """The director's sight test rolls for the player's crimes only."""
+    s, ann = _watched(1)
+    monkeypatch.setattr(s, "_law_visible", lambda observer, pos: True)
+    crime = SimpleNamespace(is_crime=True, actor=s.player_key)
+    s.director.dispatching = crime
+    assert not s._witness_sees(ann, [0.0, 0.0, 0.0])
+    assert id(ann) in s.roll_boxes
+    s.roll_boxes.clear()
+    s.director.dispatching = SimpleNamespace(is_crime=False, actor=s.player_key)
+    assert s._witness_sees(ann, [0.0, 0.0, 0.0])
+    assert not s.roll_boxes
+    s.director.dispatching = None
+
+
+def test_the_box_names_what_they_roll_for():
+    from ..ui import hud
+    assert hud._box_action("Ann rolls to notice you", "YOU") == "ROLL TO NOTICE"
+    assert hud._box_action("Bandit rolls to hit you", "YOU") == "ROLL TO HIT"
+
+
+def test_being_caught_is_told_when_their_die_lands():
+    s, ann = _watched(20)
+    assert s.notices_sneaking_player(ann)
+    assert s._notice_wait() > 0.3                      # their die is still in the air
+    s._tick_dice_animation(1.5)
+    assert s._notice_wait() == 0.0

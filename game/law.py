@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import math
+import time
 
 from .sim import crime, knowledge, perception
 from .sim.director import PLAYER_KEY, actor_key
 from .sim.law import SEARCH_RADIUS
+
+
+#: Seconds an observer's roll to notice the sneaking player stands before it
+#: rolls again (RULES.md §11).
+NOTICE_MEMORY = 6.0
 
 
 class SettlementLaw:
@@ -55,8 +61,51 @@ class SettlementLaw:
                    and float(f.get("certainty", 0)) >= crime.REPORT_CERTAINTY
                    for f in knowledge.facts(self.store, actor_key(guard)))
 
+    def notices_sneaking_player(self, observer, distance=None) -> bool:
+        """Whether *observer*, who has the player in plain sight, notices
+        them. Standing, always. Sneaking, it rolls to notice them -- a d20 at
+        :func:`game.sim.perception.notice_chance`, in a roll box over it
+        (RULES.md §1, §11) -- and that roll stands for
+        :data:`NOTICE_MEMORY` seconds, so asking again (every look a patrol
+        takes) never rolls again until then. Beyond its sneak-shortened
+        sight it sees nothing and rolls nothing."""
+        if not getattr(getattr(self, "game", None), "sneaking", False):
+            return True
+        player = self.player_actor
+        if player is None or observer is None or getattr(observer, "pos", None) is None:
+            return True
+        props = observer.properties
+        reach = (perception.sight_range(props, self.clock.hour)
+                 * perception.stealth_factor(player.properties))
+        if distance is None:
+            distance = self._dist2d(observer.pos, player.pos)
+        chance = perception.notice_chance(distance, reach)
+        if chance <= 0.0:
+            return False
+        memo = self.__dict__.setdefault("_notice_rolls", {})
+        now = time.monotonic()
+        held = memo.get(id(observer))
+        if held is not None and held[1] > now:
+            return held[0]
+        if self.game.dice is None:
+            return True
+        from .diceroll import roll_check
+        name = str(props.get("display_name") or props.get("name") or "Someone")
+        roll = roll_check(self.game.dice, chance, f"{name} rolls to notice you",
+                          source="sneak.notice",
+                          why=f"You sneak, {distance:.0f} of their {reach:.0f} away — "
+                              f"{chance * 100:.0f}%",
+                          context={"npc": True, "quiet": True, "against_player": True})
+        roll["notice"] = True            # what they saw is told when it lands
+        self.show_roll_box(observer, roll, against=("YOU", "you"))
+        for key in [k for k, (_seen, until) in memo.items() if until <= now]:
+            del memo[key]
+        memo[id(observer)] = (bool(roll["success"]), now + NOTICE_MEMORY)
+        return bool(roll["success"])
+
     def _guard_sees_player(self, guard):
-        """The same darkness/stealth rules as witnesses, plus the scene's walls."""
+        """The same darkness/stealth rules as witnesses, plus the scene's walls
+        -- and, while the player sneaks, the guard's roll to notice them."""
         p = guard.properties
         if p.get("dead") or perception._is_asleep(p):
             return False
@@ -65,9 +114,13 @@ class SettlementLaw:
             return False
         reach = perception.sight_range(p, self.clock.hour)
         reach *= perception.stealth_factor(actor.properties)
-        if self._dist2d(guard.pos, actor.pos) > reach:
+        distance = self._dist2d(guard.pos, actor.pos)
+        if distance > reach:
             return False
-        return self._law_visible(guard, actor.pos)
+        if not self._law_visible(guard, actor.pos):
+            return False
+        # Sneaking, in plain sight: the guard rolls to notice you.
+        return self.notices_sneaking_player(guard, distance)
 
     def _law_visible(self, observer, pos):
         runtime = getattr(self.logic, "session_runtime", None)

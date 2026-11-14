@@ -1026,10 +1026,11 @@ class MiniwindSession(SettlementLaw):
             disposition=self._sim_disposition,
             on_bounty=self._sim_on_bounty,
             on_message=self.game.message,
-            on_witness=lambda event, seen: self.notify(
-                "Someone witnessed your crime." if seen else
-                "Someone heard the disturbance.", 4.0),
-            sight_test=self._law_visible, region_for=self._law_region,
+            on_witness=lambda event, seen: self._after_dice(
+                self._notice_wait(), lambda: self.notify(
+                    "Someone witnessed your crime." if seen else
+                    "Someone heard the disturbance.", 4.0)),
+            sight_test=self._witness_sees, region_for=self._law_region,
             on_gossip=self._on_gossip)
         self.director.rumour_decay = self._rumour_decay
         # The player's crimes and kindnesses move their alignment.
@@ -1466,6 +1467,23 @@ class MiniwindSession(SettlementLaw):
         if result.get("fate"):
             self._tell_fate(actor, result)
         return box
+
+    def _notice_wait(self) -> float:
+        """Seconds until the last of the notice rolls on screen lands (what
+        they saw is told then), 0 with none."""
+        boxes = (self.__dict__.get("roll_boxes") or {}).values()
+        return max([self._reveal_delay(b["actor"]) for b in boxes
+                    if (b.get("result") or {}).get("notice")], default=0.0)
+
+    def _witness_sees(self, observer, pos) -> bool:
+        """The director's sight test: a clear line from *observer* to *pos*;
+        and, for a crime of the sneaking player's, noticing them."""
+        if not self._law_visible(observer, pos):
+            return False
+        event = getattr(self.director, "dispatching", None)
+        if event is not None and event.is_crime and event.actor == self.player_key:
+            return self.notices_sneaking_player(observer)
+        return True
 
     def _tell_fate(self, actor, roll) -> None:
         """Luck turned *actor*'s saving throw (game/rpg/luck.py): once its
@@ -5279,8 +5297,10 @@ class MiniwindSession(SettlementLaw):
         if not self.law.charge(region, event.id, amount, self._law_now(), grave=grave):
             return
         self.game.character.bounty = self.law.total
-        self.notify(f"Word reaches the watch of {region}: a writ for {amount} gold "
-                    f"({event.kind}).", 5.0)
+        writ = (f"Word reaches the watch of {region}: a writ for {amount} gold "
+                f"({event.kind}).")
+        # Seen sneaking? Told once their roll to notice has landed.
+        self._after_dice(self._notice_wait(), lambda: self.notify(writ, 5.0))
         self.game.message(f"The watch of {region} records the {event.kind}: +{amount} gold.")
         if grave:
             self._raise_hue_and_cry(region, reporter_key, event)
@@ -11005,6 +11025,8 @@ class MiniwindSession(SettlementLaw):
                 target = glm.vec3(*player.pos) + glm.vec3(0, 36, 0)
                 if not grid.has_line_of_sight(eye, target):
                     continue
+            if not self.notices_sneaking_player(npc, seen.distance):
+                continue                 # sneaking: they rolled and missed you
             observers.append(npc)
         if not observers:
             return False
@@ -11015,7 +11037,8 @@ class MiniwindSession(SettlementLaw):
         self.director.resolve_reports(observers)
         self.close_lockpicking()
         name = observers[0].properties.get("display_name") or "Someone"
-        self.notify(f"{name} caught you picking the lock!", 5.0)
+        self._after_dice(self._notice_wait(),
+                         lambda: self.notify(f"{name} caught you picking the lock!", 5.0))
         return True
 
     def close_lockpicking(self, save_progress=True):

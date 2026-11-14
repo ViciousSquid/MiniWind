@@ -598,6 +598,17 @@ view nothing is.
 Sneaking halves how far others can see you; an observer without a torch at
 night sees 45% as far. Sneak attacks multiply damage (see §7).
 
+* **Being noticed.** While you sneak, someone with you in plain sight (within
+  their halved sight, nothing in the way) must roll to notice you before
+  they count as having seen you: a d20 at `1 − 0.7 × distance ÷ their
+  sight` (at least 20%; `notice_chance`, `game/sim/perception.py`), in a
+  roll box over them ("CRESS OF THE WATCH: ROLL TO NOTICE YOU"). Their roll
+  stands for 6 s (`NOTICE_MEMORY`, `game/law.py`); still in sight after
+  that, they roll again. It is rolled when being seen matters: a witness
+  to a crime of yours (picking a lock included) and the watch looking for
+  you while you are wanted. Standing, you are simply seen. Being caught --
+  the toast, the writ -- is told when their die lands.
+
 ---
 
 ## 12. Loot and rarity
@@ -765,5 +776,7 @@ Places where the code does not yet do what something in the game describes:
   removes.
 * Sneak-attack damage applies whenever sneaking is on, even if the target has
   already seen you.
+* **Monsters and animals** (Fio's monster AI) ignore sneaking: their sight is
+  neither halved nor rolls to notice you.
 * **Charisma** counts twice in prices.
 * The older pool-based level-up option is unused.
