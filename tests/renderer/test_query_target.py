@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 import pytest
 
-# Headless core CI has no PyOpenGL; the renderer tier verifies this fake
-# context negotiation test without requiring a live GPU.
+# Headless core CI has the GL bindings but no live context; this test drives
+# a fake GL namespace and requires no GPU.
 pytest.importorskip("OpenGL.GL")
 
 from engine.renderer.forward.occlusion import OcclusionMixin  # noqa: E402
