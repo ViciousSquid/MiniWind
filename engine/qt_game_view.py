@@ -782,17 +782,24 @@ class QtGameView(QOpenGLWidget):
         """
         if not self.play_mode or not self.renderer or not self.renderer.ready:
             return 0
+        logic = self.logic_thread
+        if logic is None or not logic.is_alive() or not getattr(logic, 'running', True):
+            # No logic thread running (a stepped test session): nothing will
+            # publish a play frame to warm up with.
+            return 0
         max_frames = self.WARM_UP_FRAMES if max_frames is None else max_frames
-        deadline = time.perf_counter() + (
+        # The monotonic clock: the deadline must pass even where something
+        # has replaced perf_counter (a test pinning the frame clock).
+        deadline = time.monotonic() + (
             self.WARM_UP_SECONDS if timeout_s is None else timeout_s)
         state = self.game_state
         while not state.published('is_play_mode', False):
-            if time.perf_counter() > deadline:
+            if time.monotonic() > deadline:
                 return 0
             time.sleep(0.002)
         textures = getattr(self.renderer, 'texture_manager', None)
         painted = 0
-        while painted < max_frames and time.perf_counter() < deadline:
+        while painted < max_frames and time.monotonic() < deadline:
             loaded = len(textures) if textures is not None else 0
             state.try_swap()
             self.repaint()
