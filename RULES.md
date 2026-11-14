@@ -599,6 +599,13 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 ## 15. Trade, talk and charm
 
+* **No talking in a fight.** You cannot start a conversation (or trade)
+  while you are in combat -- for 6 seconds after any blow struck or taken,
+  or while a foe within 900 has its eyes on you -- nor with anyone who is
+  fighting or fleeing. The prompt says why instead of offering to talk. A
+  fight that starts mid-conversation, or draws your partner in, breaks it
+  off. Notice boards can still be read, and a guard's arrest order is
+  still given.
 * **Prices:** `factor = 1 − (Mercantile + PER − 40) / 300`; buying costs
   `base × (2 − factor) × like × face`, selling pays `base × factor × 0.8 ÷
   like × face`. *Like* is `1 − (disposition − 50) × 0.0035` (0.85–1.15);

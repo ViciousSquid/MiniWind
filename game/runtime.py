@@ -26,6 +26,7 @@ import threading
 import os
 import random
 import uuid
+import time
 from itertools import chain as _chain
 from typing import Dict, List, Optional
 
@@ -205,6 +206,10 @@ NPC_BLOCKED_GIVE_UP_TICKS = 60
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
 TALK_RADIUS = 140.0
+#: No talking in a fight: after any blow struck or taken the player is in
+#: combat this long (seconds), and while a foe this near has its eyes on them.
+COMBAT_GRACE = 6.0
+COMBAT_SIGHT = 900.0
 #: The inventory strip's width in slots: always nine, one per number key.
 STRIP_SIZE = 9
 #: A strip slot holding a spell keeps ``"spell:<spell id>"`` (item ids never
@@ -1460,9 +1465,13 @@ class MiniwindSession(SettlementLaw):
 
     def note_combat(self, foe, by_player: bool) -> None:
         """A blow between the player and *foe* (by_player: the player struck
-        or swung at it; else it struck the player): the target panel shows it."""
+        or swung at it; else it struck the player): the target panel shows it,
+        and the player is in combat a while -- no talking (a conversation
+        under way breaks off)."""
         if foe is None or foe is self.player_actor:
             return
+        self._combat_until = time.monotonic() + COMBAT_GRACE
+        self._break_off_talk()
         recorder = self.__dict__.get("encounters")
         if recorder is not None:
             recorder.engage(foe)
@@ -1473,6 +1482,64 @@ class MiniwindSession(SettlementLaw):
             panel.note(foe, by_player)
         except Exception:
             pass
+
+    # -- no talking in a fight ---------------------------------------------------------
+    def player_in_combat(self) -> bool:
+        """Whether the player is fighting: a blow struck or taken in the last
+        :data:`COMBAT_GRACE` seconds, or a foe within :data:`COMBAT_SIGHT`
+        with its eyes on them."""
+        if time.monotonic() < self.__dict__.get("_combat_until", 0.0):
+            return True
+        me = id(self.player_actor)
+        ppos = self._player_pos()
+        if ppos is None:
+            return False
+        for t in fio.monster_things(self.logic):
+            p = getattr(t, "properties", None) or {}
+            if (p.get("_aggro_target") == me and not p.get("dead") and not p.get("hidden")
+                    and not p.get("triggered", False)
+                    and self._dist2d(t.pos, ppos) <= COMBAT_SIGHT):
+                return True
+        return False
+
+    @staticmethod
+    def actor_in_combat(actor) -> bool:
+        """Whether *actor* is in a fight: swinging at someone (a live mark the
+        combat AI keeps; a parked actor's is only a memory), or fighting or
+        fleeing by its schedule."""
+        p = getattr(actor, "properties", None) or {}
+        if p.get("dead"):
+            return False
+        if p.get("sched_state") in (sched.COMBAT, sched.FLEE):
+            return True
+        return bool(p.get("_aggro_target")) and not p.get("triggered", False)
+
+    def talk_block(self, npc) -> str:
+        """Why the player cannot talk to *npc* now ('' if they can): not in
+        the middle of a fight, nor with anyone who is in one."""
+        if self.player_in_combat():
+            return "You can't talk in the middle of a fight."
+        if npc is not None and self.actor_in_combat(npc):
+            name = npc.properties.get("display_name") or npc.properties.get("name", "They")
+            return f"{name} is fighting: no time to talk."
+        return ""
+
+    def _check_talk_partner(self) -> None:
+        """Every tick: a conversation partner drawn into a fight stops talking."""
+        if self.dialogue is not None and self.dialogue_npc is not None \
+                and self.actor_in_combat(self.dialogue_npc):
+            self._break_off_talk()
+
+    def _break_off_talk(self) -> None:
+        """A fight ends a conversation under way (never a notice board, nor an
+        arrest order the guard is giving)."""
+        npc = self.dialogue_npc
+        if self.dialogue is None or npc is None or npc is self._arrest_guard:
+            return
+        if str(npc.properties.get("type", "")).replace("_", "").lower() == "noticeboard":
+            return
+        self.end_dialogue()
+        self.notify("The fight breaks off the conversation.")
 
     def has_roll_box(self, thing) -> bool:
         """Whether *thing* has a roll box over its head right now (its speech
@@ -2288,6 +2355,7 @@ class MiniwindSession(SettlementLaw):
         self.burning.update(delta)
         self._update_grass_fire(delta)
         self.wildlife.update(delta)
+        self._check_talk_partner()
         if self.__dict__.get("_party_due") and self._player_pos() is not None:
             self._party_due = False
             party.arrive(self)
@@ -10128,6 +10196,14 @@ class MiniwindSession(SettlementLaw):
         return best
 
     def start_dialogue(self, npc, player) -> bool:
+        noticeboard = str(npc.properties.get("type", "")).replace("_", "").lower() == "noticeboard"
+        arrest = npc is self._arrest_guard and self._arrest_state == "ready"
+        if not noticeboard and not arrest:
+            # No talking in a fight, nor with anyone in one.
+            reason = self.talk_block(npc)
+            if reason:
+                self.notify(reason)
+                return False
         tree = npc.properties.get("dialogue")
         self.dialogue_selected = 0
         self.dialogue_npc = npc

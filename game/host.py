@@ -1223,6 +1223,12 @@ class MiniwindGame:
 
         npc = session.nearest_talkable(player.pos, TALK_RADIUS)
         if npc is not None:
+            blocked = session.talk_block(npc)
+            if blocked:
+                # No talking in a fight, nor with anyone in one: say why.
+                ctx.set_prompt(blocked, priority=5)
+                session.interact_prompt = blocked
+                return
             name = npc.properties.get("display_name") or npc.properties.get("name", "NPC")
             verb = "trade with" if npc.properties.get("merchant") else "talk to"
             prompt = f"{controls.press('interact')} to {verb} {name}"
