@@ -1,7 +1,6 @@
 from engine.asset_qt import load_icon, load_pixmap
 from engine import gc_policy
 import sys
-import html
 import io
 import functools
 import json
@@ -3373,9 +3372,17 @@ class MainWindow(QMainWindow):
         """)
         layout.addWidget(subtitle_label)
 
-        version_html = html.escape(version).replace("\n", "<br>")
-        version_label = QLabel(
-            f"{version_html}<br>"
+        # Keep the version file as plain text: QLabel renders its newline
+        # characters directly, without rich-text whitespace collapsing.
+        version_label = QLabel(version)
+        version_label.setTextFormat(Qt.PlainText)
+        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setWordWrap(True)
+        version_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        version_label.setStyleSheet("QLabel { color: #f0f0f0; }")
+        layout.addWidget(version_label)
+
+        links_label = QLabel(
             f"<a href='https://github.com/ViciousSquid/Fio' style='color: #F08000; text-decoration: none;'>"
             f"https://github.com/ViciousSquid/Fio"
             f"</a><br>"
@@ -3383,14 +3390,14 @@ class MainWindow(QMainWindow):
             f"view the wiki"
             f"</a>"
         )
-        version_label.setTextFormat(Qt.RichText)
-        version_label.setAlignment(Qt.AlignCenter)
-        version_label.setOpenExternalLinks(True)
-        version_label.setStyleSheet("""
+        links_label.setTextFormat(Qt.RichText)
+        links_label.setAlignment(Qt.AlignCenter)
+        links_label.setOpenExternalLinks(True)
+        links_label.setStyleSheet("""
             QLabel { color: #f0f0f0; }
             a { color: #F08000; }
         """)
-        layout.addWidget(version_label)
+        layout.addWidget(links_label)
         
         msg_box.layout().addWidget(container_widget, 0, 0, 1, msg_box.layout().columnCount())
         
