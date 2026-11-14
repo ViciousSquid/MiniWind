@@ -28,6 +28,7 @@ from . import inventory as inv
 from . import equipment as eq
 from . import combat
 from . import magic
+from . import skills as sk
 from . import loot as loot_mod
 from . import quests
 from . import quests_content
@@ -95,6 +96,33 @@ def _stacks_from_text(text) -> List[Dict]:
 
 #: Weapon-skill practice from a miss, against a hit's ``1 + target health/120``.
 MISS_PRACTICE = 0.25
+
+#: Alchemy practice each potion drunk earns.
+POTION_PRACTICE = 0.5
+#: How much more a potion restores per point of Alchemy: x1.15 at 50, x1.3
+#: at 100 (:func:`alchemy_effects`).
+ALCHEMY_POTENCY_PER_POINT = 0.003
+#: The potion effects Alchemy strengthens: what a potion restores.
+ALCHEMY_EFFECTS = ("restore_health", "restore_magicka", "restore_stamina")
+
+
+def alchemy_potency(character) -> float:
+    """``1 + 0.003 x Alchemy``: how much more a potion restores for one who
+    knows potions."""
+    return 1.0 + character.skill(sk.ALCHEMY) * ALCHEMY_POTENCY_PER_POINT
+
+
+def alchemy_effects(character, effects: List[Dict]) -> List[Dict]:
+    """A drunk potion's *effects* as *character* gets them: each restoring
+    effect's magnitude x :func:`alchemy_potency`; the rest as they are."""
+    potency = alchemy_potency(character)
+    out = []
+    for e in effects or []:
+        e = dict(e)
+        if e.get("kind") in ALCHEMY_EFFECTS:
+            e["magnitude"] = float(e.get("magnitude", 0)) * potency
+        out.append(e)
+    return out
 
 
 #: Starting gear by class specialisation, granted at character creation.
@@ -192,10 +220,15 @@ class GameState:
         if d.category == items.POTION:
             if inv.remove_item(self.character.inventory, item_id, 1) <= 0:
                 return False
-            magic.apply_effects_to_character(self.character, d.get("effects", []))
             if not items.is_potion(d):
+                magic.apply_effects_to_character(self.character, d.get("effects", []))
                 self.message(f"Ate {d.name}")     # food: eaten, not drunk
                 return True
+            # Alchemy: who knows potions gets more from one, and every
+            # potion drunk teaches a little.
+            magic.apply_effects_to_character(
+                self.character, alchemy_effects(self.character, d.get("effects", [])))
+            self.character.use_skill(sk.ALCHEMY, POTION_PRACTICE)
             self.message(f"Drank {d.name}")
             for listener in list(getattr(self, "_drink_listeners", ())):
                 try:

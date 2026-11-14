@@ -219,6 +219,7 @@ Master 100.
 | Staff | Offensive 1.0 |
 | Lockpicking | 1 + 0.5 × pins |
 | Theft (seen or not) | Light Fingers 1.0 |
+| Drinking a potion | Alchemy 0.5 (not food) |
 | Trading | Mercantile 0.5 |
 | Persuading | Speechcraft 1.0 |
 | Skill book | 5.0 (first read only) |
@@ -253,7 +254,10 @@ Each level adds +25% magnitude, +12.5% duration and +10% cost.
 * **Regeneration per second:** magicka `max × 0.02 × (0.5 + END/100)` (none
   under the Golem); stamina `max × 0.15` (not while sprinting). Health does
   not regenerate — only spells, potions, food (bread and flour, 8 each) and
-  levelling restore it. The quick-heal key (**H**) drinks the strongest
+  levelling restore it.
+* **Alchemy:** a potion you drink restores `× (1 + 0.003 × Alchemy)` of its
+  health, magicka or stamina — ×1.15 at Alchemy 50, ×1.3 at 100. Other
+  effects (a ward, a cure) and food are unchanged. The quick-heal key (**H**) drinks the strongest
   healing potion carried, or, with none left, eats the cheapest food that
   heals (never while unhurt).
 * **Sprinting** costs 12 stamina a second; at 0 you are **winded** and cannot
@@ -810,4 +814,4 @@ It does nothing for anything else you do, and hearing is unchanged.
 
 Places where the code does not yet do what something in the game describes:
 
-* **Acrobatics** and **Alchemy** are neither trained nor read.
+* **Acrobatics** is neither trained nor read.

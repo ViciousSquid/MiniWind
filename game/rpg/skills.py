@@ -102,7 +102,8 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
              "the living, summoning spirit beasts, bending creatures to your "
              "will and sensing the life around you."),
     SkillDef(ALCHEMY, "Alchemy", MAGIC, attr.INTELLIGENCE,
-             "Brewing potions and poisons from ingredients."),
+             "Knowing your potions: those you drink restore more. Every "
+             "potion drunk trains it."),
     # --- Stealth ---
     SkillDef(SNEAK, "Sneak", STEALTH, attr.ENDURANCE,
              "Moving unseen; enables devastating sneak attacks."),
