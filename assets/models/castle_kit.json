@@ -1,0 +1,87 @@
+{
+  "player_height": 100,
+  "units": "Fio units (1 unit approximately 1.8 cm)",
+  "up_axis": "Y",
+  "front_axis": "+Z",
+  "origin": "ground center",
+  "model_scale": [
+    1,
+    1,
+    1
+  ],
+  "model_rotation": [
+    0,
+    0,
+    0
+  ],
+  "tower": {
+    "bounds_min": [
+      -224.0,
+      0.0,
+      -224.0
+    ],
+    "bounds_max": [
+      224.0,
+      768.0,
+      258.0
+    ],
+    "triangle_count": 3120,
+    "height": 768,
+    "base_diameter": 448,
+    "door_height": 120,
+    "roof_deck_height": 638
+  },
+  "wall": {
+    "bounds_min": [
+      -256.0,
+      0.0,
+      -98.0
+    ],
+    "bounds_max": [
+      256.0,
+      480.0,
+      98.0
+    ],
+    "triangle_count": 420,
+    "length": 512,
+    "height": 480,
+    "walkway_height": 392,
+    "walkway_clear_width": 96,
+    "repeat_offset": [
+      512,
+      0,
+      0
+    ],
+    "join_planes": [
+      -256,
+      256
+    ]
+  },
+  "gatehouse": {
+    "bounds_min": [
+      -512.0,
+      0.0,
+      -160.0
+    ],
+    "bounds_max": [
+      512.0,
+      640.0,
+      160.0
+    ],
+    "triangle_count": 2724,
+    "length": 1024,
+    "height": 640,
+    "opening_width": 256,
+    "opening_spring_height": 180,
+    "opening_crown_height": 308,
+    "join_planes": [
+      -512,
+      512
+    ]
+  },
+  "tower_join_planes": [
+    -224,
+    224
+  ],
+  "collision": "Exterior scenery. Use matching structural brushes for collision; model Props use a single bounding box."
+}
