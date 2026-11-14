@@ -449,7 +449,7 @@ if __name__ == "__main__":
             shares = ((0, 25), (25, 50), (50, 100))
         else:
             shares = ((0, 45), (45, 100))
-        with overlay.busy(title, "Reading the map"):
+        with overlay.busy(title, "Reading the map", 0):
             if default_map_path and os.path.isfile(default_map_path):
                 with overlay.share(*shares[0]):
                     window.load_level_file(default_map_path)
