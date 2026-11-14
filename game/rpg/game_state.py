@@ -28,6 +28,7 @@ from . import inventory as inv
 from . import equipment as eq
 from . import combat
 from . import magic
+from . import skills as sk
 from . import loot as loot_mod
 from . import quests
 from . import quests_content
@@ -42,6 +43,15 @@ except Exception:  # pragma: no cover
     _gore = None
 
 from . import gib as _gib
+
+
+def r_faction(q, rewards) -> str:
+    """The faction a quest's reputation goes to: its rewards' rep faction,
+    else the quest's own."""
+    rep = rewards.get("rep")
+    if isinstance(rep, (list, tuple)) and rep:
+        return str(rep[0])
+    return str(getattr(q, "faction", "") or "")
 
 
 def _mark_gibbed(props, damage, new_health, magical: bool = False) -> bool:
@@ -81,6 +91,37 @@ def _stacks_from_text(text) -> List[Dict]:
         stack = items.make(iid.strip(), n)
         if stack:
             out.append(stack)
+    return out
+
+
+#: Weapon-skill practice from a miss, against a hit's ``1 + target health/120``.
+MISS_PRACTICE = 0.25
+
+#: Alchemy practice each potion drunk earns.
+POTION_PRACTICE = 0.5
+#: How much more a potion restores per point of Alchemy: x1.15 at 50, x1.3
+#: at 100 (:func:`alchemy_effects`).
+ALCHEMY_POTENCY_PER_POINT = 0.003
+#: The potion effects Alchemy strengthens: what a potion restores.
+ALCHEMY_EFFECTS = ("restore_health", "restore_magicka", "restore_stamina")
+
+
+def alchemy_potency(character) -> float:
+    """``1 + 0.003 x Alchemy``: how much more a potion restores for one who
+    knows potions."""
+    return 1.0 + character.skill(sk.ALCHEMY) * ALCHEMY_POTENCY_PER_POINT
+
+
+def alchemy_effects(character, effects: List[Dict]) -> List[Dict]:
+    """A drunk potion's *effects* as *character* gets them: each restoring
+    effect's magnitude x :func:`alchemy_potency`; the rest as they are."""
+    potency = alchemy_potency(character)
+    out = []
+    for e in effects or []:
+        e = dict(e)
+        if e.get("kind") in ALCHEMY_EFFECTS:
+            e["magnitude"] = float(e.get("magnitude", 0)) * potency
+        out.append(e)
     return out
 
 
@@ -179,10 +220,15 @@ class GameState:
         if d.category == items.POTION:
             if inv.remove_item(self.character.inventory, item_id, 1) <= 0:
                 return False
-            magic.apply_effects_to_character(self.character, d.get("effects", []))
             if not items.is_potion(d):
+                magic.apply_effects_to_character(self.character, d.get("effects", []))
                 self.message(f"Ate {d.name}")     # food: eaten, not drunk
                 return True
+            # Alchemy: who knows potions gets more from one, and every
+            # potion drunk teaches a little.
+            magic.apply_effects_to_character(
+                self.character, alchemy_effects(self.character, d.get("effects", [])))
+            self.character.use_skill(sk.ALCHEMY, POTION_PRACTICE)
             self.message(f"Drank {d.name}")
             for listener in list(getattr(self, "_drink_listeners", ())):
                 try:
@@ -280,7 +326,8 @@ class GameState:
 
     def attack_creature(self, target_props: Dict, distance: float = 0.0,
                         draw: float = 1.0, guaranteed: bool = False,
-                        power: float = 1.0, hand: str = "main") -> Dict:
+                        power: float = 1.0, hand: str = "main",
+                        noticed: Optional[bool] = None, from_behind: bool = False) -> Dict:
         """Resolve a melee attack on a creature. Returns the combat result.
 
         Spends stamina, applies damage to the target's ``health`` property,
@@ -293,11 +340,15 @@ class GameState:
         Bow shots go through :meth:`fire_arrow` / :meth:`resolve_arrow_hit`
         instead, since a real flying arrow's damage is resolved when it
         physically lands, not the instant the string is released.
+
+        ``noticed``: whether the target has noticed the player (no sneak
+        attack then); None leaves it to :func:`combat.has_noticed`.
         """
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
                                    draw=draw, rng=self.rng, dice=self.dice,
-                                   guaranteed_hit=guaranteed, power=power, hand=hand)
+                                   guaranteed_hit=guaranteed, power=power, hand=hand,
+                                   noticed=noticed, from_behind=from_behind)
         if res.get("no_ammo"):
             self.message(out_of_ammo_text(eq.hand_weapon(char, hand)))
             return res
@@ -331,7 +382,8 @@ class GameState:
         return True
 
     def resolve_arrow_hit(self, target_props: Dict, draw: float = 1.0,
-                          hand: str = "main") -> Dict:
+                          hand: str = "main", noticed: Optional[bool] = None,
+                          from_behind: bool = False) -> Dict:
         """Resolve an already-fired arrow's impact on a creature.
 
         Mirrors :meth:`attack_creature` but assumes :meth:`fire_arrow` already
@@ -340,7 +392,8 @@ class GameState:
         """
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
-                                   draw=draw, rng=self.rng, dice=self.dice, hand=hand)
+                                   draw=draw, rng=self.rng, dice=self.dice, hand=hand,
+                                   noticed=noticed, from_behind=from_behind)
         return self._apply_hit(target_props, res)
 
     def _apply_hit(self, target_props: Dict, res: Dict) -> Dict:
@@ -350,6 +403,10 @@ class GameState:
         returned unchanged."""
         char = self.character
         if not res["hit"]:
+            # A miss still teaches a little: using a weapon is how you get
+            # better with it.
+            if res.get("skill") and not res.get("no_ammo"):
+                char.use_skill(res["skill"], MISS_PRACTICE)
             return res
         from .blocking import npc_block
         physical = res.get("kind") in (items.KIND_MELEE, *items.RANGED_KINDS)
@@ -358,6 +415,7 @@ class GameState:
                              rng=self.rng, against_player=True))
         res["damage"] = _warded(target_props, res["damage"])
         hp = int(target_props.get("health", 30))
+        res["health_before"] = hp
         hp -= int(round(res["damage"]))
         target_props["health"] = hp
         char.use_skill(res["skill"], res["difficulty"])
@@ -371,8 +429,15 @@ class GameState:
             target_props["health"] = 0
             target_props["dead"] = True
             # A physical overkill (melee / arrow) blows the body apart into a
-            # blood stain (hp here is the pre-clamp negative health).
-            _mark_gibbed(target_props, res["damage"], hp, magical=False)
+            # blood stain (hp here is the pre-clamp negative health) -- and so
+            # does any critical killing blow.
+            if res.get("crit") and _gore is not None:
+                res["crit_kill"] = True
+                _mark_gibbed(target_props, max(float(res["damage"]),
+                                               _gore.GIB_DAMAGE_FRACTION * _gore.max_health(
+                                                   target_props) + 1.0), hp, magical=False)
+            else:
+                _mark_gibbed(target_props, res["damage"], hp, magical=False)
             self.on_kill(target_props)
         return res
 
@@ -389,6 +454,8 @@ class GameState:
             for e in (spell.effects if spell else []):
                 if e.get("kind") == "summon":
                     self.message(f"Summoned a {e.get('creature','creature')}!")
+        elif res.reason == "metal":
+            self.message(magic.METAL_INTERFERES)
         elif res.reason == "not enough magicka":
             self.message("Not enough magicka")
         elif res.reason == "fizzle":
@@ -533,6 +600,7 @@ class GameState:
         if r.get("rep"):
             fac, amt = r["rep"]
             guilds.add_reputation(self.character, fac, amt)
+        self._grant_returns(q, r)
         self.award_xp(getattr(q, "xp", 0))
         self.message(f"Quest complete: {q.name}")
         # Helping someone in need is a good deed (game.rpg.alignment).
@@ -540,6 +608,29 @@ class GameState:
         delta = alignment.player_deed(self.character, "quest")
         if delta:
             self.message(f"Alignment {delta:+.1f}: you helped someone in need.")
+
+    def _grant_returns(self, q, rewards) -> None:
+        """What the quest's giver is glad to have back (``rewards.returns``):
+        each item the character still carries is handed over, for the gold
+        and reputation it is worth to them. Keeping it is the character's
+        choice; it is still stolen (game.sim.ownership)."""
+        for ret in rewards.get("returns") or ():
+            if not isinstance(ret, dict) or not ret.get("item"):
+                continue
+            iid = str(ret["item"])
+            if not inv.has_item(self.character.inventory, iid, 1):
+                continue
+            inv.remove_item(self.character.inventory, iid, 1)
+            gold = int(ret.get("gold", 0) or 0)
+            if gold:
+                self.add_gold(gold)
+            rep = int(ret.get("rep", 0) or 0)
+            if rep and r_faction(q, rewards):
+                guilds.add_reputation(self.character, r_faction(q, rewards), rep)
+            d = items.get(iid)
+            name = d.name if d is not None else iid
+            who = q.giver or "They"
+            self.message(f"{who} takes back {name}" + (f": +{gold} gold." if gold else "."))
 
     def award_xp(self, amount) -> int:
         """Give the character *amount* experience; tells the XP listeners."""

@@ -41,7 +41,7 @@ from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainterPath, QPen
 
 from engine.floating_windows import FloatingWindow
 
-from . import drag, hits, hud_layout
+from . import drag, hits, hud_layout, spell_lock
 
 # Forged iron and old bronze, after the dark ornate action bars of ARPGs: a
 # bevelled tile per slot on a riveted backing bar, an ember rim on the one
@@ -82,6 +82,14 @@ def layout(n, view_w, view_h):
     cell = int(max(MIN_CELL, min(CELL, (room + GAP) // n - GAP)))
     total = n * cell + (n - 1) * GAP
     x0 = (view_w - total) // 2
+    # The target panel shares the bottom row: on a small screen it narrows
+    # first, and only when even its narrowest will not fit does the bar move
+    # left to make room (game/ui/target_panel.py).
+    try:
+        from .target_panel import bar_nudge
+        x0 -= bar_nudge(view_w, x0 - PAD, total + 2 * PAD)
+    except Exception:
+        pass
     y = view_h - cell - BOTTOM - PAD - NUMBERS
     return [QRect(x0 + i * (cell + GAP), y, cell, cell) for i in range(n)]
 
@@ -100,6 +108,14 @@ def _is_weapon(iid) -> bool:
     except Exception:
         return False
     return d is not None and d.category == items.WEAPON
+
+
+def _gamepad() -> bool:
+    try:
+        import game.controls as controls
+        return bool(controls.gamepad())
+    except Exception:
+        return False
 
 
 def _spell_of(stack):
@@ -129,6 +145,7 @@ class InventoryStrip(FloatingWindow):
     def __init__(self, session):
         from .paint_cache import PaintCache
         self._cache = PaintCache()
+        self._locked = False
         super().__init__("Inventory", 0, 0, 200, body_height=CELL)
         self.window_rect = QRect(0, 0, 0, 0)
         self.session = session
@@ -209,12 +226,17 @@ class InventoryStrip(FloatingWindow):
             handed = getattr(self.session.game.character, "handed", "right")
         except Exception:
             handed = "right"
+        # Worn metal armour greys every spell out (game/ui/spell_lock.py).
+        try:
+            self._locked = spell_lock.locked(self.session.game.character)
+        except Exception:
+            self._locked = False
         # The bar, tiles, icons and numbers as one picture, painted again only
         # when something it shows changes (paint_cache): it was ~2 ms a frame.
         key = (tuple(repr(stack) for stack in self._slots[:len(self._rects)]),
                tuple((r.x(), r.y(), r.width(), r.height()) for r in self._rects),
                self.selected, hovered, dragged is not None, picked, hidden,
-               tuple(sorted(worn)), tuple(hands), handed)
+               tuple(sorted(worn)), tuple(hands), handed, self._locked)
         frame = QRect(self.window_rect).adjusted(-6, -6, 6, 6 + NUMBERS + 4)
         self._cache.draw(painter, key, frame,
                          lambda p: self._paint_slots(p, worn, hands, hovered, dragged,
@@ -226,6 +248,15 @@ class InventoryStrip(FloatingWindow):
         stack = self._slots[self.selected] if self.selected < len(self._slots) else None
         if stack and dragged is None:
             self._draw_name(painter, stack)
+        if self._locked and dragged is None:
+            # A greyed spell says why: hovered by the pointer, or the slot a
+            # gamepad has highlighted (the selected one).
+            if 0 <= hovered < len(self._slots) and _spell_of(self._slots[hovered]) is not None:
+                spell_lock.note(self._rects[hovered], True)
+            elif (_gamepad() and self.selected < min(len(self._slots), len(self._rects))
+                  and _spell_of(self._slots[self.selected]) is not None):
+                spell_lock.focus(self._rects[self.selected], True)
+            spell_lock.flush(painter)
         if mine:
             drag.draw_ghost(painter, self, hits.pointer, self._rects[0].width() - 8)
         elif picked is not None:
@@ -357,6 +388,8 @@ class InventoryStrip(FloatingWindow):
             pm = item_icons.spell_pixmap(spell.id, rect.width() - 8)
         except Exception:
             pm = None
+        locked = getattr(self, "_locked", False)
+        pm = spell_lock.grey(pm, locked)
         if pm is not None and not pm.isNull():
             clip = QPainterPath()
             clip.addRoundedRect(QRectF(rect).adjusted(4, 4, -4, -4), 3, 3)
@@ -366,12 +399,14 @@ class InventoryStrip(FloatingWindow):
                                rect.y() + (rect.height() - pm.height()) // 2, pm)
             painter.restore()
         else:
-            colour = QColor(*spell.color)
+            colour = spell_lock.colour(spell.color, locked)
             r = QRectF(rect).adjusted(rect.width() * 0.22, rect.height() * 0.22,
                                       -rect.width() * 0.22, -rect.height() * 0.22)
             painter.setBrush(colour)
             painter.setPen(QPen(colour.darker(170), 1.4))
             painter.drawEllipse(r)
+        if locked:
+            spell_lock.veil(painter, rect)
         if not hand:
             return
         c = self.session.game.character

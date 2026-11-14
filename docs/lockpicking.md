@@ -51,9 +51,13 @@ Releasing tension lets strain recover. A stalled frame counts for at most
 pick. Security practice is awarded once, on opening the lock.
 
 At **Security below 15**, each snap can shear a tip off in the lock. The chance
-is `25% × (15 − Security) / 15` (about 17% at Security 5), displayed before
-tension is applied. A sheared tip jams the container: keys, further picks,
-leaving the map, saving and reloading cannot bypass it.
+is `25% × (15 − Security) / 15` (about 17% at Security 5). It is rolled as a
+d20 save -- "Roll to save the snapped pick", at `1 −` that chance -- in the
+player's roll box over them, which shows over the lockpicking window (RULES.md
+§1); the result is told when the die lands. The window shows the risk as the
+die rolls it (5% steps, at least 5%: 15% at Security 5) before tension is
+applied. A sheared tip jams the container: keys, further picks, leaving the
+map, saving and reloading cannot bypass it.
 
 **Knock** is the sole jam exception. This Defensive touch spell costs 45 base
 magicka and uses normal spell knowledge, skill, magicka, fizzle and practice
@@ -78,3 +82,25 @@ The engraved plate is `assets/ui/lockpicking/escutcheon.png`. Pins, springs,
 shear line, pick, tension feedback, recoil and broken-pick segments are drawn
 as scalable vectors over it. `assets/sprites/spells/knock.png` is the 100×100
 placeholder spell icon.
+
+## Lock styles
+
+Every lock is picked the same way, with the same numbers; only its look
+changes with what it locks (`lock_style` in `game/ui/lockpicking.py`):
+
+| Style | Seen on | Looks like |
+| --- | --- | --- |
+| Padlock | crates | a laminated steel padlock opened up like a practice lock: the pins upright in their chambers above a brass plug, the pick in through the keyway at its side |
+| Rusted | abandoned, burial and barrow chests; many novice locks | a pitted, rust-streaked iron case with dull pins |
+| Iron | strongboxes, coffers, hoards, the toll chest; most apprentice locks | a riveted steel case with steel pins |
+| Ornate | merchants' and fine chests; expert and master locks | the engraved brass escutcheon |
+
+The iron, rusted and padlock plates are rendered images, like the escutcheon,
+made by `python -m game.tools.make_lock_art` (a lit height field: forged and
+pitted metal, hammer marks, scratches, rivets, rust and flaking scale, a laminated
+steel padlock with a cutaway into its works), laid out channel for channel with the
+pins and pick the game draws over them.
+
+A container can name its own with `"lock_style"` (`ornate`, `iron`, `rusted`,
+`padlock`); otherwise it is chosen from its kind, name and difficulty, fixed
+per container so the same chest always shows the same lock.

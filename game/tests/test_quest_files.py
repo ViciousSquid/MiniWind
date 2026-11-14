@@ -215,3 +215,136 @@ def test_wire_quest_givers_shows_available_quest_bubble():
     session._wire_quest_givers()
     # An un-started offered quest shows the '!' available-quest cue.
     assert session.bubble_kind(npc) == "quest"
+
+
+# --- precedence: the files win over the built-ins, in a new game too -------
+def test_a_new_character_keeps_the_quest_files_not_the_built_ins():
+    """Making a character builds a new GameState, whose constructor loads the
+    built-in quests. It used to register them again over the ``.quest`` files
+    the session had already loaded, so every new game played the built-in Old
+    Mill quest -- whose first stage never completes."""
+    session = _session([])
+    on_disk = {d["id"]: d for d in quest_files.load_quest_defs()}
+    assert "mill_bandits" in on_disk
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    for qid, data in on_disk.items():
+        running = quests.get(qid)
+        assert running is not None, qid
+        assert [s.index for s in running.stages] == [s["index"] for s in data["stages"]], qid
+        assert [s.objective for s in running.stages] == \
+            [s.get("objective", "") for s in data["stages"]], qid
+
+
+def test_a_return_to_the_giver_stage_points_at_the_giver():
+    """'Return to Aldric' has no condition (the giver's dialogue advances it),
+    and used to have no arrow either -- with Aldric 12 km away."""
+    quests.register(quests.quest_from_dict(
+        {"id": "arrow_home", "name": "Arrow Home", "giver": "Aldric",
+         "stages": [{"index": 0, "journal": "Go", "objective": "Go",
+                     "condition": {"kind": "visit", "target": "Nowhere"}},
+                    {"index": 10, "journal": "Back", "objective": "Return to Aldric"},
+                    {"index": 20, "journal": "Paid", "finishes": True}]}))
+    aldric = entities.NPC(pos=[9000, 0, 6000], properties={"name": "Aldric"})
+    session = _session([aldric])
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    session.game.quests.start("arrow_home")
+    session.game.quests.set_stage("arrow_home", 10)
+    q = quests.get("arrow_home")
+    assert session._objective_world_pos(q) == [9000, 0, 6000]
+    session.game.quests.set_stage("arrow_home", 20)
+    assert session._objective_world_pos(q) is None
+
+
+def test_a_bandit_archer_counts_toward_killing_bandits():
+    """A 'kill bandits' objective counts archers too: they are bandits. Only
+    the plain 'bandit' role used to count, so an archer read SLAIN on screen
+    and the objective stayed at 0."""
+    session = _session([])
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    archer = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "bandit_archer"})
+    assert archer.properties["faction"] == "bandits"
+    session.record_kill(archer)
+    assert session.store.get("kills.bandits") in (1, "1")
+
+
+# --- chapter one: the opening ------------------------------------------------
+def _speak(session, npc):
+    """The line *npc* opens a conversation with, and the talk recorded."""
+    tree = session._with_quest_lines(npc.properties.get("dialogue") or
+                                     {"start": "greet", "nodes": {"greet": {"text": "Hello.", "responses": []}}},
+                                     npc)
+    session.record_talk(npc)
+    return tree["nodes"][tree["start"]]["text"]
+
+
+def test_a_new_character_begins_with_elowen_and_the_flour():
+    """Trouble at the Old Mill starts with a new game: talk to Elowen, who
+    reads her own shelf, then Mara, who reads her windmill's stock."""
+    elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen", "display_name": "Elowen the Trader",
+                                                      "inventory": [{"id": "flour", "qty": 2}]})
+    mara = entities.NPC(pos=[10, 0, 0], properties={"name": "Mara"})
+    session = _session([elowen, mara])
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    log = session.game.quests
+    assert log.is_active("mill_bandits") and log.stage_of("mill_bandits") == 0
+    assert log.current_objective("mill_bandits") == "Talk to Elowen"
+
+    # Talking to Mara first does nothing for a stage that isn't hers yet.
+    assert "hopper" not in _speak(session, mara)
+    line = _speak(session, elowen)
+    assert "2 sacks of flour on the shelf" in line
+    session._tick_quests()
+    assert log.stage_of("mill_bandits") == 10
+
+    # Mara was spoken to before: this stage still wants a word now.
+    session._tick_quests()
+    assert log.stage_of("mill_bandits") == 10
+    line = _speak(session, mara)
+    assert "no wheat in the hopper" in line          # no windmill in this scene
+    session._tick_quests()
+    assert log.stage_of("mill_bandits") == 20
+    assert log.current_objective("mill_bandits") == "Find the Old Mill"
+
+
+def test_an_empty_shelf_is_said_plainly():
+    elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen"})
+    session = _session([elowen])
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    assert "Today I've no flour on the shelf" in _speak(session, elowen)
+
+
+def test_elowen_calls_out_and_the_chapter_has_a_card():
+    import time
+    elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen"})
+    session = _session([elowen])
+    session._player_pos = lambda: [0.0, 0.0, 50.0]
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    queued = [text for _at, thing, text in session.__dict__.get("_bark_queue", [])
+              if thing is elowen]
+    assert queued == ["You! New face! Have you got a minute?"]
+    q = quests.get("mill_bandits")
+    assert (q.chapter, q.chapter_title) == (1, "The Old Mill")
+    session._quest_completed(q)
+    assert session.title_card["kicker"] == "Chapter One complete"
+    assert session.title_card["title"] == "The Old Mill"
+    assert session.title_card["t0"] <= time.monotonic()
+
+
+def test_an_empty_dialogue_tree_is_no_dialogue():
+    """The editor saves "no dialogue" as ``{"nodes": {}}``. That truthy dict
+    gave Millbrook's Head Chef (a merchant) and two archers of the Watch a
+    talk bubble and the Talk prompt, and pressing E opened nothing: the chef
+    could never trade."""
+    chef = entities.NPC(pos=[0, 0, 0], properties={
+        "name": "Head Chef", "display_name": "Head Chef", "merchant": True,
+        "dialogue": {"nodes": {}}})
+    archer = entities.NPC(pos=[40, 0, 0], properties={
+        "name": "Cress of the Watch", "dialogue": {"nodes": {}}})
+    session = _session([chef, archer])
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    assert session.start_dialogue(chef, None)
+    texts = [r["text"] for r in session.dialogue.view()["responses"]]
+    assert "Let's trade." in texts
+    session.end_dialogue()
+    assert session.bubble_kind(archer) is None
+    assert session.nearest_talkable([40, 0, 0]) is chef

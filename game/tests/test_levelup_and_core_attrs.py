@@ -36,12 +36,17 @@ def test_an_old_save_naming_them_still_loads():
     assert custom.favored_attrs == [attr.ENDURANCE]
 
 
-def test_endurance_now_steadies_the_aim():
+def test_skill_and_strength_steady_the_aim_and_armour_turns_it():
+    """To hit is d20 + attack bonus against Armour Class: weapon skill (and,
+    in melee, Strength) raise the bonus; a higher AC is harder to hit."""
     c = Character()
-    c.attrs[attr.ENDURANCE] = 40
-    low = combat.hit_chance(c, 30, 40)
-    c.attrs[attr.ENDURANCE] = 90
-    assert combat.hit_chance(c, 30, 40) > low
+    c.attrs[attr.STRENGTH] = 40
+    low = combat.hit_chance(c, 30, 12)
+    assert combat.hit_chance(c, 60, 12) > low
+    c.attrs[attr.STRENGTH] = 90
+    assert combat.hit_chance(c, 30, 12) > low
+    assert combat.hit_chance(c, 30, 12, melee=False) == low   # bows: no Strength
+    assert combat.hit_chance(c, 30, 18) < combat.hit_chance(c, 30, 12)
 
 
 # ------------------------------------------- every living thing has three
@@ -76,7 +81,7 @@ def test_strength_scales_the_damage_a_creature_deals():
 
 # ---------------------------------------------------------------- level up
 def _ready(class_id):
-    c = Character.create("T", "nord", class_id, "none")
+    c = Character.create("T", "highlander", class_id, "none")
     c.xp = c.xp_needed
     return c
 
@@ -85,6 +90,7 @@ def test_magic_users_choose_from_three_and_warriors_from_two():
     assert _ready("sorcerer").level_choices() == ["strength", "endurance", "charisma",
                                                   "magicka"]
     assert _ready("warrior").level_choices() == ["strength", "endurance", "charisma"]
+    assert _ready("barbarian").level_choices() == ["strength", "endurance", "charisma"]
 
 
 def test_the_choice_grows_its_attribute():
@@ -97,8 +103,9 @@ def test_the_choice_grows_its_attribute():
     assert c.max_magicka > magicka
 
 
-def test_a_warrior_cannot_take_magicka():
-    c = _ready("warrior")
+@pytest.mark.parametrize("class_id", ["warrior", "barbarian"])
+def test_a_warrior_cannot_take_magicka(class_id):
+    c = _ready(class_id)
     intelligence = c.attrs[attr.INTELLIGENCE]
     res = c.level_up(choice="magicka")
     assert res["choice"] == "" and c.attrs[attr.INTELLIGENCE] == intelligence
@@ -249,7 +256,7 @@ def test_a_watchman_can_be_talked_out_of_half_a_lesser_writ():
     assert w.bounty("vale") == 550                    # the blood writ stands
 
 
-def test_a_warrior_hits_harder_than_any_other_class():
+def test_a_warrior_and_a_barbarian_hit_harder_than_any_other_class():
     import random as _random
     from ..rpg import inventory as inv, items, equipment as eq
     damage = {}
@@ -261,10 +268,12 @@ def test_a_warrior_hits_harder_than_any_other_class():
         res = combat.player_attack(c, {"health": 500, "endurance": 40}, guaranteed_hit=True,
                                    rng=_random.Random(1))
         damage[class_id] = res["damage"] / (1.5 if res["crit"] else 1.0)
-    best = max(v for k, v in damage.items() if k != "warrior")
+    best = max(v for k, v in damage.items() if k not in ("warrior", "barbarian"))
     assert damage["warrior"] == pytest.approx(best * classes.WARRIOR_DAMAGE, rel=0.02)
+    assert damage["barbarian"] == pytest.approx(damage["warrior"], rel=0.02)
     assert classes.damage_mult(type("C", (), {"class_id": "custom"})()) == 1.0
     assert classes.NO_MAGIC_NOTE and not classes.CLASSES["warrior"].magic
+    assert not classes.CLASSES["barbarian"].magic
 
 
 def test_a_warrior_takes_the_same_damage_as_anyone():

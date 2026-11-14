@@ -7,7 +7,9 @@ only show after many sessions, which is how an editor is actually used.
 """
 
 import gc
+import linecache
 import threading
+import traceback
 import tracemalloc
 
 import pytest
@@ -23,6 +25,11 @@ pytestmark = [pytest.mark.qt, pytest.mark.integration, pytest.mark.slow]
 #: A room with a patrolling monster, a pickup and a level change.
 MAP = scenes.monster_arena()
 CYCLES = 30
+#: Not the game's memory: the freeze watchdog (engine/freeze_watchdog.py)
+#: dumps every thread's stack if a step stalls for 30 s, as it can on a
+#: loaded machine, and the dump fills Python's source-line cache.
+_NOT_THE_GAME = [tracemalloc.Filter(False, linecache.__file__),
+                 tracemalloc.Filter(False, traceback.__file__)]
 
 
 def _play_once(session):
@@ -48,6 +55,8 @@ def test_repeated_play_sessions_leak_no_threads_or_memory(fio_session):
             _play_once(session)
         gc.collect()
         after = tracemalloc.take_snapshot()
+        before = before.filter_traces(_NOT_THE_GAME)
+        after = after.filter_traces(_NOT_THE_GAME)
     finally:
         tracemalloc.stop()
 

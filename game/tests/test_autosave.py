@@ -65,6 +65,23 @@ def test_a_timed_save_waits_out_danger_and_menus():
     assert not saver.ready()
 
 
+def test_a_discovery_in_danger_is_saved_once_the_danger_has_passed():
+    """Discovering a ruin by walking into its skeletons saved the game among
+    them: each restore put the player back there, hurt, to die again."""
+    s, saver, now = _saver()
+    danger = {"near": True}
+    s.hostile_near = lambda radius: danger["near"]
+    saver.tick(1.0)
+    s.game.character.health = 70.0                   # struck as it is found
+    saver.tick(1.0)
+    saver.discovered("Old Hob's Ruin")
+    assert saver.pending == "discovered Old Hob's Ruin" and not saver.ready()
+    now[0] += autosave.SAFE_AFTER_HURT
+    assert not saver.ready(), "the skeletons are still here"
+    danger["near"] = False
+    assert saver.ready() and saver.take() == "discovered Old Hob's Ruin"
+
+
 def test_the_dead_are_never_saved():
     s, saver, now = _saver()
     saver.discovered("Greywood")

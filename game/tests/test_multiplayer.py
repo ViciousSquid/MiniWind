@@ -19,7 +19,7 @@ def profile(index=0, device=None):
     return dict(
         name=f"Player {index + 1}",
         head=heads.HEAD_IDS[index],
-        race="imperial",
+        race="valian",
         **{"class": "warrior"},
         birthsign="none",
         gender="male",
@@ -157,7 +157,7 @@ def test_only_host_can_set_companion_respawns_before_starting():
         lobby.set_respawn_at_village("host", False)
 
 
-def test_bots_use_party_slots_and_cannot_impersonate_human_devices_or_host():
+def test_ai_companions_come_on_top_of_four_humans_and_cannot_impersonate_them():
     lobby = Lobby()
     with pytest.raises(LobbyError, match="host"):
         lobby.add("guest", profile(), bot=True)
@@ -169,8 +169,16 @@ def test_bots_use_party_slots_and_cannot_impersonate_human_devices_or_host():
     assert not lobby.can_start
     with pytest.raises(LobbyError, match="local character"):
         lobby.ready("host", True)
+    with pytest.raises(LobbyError, match="companions"):
+        lobby.add("host", profile(9), bot=True)            # four AI at most
+    # Four humans still fit beside the four companions.
+    lobby.add("host", profile(4))
+    lobby.add("host", profile(5, "pad:5"))
+    lobby.add("guest", profile(6, "keyboard"))
+    lobby.add("guest", profile(7, "pad:7"))
+    assert lobby.humans() == 4 and lobby.companions() == 4
     with pytest.raises(LobbyError, match="full"):
-        lobby.add("host", profile())
+        lobby.add("third", profile(8, "keyboard"))
 
 
 def test_imported_campaign_identity_cannot_escape_its_save_folder(monkeypatch):

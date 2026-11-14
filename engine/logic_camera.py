@@ -6,6 +6,7 @@ and first-person/overhead transitions.
 """
 
 import math
+import random
 import time
 
 import glm
@@ -55,21 +56,27 @@ class LogicCamera:
         self.reset_camera_focus()
 
         # Screen shake (shake()): strength as a fraction of the overhead
-        # camera's height, when it started and how long it lasts.
+        # camera's height, when it started, how long it lasts, and how many
+        # jumps a second (0: a smooth wobble).
         self._shake = (0.0, 0.0, 0.0)
+        self._shake_steps = 0.0
 
     # ------------------------------------------------------------------
     # Screen shake
     # ------------------------------------------------------------------
 
-    def shake(self, strength: float, seconds: float = 0.3) -> None:
+    def shake(self, strength: float, seconds: float = 0.3,
+              steps_per_second: float = 0.0) -> None:
         """Jolt the play camera: *strength* is how far it jumps, as a fraction
         of the overhead camera's height (0.02 is a hard knock), dying away
-        over *seconds*. A stronger shake replaces a weaker one in progress."""
+        over *seconds*. With *steps_per_second* the camera jumps to a new
+        random spot that many times a second -- a choppy rattle -- rather than
+        wobbling smoothly. A stronger shake replaces a weaker one in progress."""
         now = time.perf_counter()
         if self.shake_level(now) > float(strength):
             return
         self._shake = (float(strength), now, max(0.05, float(seconds)))
+        self._shake_steps = max(0.0, float(steps_per_second))
 
     def shake_level(self, now=None) -> float:
         """How strong the shake is right now (0 when still)."""
@@ -87,6 +94,15 @@ class LogicCamera:
         if level <= 0.0:
             return 0.0, 0.0
         amp = level * self.effective_overhead_height()
+        steps = getattr(self, "_shake_steps", 0.0)
+        if steps > 0.0:
+            # A rattle: a new random spot each step, held until the next.
+            start = self._shake[1]
+            step = int((now - start) * steps)
+            rng = random.Random(hash((round(start, 6), step)))
+            angle = rng.uniform(0.0, 2.0 * math.pi)
+            reach = amp * rng.uniform(0.55, 1.0)
+            return reach * math.cos(angle), reach * math.sin(angle)
         return (amp * math.sin(now * 71.0) * math.cos(now * 23.0),
                 amp * math.sin(now * 59.0 + 1.3) * math.cos(now * 31.0))
 

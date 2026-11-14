@@ -8,7 +8,7 @@ import pytest
 from game.diceroll import DiceRoller, roll_check
 from game.held_weapons import HeldWeapons
 from game.multiplayer.bots import PartyBots
-from game.rpg import blocking, combat, equipment, items
+from game.rpg import armour_class, blocking, combat, equipment, items
 from game.rpg.dialogue import DictStore
 from game.rpg.game_state import GameState
 from game.tests.test_multiplayer_bots import companions, think_until
@@ -27,7 +27,7 @@ class Faces(random.Random):
 
 
 def fighter():
-    return GameState.new_game(DictStore(), "Fighter", "imperial", "warrior", rng=random.Random(0))
+    return GameState.new_game(DictStore(), "Fighter", "valian", "warrior", rng=random.Random(0))
 
 
 def guard(**extra):
@@ -37,12 +37,12 @@ def guard(**extra):
             **extra}
 
 
-def test_successful_character_save_mitigates_damage_and_failed_save_does_not(monkeypatch):
-    monkeypatch.setattr(equipment, "deflect_chance", lambda _: 0)
+def test_successful_character_save_mitigates_damage_and_failed_save_does_not():
+    # The attacker's to-hit roll lands (20), then the block save fails / saves.
     failed = combat.resolve_incoming(fighter().character, 100, blocking=True,
-                                     dice=DiceRoller(rng=Faces(1)))
+                                     dice=DiceRoller(rng=Faces(20, 1)))
     saved = combat.resolve_incoming(fighter().character, 100, blocking=True,
-                                    dice=DiceRoller(rng=Faces(20)))
+                                    dice=DiceRoller(rng=Faces(20, 20)))
     assert failed["blocked"] == 0 and not failed["block_roll"]["success"]
     assert saved["blocked"] > 0 and saved["block_roll"]["success"]
     assert saved["block_roll"]["dice_notation"] == "1d20"
@@ -79,7 +79,9 @@ def test_player_hit_tests_the_npc_shield_and_applies_the_saved_damage():
     outcomes = []
     for face in (1, 20):
         game = fighter()
-        game.dice = DiceRoller(rng=Faces(1, face))  # failed critical, then the defender's save
+        # The to-hit roll lands, the damage die rolls a 4, a failed critical,
+        # then the defender's save.
+        game.dice = DiceRoller(rng=Faces(20, 4, 1, face))
         target = guard()
         result = game.attack_creature(target, guaranteed=True)
         assert target["health"] == 500 - round(result["damage"])
@@ -88,8 +90,10 @@ def test_player_hit_tests_the_npc_shield_and_applies_the_saved_damage():
     assert outcomes[1] < outcomes[0]
 
 
-def test_npc_damage_filter_saves_then_applies_wards():
+def test_npc_damage_filter_saves_then_applies_wards(monkeypatch):
     from game.npc_magic import NpcMagic
+    from game.rpg import armour_class
+    monkeypatch.setattr(armour_class, "to_hit", lambda *a: 1.0)   # every blow lands
     from game.tests.test_npc_magic import _Session
 
     game = fighter()
@@ -151,12 +155,13 @@ def test_companion_save_changes_real_health_and_logs_without_animating(coop_game
     human, bot, *_ = companions(coop)
     c = bot.session.game.character
     monkeypatch.setattr(equipment, "deflect_chance", lambda _: 0)
+    monkeypatch.setattr(armour_class, "crit_chance", lambda *_a, **_k: 0.0)
     sentinel = {"result": {"label": "Player's own roll"}, "elapsed": 0.2}
     human.session.dice_animation = sentinel
     bot.session.toggle_block(True)
     before = c.health
     c.health = c.max_health
-    bot.session.game.dice.rng = Faces(20)
+    bot.session.game.dice.rng = Faces(20, 20)     # the foe's to-hit lands; the save holds
     reduced = coop.damage(bot.player_id, 25)
     assert reduced < 25 and c.health == c.max_health - reduced
     assert human.session.dice_animation is sentinel and bot.session.dice_animation is None
@@ -208,8 +213,9 @@ def test_humans_own_shield_save_animates(coop_game, monkeypatch):
     monkeypatch.setattr(human.session, "_visualise_dice_rolls_enabled", lambda: True)
     monkeypatch.setattr(equipment, "deflect_chance", lambda _: 0)
     human.session.dice_animation = None
+    monkeypatch.setattr(armour_class, "crit_chance", lambda *_a, **_k: 0.0)
     human.session.toggle_block(True)
-    human.session.game.dice.rng = Faces(20)
+    human.session.game.dice.rng = Faces(20, 20)   # the foe's to-hit lands; the save holds
     coop.damage(human.player_id, 10)
     result = human.session.dice_animation["result"]
     assert result["success"] and "shield saving throw" in result["label"]

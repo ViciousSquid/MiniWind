@@ -2,6 +2,7 @@
 file overrides its archive member, and every loader finds archived assets."""
 
 import io
+import os
 import zipfile
 
 import pytest
@@ -229,3 +230,23 @@ def test_repository_editor_archive_carries_the_playerstart_model():
         names = set(archive.namelist())
     assert {'assets/editor/playerstart.obj', 'assets/editor/playerstart.mtl',
             'assets/select.png'} <= names
+
+
+def test_the_mount_index_follows_a_change_of_working_folder(tmp_path, monkeypatch):
+    """The mounted packages are found relative to the working folder; an
+    index built in one folder must not answer for another -- found when the
+    suite ran this file right after a test that indexed the project."""
+    from engine import asset_archives as mounts
+    first, second = tmp_path / 'first', tmp_path / 'second'
+    for folder, data in ((first, b'first'), (second, b'second')):
+        (folder / 'assets').mkdir(parents=True)
+        with zipfile.ZipFile(folder / 'assets' / 'extra.fiopak', 'w') as archive:
+            archive.writestr('data/thing.txt', data)
+    monkeypatch.chdir(first)
+    mounts.refresh()
+    held = mounts.archive_of('data/thing.txt')
+    assert held is not None and os.path.isabs(held) and held.startswith(str(first))
+    monkeypatch.chdir(second)                 # well within the recheck window
+    held = mounts.archive_of('data/thing.txt')
+    assert held is not None and held.startswith(str(second))
+    mounts.refresh()

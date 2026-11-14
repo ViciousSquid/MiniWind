@@ -141,6 +141,8 @@ class LoadingOverlay(QWidget):
         self._bar = None
         #: Which presentation the load under way was raised with.
         self._staged = False
+        #: The bar's share each nested operation reports into (see share()).
+        self._shares = []
         parent.installEventFilter(self)
         self.hide()
 
@@ -191,6 +193,29 @@ class LoadingOverlay(QWidget):
         finally:
             self.end()
 
+    @contextlib.contextmanager
+    def share(self, low: float, high: float):
+        """Within the block, a stage's percentage is of the share *low* to
+        *high* of the bar, not of the whole bar.
+
+        An operation made of others -- opening a map and then starting play
+        on it -- gives each its share, so each one's own stages (0-100 of
+        itself) move the bar through its part instead of being swallowed by
+        the bar already standing further on. Shares nest."""
+        outer = self._shares[-1] if self._shares else (0.0, 100.0)
+        span = (outer[1] - outer[0]) / 100.0
+        self._shares.append((outer[0] + float(low) * span, outer[0] + float(high) * span))
+        try:
+            yield self
+        finally:
+            self._shares.pop()
+
+    def _in_share(self, percent):
+        if not self._shares:
+            return percent
+        low, high = self._shares[-1]
+        return low + (high - low) * float(percent) / 100.0
+
     def step(self, stage: str, percent: int = None) -> None:
         """Name the stage now under way and show it, and the throbber, at once."""
         if not self.active:
@@ -201,7 +226,7 @@ class LoadingOverlay(QWidget):
         if percent is None:
             target = current + max(1, int((_CEILING - current) * _ADVANCE))
         else:
-            target = int(percent)
+            target = int(round(self._in_share(percent)))
         self._value = max(current, min(_CEILING, target))
         if self._staged and self._bar is not None:
             self._bar.setValue(self._value)
@@ -351,6 +376,10 @@ class _NullOverlay(QObject):
 
     @contextlib.contextmanager
     def busy(self, *_a, **_k):
+        yield self
+
+    @contextlib.contextmanager
+    def share(self, *_a, **_k):
         yield self
 
 

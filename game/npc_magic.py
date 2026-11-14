@@ -466,14 +466,59 @@ class NpcMagic:
         return out
 
     def damage_filter(self, victim, damage, _attacker=None, *, damage_kind="physical"):
-        """NPC shields roll a physical save, then wards soak what remains."""
+        """A physical blow between NPCs and creatures first rolls to hit: the
+        attacker's d20 + attack bonus against the victim's Armour Class
+        (game/rpg/armour_class.py) -- a miss does nothing. Then NPC shields
+        roll a physical save, and wards soak what remains."""
         props = getattr(victim, "properties", None)
+        if (isinstance(props, dict) and damage_kind == "physical" and damage > 0
+                and not props.get("multiplayer_player")):
+            from .rpg import armour_class as ac_rules
+            from .diceroll import DiceRoller, roll_check
+            attacker = getattr(_attacker, "properties", None)
+            bonus = ac_rules.npc_attack_bonus(attacker)
+            target_ac = ac_rules.of(props)
+            chance = ac_rules.to_hit(bonus, target_ac)
+            # A d20 of its own (no listeners: not the player's dice log).
+            dice_rng = getattr(self.session, "dice_rng", None) or getattr(self.session, "rng", None)
+            roll = roll_check(DiceRoller(rng=dice_rng), chance,
+                              "Roll to hit", source="combat.npc_hit",
+                              why=f"d20 {bonus:+d} vs Armour Class {target_ac}",
+                              context={"npc": True, "quiet": True})
+            hit = bool(roll["success"])
+            # It landed: the attacker rolls for a critical hit, as the
+            # player does (from its Luck).
+            crit = hit and ac_rules.roll_crit(attacker, rng=dice_rng)
+            if crit:
+                damage = damage * ac_rules.CRIT_DAMAGE
+            outcome = getattr(self.session, "attack_outcome", None)
+            show = getattr(self.session, "show_roll_box", None)
+            side = getattr(self.session, "side_of", None)
+            if _attacker is not None:
+                try:
+                    if show is not None:
+                        name = str(props.get("display_name") or props.get("name") or "")
+                        show(_attacker, roll, kind="npc",
+                             against=(name.upper(), side(victim) if side else "ally"))
+                    if outcome is not None:
+                        outcome(_attacker, hit, crit)   # HIT / MISS / Crit!, as its die lands
+                except Exception:
+                    pass
+            if not hit:
+                return 0                    # turned aside by the victim's armour
         if isinstance(props, dict):
             from .rpg.blocking import npc_block
             game = getattr(self.session, "game", None)
-            damage = npc_block(props, damage, damage_kind=damage_kind,
-                               dice=getattr(game, "dice", None),
-                               rng=getattr(self.session, "rng", None))["damage"]
+            saved = npc_block(props, damage, damage_kind=damage_kind,
+                              dice=getattr(game, "dice", None),
+                              rng=getattr(self.session, "rng", None))
+            damage = saved["damage"]
+            show = getattr(self.session, "show_roll_box", None)
+            if saved.get("block_roll") and show is not None:
+                try:
+                    show(victim, saved["block_roll"], kind="npc")   # its shield save
+                except Exception:
+                    pass
         dealt = ward_soak(props, damage) if isinstance(props, dict) else damage
         bleed = getattr(self.session, "gore_npc_hit", None)
         if bleed is not None:

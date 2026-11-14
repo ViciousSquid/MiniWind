@@ -322,9 +322,20 @@ def _find(member):
         if name is not None:
             return ('package', path), name
     mounted = _ensure_index().get(member)
-    if mounted is not None:
+    if mounted is not None and not _is_category_archive(mounted):
         return ('mount', mounted), member
     return None, None
+
+
+def _is_category_archive(path) -> bool:
+    """``assets/<category>.fiopak``: a category archive. Those are indexed and
+    checked by :func:`prepare_asset_archives`, which has the last word for
+    them here -- one it refused (unsafe or foreign members) must not be read
+    member by member through the mount index instead."""
+    folder, name = os.path.split(os.path.normpath(path))
+    stem, ext = os.path.splitext(name)
+    return (ext.lower() == '.fiopak' and stem in ASSET_CATEGORIES
+            and os.path.basename(folder) == ASSET_DIR)
 
 
 def _read(found, info):
@@ -509,6 +520,7 @@ _mount_lock = threading.Lock()
 _mount_index: Dict[str, str] = {}             # member path -> archive path
 _signature: Tuple = ()
 _checked = 0.0
+_checked_in = ""          # the working folder the index was checked in
 #: How often (s) to look for archives that appeared, vanished or changed.
 RECHECK_SECONDS = 2.0
 
@@ -536,7 +548,10 @@ def archives() -> List[str]:
     found = []
     for folder in SEARCH_DIRS:
         found.extend(glob.glob(os.path.join(folder, ARCHIVE_GLOB)))
-    return sorted(set(os.path.normpath(p) for p in found),
+    # Absolute: the search folders are relative to the working folder, and
+    # an index kept as relative paths would read another folder's archive
+    # after a change of directory.
+    return sorted(set(os.path.abspath(p) for p in found),
                   key=lambda p: (os.path.basename(p).casefold(), p))
 
 
@@ -552,12 +567,13 @@ def _current_signature() -> Tuple:
 
 
 def _ensure_index() -> Dict[str, str]:
-    global _mount_index, _signature, _checked
+    global _mount_index, _signature, _checked, _checked_in
     import time
     now = time.monotonic()
-    if _signature and now - _checked < RECHECK_SECONDS:
+    here = os.getcwd()
+    if _signature and now - _checked < RECHECK_SECONDS and here == _checked_in:
         return _mount_index
-    _checked = now
+    _checked, _checked_in = now, here
     sig = _current_signature()
     if sig == _signature:
         return _mount_index
@@ -581,11 +597,12 @@ def _ensure_index() -> Dict[str, str]:
 
 def refresh() -> None:
     """Forget the index (a test, or an archive written while running)."""
-    global _mount_index, _signature, _checked
+    global _mount_index, _signature, _checked, _checked_in
     with _mount_lock:
         _mount_index = {}
         _signature = ()
         _checked = 0.0
+        _checked_in = ""
 
 
 def archive_of(path: str) -> Optional[str]:

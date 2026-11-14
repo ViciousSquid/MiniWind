@@ -25,13 +25,20 @@ NPC = "npc"
 CREATURE = "creature"
 
 
+#: Body sizes, D&D's categories, and how much body each is beside a person
+#: (1.0). Health is toughness, not bulk: a veteran guard has more of it than
+#: a farmer and is no bigger, a bear more than both and is.
+TINY, SMALL, MEDIUM, LARGE, HUGE = "tiny", "small", "medium", "large", "huge"
+SIZES = {TINY: 0.12, SMALL: 0.4, MEDIUM: 1.0, LARGE: 2.2, HUGE: 3.0}
+
+
 class Creature:
     def __init__(self, role, name, health, damage, attack_style=MELEE,
                  faction="monsters", loot="", scale=112, aggression="hostile",
                  sight=1024, speed=90.0, level=1, xp=10, resistances=None,
                  kind=CREATURE, weapon="", produces="",
                  produce_every_hours=0.0, produce_into="world",
-                 produce_quantity=1):
+                 produce_quantity=1, size=MEDIUM):
         self.role = role
         self.name = name
         self.health = health
@@ -56,6 +63,9 @@ class Creature:
         self.produce_every_hours = produce_every_hours
         self.produce_into = produce_into
         self.produce_quantity = produce_quantity
+        #: How big a body it is (:data:`SIZES`): how much there is of it to
+        #: blow apart, whatever its health.
+        self.size = size if size in SIZES else MEDIUM
 
 
 def _load_bestiary() -> Dict[str, Creature]:
@@ -89,6 +99,7 @@ def _load_bestiary() -> Dict[str, Creature]:
             produce_every_hours=row.pop("produce_every_hours", 0.0),
             produce_into=row.pop("produce_into", "world"),
             produce_quantity=row.pop("produce_quantity", 1),
+            size=row.pop("size", MEDIUM),
         )
     return out
 
@@ -107,3 +118,22 @@ def roles_of_kind(kind: str) -> list:
 
 #: Roles the engine treats as genuinely hostile from the start.
 HOSTILE_ROLES = {r for r, c in BESTIARY.items() if c.aggression == "hostile"}
+
+
+def body_size(props) -> str:
+    """How big the actor with *props* is: its own ``body_size`` when the map
+    says, else its kind's (the bestiary, by role), else a person's."""
+    props = props or {}
+    own = str(props.get("body_size") or "").lower()
+    if own in SIZES:
+        return own
+    for key in ("npc_role", "creature_role", "monster_type"):
+        tmpl = get(props.get(key) or "")
+        if tmpl is not None:
+            return tmpl.size
+    return MEDIUM
+
+
+def body_mass(props) -> float:
+    """How much body the actor with *props* is, a person being 1.0."""
+    return SIZES[body_size(props)]

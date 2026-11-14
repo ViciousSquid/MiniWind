@@ -86,7 +86,7 @@ def test_multiplayer_only_opens_after_becoming_visible_and_closes_on_back(
     assert not dialog.timer.isActive()
 
 
-def test_host_can_fill_empty_lobby_slots_with_distinct_bot_heads(qt_app):
+def test_host_can_add_four_ai_companions_on_top_with_distinct_heads(qt_app):
     from game.multiplayer.lobby import LobbyController
     from game.tests.test_multiplayer import profile
 
@@ -99,12 +99,13 @@ def test_host_can_fill_empty_lobby_slots_with_distinct_bot_heads(qt_app):
     dialog._render_lobby()
     dialog.respawn_at_village.setChecked(True)
     assert controller.lobby.respawn_at_village
-    for _ in range(3):
+    for _ in range(4):
         dialog._add_bot()
-    assert len(controller.lobby.members) == 4
-    assert sum(m.bot for m in controller.lobby.members) == 3
-    assert len({m.profile["head"] for m in controller.lobby.members}) == 4
-    assert not dialog.bot_button.isEnabled()
+    assert len(controller.lobby.members) == 5
+    assert sum(m.bot for m in controller.lobby.members) == 4
+    assert len({m.profile["head"] for m in controller.lobby.members}) == 5
+    assert not dialog.bot_button.isEnabled()         # four AI at most
+    assert dialog.add_button.isEnabled()             # humans still have room
     dialog._ready()
     dialog._render_lobby()
     assert dialog.start_button.isEnabled()

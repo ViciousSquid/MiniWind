@@ -80,6 +80,41 @@ _OVERRIDE_COLOURS = np.array(
 _TRIGGER_ROW, _SELECTED_ROW, _SUBTRACT_ROW = 0, 1, 2
 
 
+#: Pixels beyond the water any copy keeps, for what its ripples bend in.
+WATER_COPY_PAD = 48
+
+
+def water_screen_rect(view_projection, bounds, size, margin_fraction=0.0):
+    """The patch of the viewport ``(x, y, w, h)`` (GL pixels, origin bottom
+    left) that water brushes with *bounds* (``(n, 6)`` centre + half extents)
+    cover on screen, padded by :data:`WATER_COPY_PAD` and *margin_fraction*
+    of the screen; the whole viewport when any corner is behind the camera."""
+    width, height = int(size[0]), int(size[1])
+    full = (0, 0, width, height)
+    b = np.asarray(bounds, dtype=np.float64).reshape(-1, 6)
+    if not len(b) or width <= 0 or height <= 0:
+        return full
+    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)],
+                     dtype=np.float64)
+    corners = (b[:, None, 0:3] + b[:, None, 3:6] * signs[None, :, :]).reshape(-1, 3)
+    m = np.array(view_projection, dtype=np.float64).reshape(4, 4)   # rows, as numpy gives a glm matrix
+    clip = np.c_[corners, np.ones(len(corners))] @ m.T
+    w = clip[:, 3]
+    if np.any(w <= 1e-6):
+        return full
+    ndc = clip[:, :2] / w[:, None]
+    lo, hi = ndc.min(axis=0), ndc.max(axis=0)
+    pad_x = WATER_COPY_PAD + margin_fraction * width
+    pad_y = WATER_COPY_PAD + margin_fraction * height
+    x0 = int(max(0, np.floor((lo[0] + 1) * 0.5 * width - pad_x)))
+    x1 = int(min(width, np.ceil((hi[0] + 1) * 0.5 * width + pad_x)))
+    y0 = int(max(0, np.floor((lo[1] + 1) * 0.5 * height - pad_y)))
+    y1 = int(min(height, np.ceil((hi[1] + 1) * 0.5 * height + pad_y)))
+    if x1 <= x0 or y1 <= y0:
+        return (0, 0, 0, 0)
+    return (x0, y0, x1 - x0, y1 - y0)
+
+
 class PassesMixin:
     """ForwardRenderer's draw passes."""
 
@@ -1070,6 +1105,9 @@ class PassesMixin:
             # settings.ini [Renderer] grass = False switches grass off
             # globally (the host also tells the terrain, so none is grown).
             draw_grass=bool(getattr(self, 'grass_enabled', True)),
+            # The wind the grass sways in: a game sets ``grass_wind`` (dir x,
+            # dir z, strength) as it sets ``sky_state``; otherwise a breeze.
+            grass_wind=getattr(self, 'grass_wind', None),
             shadow_cubemaps=(self._shadow_cubemaps if self.shadows_enabled else None),
             shadow_unit_base=self.SHADOW_TEXTURE_UNIT_BASE,
             env_uniforms=self.env_uniform_values(),
@@ -1384,7 +1422,7 @@ class PassesMixin:
     # --------------------------------------------------------------------------
     @timed_pass('sprites')
     def draw_sprites_instanced(self, projection, view, table, slots,
-                               gl_ids=None, camera_pos=None):
+                               gl_ids=None, camera_pos=None, mirror=None):
         """The sprite pass over dense columns: one draw, back to front.
 
         *slots* are rows of an :class:`engine.entity_table.EntityTable`, already
@@ -1404,6 +1442,10 @@ class PassesMixin:
 
         Returns the number of sprites submitted, so a caller can tell an empty
         pass from a skipped one.
+
+        *mirror* draws the same sprites as their reflections in water instead
+        (see :meth:`_draw_water_reflections`): ``(planes, down_xz, alpha,
+        tint, time)`` with *planes* the water height under each of *slots*.
         """
         if 'sprite_instanced' not in self.shaders or not len(slots):
             return 0
@@ -1439,6 +1481,8 @@ class PassesMixin:
         if valid_count != slot_count:
             slots = slots[drawn]
             textures = textures[drawn]
+            if mirror is not None:
+                mirror = (mirror[0][drawn],) + tuple(mirror[1:])
 
         # Back-to-front, by the XZ distance the pass has always used. This is
         # the order the pass *must* draw in -- it is blended with depth writes
@@ -1488,6 +1532,8 @@ class PassesMixin:
             data[:, 7] = 0.0
         np.take(table.sprite_spin, sorted_slots, axis=0, out=data[:, 8:10])
         np.take(table.sprite_tint, sorted_slots, axis=0, out=data[:, 10:13])
+        if mirror is not None:
+            self._mirror_sprite_instances(data, table, sorted_slots, mirror[0][order], *mirror[1:4])
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
         gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)
 
@@ -1495,6 +1541,11 @@ class PassesMixin:
         shader, uniforms = self.shaders[program], self.uniforms[program]
         gl.glUseProgram(shader)
         self._current_shader = shader
+        ripple_loc = uniforms.get('spriteRipple', -1)
+        if ripple_loc is not None and ripple_loc >= 0:
+            gl.glUniform1f(ripple_loc, 1.0 if mirror is not None else 0.0)
+            if mirror is not None:
+                gl.glUniform1f(uniforms.get('spriteRippleTime', -1), float(mirror[4]))
         # Billboards are unlit, so they never reach _upload_lights_once -- they
         # still need fogging, exactly as the per-sprite path does.
         self._upload_env_uniforms(program)
@@ -1530,6 +1581,36 @@ class PassesMixin:
                 self.render_stats.draw_calls += 1
         gl.glBindVertexArray(0)
         return count
+
+    #: Reflections of sprites in water: how strongly they show, their tint,
+    #: how far from the water they still reflect (world units above the
+    #: surface; a sprite's own height reaches across it), and how much
+    #: shorter the reflection is than the sprite.
+    WATER_REFLECTION_ALPHA = 0.42
+    WATER_REFLECTION_TINT = (0.70, 0.80, 0.92)
+    WATER_REFLECTION_ABOVE = 220.0
+    WATER_REFLECTION_SQUASH = 0.85
+
+    def _mirror_sprite_instances(self, data, table, slots, planes, down_xz, alpha, tint):
+        """Turn sprite instance rows into their reflections: each mirrored
+        about the water plane under it and laid in the water just below the
+        sprite as the camera sees it (*down_xz*: the screen's "down" on the
+        ground) -- where a slightly tilted overhead camera sees an upright
+        figure's reflection -- flipped, shorter, fainter and tinted."""
+        heights = data[:, 4].copy()
+        half = heights * 0.5
+        feet = data[:, 1] - half
+        data[:, 1] = planes + 0.5                       # on the surface
+        reach = half + heights * self.WATER_REFLECTION_SQUASH * 0.5
+        data[:, 0] += down_xz[0] * reach
+        data[:, 2] += down_xz[1] * reach
+        # Further above the water, a fainter reflection.
+        above = np.clip((feet - planes) / max(1.0, self.WATER_REFLECTION_ABOVE), 0.0, 1.0)
+        data[:, 4] = -heights * self.WATER_REFLECTION_SQUASH  # upside down
+        wound = np.floor(data[:, 6] * 0.5) * 2.0
+        opacity = data[:, 6] - wound
+        data[:, 6] = wound + opacity * alpha * (1.0 - 0.7 * above)
+        data[:, 10:13] *= np.asarray(tint, dtype=data.dtype)
 
     def draw_billboards(self, projection, view, positions, size, tex_id):
         """Camera-facing billboards sharing one texture and size: one draw.
@@ -1984,6 +2065,40 @@ class PassesMixin:
     #: How far across the water an effect's reflection is looked for, as a
     #: multiple of its height above the surface.
     EFFECT_REFLECTION_REACH = 4.0
+    #: High-quality water traces reflections across the copied frame: its
+    #: copy reaches this share of the screen beyond the water on every side.
+    WATER_SSR_MARGIN = 0.2
+
+    #: Texture unit of the sky's baked clouds (engine/sky_clouds.py).
+    SKY_CLOUD_UNIT = 13
+
+    def _sky_cloud_texture(self):
+        """The sky's clouds, baked and uploaded once (engine/sky_clouds.py):
+        a few texture reads per water pixel instead of fractal noise."""
+        tex = getattr(self, '_sky_clouds_tex', 0)
+        if tex:
+            return tex
+        from engine import sky_clouds
+        baked = sky_clouds.ready()          # baked while the game loaded
+        if baked is None:
+            return 0                        # not yet: a cloudless sky for now
+        data = np.ascontiguousarray(baked)
+        tex = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, data.shape[1], data.shape[0], 0,
+                        gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data)
+        gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+        for param, value in ((gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT),
+                             (gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT),
+                             (gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR),
+                             (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)):
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, param, value)
+        self._sky_clouds_tex = tex
+        return tex
+
+    #: The sky water reflects when no game says otherwise: day, a few
+    #: clouds, no gloom, no dusk (night, cloud cover, gloom, dusk).
+    DEFAULT_SKY_STATE = (0.0, 0.35, 0.0, 0.0)
 
     def _write_effect_depth(self, uniforms, ordered_textures, run_starts):
         """Write the solid part of the effects just drawn into the depth
@@ -2100,26 +2215,41 @@ class PassesMixin:
         gl.glUniform3fv(
             uniforms['viewPos'], 1, glm.value_ptr(camera_pos))
         gl.glUniform1f(uniforms['time'], config.get('time', 0.0))
+        # The sky the water reflects (water.frag skyColor): a game sets
+        # ``sky_state`` (night, cloud cover, gloom, dusk) and ``sky_drift``;
+        # otherwise a fair day.
+        sky = getattr(self, 'sky_state', None) or self.DEFAULT_SKY_STATE
+        drift = getattr(self, 'sky_drift', None) or (0.0, 0.0)
+        gl.glUniform4f(uniforms['skyState'], *[float(v) for v in sky])
+        gl.glUniform2f(uniforms['skyDrift'], float(drift[0]), float(drift[1]))
+        gl.glActiveTexture(gl.GL_TEXTURE0 + self.SKY_CLOUD_UNIT)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self._sky_cloud_texture())
+        gl.glUniform1i(uniforms['skyClouds'], self.SKY_CLOUD_UNIT)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
 
         # Water uses the same scene capture as Glass, but captures before any
         # water surface is submitted so transmission never contains the water
         # itself.
-        scene_size = self._capture_glass_scene()
+        # All water is high quality unless the graphics setting says low
+        # ([Renderer] water_quality, r_waterquality): a brush's own flag no
+        # longer lowers it.
+        high_quality = np.full(len(brushes), getattr(self, 'water_quality', 'expensive') == 'expensive')
+        # Copy only the patch of screen the water covers (and a margin for
+        # what it bends or reflects in from beside it), not the whole frame:
+        # a pond in a corner costs a pond's worth of copying.
+        viewport = gl.glGetIntegerv(gl.GL_VIEWPORT)
+        rect = water_screen_rect(
+            projection * view, table.bounds[brushes],
+            (int(viewport[2]), int(viewport[3])),
+            margin_fraction=self.WATER_SSR_MARGIN if bool(high_quality.any()) else 0.0)
+        scene_size = self._capture_glass_scene(rect)
         if scene_size is None:
-            viewport = gl.glGetIntegerv(gl.GL_VIEWPORT)
             scene_size = (
                 max(int(viewport[2]), 1),
                 max(int(viewport[3]), 1),
             )
         scene_width, scene_height = scene_size
-        # Quality is per brush ("High quality" in the property editor). The
-        # depth copy is made once, and only if some brush in the pass wants
-        # it; the renderer's water_quality is a session-only debug cap
-        # (r_waterquality cheap forces every brush cheap).
-        high_quality = table.water_high_quality[brushes]
-        if getattr(self, 'water_quality', 'expensive') != 'expensive':
-            high_quality = np.zeros_like(high_quality)
-        has_depth = bool(high_quality.any()) and self._capture_scene_depth()
+        has_depth = bool(high_quality.any()) and self._capture_scene_depth(rect)
         depth_unit = self._water_depth_texture_unit
         gl.glActiveTexture(gl.GL_TEXTURE0 + depth_unit)
         gl.glBindTexture(gl.GL_TEXTURE_2D,
@@ -2204,6 +2334,16 @@ class PassesMixin:
 
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+        # Actors near the water are reflected in it: the surfaces drawn
+        # below mark their pixels in one stencil bit, and the reflections
+        # are drawn only there (_draw_water_reflections).
+        reflect = self._water_reflection_plan(table, brushes, view, config)
+        if reflect is not None:
+            gl.glEnable(gl.GL_STENCIL_TEST)
+            gl.glStencilMask(self.WATER_STENCIL_BIT)
+            gl.glStencilFunc(gl.GL_ALWAYS, self.WATER_STENCIL_BIT, self.WATER_STENCIL_BIT)
+            gl.glStencilOp(gl.GL_KEEP, gl.GL_KEEP, gl.GL_REPLACE)
 
         upload_model = uniform_rows('mat4', models)
         upload_normal = uniform_rows('mat3', normals)
@@ -2293,14 +2433,155 @@ class PassesMixin:
 
         gl.glBindVertexArray(0)
         gl.glActiveTexture(gl.GL_TEXTURE0)
+        if reflect is not None:
+            self._draw_water_reflections(projection, view, camera_pos, reflect, config)
         return
 
-    def _capture_glass_scene(self):
+    def _draw_loose_reflection(self, projection, view, head, plane, down, time_now):
+        """One head drawn outside the entity table (the player's), reflected:
+        ``head`` is (image path, centre, (w, h), heading radians)."""
+        path, centre, size, heading = head
+        path = str(path)
+        if path.replace('\\', '/').startswith('assets/'):
+            path = path[len('assets/'):]
+        tex_id = self.load_texture(path, '')
+        if not tex_id or 'sprite_instanced' not in self.shaders:
+            return
+        self._ensure_sprite_instance_buffer(1)
+        data = self._sprite_instance_data[:1]
+        data[0, 0:3] = centre
+        data[0, 3:5] = (float(size[0]), float(size[1]))
+        data[0, 5] = -10000.0                       # camera-facing
+        data[0, 6] = 1.0
+        data[0, 7] = 0.0
+        data[0, 8:10] = (float(heading), 1.0)       # turned like the head is
+        data[0, 10:13] = 1.0
+        self._mirror_sprite_instances(data, None, None, np.array([plane]), down,
+                                      self.WATER_REFLECTION_ALPHA, self.WATER_REFLECTION_TINT)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
+        gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)
+        shader, uniforms = self.shaders['sprite_instanced'], self.uniforms['sprite_instanced']
+        gl.glUseProgram(shader)
+        self._current_shader = shader
+        self._upload_env_uniforms('sprite_instanced')
+        glraw.uniform_matrix4fv(gl, uniforms['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
+        glraw.uniform_matrix4fv(gl, uniforms['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
+        ripple = uniforms.get('spriteRipple', -1)
+        if ripple is not None and ripple >= 0:
+            gl.glUniform1f(ripple, 1.0)
+            gl.glUniform1f(uniforms.get('spriteRippleTime', -1), time_now)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glUniform1i(uniforms['sprite_texture'], 0)
+        gl.glUniform1i(uniforms['use_fixed_facing'], 0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, int(tex_id))
+        gl.glBindVertexArray(self._ensure_sprite_instance_vao())
+        self._point_sprite_instances_at(0)
+        gl.glDrawArraysInstanced(gl.GL_TRIANGLE_STRIP, 0, 4, 1)
+        gl.glBindVertexArray(0)
+        if ripple is not None and ripple >= 0:
+            gl.glUniform1f(ripple, 0.0)
+        self.render_stats.draw_calls += 1
+
+    #: The stencil bit the water marks for its reflections (portals use the
+    #: low bits, and clear the buffer themselves); cleared again at once.
+    WATER_STENCIL_BIT = 0x80
+
+    def _water_reflection_plan(self, table, brushes, view, config=None):
+        """Which sprites to reflect, in which water: ``(etable, slots,
+        planes, down_xz, loose)`` -- *loose* the heads drawn outside the
+        entity table (the player's, from ``reflected_heads``) with the water
+        height under each -- or None (none near water, reflections off, or
+        inside a portal's view, which owns the stencil buffer then)."""
+        if not getattr(self, 'water_reflects_actors', True):
+            return None
+        source = getattr(self, '_reflect_source', None)
+        loose_in = tuple((config or {}).get('reflected_heads', ()) or ())
+        if (source is None and not loose_in) or gl.glIsEnabled(gl.GL_STENCIL_TEST):
+            return None
+        # The screen's "down", on the ground: where an upright figure's
+        # reflection falls as the camera sees it.
+        up_x, up_z = float(view[0][1]), float(view[2][1])
+        length = (up_x * up_x + up_z * up_z) ** 0.5
+        if length < 1e-3:
+            return None
+        down = (-up_x / length, -up_z / length)
+        bounds = table.bounds[brushes]
+        centre, half = bounds[:, 0:3], bounds[:, 3:6]
+        tops = centre[:, 1] + half[:, 1]
+
+        def over_water(pos, heights):
+            """(hit mask, water height) for sprites at *pos* of *heights*."""
+            reach = heights * 0.5 + heights * self.WATER_REFLECTION_SQUASH * 0.5
+            rx = pos[:, 0] + down[0] * reach
+            rz = pos[:, 2] + down[1] * reach
+            feet = pos[:, 1] - heights * 0.5
+            # (sprites x water): the reflection's centre over the water's
+            # footprint, the sprite not far above it (nor sunk below it).
+            inside = ((np.abs(rx[:, None] - centre[None, :, 0]) < half[None, :, 0])
+                      & (np.abs(rz[:, None] - centre[None, :, 2]) < half[None, :, 2])
+                      & (feet[:, None] > tops[None, :] - heights[:, None])
+                      & (feet[:, None] < tops[None, :] + self.WATER_REFLECTION_ABOVE))
+            hit = inside.any(axis=1)
+            return hit, tops[inside.argmax(axis=1)].astype(np.float64)
+
+        etable = slots = planes = None
+        if source is not None:
+            etable, all_slots = source
+            if etable is not None and len(all_slots):
+                from engine.entity_table import ENT_MONSTER
+                # Actors -- people and creatures -- not markers or props.
+                all_slots = np.asarray(all_slots)
+                all_slots = all_slots[(etable.class_bits[all_slots] & ENT_MONSTER) != 0]
+            if etable is not None and len(all_slots):
+                hit, under = over_water(etable.pos[all_slots],
+                                        etable.sprite_size[all_slots][:, 1].astype(np.float64))
+                if hit.any():
+                    slots, planes = all_slots[hit], under[hit]
+        loose = []
+        if loose_in:
+            try:
+                pos = np.array([h[1] for h in loose_in], dtype=np.float64).reshape(-1, 3)
+                heights = np.array([float(h[2][1]) for h in loose_in], dtype=np.float64)
+            except (TypeError, ValueError, IndexError):
+                pos, heights = np.zeros((0, 3)), np.zeros(0)
+            if len(pos):
+                hit, under = over_water(pos, heights)
+                loose = [(loose_in[i], float(under[i])) for i in np.nonzero(hit)[0]]
+        if slots is None and not loose:
+            return None
+        return etable, slots, planes, down, loose
+
+    def _draw_water_reflections(self, projection, view, camera_pos, plan, config):
+        """The reflections, where the water just marked the stencil: one
+        sprite draw (and one for each loose head), then the bit is cleared
+        and the stencil left as found."""
+        etable, slots, planes, down, loose = plan
+        time_now = float(config.get('time', 0.0))
+        try:
+            gl.glStencilFunc(gl.GL_EQUAL, self.WATER_STENCIL_BIT, self.WATER_STENCIL_BIT)
+            gl.glStencilMask(0x00)
+            gl.glStencilOp(gl.GL_KEEP, gl.GL_KEEP, gl.GL_KEEP)
+            if slots is not None:
+                self.draw_sprites_instanced(
+                    projection, view, etable, slots, camera_pos=camera_pos,
+                    mirror=(planes, down, self.WATER_REFLECTION_ALPHA,
+                            self.WATER_REFLECTION_TINT, time_now))
+            for head, plane in loose:
+                self._draw_loose_reflection(projection, view, head, plane, down, time_now)
+        finally:
+            gl.glStencilMask(self.WATER_STENCIL_BIT)
+            gl.glClear(gl.GL_STENCIL_BUFFER_BIT)       # only our bit (the mask)
+            gl.glStencilMask(0xFF)
+            gl.glDisable(gl.GL_STENCIL_TEST)
+
+    def _capture_glass_scene(self, rect=None):
         """Copy the current framebuffer into the glass transmission texture.
 
         The copy happens once before the glass pass, so every glass surface
         samples the same scene behind it. GL 3.3 supports this without adding
-        another permanent render target to the forward pipeline.
+        another permanent render target to the forward pipeline. *rect*
+        ``(x, y, w, h)`` in viewport pixels copies only that patch (the water
+        pass: :func:`water_screen_rect`); None copies all of it.
         """
         viewport = gl.glGetIntegerv(gl.GL_VIEWPORT)
         if viewport is None or len(viewport) < 4:
@@ -2329,8 +2610,10 @@ class PassesMixin:
                 gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
             self._glass_scene_size = (width, height)
 
-        gl.glCopyTexSubImage2D(
-            gl.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height)
+        rx, ry, rw, rh = rect if rect is not None else (0, 0, width, height)
+        if rw > 0 and rh > 0:
+            gl.glCopyTexSubImage2D(
+                gl.GL_TEXTURE_2D, 0, rx, ry, x + rx, y + ry, rw, rh)
         return width, height
 
     def _read_framebuffer_has_depth(self):
@@ -2371,7 +2654,7 @@ class PassesMixin:
         except Exception:
             return False
 
-    def _capture_scene_depth(self):
+    def _capture_scene_depth(self, rect=None):
         """Copy the current depth buffer into the water depth texture.
 
         Plain GL 3.3 core: one ``glCopyTexSubImage2D`` into a depth texture,
@@ -2401,7 +2684,9 @@ class PassesMixin:
                 gl.GL_TEXTURE_2D, 0, gl.GL_DEPTH_COMPONENT24, width, height, 0,
                 gl.GL_DEPTH_COMPONENT, gl.GL_FLOAT, None)
             self._water_depth_size = (width, height)
-        gl.glCopyTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height)
+        rx, ry, rw, rh = rect if rect is not None else (0, 0, width, height)
+        if rw > 0 and rh > 0:
+            gl.glCopyTexSubImage2D(gl.GL_TEXTURE_2D, 0, rx, ry, x + rx, y + ry, rw, rh)
         return True
 
     @timed_pass('glass')

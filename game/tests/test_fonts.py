@@ -38,3 +38,13 @@ def test_game_windows_use_medieval_text_and_inspector_remains_sans(qt_app):
                loadout.title_font, strip.f_count, strip.f_name, strip.f_number]
     assert all(QFontInfo(font).family() == "MedievalSharp" for font in samples)
     assert QFontInfo(ui_font(11)).family() != "MedievalSharp"
+
+
+def test_small_text_is_texturina_light_and_never_under_eleven_pixels(qt_app):
+    from PyQt5.QtGui import QFontInfo
+    small = fonts.small_font(9)
+    assert QFontInfo(small).family() == "Texturina"
+    assert small.pixelSize() == fonts.SMALL_MIN_PX == 11
+    assert fonts.small_font(13).pixelSize() == 13
+    themed = theme.font(10, family="small")
+    assert QFontInfo(themed).family() == "Texturina" and themed.pixelSize() == 11

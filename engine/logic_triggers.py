@@ -15,6 +15,13 @@ import glm
 import numpy as np
 
 from .constants import brush_aabb_bounds
+
+#: The player's pain cries, one at random each time damage lands.
+PAIN_SOUNDS = (
+    "assets/sounds/pain01.mp3",
+    "assets/sounds/pain02.mp3",
+    "assets/sounds/pain03.mp3",
+)
 try:
     from editor.debug_console import debug_log
 except ImportError:
@@ -676,11 +683,7 @@ class LogicTriggers:
                 )
 
         if took_damage and pain_position is not None:
-            pain_file = random.choice((
-                "assets/sounds/pain01.mp3",
-                "assets/sounds/pain02.mp3",
-                "assets/sounds/pain03.mp3",
-            ))
+            pain_file = random.choice(PAIN_SOUNDS)
             self.logic.game_state.queue_sound({
                 "file": pain_file,
                 "volume": 1.0,

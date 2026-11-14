@@ -34,12 +34,13 @@ from . import birthsigns
 
 #: Major-skill increases needed to earn one character level.
 SKILL_UPS_PER_LEVEL = 10
-#: The three pools a level-up could grow (the older, pool-based level-up).
-LEVEL_POOLS = ("health", "magicka", "stamina")
+#: Movement pace per point of Speed above (or below) 40: Speed 0 walks at
+#: x0.90, 40 at x1.00, 100 at x1.15 (:meth:`Character.move_speed_factor`).
+SPEED_PACE_PER_POINT = 0.0025
+#: Max stamina each point of Athletics gained adds, for good.
+ATHLETICS_STAMINA = 1.0
 #: Stamina a second of sprinting costs (a fresh 100 lasts about eight seconds).
 SPRINT_STAMINA_PER_SECOND = 12.0
-#: How much the chosen pool grows per level.
-LEVEL_POOL_GAIN = 10.0
 #: The level-up choice: which attribute grows, by :data:`LEVEL_ATTR_GAIN`.
 #: MAGICKA is the well of magic -- Intelligence underneath, which sets
 #: maximum magicka -- and is only offered to those who work magic.
@@ -57,11 +58,25 @@ def xp_to_next(level: int) -> int:
     return XP_PER_LEVEL * max(1, int(level))
 
 
+def whole_health(health) -> int:
+    """*health* as a whole number, as the HUD and the engine show it:
+    rounded, but never 0 while the character is alive, because 0 is dead
+    (the engine freezes the world for it). Rounding 0.4 down once left a
+    living character frozen on a death the game did not know about."""
+    try:
+        health = float(health)
+    except (TypeError, ValueError):
+        return 0
+    if not health > 0.0:
+        return 0
+    return max(1, int(round(health)))
+
+
 class Character:
     def __init__(self):
         # identity
         self.name = "Adventurer"
-        self.race_id = "imperial"
+        self.race_id = "valian"
         self.class_id = "warrior"
         self.birthsign_id = "none"
         self.gender = "male"
@@ -269,9 +284,20 @@ class Character:
 
     #: health accumulated from levelling (added on top of endurance*2)
     _accum_health: float = 0.0
-    #: magicka and stamina chosen at level-ups (added on top of the attributes)
+    #: magicka a save from before the level-up page kept from the old
+    #: pool-based level-up (nothing adds to it now)
     _accum_magicka: float = 0.0
+    #: stamina from Athletics rises (:data:`ATHLETICS_STAMINA` a point), plus
+    #: any an old save's pool-based level-ups gave
     _accum_stamina: float = 0.0
+
+    @property
+    def move_speed_factor(self) -> float:
+        """How fast Speed makes you move, as a multiple of the usual pace:
+        ``1 + (Speed - 40) x`` :data:`SPEED_PACE_PER_POINT` (0.90 at Speed 0,
+        1.15 at 100). Encumbrance multiplies on top (runtime)."""
+        speed = attr.clamp(self.attrs.get(attr.SPEED, attr.BASE_ATTRIBUTE))
+        return 1.0 + (speed - attr.BASE_ATTRIBUTE) * SPEED_PACE_PER_POINT
 
     @property
     def carry_capacity(self) -> float:
@@ -318,9 +344,11 @@ class Character:
             del self._skill_raises[:-16]
         gov = sk.governing_attribute(skill_id)
         self._level_attr_gains[gov] = self._level_attr_gains.get(gov, 0) + 1
-        # Athletics/heavy skills also nudge derived pools live.
-        if skill_id in (sk.ATHLETICS,):
-            self.max_stamina += 1
+        # Each Athletics point is +1 max stamina for good: kept with the
+        # other gains, so recompute_derived keeps it too.
+        if skill_id == sk.ATHLETICS:
+            self._accum_stamina += ATHLETICS_STAMINA
+            self.max_stamina += ATHLETICS_STAMINA
         if skill_id in self.major_skills:
             self.xp_progress += 1
 
@@ -389,21 +417,20 @@ class Character:
         return out
 
     def level_up(self, chosen_attrs: Optional[List[str]] = None,
-                 pool: Optional[str] = None, choice: Optional[str] = None) -> Dict:
-        """Advance one character level.
+                 choice: Optional[str] = None) -> Dict:
+        """Advance one character level -- the level-up page's one path.
 
-        *choice* is the level-up screen's question: ``"strength"``,
-        ``"endurance"``, ``"charisma"`` or ``"magicka"`` grows by :data:`LEVEL_ATTR_GAIN`
-        (see :data:`LEVEL_CHOICES`), and health grows by a tenth of Endurance
-        as every level. A *choice* the character may not make (MAGICKA for a
-        Warrior) is ignored.
+        Attributes rise from what was actually trained: if *chosen_attrs* (up
+        to 3) is given those are raised; otherwise the two favoured attributes
+        plus the most-trained attribute this level, each by +1 to +5.
 
-        *pool* is the older pool choice: ``"health"``, ``"magicka"`` or
-        ``"stamina"`` grows by :data:`LEVEL_POOL_GAIN`. Attributes still rise
-        as well, from what was actually trained: if
-        *chosen_attrs* (up to 3) is given those are raised; otherwise the two
-        favoured attributes plus the most-trained attribute this level. With no
-        *pool* the old Endurance-based health gain applies. Returns a summary.
+        *choice* is the level-up page's question: ``"strength"``,
+        ``"endurance"``, ``"charisma"`` or ``"magicka"`` grows by
+        :data:`LEVEL_ATTR_GAIN` (see :data:`LEVEL_CHOICES`). A *choice* the
+        character may not make (MAGICKA for a Warrior) is ignored.
+
+        Health grows by a tenth of Endurance, for good, and every pool
+        refills. Returns a summary.
         """
         # The level is paid for by whichever track is full -- the skill
         # training first -- and the other keeps its progress. (A forced
@@ -449,16 +476,9 @@ class Character:
         else:
             choice = ""
 
-        pool = str(pool or "").lower()
-        gains = {"health": 0.0, "magicka": 0.0, "stamina": 0.0}
-        if pool in LEVEL_POOLS:
-            gains[pool] = LEVEL_POOL_GAIN
-        else:
-            # Health gain from endurance (classic: 10% of endurance per level).
-            gains["health"] = self.attrs.get(attr.ENDURANCE, 40) * 0.1
-        self._accum_health += gains["health"]
-        self._accum_magicka += gains["magicka"]
-        self._accum_stamina += gains["stamina"]
+        # Health gain from endurance (10% of endurance per level).
+        health_gain = self.attrs.get(attr.ENDURANCE, 40) * 0.1
+        self._accum_health += health_gain
         self._level_attr_gains = {a: 0 for a in attr.ATTRIBUTES}
         self.trained_this_level = 0
         self.recompute_derived(reset_current=False)
@@ -467,8 +487,7 @@ class Character:
         self.magicka = self.max_magicka
         self.stamina = self.max_stamina
         return {"level": self.level, "attrs_raised": raised,
-                "health_gain": gains["health"], "pool": pool if pool in LEVEL_POOLS else "",
-                "pool_gain": gains.get(pool, 0.0) if pool in LEVEL_POOLS else 0.0,
+                "health_gain": health_gain,
                 "choice": choice, "choice_gain": choice_gain}
 
     # --------------------------------------------------------------- pools help
@@ -503,7 +522,7 @@ class Character:
         of regaining it."""
         if self.is_dead:
             return
-        # Atronach sign: magicka does not regenerate.
+        # The Golem sign: magicka does not regenerate.
         golem = self.birthsign_id == "golem"
         if not golem and self.max_magicka > 0:
             rate = self.max_magicka * 0.02 * (0.5 + self.attrs.get(attr.ENDURANCE, 40) / 100.0)

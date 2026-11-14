@@ -32,8 +32,10 @@ AUTOSAVE_NAME = "autosave"
 INTERVAL = 300.0
 #: A discovery this soon after the last autosave does not save again.
 MIN_GAP = 30.0
-#: A timed save waits until the player has gone this long unhurt (seconds).
+#: A save waits until the player has gone this long unhurt (seconds)...
 SAFE_AFTER_HURT = 15.0
+#: ...and no hostile is this near (world units).
+DANGER_RADIUS = 1200.0
 
 
 class Autosaver:
@@ -77,7 +79,8 @@ class Autosaver:
     def ready(self) -> bool:
         """Whether the due save can be made now: the player alive and free
         (no menu, no conversation, no character creation), and -- for a
-        timed save -- not hurt lately. A discovery saves at once."""
+        save of either kind -- not hurt lately and no hostile near. A
+        discovery made in danger is saved once the danger has passed."""
         if self.pending is None:
             return False
         s = self.session
@@ -86,7 +89,13 @@ class Autosaver:
             return False
         if s.open_screen is not None or s.dialogue is not None:
             return False
-        if self.pending == "timer" and self._clock() - self._hurt_at < SAFE_AFTER_HURT:
+        # Never save in danger, timed or not: a discovery is usually made by
+        # walking into a place's guardians, and an autosave taken among them
+        # restored the player there, hurt, to die again -- a death loop.
+        if self._clock() - self._hurt_at < SAFE_AFTER_HURT:
+            return False
+        near = getattr(s, "hostile_near", None)
+        if callable(near) and near(DANGER_RADIUS):
             return False
         return True
 

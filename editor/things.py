@@ -303,6 +303,10 @@ class Thing:
         for k, v in _heal_legacy_strings(type(self), props_copy).items():
             if isinstance(v, (str, int, float, bool, list, dict, type(None))):
                 serializable_props[k] = v
+            elif isinstance(v, tuple):
+                # A tuple is a list in JSON. str() made "(1.0, 2.0)", which
+                # came back from a save as a string the game could not use.
+                serializable_props[k] = list(v)
             else:
                 serializable_props[k] = str(v)  # QColor etc.
 

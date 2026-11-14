@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import MAX_PLAYERS, PROTOCOL_VERSION
+from . import MAX_COMPANIONS, MAX_PLAYERS, PROTOCOL_VERSION
 
 
 class LobbyError(ValueError):
@@ -100,6 +100,10 @@ class Member:
         }
 
 
+#: What a player is told who tries to join a started game that is closed.
+LATE_ARRIVAL_CLOSED = "Game has already started and does not allow late arrival"
+
+
 class Lobby:
     def __init__(self, host="host", name="MiniWind party", signature="", map_name=""):
         self.host = host
@@ -113,12 +117,22 @@ class Lobby:
         self.resume = None
         self.map_hash = ""
         self.respawn_at_village = False
+        #: Late arrival: players may join after the adventure has started (the
+        #: host's choice in the lobby). Off, the party is closed at Start.
+        self.late_arrival = True
 
     def _changed(self):
         self.revision += 1
         if not self.started:
             for member in self.members:
                 member.ready = member.bot
+
+    def humans(self) -> int:
+        """Human players in the party (AI companions do not count)."""
+        return sum(1 for m in self.members if not m.bot)
+
+    def companions(self) -> int:
+        return sum(1 for m in self.members if m.bot)
 
     def owned(self, owner):
         return [p for p in self.members if p.owner == owner]
@@ -130,7 +144,11 @@ class Lobby:
         return found
 
     def add(self, owner, profile, *, player_id=None, character=None, bot=False):
-        if len(self.members) >= MAX_PLAYERS:
+        if self.started and not self.late_arrival:
+            raise LobbyError(LATE_ARRIVAL_CLOSED)
+        if bot and self.companions() >= MAX_COMPANIONS:
+            raise LobbyError("The party has all the AI companions it can take (four).")
+        if not bot and self.humans() >= MAX_PLAYERS:
             raise LobbyError("The party is full (four players).")
         if bot:
             if owner != self.host or self.started:
@@ -198,6 +216,15 @@ class Lobby:
             member.ready = ready or member.bot
         self.revision += 1
 
+    def set_late_arrival(self, owner, enabled):
+        if owner != self.host or self.started:
+            raise LobbyError("Only the host can change late arrival before starting.")
+        if not isinstance(enabled, bool):
+            raise LobbyError("Invalid late arrival setting.")
+        if self.late_arrival != enabled:
+            self.late_arrival = enabled
+            self.revision += 1
+
     def set_respawn_at_village(self, owner, enabled):
         if owner != self.host or self.started:
             raise LobbyError("Only the host can change companion respawning before starting.")
@@ -232,6 +259,7 @@ class Lobby:
             "started": self.started,
             "map_hash": self.map_hash,
             "respawn_at_village": self.respawn_at_village,
+            "late_arrival": self.late_arrival,
             "members": [p.public() for p in self.members],
         }
 

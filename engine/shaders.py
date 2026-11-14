@@ -1034,17 +1034,94 @@ vec4 reflectEffects(highp vec3 P, vec3 R) {
     return vec4(0.0);
 }
 
-// Procedural sky remains the zero-cost fallback when reflections are disabled.
-vec3 skyColor(vec3 dir) {
+// The sky the water reflects wherever its reflected ray finds nothing on
+// screen -- in a top-down game, nearly everywhere: a sky gradient with the sun
+// by day, dusk's colour at either end of it, stars and the moon by night, and
+// a layer of clouds CLOUD_HEIGHT above the world, seen from the water along
+// the reflected ray, so the clouds slide across the water as the camera moves.
+// The game sets skyState (night, cloud cover, gloom, dusk) and skyDrift (how
+// far the wind has carried the clouds); left unset it is a fair day.
+uniform vec4 skyState;
+uniform vec2 skyDrift;
+// Clouds baked once (engine/sky_clouds.py): R cloud, G toward the sun,
+// B toward the moon, A the moon's seas. Tiles.
+uniform sampler2D skyClouds;
+const float CLOUD_HEIGHT = 6000.0;
+const float SKY_REFLECTION_FLOOR = 0.35;
+// One tile of the baked clouds covers 1 / CLOUD_SCALE world units of sky.
+const float CLOUD_SCALE = 1.0 / 14000.0;
+const vec3 MOON_DIR = vec3(-0.17008, 0.97049, -0.17008);   // unit length
+
+float skyHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// The moon and the stars: points of light that calm water mirrors hard,
+// added over the water's colour rather than mixed into it (skyColor's soft
+// sky would drown them), and hidden by the clouds.
+vec3 skyLights(vec3 dir, vec3 P) {
+    float night = clamp(skyState.x, 0.0, 1.0);
+    float gloom = clamp(skyState.z, 0.0, 1.0);
+    if (night <= 0.01 || dir.y <= 0.02) return vec3(0.0);
+    // The moon rides high, where water seen from above can mirror it: a
+    // disc with grey seas on it, and a halo.
+    float moon = max(dot(dir, MOON_DIR), 0.0);
+    float disc = smoothstep(0.99756, 0.99813, moon);      // about 4 degrees across
+    float seas = texture(skyClouds, (dir.xz - MOON_DIR.xz) * 9.0 + 0.37).a;
+    vec3 light = vec3(0.86, 0.89, 0.97) * disc * (1.25 - 0.55 * smoothstep(0.45, 0.7, seas))
+               + vec3(0.45, 0.55, 0.8) * (pow(moon, 400.0) * 0.7 + pow(moon, 60.0) * 0.18);
+    // A star field over the sky, coarse enough that a star is a few pixels
+    // across from a top-down camera's height, twinkling.
+    vec2 sp = dir.xz / (dir.y + 0.35) * 26.0;
+    vec2 cell = floor(sp);
+    vec2 f = fract(sp) - 0.5;
+    float r = skyHash(cell);
+    vec2 off = vec2(skyHash(cell + 1.7), skyHash(cell + 3.1)) - 0.5;
+    float d = length(f - off * 0.6);
+    float size = 0.06 + 0.1 * skyHash(cell + 7.7);
+    float star = step(0.55, r) * smoothstep(size, size * 0.2, d)
+               * (0.6 + 0.4 * sin(time * 2.3 + r * 71.0));
+    vec3 stars = vec3(0.92, 0.94, 1.0) * star * 5.0 * (1.0 - disc);
+    // Behind the clouds, none of it.
+    vec2 hit = P.xz + dir.xz / dir.y * (CLOUD_HEIGHT - P.y) + skyDrift;
+    float edge = mix(0.66, 0.28, clamp(skyState.y, 0.0, 1.0));
+    float clear = 1.0 - smoothstep(edge, edge + 0.2, texture(skyClouds, hit * CLOUD_SCALE).r);
+    // Cloud hides the stars; the moon shines through it, dimmed.
+    return (light * mix(0.45, 1.0, clear) + stars * clear) * night * (1.0 - gloom * 0.7);
+}
+
+vec3 skyColor(vec3 dir, vec3 P) {
+    float night = clamp(skyState.x, 0.0, 1.0);
+    float cover = clamp(skyState.y, 0.0, 1.0);
+    float gloom = clamp(skyState.z, 0.0, 1.0);
+    float dusk = clamp(skyState.w, 0.0, 1.0);
     float h = clamp(dir.y, 0.0, 1.0);
-    vec3 sky = mix(vec3(0.66, 0.76, 0.83),
-                   vec3(0.19, 0.38, 0.66),
-                   pow(h, 0.55));
+    vec3 top = mix(vec3(0.19, 0.38, 0.66), vec3(0.03, 0.07, 0.19), night);
+    vec3 horizon = mix(mix(vec3(0.66, 0.76, 0.83), vec3(0.09, 0.14, 0.27), night),
+                       vec3(0.96, 0.56, 0.34), dusk);
+    vec3 sky = mix(horizon, top, pow(h, 0.55));
+    // Under cloud the whole sky greys.
+    sky = mix(sky, mix(vec3(0.56, 0.59, 0.63), vec3(0.03, 0.04, 0.07), night), gloom * 0.8);
+    float day = (1.0 - night) * (1.0 - gloom);
     float sunAmount = max(dot(dir, SUN_DIR), 0.0);
-    sky += SUN_COLOR * (
-        pow(sunAmount, 350.0) * 3.0 +
-        pow(sunAmount, 24.0) * 0.18
-    );
+    sky += SUN_COLOR * (pow(sunAmount, 350.0) * 3.0 + pow(sunAmount, 24.0) * 0.18) * day;
+    // The cloud layer, with light on its sunward side and shadowed beneath.
+    if (dir.y > 0.02) {
+        vec2 hit = P.xz + dir.xz / dir.y * (CLOUD_HEIGHT - P.y) + skyDrift;
+        vec4 tex = texture(skyClouds, hit * CLOUD_SCALE);
+        float n = tex.r;
+        float edge = mix(0.66, 0.28, cover);
+        float c = smoothstep(edge, edge + 0.2, n);
+        // Thicker here than a step toward the sun: the cloud faces the light.
+        float lit = clamp(0.6 + (n - tex.g) * 4.0, 0.25, 1.0);
+        vec3 dayCloud = mix(vec3(0.5, 0.54, 0.6), vec3(1.0, 0.99, 0.96), lit);
+        dayCloud = mix(dayCloud, vec3(1.0, 0.70, 0.52) * lit, dusk * 0.65);
+        // By night the moon lights them: dark bellies, silver edges.
+        float moonLit = clamp(0.5 + (n - tex.b) * 5.0, 0.0, 1.0);
+        float rim = smoothstep(0.0, 0.35, c) * (1.0 - smoothstep(0.35, 0.95, c));
+        vec3 nightCloud = mix(vec3(0.025, 0.035, 0.07), vec3(0.32, 0.37, 0.5), moonLit * 0.7)
+                        + vec3(0.55, 0.62, 0.8) * rim * (0.4 + 0.6 * moonLit);
+        vec3 cloud = mix(dayCloud, nightCloud, night);
+        cloud = mix(cloud, cloud * vec3(0.6, 0.62, 0.66), gloom);
+        sky = mix(sky, cloud, c * mix(1.0, 0.75, night) * smoothstep(0.02, 0.15, dir.y));
+    }
     return sky;
 }
 
@@ -1288,7 +1365,12 @@ void main()
     );
 
     vec3 R = reflect(-viewDir, N);
-    vec3 reflection = skyColor(R);
+    // The sky is seen from the real camera (the view matrix's eye): the
+    // reflected rays fan out across the water as they truly do from above,
+    // the ripples tilting them a little, so the sky shimmers.
+    vec3 eye = vec3(inverse(view)[3]);
+    vec3 skyR = reflect(normalize(FragPos - eye), normalize(mix(vec3(0.0, 1.0, 0.0), N, 0.35)));
+    vec3 reflection = skyColor(skyR, FragPos);
     float sceneReflection = 0.0;
     // The scene's reflection fades out with distance; past the fade no ray
     // is marched, and the sky is what the far water reflects.
@@ -1326,7 +1408,13 @@ void main()
     // let the authored reflectivity carry them further.
     reflectionWeight = max(reflectionWeight,
         clamp(waterReflectivity, 0.0, 1.0) * 0.8 * sceneReflection);
+    // Seen from above, the sky is what open water shows most of: its clouds,
+    // dusk and stars carry at least SKY_REFLECTION_FLOOR of the colour of a
+    // calm top surface (less where it is rough, none where the scene is).
+    reflectionWeight = max(reflectionWeight,
+        SKY_REFLECTION_FLOOR * topFace * (1.0 - roughness * 0.7) * (1.0 - sceneReflection));
     vec3 color = mix(transmission, reflection, reflectionWeight);
+    color += skyLights(skyR, FragPos) * topFace * (1.0 - roughness * 0.8) * (1.0 - sceneReflection);
 
     // ------------------------------------------------------------------
     // Dynamic lights / specular / foam.
@@ -1613,8 +1701,10 @@ precision highp int;
 // position, the flat face normal, the per-triangle colour, the UV and the
 // smooth normal. The arithmetic follows the old NumPy builder step by step
 // (float32 throughout), including its quirks, which are preserved on purpose:
-// the face normal points down (cross(+x, +z) = -y), colour is normalised by
-// the chunk's own height range, and the "variation" seed reduces to iz.
+// the face normal points down (cross(+x, +z) = -y) and the "variation" seed
+// reduces to iz. (Colour is no longer normalised by the chunk's own height
+// range, which coloured the same height differently on each chunk: a hard
+// seam along every chunk border.)
 out vec3 FragPos;
 out mediump vec3 Normal;
 out mediump vec3 VertexColor;
@@ -1632,6 +1722,10 @@ uniform highp sampler2DArray uHeights;
 uniform ivec2 uChunkI;     // (quads per side, texture layer)
 uniform vec3  uChunkX;     // (world x, world z, grid step), as float32
 uniform vec2  uChunkY;     // (chunk min height, height range; 1 when flat)
+// The whole terrain's (low, high) height (shared with terrain.frag's layers):
+// the colour gradient is read against it, so a height has one colour on every
+// chunk and neighbouring chunks meet without a seam.
+uniform highp vec2 uHeightRange;
 uniform float uTiling;     // Terrain.TILING_SCALE
 uniform int   uFlatMode;
 
@@ -1707,7 +1801,8 @@ void main() {
         VertexColor = vec3(0.7);
     } else {
         float meanHeight = (pa.y + pb.y + pc.y) / 3.0;   // "centroid" is reserved
-        float norm = clamp((meanHeight - uChunkY.x) / uChunkY.y, 0.0, 1.0);
+        float norm = clamp((meanHeight - uHeightRange.x)
+                           / max(uHeightRange.y - uHeightRange.x, 1e-3), 0.0, 1.0);
         int seed = second ? ((ix + 1000) * 1000 + iz + 1000) % 100
                           : (ix * 1000 + iz) % 100;
         float variation = (float(seed) / 100.0 - 0.5) * 0.08;
@@ -2142,7 +2237,14 @@ out vec3 GroundColor;
 uniform mat4 projection;
 uniform mat4 view;
 uniform float time;
+// The wind (TerrainGL.grass_wind): how hard (0.65 a fair breeze; past ~1 a
+// storm's gale, which adds fast gusts and a violent flutter), which way (a
+// zero vector is the default heading), and how far its gust field has rolled
+// along that way so far -- accumulated on the CPU, so a turning or
+// strengthening wind never jumps the pattern.
 uniform float windStrength;
+uniform vec2 uWindDir;
+uniform vec2 uWindScroll;
 uniform vec3 cameraPos;
 uniform int uSegments;
 uniform float uLodStart;
@@ -2256,11 +2358,19 @@ void main() {
                         cameraSide.x * sin(turn) + cameraSide.y * cos(turn));
 
     // Wind: a slow Perlin field rolling across the world, biased downwind,
-    // plus a small per-blade flutter.
-    vec2 windDir = normalize(vec2(1.0, 0.35));
-    float wave = cnoise(iPosition.xz * 0.012 - windDir * time * 0.6);
-    float strong = (wave * 0.5 + 0.2) * windStrength * height;
-    float gentle = sin(time * 1.9 + seedA * 10.0) * 0.08 * height;
+    // plus a small per-blade flutter. A gale adds a finer, faster field of
+    // gusts that lays the grass over and a hard flutter on top.
+    vec2 windDir = dot(uWindDir, uWindDir) > 1e-6 ? normalize(uWindDir)
+                                                  : normalize(vec2(1.0, 0.35));
+    float wave = cnoise(iPosition.xz * 0.012 - uWindScroll);
+    float gale = smoothstep(0.8, 1.1, windStrength);
+    float gust = cnoise(iPosition.xz * 0.021 - uWindScroll * 2.7);
+    float strong = ((wave * 0.5 + 0.2) * windStrength
+                    + gale * (gust * 0.65 + 0.45)) * height;
+    // However hard it blows, a blade lies down rather than stretching.
+    strong = clamp(strong, -0.6 * height, 1.3 * height);
+    float gentle = (sin(time * 1.9 + seedA * 10.0) * 0.08
+                    + gale * sin(time * 11.0 + seedB * 20.0) * 0.2) * height;
     float bendStrength = mix(0.15, 0.45, seedA) * height;
     float bendStart = mix(0.0, 0.3, seedB);
 
@@ -2807,7 +2917,8 @@ def _terrain_indexed_sources():
         VertexColor = vec3(0.7);
     } else {
         float meanHeight = (pa.y + pb.y + pc.y) / 3.0;
-        float norm = clamp((meanHeight - uChunkY.x) / uChunkY.y, 0.0, 1.0);
+        float norm = clamp((meanHeight - uHeightRange.x)
+                           / max(uHeightRange.y - uHeightRange.x, 1e-3), 0.0, 1.0);
         int seed = second ? ((ix + 1000) * 1000 + iz + 1000) % 100
                           : (ix * 1000 + iz) % 100;
         float variation = (float(seed) / 100.0 - 0.5) * 0.08;

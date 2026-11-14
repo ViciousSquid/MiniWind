@@ -16,7 +16,7 @@ import queue
 import threading
 from .terrain_frame import (                      # noqa: F401
     TerrainFrame, TerrainProducts, grass_vertex_count, heightfield_indices,
-    new_publication_key, read_only)
+    new_publication_key, paint_chain, read_only)
 from .terrain_table import GRID_BORDER, STORED_GRID, TerrainTable
 
 
@@ -168,29 +168,103 @@ class PerlinNoise:
 _PAINT_PACKERS = None
 
 
-def _pack_paint(paint):
-    """One paint chunk as base64 text of its zlib stream."""
-    import base64, zlib
+def _pack_raw(paint):
+    """One paint chunk's zlib stream, as a map saves it (before base64)."""
+    import zlib
     # Level 1: a 256 chunk in under half the time of level 6 for the same
     # size (measured: 2.2 against 5.1 ms a chunk, 85 KB either way).
-    payload = zlib.compress(np.ascontiguousarray(paint).tobytes(), 1)
-    return base64.b64encode(payload).decode('ascii')
+    return zlib.compress(np.ascontiguousarray(paint).tobytes(), 1)
 
 
-def _compress_paint(paints):
-    """:func:`_pack_paint` of each of *paints*, in order; several at once
-    when there are several (the arrays are never written after they are
+def _pack_paint(paint):
+    """One paint chunk as base64 text of its zlib stream."""
+    import base64
+    return base64.b64encode(_pack_raw(paint)).decode('ascii')
+
+
+def _compress_paint(paints, pack=_pack_paint):
+    """*pack* (:func:`_pack_paint`) of each of *paints*, in order; several at
+    once when there are several (the arrays are never written after they are
     stored, so reading them from other threads is safe)."""
     global _PAINT_PACKERS
     if len(paints) < 2:
-        return [_pack_paint(paint) for paint in paints]
+        return [pack(paint) for paint in paints]
     if _PAINT_PACKERS is None:
         import os
         from concurrent.futures import ThreadPoolExecutor
         _PAINT_PACKERS = ThreadPoolExecutor(
             max_workers=max(1, min(4, os.cpu_count() or 1)),
             thread_name_prefix='TerrainPaintPack')
-    return list(_PAINT_PACKERS.map(_pack_paint, paints))
+    return list(_PAINT_PACKERS.map(pack, paints))
+
+
+class _PackedPaint:
+    """One chunk's paint, packed as a map saves it (its zlib stream), and,
+    while the chunk is resident, unpacked as well.
+
+    A paint array is never written in place -- a bake copies it -- so the
+    stream stays the array's for its whole life. The unpacked array is
+    read-only to keep it so."""
+
+    __slots__ = ('data', 'shape', 'painted', 'array')
+
+    def __init__(self, data, shape, painted, array=None):
+        self.data = data
+        self.shape = tuple(shape)
+        #: Whether any texel has alpha (a chunk without is not saved).
+        self.painted = bool(painted)
+        self.array = array
+
+    def unpack(self):
+        """The array, unpacked now if it is not (and kept until its chunk
+        stops being resident)."""
+        array = self.array
+        if array is None:
+            array = self.read()
+            self.array = array
+        return array
+
+    def read(self):
+        """The array, unpacked for this one read if it is not kept."""
+        array = self.array
+        if array is None:
+            import zlib
+            array = np.frombuffer(zlib.decompress(self.data), dtype=np.uint8).reshape(self.shape)
+        return array
+
+
+class _PaintMaps(dict):
+    """``chunk -> paint array``, where a chunk away from the camera holds
+    only its packed paint (:class:`_PackedPaint`), unpacked when read.
+
+    The shipped overworld's paint is 107 chunks of 1 MB; packed, all of it is
+    8 MB, and only the few resident chunks are kept unpacked."""
+
+    __slots__ = ()
+
+    def __getitem__(self, key):
+        value = dict.__getitem__(self, key)
+        return value.unpack() if type(value) is _PackedPaint else value
+
+    def get(self, key, default=None):
+        value = dict.get(self, key, default)
+        return value.unpack() if type(value) is _PackedPaint else value
+
+    def pop(self, key, *default):
+        value = dict.pop(self, key, *default)
+        return value.read() if type(value) is _PackedPaint else value
+
+    def items(self):
+        return [(key, value.read() if type(value) is _PackedPaint else value)
+                for key, value in dict.items(self)]
+
+    def values(self):
+        return [value.read() if type(value) is _PackedPaint else value
+                for value in dict.values(self)]
+
+    def copy(self):
+        """A copy sharing every chunk, packed or not."""
+        return _PaintMaps(dict.items(self))
 
 
 class TerrainFeatures:
@@ -368,6 +442,22 @@ DEFAULT_GRASS_ENABLED = True
 # MAIN TERRAIN CLASS
 # ============================================================================
 
+class _ChunkRow:
+    """One chunk's row of a :class:`TerrainTable`, copied, at index 0.
+
+    What growing a chunk's grass reads of the table (its origin, size and
+    grid coordinates), taken on the thread that writes the table, so the
+    builder thread can grow the blades without reading it."""
+
+    __slots__ = ('size', 'world', 'coord')
+
+    def __init__(self, table, slot):
+        rows = slice(slot, slot + 1)
+        self.size = np.array(table.size[rows])
+        self.world = np.array(table.world[rows])
+        self.coord = np.array(table.coord[rows])
+
+
 class Terrain:
     # Terrain inside this radius is a protected high-detail zone. A chunk is
     # never allowed to change LOD while any part of it lies within 4096 world
@@ -379,6 +469,8 @@ class Terrain:
     LOD_RESOLUTIONS = [48, 32, 16, 8]
     LOD_HYSTERESIS_FRAMES = 10
     MAX_UPDATES_PER_FRAME = 2
+    #: Chunk builds and grass the last advance() left for later frames.
+    work_due = 0
     #: Build height grids on a background thread (``TerrainBuilder``) instead
     #: of inside :meth:`advance`. ``main.py`` turns it on for the editor and
     #: the game; off, a terrain is built where it is advanced, a bounded
@@ -401,7 +493,18 @@ class Terrain:
     #: 256 a chunk is one texel a world unit at the default chunk size (it
     #: was 128: a texel every two units, which is what made paint muddy).
     #: Maps saved at another resolution are converted when loaded.
+    #:
+    #: That is the least a chunk has: a terrain with bigger chunks gets
+    #: more (:meth:`paint_resolution_for`), so a texel never covers more
+    #: than :data:`PAINT_UNITS_PER_TEXEL` world units -- a big world's
+    #: 2048-unit chunks get 512, where 256 (eight units a texel) left its
+    #: roads smeared. A terrain's own is the instance attribute of the same
+    #: name, set with its chunk size (:meth:`_sync_paint_resolution`).
     TERRAIN_PAINT_RESOLUTION = 256
+    #: Most world units a paint texel covers, chunk size allowing.
+    PAINT_UNITS_PER_TEXEL = 4.0
+    #: The most texels a paint chunk has a side.
+    MAX_PAINT_RESOLUTION = 1024
     #: World units one pixel of a tiled paint texture covers: a 512-pixel
     #: image repeats every 256 units, whatever the size of the stamp.
     STAMP_TILE_UNITS_PER_PIXEL = 0.5
@@ -411,6 +514,10 @@ class Terrain:
     #: a map gets as many pages as its painted chunks need. (It was one
     #: layer a chunk slot, painted or not: 32 MB a page at 128.)
     PAINT_PAGE_LAYERS = 32
+    #: Most bytes a paint page's first level holds: at 512 a chunk a page is
+    #: 16 layers (21 MB with mips) -- more than a streamed world keeps
+    #: resident -- rather than 32 (43 MB), half of which would sit empty.
+    PAINT_PAGE_BYTES = 16 * 1024 * 1024
     #: Texture layers per height-grid page; clamped to the driver's limit.
     HEIGHT_PAGE_LAYERS = 512
     #: Every uniform the terrain programs are driven through.
@@ -437,6 +544,7 @@ class Terrain:
         self.features = TerrainFeatures(self.noise, seed)
         self.biome: BiomeConfig = BIOMES[DEFAULT_BIOME]
         self.chunk_size: float = self.DEFAULT_CHUNK_SIZE
+        self._sync_paint_resolution()
         self.mesh_scale: float = 1.0
         self.base_resolution: int = 48
         self.offset_x: float = 0.0
@@ -461,7 +569,7 @@ class Terrain:
         # albedo map at TERRAIN_PAINT_RESOLUTION². The source image is sampled
         # once by the editor and the resulting colour/coverage becomes part
         # of the terrain data itself.
-        self.texture_paint_maps: Dict[Tuple[int, int], np.ndarray] = {}
+        self.texture_paint_maps: Dict[Tuple[int, int], np.ndarray] = _PaintMaps()
         # Placed texture stamps. Each record (id, texture, x, z, radius,
         # angle, feather, opacity) is also baked into texture_paint_maps, which
         # stays what renders and what the game loads; the records let the
@@ -469,7 +577,15 @@ class Terrain:
         # texture_paint_base is the paint no stamp record owns (maps painted
         # before stamps were kept), composited under the stamps.
         self.paint_stamps: List[dict] = []
-        self.texture_paint_base: Dict[Tuple[int, int], np.ndarray] = {}
+        self.texture_paint_base: Dict[Tuple[int, int], np.ndarray] = _PaintMaps()
+        # The chunks resident when paint was last packed and unpacked for
+        # them (_settle_paint).
+        self._paint_resident = None
+        # Resident chunks' paint mip chains, made on the builder thread:
+        # chunk -> (the paint array, [levels]); and chunk -> the array whose
+        # chain is being made.
+        self._paint_chains = {}
+        self._chaining = {}
         # Editor-only: selected stamps draw tinted from _paint_display, which
         # overrides texture_paint_maps for the chunks they touch.
         self.selected_stamp_ids: set = set()
@@ -594,6 +710,8 @@ class Terrain:
         # The builder thread (BACKGROUND_BUILDS): slot -> the allocation
         # order it was asked for, the requests and the finished grids.
         self._building: Dict[int, int] = {}
+        # Grass grown on the same thread: slot -> the order it was asked for.
+        self._growing: Dict[int, int] = {}
         self._build_requests: "queue.Queue" = queue.Queue()
         self._build_results: "queue.Queue" = queue.Queue()
         self._builder = None
@@ -681,11 +799,47 @@ class Terrain:
         max_z = (self.max_chunk_z + 1) * self.chunk_size + self.offset_z
         return ((min_x, max_x), (min_z, max_z))
     
+    @classmethod
+    def paint_resolution_for(cls, chunk_size) -> int:
+        """Paint texels a side for chunks of *chunk_size* world units: the
+        class's :data:`TERRAIN_PAINT_RESOLUTION`, doubled until a texel is
+        no more than :data:`PAINT_UNITS_PER_TEXEL` units (at most
+        :data:`MAX_PAINT_RESOLUTION`)."""
+        res = int(cls.TERRAIN_PAINT_RESOLUTION)
+        try:
+            size = float(chunk_size)
+        except (TypeError, ValueError):
+            return res
+        while res < cls.MAX_PAINT_RESOLUTION and res * cls.PAINT_UNITS_PER_TEXEL < size:
+            res *= 2
+        return res
+
+    def _sync_paint_resolution(self):
+        """Set this terrain's paint resolution for its chunk size; paint it
+        already holds is resampled to it."""
+        res = type(self).paint_resolution_for(self.chunk_size)
+        old = self.__dict__.get('TERRAIN_PAINT_RESOLUTION')
+        self.TERRAIN_PAINT_RESOLUTION = res
+        if old is None or old == res:
+            return
+        for name in ('texture_paint_maps', 'texture_paint_base'):
+            maps = getattr(self, name, None)
+            if maps:
+                setattr(self, name, _PaintMaps(
+                    {key: self._resample_paint(paint, res) for key, paint in maps.items()}))
+
+    def paint_page_layers(self) -> int:
+        """Layers a paint page has at this terrain's paint resolution."""
+        side = int(self.TERRAIN_PAINT_RESOLUTION)
+        return max(1, min(int(self.PAINT_PAGE_LAYERS),
+                          int(self.PAINT_PAGE_BYTES) // max(1, side * side * 4)))
+
     def set_mesh_scale(self, factor: float):
         """Set uniform physical terrain scale without changing morphology."""
         factor = max(0.01, float(factor))
         self.mesh_scale = factor
         self.chunk_size = self.DEFAULT_CHUNK_SIZE * factor
+        self._sync_paint_resolution()
         self.cleanup()
         self.mark_all_dirty()
 
@@ -1000,6 +1154,38 @@ class Terrain:
         return (self.min_chunk_x, self.max_chunk_x,
                 self.min_chunk_z, self.max_chunk_z)
 
+    def view_ready(self, x: float, z: float, radius: float) -> bool:
+        """Whether the ground within *radius* of world ``(x, z)`` is there to
+        draw: every in-bounds chunk whose nearest point is that close resident
+        and built. After a jump (a loaded save, a level change) the chunks
+        stream in over a few frames, and until they do the camera sees through
+        the world to the clear colour; a game can cover the view until this
+        says the ground is ready. The radius is capped at the stream radius,
+        beyond which chunks are never resident. GL-free; no state changes."""
+        if not self.enabled:
+            return True
+        if self.streaming:
+            radius = min(float(radius), float(self.stream_radius))
+        min_cx, max_cx, min_cz, max_cz = self._chunk_bounds()
+        cs = float(self.chunk_size)
+        px, pz = float(x) - self.offset_x, float(z) - self.offset_z
+        reach = int(math.ceil(radius / cs)) + 1
+        cam_cx, cam_cz = int(math.floor(px / cs)), int(math.floor(pz / cs))
+        lo_x, hi_x = max(min_cx, cam_cx - reach), min(max_cx, cam_cx + reach)
+        lo_z, hi_z = max(min_cz, cam_cz - reach), min(max_cz, cam_cz + reach)
+        if lo_x > hi_x or lo_z > hi_z:
+            return True                     # off the terrain altogether
+        gx, gz = np.meshgrid(np.arange(lo_x, hi_x + 1, dtype=np.int64),
+                             np.arange(lo_z, hi_z + 1, dtype=np.int64), indexing='ij')
+        gx, gz = gx.ravel(), gz.ravel()
+        near = TerrainTable._ring_dist_sq(gx, gz, px, pz, cs) <= radius * radius
+        table = self.table
+        for cx, cz in zip(gx[near].tolist(), gz[near].tolist()):
+            slot = table.slot_of_coord.get((cx, cz))
+            if slot is None or not table.built[slot]:
+                return False
+        return True
+
     def _stream_chunks(self, camera_pos):
         """Keep only the chunks near ``camera_pos`` resident (streaming mode).
 
@@ -1273,7 +1459,7 @@ class Terrain:
     #: the ground it grows on.
     meadow_colour = None
 
-    def _generate_grass_blades(self, slot: int) -> np.ndarray:
+    def _generate_grass_blades(self, slot: int, table=None) -> np.ndarray:
         """Per-blade instance records ``(x, y, z, size, yaw, tint, r, g, b)``.
 
         Wheat fields and tundra heath, wherever the biome map paints them,
@@ -1281,28 +1467,33 @@ class Terrain:
         :attr:`meadow_grass` is on, the meadow scattered over ordinary
         ground. Ordinary terrain otherwise stays clear of meadow grass and
         swamp reeds.
+
+        *table* is the chunk table to read the chunk's row from: this
+        terrain's own, or a :class:`_ChunkRow` snapshot of one row (at index
+        0) when the blades are grown on the builder thread.
         """
         parts = []
         if self.meadow_grass:
-            parts.append(self._generate_meadow_blades(slot))
+            parts.append(self._generate_meadow_blades(slot, table))
         if self.biome_map is not None:
-            parts.append(self._generate_wheat_blades(slot))
-            parts.append(self._generate_tundra_blades(slot))
+            parts.append(self._generate_wheat_blades(slot, table))
+            parts.append(self._generate_tundra_blades(slot, table))
         parts = [p for p in parts if len(p)]
         if not parts:
             return np.empty((0, 9), dtype=np.float32)
         return np.concatenate(parts) if len(parts) > 1 else parts[0]
 
-    def _generate_meadow_blades(self, slot: int) -> np.ndarray:
+    def _generate_meadow_blades(self, slot: int, table=None) -> np.ndarray:
         """Deterministic per-blade instance records ``(x, y, z, size, yaw, tint)``.
 
         Tufts are scattered over the chunk and each spreads a handful of
         blades around its centre, so a field reads as clumps rather than an
         even carpet. Every blade root is sampled on the (possibly terraced)
         surface. Tufts are dropped on steep ground, outside the grass height
-        layer (high rock and snow, low sand) and in broad noise clearings.
+        layer (high rock and snow, low sand), in broad noise clearings and
+        wherever the biome map paints a wheat field, desert or snowfield.
         """
-        table = self.table
+        table = self.table if table is None else table
         size = float(table.size[slot])
         density = self.grass_density if self.meadow_density is None else self.meadow_density
         limit = self.GRASS_MAX_PER_CHUNK
@@ -1349,6 +1540,9 @@ class Terrain:
         clearing = self.noise.noise2d_batch(
             (tx - self.offset_x) * 0.0035 + 91.7, (tz - self.offset_z) * 0.0035 - 13.3)
         weight = weight * np.clip((clearing + 0.3) / 0.45, 0.0, 1.0)
+        # Only wheat grows in a wheat field (and nothing on sand or snow;
+        # the heath thins it): the biome map's own rule for ordinary grass.
+        weight = weight * terrain_biomes.grass_keep(self.biome_weights_batch(tx, tz))
         keep &= edge_roll < weight
         tx = tx[keep]
         tz = tz[keep]
@@ -1402,10 +1596,10 @@ class Terrain:
                 np.repeat(tuft_slope, per_tuft))
         return data
 
-    def _generate_wheat_blades(self, slot: int) -> np.ndarray:
+    def _generate_wheat_blades(self, slot: int, table=None) -> np.ndarray:
         """Wheat: dense clumps of tall golden stalks wherever the biome map
         paints a field, with its own budget so a field is never sparse."""
-        table = self.table
+        table = self.table if table is None else table
         size = float(table.size[slot])
         x0 = float(table.world[slot, 0])
         z0 = float(table.world[slot, 1])
@@ -1457,7 +1651,7 @@ class Terrain:
         lo, hi = terrain_biomes.WHEAT_SIZE
         data[:, 3] = rng.uniform(lo, hi, count) * height * self._biome_size_scale()
         data[:, 4] = rng.uniform(0.0, 6.2831853, count)
-        data[:, 5] = rng.uniform(0.9, 1.1, count)
+        data[:, 5] = rng.uniform(*terrain_biomes.WHEAT_BRIGHTNESS, count)
         ripe = rng.random(count)[:, None]
         gold = (terrain_biomes.WHEAT_COLOUR[None, :] * (1.0 - ripe * 0.5)
                 + terrain_biomes.WHEAT_TIP[None, :] * ripe * 0.5)
@@ -1518,14 +1712,14 @@ class Terrain:
         :data:`DEFAULT_GRASS_HEIGHT`, and the shader multiplies by the map's."""
         return DEFAULT_GRASS_HEIGHT / max(float(self.grass_height), 0.5)
 
-    def _generate_tundra_blades(self, slot: int) -> np.ndarray:
+    def _generate_tundra_blades(self, slot: int, table=None) -> np.ndarray:
         """Tundra heath: dense, tall leafy shrub-grass wherever the biome map's
         fifth channel paints it, green with drifts of flame-orange, red and
         gold shoots (:func:`terrain_biomes.tundra_colours`). Its own budget,
         like wheat, so a heath is never sparse."""
         if self.biome_map is None or self.biome_map.shape[2] <= terrain_biomes.TUNDRA:
             return np.empty((0, 9), dtype=np.float32)
-        table = self.table
+        table = self.table if table is None else table
         size = float(table.size[slot])
         x0 = float(table.world[slot, 0])
         z0 = float(table.world[slot, 1])
@@ -1706,12 +1900,10 @@ class Terrain:
                     self._normalized_layer_height(raw), slope,
                     self._layer_heights(), a.layer_blend, a.slope_rock, averages)
                 return np.clip(out, 0.0, 1.0).astype(np.float32)
-        # Biome vertex colours, normalised by the chunk's own height range as
-        # terrain.vert does.
-        table = self.table
-        lo, hi = float(table.min_y[slot]), float(table.max_y[slot])
-        if not table.built[slot] or hi <= lo:
-            lo, hi = self._layer_height_range()
+        # Biome vertex colours, normalised by the whole terrain's height range
+        # as terrain.vert does (one colour per height on every chunk: no seam
+        # at a chunk's border).
+        lo, hi = self._layer_height_range()
         out = self._get_colors_batch(y, (np.asarray(y) - lo) / max(hi - lo, 1e-3)) * 1.1
         return np.clip(out, 0.0, 1.0).astype(np.float32)
 
@@ -1773,10 +1965,12 @@ class Terrain:
             grass_blade_width=self.GRASS_BLADE_WIDTH,
             paint_display=read_only(self._paint_display),
             paint_maps=read_only(self.texture_paint_maps),
+            paint_chains=read_only(self._paint_chains),
+            paint_chains_pending=frozenset(self._chaining),
             paint_versions=read_only(self._paint_map_versions),
             paint_epoch=self._paint_epoch,
             paint_resolution=self.TERRAIN_PAINT_RESOLUTION,
-            paint_page_layers=self.PAINT_PAGE_LAYERS,
+            paint_page_layers=self.paint_page_layers(),
             height_page_layers=self.HEIGHT_PAGE_LAYERS,
             max_gradient_stops=self.MAX_GRADIENT_STOPS,
             triangle_count=self.table.triangle_count(),
@@ -1804,6 +1998,7 @@ class Terrain:
             self.products.drop(slots)
             for slot in slots:
                 self._building.pop(int(slot), None)
+                self._growing.pop(int(slot), None)
 
     def cleanup(self):
         """Drop every chunk. No GL here: a renderer's side goes with the
@@ -1842,6 +2037,9 @@ class Terrain:
                                      self.offset_x, self.offset_z)
         table = self.table
         self._collect_built()
+        if self.BACKGROUND_BUILDS:
+            self._settle_paint()
+            self._request_paint_chains()
         slots = table.live_slots()
         cam_x = float(camera_pos.x)
         cam_z = float(camera_pos.z)
@@ -1855,6 +2053,10 @@ class Terrain:
             slots, dist_sq, visible, self._near_detail_radius(),
             self.LOD_RESOLUTIONS, self.LOD_DISTANCES_SQ,
             self.LOD_HYSTERESIS_FRAMES)
+        #: Work this frame left for later frames: chunks still to build at
+        #: their wanted detail (or in flight on the builder) and grass still
+        #: to grow in view. 0 once the view is complete (warm_up_play).
+        self.work_due = int(len(queue_slots)) + len(self._chaining)
         if self.BACKGROUND_BUILDS:
             self._request_builds(queue_slots, queue_res)
         else:
@@ -1878,8 +2080,16 @@ class Terrain:
             in_view = visible & (dist_sq <= reach_sq)
             wanted = np.nonzero(table.grass_dirty[slots] & table.built[slots] & in_view)[0]
             nearest = wanted[np.argsort(dist_sq[wanted], kind='stable')]
-            for i in nearest[:self.MAX_UPDATES_PER_FRAME]:
-                self._build_grass(int(slots[i]))
+            if self.BACKGROUND_BUILDS:
+                # Grown on the builder thread, published by _collect_built:
+                # a chunk's blades are 75-600 ms of numpy, far too long for a
+                # frame (the largest hitch of walking into new country).
+                self._request_grass([int(slots[i]) for i in nearest])
+                self.work_due += len(nearest) + len(self._growing)
+            else:
+                for i in nearest[:self.MAX_UPDATES_PER_FRAME]:
+                    self._build_grass(int(slots[i]))
+                self.work_due += max(0, len(nearest) - self.MAX_UPDATES_PER_FRAME)
             grown = self.products.grass
             if grown:
                 far = [int(slot) for slot in slots[dist_sq > reach_sq * 2.56].tolist()
@@ -1941,6 +2151,29 @@ class Terrain:
                 target=self._builder_loop, name='TerrainBuilder', daemon=True)
             self._builder.start()
 
+    def _request_grass(self, slots):
+        """Hand grass to grow to the builder thread, nearest first.
+
+        Each request carries a snapshot of its chunk's row (_ChunkRow), so
+        the thread never reads the table, which only this thread writes; the
+        blades are published here by :meth:`_collect_built`, and only if the
+        row still holds the same chunk. A slot waits at most once."""
+        table = self.table
+        for slot in slots:
+            if slot in self._growing or len(self._growing) >= self.BUILD_QUEUE_LIMIT:
+                continue
+            order = int(table.order[slot])
+            self._growing[slot] = order
+            # Dirtied again while in flight (a season, a quality change):
+            # grown again once this lands.
+            table.grass_dirty[slot] = False
+            self._build_requests.put(('grass', slot, order, _ChunkRow(table, slot)))
+        if self._growing and (self._builder is None or not self._builder.is_alive()):
+            self._builder_stop = False
+            self._builder = threading.Thread(
+                target=self._builder_loop, name='TerrainBuilder', daemon=True)
+            self._builder.start()
+
     def _builder_loop(self):
         requests, results = self._build_requests, self._build_results
         while not self._builder_stop:
@@ -1950,6 +2183,38 @@ class Terrain:
                 continue
             if job is None:                     # stop_builder's wake-up
                 break
+            if job[0] == 'paint':
+                _kind, fresh, unpack = job
+                for record in unpack:
+                    try:
+                        record.unpack()
+                    except Exception:
+                        pass                    # unpacked when it is read
+                try:
+                    packed = [(key, array, _pack_raw(array), bool(np.any(array[..., 3])))
+                              for key, array in fresh]
+                except Exception:
+                    packed = []
+                if packed:
+                    results.put(('paint', packed))
+                continue
+            if job[0] == 'chain':
+                _kind, coord, source, side = job
+                try:
+                    array = source.unpack() if type(source) is _PackedPaint else source
+                    chain = paint_chain(array, side)
+                except Exception:
+                    array = chain = None        # made by the renderer instead
+                results.put(('chain', coord, source, array, chain))
+                continue
+            if job[0] == 'grass':
+                _kind, slot, order, row = job
+                try:
+                    blades = self._generate_grass_blades(0, row)
+                except Exception:
+                    blades = None               # grown again next frame
+                results.put(('grass', slot, order, blades))
+                continue
             slot, order, resolution, world_x, world_z, size = job
             try:
                 heights = self._grid_heights(world_x, world_z, size, resolution)
@@ -1965,9 +2230,19 @@ class Terrain:
         table = self.table
         while True:
             try:
-                slot, order, resolution, heights = self._build_results.get_nowait()
+                result = self._build_results.get_nowait()
             except queue.Empty:
                 return
+            if result[0] == 'grass':
+                self._collect_grass(*result[1:])
+                continue
+            if result[0] == 'paint':
+                self._store_packed(result[1])
+                continue
+            if result[0] == 'chain':
+                self._collect_chain(*result[1:])
+                continue
+            slot, order, resolution, heights = result
             if self._building.get(slot) == order:
                 del self._building[slot]
             if (heights is None or slot >= table.capacity or not table.live[slot]
@@ -1979,6 +2254,120 @@ class Terrain:
             edited = bool(table.dirty[slot])
             self._store_heights(slot, resolution, heights)
             table.dirty[slot] = edited
+
+    # -- paint: packed away from the camera ----------------------------------
+
+    def _paint_to_pack(self, resident):
+        """Drop the unpacked arrays of packed chunks that are not *resident*,
+        and return ``[(chunk, array)]``: the chunks away from them whose paint
+        is not packed yet (baked since, or never packed)."""
+        maps, base = self.texture_paint_maps, self.texture_paint_base
+        fresh = []
+        for paints in (maps, base):
+            for key, value in dict.items(paints):
+                if key in resident:
+                    continue
+                if type(value) is _PackedPaint:
+                    value.array = None
+                elif value is not None and (paints is maps or dict.get(maps, key) is not value):
+                    fresh.append((key, value))
+        return fresh
+
+    def _pack_paint(self, fresh):
+        """Pack the ``(chunk, array)`` pairs of *fresh*, here and now."""
+        if fresh:
+            data = _compress_paint([array for _key, array in fresh], pack=_pack_raw)
+            self._store_packed([(key, array, packed, None) for (key, array), packed
+                                in zip(fresh, data)])
+
+    def _store_packed(self, packed):
+        """Put packed paint in place of the arrays it was packed from, in
+        both paint dicts (they share arrays): only where the dict still holds
+        that same array, so a bake made meanwhile is never undone."""
+        resident = self._paint_resident or ()
+        for key, array, data, painted in packed:
+            if painted is None:
+                painted = np.any(array[..., 3])
+            record = _PackedPaint(data, array.shape, painted,
+                                  array if key in resident else None)
+            for paints in (self.texture_paint_maps, self.texture_paint_base):
+                if dict.get(paints, key) is array:
+                    dict.__setitem__(paints, key, record)
+
+    def _settle_paint(self):
+        """Keep paint unpacked only for the resident chunks: as chunks stream
+        in, theirs is unpacked on the builder thread; as they leave, theirs
+        is dropped (packed first, there too, if it was baked meanwhile)."""
+        resident = frozenset(self.table.slot_of_coord)
+        if resident == self._paint_resident:
+            return
+        self._paint_resident = resident
+        fresh = self._paint_to_pack(resident)
+        unpack = []
+        for paints in (self.texture_paint_maps, self.texture_paint_base):
+            for key in resident:
+                value = dict.get(paints, key)
+                if type(value) is _PackedPaint and value.array is None:
+                    unpack.append(value)
+        if not fresh and not unpack:
+            return
+        self._build_requests.put(('paint', fresh, unpack))
+        self._start_builder()
+
+    def _request_paint_chains(self):
+        """Ask the builder thread for the mip chain of each resident chunk's
+        paint that has none for its current array, so a renderer only
+        uploads (the chain is ~4.5 ms of NumPy a 512 chunk). Chains of
+        chunks that left are dropped."""
+        maps = self.texture_paint_maps
+        resident = self._paint_resident or frozenset()
+        chains = self._paint_chains
+        for coord in [c for c in chains if c not in resident]:
+            del chains[coord]
+        side = int(self.TERRAIN_PAINT_RESOLUTION)
+        asked = False
+        for coord in resident:
+            value = dict.get(maps, coord)
+            if value is None or coord in self._chaining:
+                continue
+            array = value.array if type(value) is _PackedPaint else value
+            have = chains.get(coord)
+            if have is not None and array is not None and have[0] is array:
+                continue
+            self._chaining[coord] = value
+            self._build_requests.put(('chain', coord, value, side))
+            asked = True
+        if asked:
+            self._start_builder()
+
+    def _collect_chain(self, coord, source, array, chain):
+        """Publish a mip chain the builder made, if the chunk is still
+        resident and its paint is still the array it was made from."""
+        if self._chaining.get(coord) is source:
+            del self._chaining[coord]
+        value = dict.get(self.texture_paint_maps, coord)
+        current = value.array if type(value) is _PackedPaint else value
+        if chain is not None and current is array and coord in (self._paint_resident or ()):
+            self._paint_chains[coord] = (array, chain)
+
+    def _start_builder(self):
+        if self._builder is None or not self._builder.is_alive():
+            self._builder_stop = False
+            self._builder = threading.Thread(
+                target=self._builder_loop, name='TerrainBuilder', daemon=True)
+            self._builder.start()
+
+    def _collect_grass(self, slot, order, blades):
+        """Publish blades the builder thread grew (this thread)."""
+        table = self.table
+        if self._growing.get(slot) == order:
+            del self._growing[slot]
+        if slot >= table.capacity or not table.live[slot] or int(table.order[slot]) != order:
+            return
+        if blades is None:
+            table.grass_dirty[slot] = True
+            return
+        self.products.put(self.products.grass, slot, order, blades)
 
     def stop_builder(self):
         """Stop the builder thread and forget what it was asked for."""
@@ -1999,10 +2388,19 @@ class Terrain:
             if slot < table.capacity and table.live[slot] and int(table.order[slot]) == order:
                 table.dirty[slot] = True
         self._building.clear()
+        for slot, order in self._growing.items():
+            if slot < table.capacity and table.live[slot] and int(table.order[slot]) == order:
+                table.grass_dirty[slot] = True
+        self._growing.clear()
+        self._chaining.clear()
 
     def builds_pending(self) -> int:
         """Grids asked of the builder thread and not yet stored."""
         return len(self._building)
+
+    def grass_pending(self) -> int:
+        """Chunks' grass asked of the builder thread and not yet published."""
+        return len(self._growing)
 
 
     def get_2d_contours(self, axis1: str, axis2: str, view_bounds: Tuple[float, float, float, float], resolution: int = 32) -> List[Tuple[List[float], List[float], float]]:
@@ -2521,6 +2919,75 @@ class Terrain:
         bot = self.heightmap_data[y1, x0] * (1 - fx) + self.heightmap_data[y1, x1] * fx
         return top * (1 - fy) + bot * fy
 
+    def snapshot_texture_paint(self, bounds):
+        """The baked paint of the chunks under *bounds*, as it is now:
+        ``{chunk: (texture_paint_maps array, texture_paint_base array)}``.
+
+        Free: paint arrays are replaced, never written in place (see
+        :meth:`_bake_texture_rect`), so holding them keeps this moment's paint
+        whatever is baked after. Hand it to :meth:`restore_texture_paint` to
+        put part of it back -- a game's scorch, say, once the ground recovers.
+        """
+        return {key: (self.texture_paint_maps.get(key), self.texture_paint_base.get(key))
+                for key in self._chunks_in_bounds(bounds)}
+
+    def restore_texture_paint(self, bounds, snapshot):
+        """Put the paint under *bounds* back as *snapshot* (from
+        :meth:`snapshot_texture_paint`) had it; True if anything changed.
+
+        Only the texels inside *bounds* change; the rest of each chunk keeps
+        whatever was baked since. Grass grows back there by the ordinary
+        rule (paint under :attr:`GRASS_PAINT_CLEAR` lets it). Costs a copy of
+        each chunk touched (256 KB), its upload and its grass, like a bake.
+        """
+        try:
+            min_x, min_z, max_x, max_z = [float(v) for v in bounds]
+        except (TypeError, ValueError):
+            return False
+        res = self.TERRAIN_PAINT_RESOLUTION
+        cell = self.chunk_size / float(res)
+        stamped = bool(self.paint_stamps)
+        target = self.texture_paint_base if stamped else self.texture_paint_maps
+        changed = set()
+        for key in self._chunks_in_bounds((min_x, min_z, max_x, max_z)):
+            if key not in snapshot:
+                continue
+            orig = snapshot[key][1 if stamped else 0]
+            cur = target.get(key)
+            if cur is None and orig is None:
+                continue
+            chunk_min_x = self.offset_x + key[0] * self.chunk_size
+            chunk_min_z = self.offset_z + key[1] * self.chunk_size
+            ix0 = max(0, int(math.floor((min_x - chunk_min_x) / cell)))
+            ix1 = min(res - 1, int(math.floor((max_x - chunk_min_x) / cell)))
+            iz0 = max(0, int(math.floor((min_z - chunk_min_z) / cell)))
+            iz1 = min(res - 1, int(math.floor((max_z - chunk_min_z) / cell)))
+            if ix1 < ix0 or iz1 < iz0:
+                continue
+            new = cur.copy() if cur is not None else np.zeros((res, res, 4), np.uint8)
+            if orig is not None:
+                new[ix0:ix1 + 1, iz0:iz1 + 1] = orig[ix0:ix1 + 1, iz0:iz1 + 1]
+            else:
+                new[ix0:ix1 + 1, iz0:iz1 + 1] = 0
+            if cur is not None and np.array_equal(new, cur):
+                continue
+            if new[..., 3].any():
+                target[key] = new
+            else:
+                target.pop(key, None)
+            changed.add(key)
+        if not changed:
+            return False
+        if stamped:
+            self._drop_drag_cache()
+            self._recompose_paint(changed)
+        else:
+            self.texture_paint_base = self.texture_paint_maps.copy()
+            self._paint_changed_grass(tuple(changed))
+            for key in changed:
+                self._touch_texture_paint(key)
+        return True
+
     def _touch_texture_paint(self, coord):
         """Bump the version for one baked terrain paint chunk."""
         self._paint_version_counter += 1
@@ -2897,7 +3364,7 @@ class Terrain:
                 feather=radius * float(np.clip(feather, 0.0, 1.0)),
                 opacity=opacity, tiled=True)
             if changed:
-                self.texture_paint_base = dict(self.texture_paint_maps)
+                self.texture_paint_base = self.texture_paint_maps.copy()
             return changed
         # Free paint lives in the base layer, under the placed stamps.
         changed = self._bake_texture_rect(
@@ -3390,9 +3857,9 @@ class Terrain:
         """Erase all baked terrain texture paint and placed stamps."""
         if self.texture_paint_maps:
             self.table.mark_grass_dirty()
-        self.texture_paint_maps = {}
+        self.texture_paint_maps = _PaintMaps()
         self._paint_epoch += 1
-        self.texture_paint_base = {}
+        self.texture_paint_base = _PaintMaps()
         self.paint_stamps = []
         self.selected_stamp_ids = set()
         self._paint_display = {}
@@ -3423,13 +3890,16 @@ class Terrain:
         res = self.TERRAIN_PAINT_RESOLUTION
         fresh = {}
         entries = []
-        ordered = sorted(maps.items())
+        # As stored: a chunk away from the camera is its packed stream
+        # already (_PackedPaint), saved as it is, with no array to compress.
+        ordered = sorted(dict.items(maps))
         # The chunks whose arrays were replaced since the last call are
         # compressed together on a few threads (zlib works without the GIL):
         # a stamp click replaces four to nine, and their compression was
         # most of the click.
         stale = [paint for (cx, cz), paint in ordered
-                 if not ((cache.get((cx, cz)) or (None,))[0] is paint)
+                 if type(paint) is not _PackedPaint
+                 and not ((cache.get((cx, cz)) or (None,))[0] is paint)
                  and paint is not None and paint.shape == (res, res, 4)
                  and np.any(paint[..., 3])]
         packed = dict(zip(map(id, stale), _compress_paint(stale)))
@@ -3437,6 +3907,11 @@ class Terrain:
             hit = cache.get((cx, cz))
             if hit is not None and hit[0] is paint:
                 entry = hit[1]
+            elif type(paint) is _PackedPaint:
+                entry = None
+                if paint.painted and paint.shape == (res, res, 4):
+                    entry = {'coord': [int(cx), int(cz)],
+                             'data': base64.b64encode(paint.data).decode('ascii')}
             elif id(paint) not in packed:
                 entry = None
             else:
@@ -3533,7 +4008,7 @@ class Terrain:
         one); a chunk saved at another is resampled.
         """
         import base64, zlib
-        maps = {}
+        maps = _PaintMaps()
         res = int(saved_res or self.TERRAIN_PAINT_RESOLUTION)
         target = self.TERRAIN_PAINT_RESOLUTION
         expected = res * res * 4
@@ -3725,6 +4200,7 @@ class Terrain:
         biome_name = data.get('biome', 'grassy_hills')
         if biome_name in BIOMES: self.biome = BIOMES[biome_name]
         self.chunk_size = data.get('chunk_size', self.DEFAULT_CHUNK_SIZE)
+        self._sync_paint_resolution()
         self.mesh_scale = float(data.get('mesh_scale', self.chunk_size / self.DEFAULT_CHUNK_SIZE))
         self.base_resolution = data.get('base_resolution', 48)
         self.offset_x = data.get('offset_x', 0.0)
@@ -3817,7 +4293,7 @@ class Terrain:
             self.texture_paint_base = self._decode_texture_paint(
                 data.get('texture_paint_base', []), saved_res)
         else:
-            self.texture_paint_base = dict(self.texture_paint_maps)
+            self.texture_paint_base = self.texture_paint_maps.copy()
         self.selected_stamp_ids = set()
         self._paint_display = {}
         self._paint_epoch += 1
@@ -3828,6 +4304,10 @@ class Terrain:
             for stamp in self.paint_stamps:
                 keys |= self._stamp_chunks(stamp)
             self._recompose_paint(keys)
+        # No chunk is resident yet: all of the paint is packed, here under
+        # the loading bar, and unpacked as its chunks stream in.
+        self._paint_resident = None
+        self._pack_paint(self._paint_to_pack(frozenset()))
 
         # Sculpt offsets
         self.sculpt_offsets = {}

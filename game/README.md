@@ -39,7 +39,7 @@ Guild.
 | **WASD** | Move | **E** (use) | Talk / interact |
 | **Y** | Cycle die type | **D** | Roll selected die |
 | **X** | Cycle active spell | **B** (hold) | Block |
-| **V** | Toggle sneak | **H** | Quick-drink a healing potion |
+| **V** | Toggle sneak | **H** | Quick-heal: a healing potion, else food |
 | **I** | Inventory & equipment | **C** | Character sheet |
 | **J** | Quest journal | **P** | Spellbook (click a spell to ready it) |
 | **L** | Level up (when available) | **1–9 / Esc** | Dialogue choices / close |
@@ -93,7 +93,7 @@ still works. Other bindings can be changed under Pause → Options → Key bindi
 |--------|---------|
 | **Character creation** | 10 races (each with attribute/skill bonuses, resistances and a daily power), 13 classes, 10 birthsigns, or your own custom class. |
 | **8 attributes** | Strength, Endurance, Agility, Speed, Intelligence, Willpower, Personality, Luck — driving every derived stat and roll. |
-| **17 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Offensive, Defensive, Occult, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
+| **16 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Offensive, Defensive, Occult, Alchemy, Sneak, Security, Mercantile, Speechcraft, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
 | **Derived pools** | Health, Magicka and Stamina, recomputed from attributes; passive magicka/stamina regen. |
 | **Combat** | Melee (Strength + weapon skill), archery (draw + ammo), spells; hit chance, criticals, sneak attacks (×6 with a dagger), blocking, armour mitigation and elemental resistance. |
 | **Magic** | 30 spells across three schools (Offensive, Defensive and Occult), spell tutors and skill trainers in the settlements, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |

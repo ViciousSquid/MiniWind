@@ -62,10 +62,12 @@ def test_an_attack_roll_names_its_target_and_its_odds():
     source, hit = seen[0]
     assert source == "combat.hit"
     assert hit["label"] == "Roll to hit Bandit"
-    assert "vs their Endurance 30" in hit["why"]
+    assert "vs Armour Class 10" in hit["why"] and hit["why"].startswith("d20 +")
     assert hit["success"] == res["hit"]
     if res["hit"]:
-        source, crit = seen[1]
+        # A hit rolls its damage die, then for a critical.
+        assert seen[1][0] == "combat.damage"
+        source, crit = seen[2]
         assert source == "combat.critical"
         assert crit["success"] == res["crit"]
 
@@ -241,16 +243,19 @@ def test_a_blow_against_the_player_is_the_attacker_rolling_to_hit():
         assert res.get("deflected", False) == (not roll["success"])
 
 
-def test_with_no_armour_class_to_beat_nothing_is_rolled():
+def test_every_blow_rolls_even_against_an_unarmoured_body():
+    """Every attack rolls d20 + the attacker's bonus against Armour Class --
+    an unarmoured AC 10 included: a typical foe (+7) needs a 3."""
     from ..rpg import combat
     from ..rpg.character import Character
     roller = diceroll.DiceRoller(rng=random.Random(5))
     seen = []
-    roller.add_roll_listener(lambda *a: seen.append(a))
+    roller.add_roll_listener(lambda result, source, ctx: seen.append((result, ctx)))
     c = Character()
     c.attrs["endurance"] = 40
-    combat.resolve_incoming(c, 10.0, dice=roller, attacker="Wolf")
-    assert seen == []
+    combat.resolve_incoming(c, 10.0, dice=roller, attacker="Wolf", attack_bonus=7)
+    (roll, ctx), = seen
+    assert roll["target"] == 3 and ctx["armour_class"] == 10 and ctx["attack_bonus"] == 7
 
 
 def test_their_rolls_go_in_the_log_coloured_for_the_player_not_the_panel(config):
@@ -271,7 +276,8 @@ def test_the_odds_shown_are_the_odds_rolled():
     target = {"endurance": 30}
     odds = combat.attack_odds(c, target)
     fatigue = c.stamina / c.max_stamina
-    assert odds["hit_chance"] == combat.hit_chance(c, c.skill("blade"), 30, fatigue)
+    assert odds["ac"] == 10
+    assert odds["hit_chance"] == combat.hit_chance(c, c.skill("blade"), 10, fatigue)
     assert odds["hit_target"] == check_target(odds["hit_chance"])
     assert odds["crit_target"] == check_target(combat.critical_chance(c))
 
@@ -282,9 +288,10 @@ def test_the_nameplate_says_what_the_player_needs(qt_app):
     from ..ui import hud
     c = Character()
     line = hud._target_odds(c, {"endurance": 30})
-    assert line.startswith("Sure hit") and "Critical: need" in line
+    # Every attack rolls, melee too: the target's AC first, then the odds.
+    assert line.startswith("AC 10  ·  To hit: need ") and "Critical: need" in line
     c.active_weapon_kind = "bow"
-    assert hud._target_odds(c, {"endurance": 30}).startswith("To hit: need ")
+    assert hud._target_odds(c, {"endurance": 30, "armour_class": 15}).startswith("AC 15")
 
 
 # ------------------------------------------------------------ conversations
@@ -305,6 +312,17 @@ def test_a_rumour_is_passed_on_in_words():
     assert reply in chatter._REPLIES["grave"]
 
 
+def test_bandits_cut_down_are_good_riddance_not_a_matter_for_the_watch():
+    """A bystander used to answer news of bandits killed on the road with
+    "The watch had better hear of this", as if it were a murder."""
+    from .. import chatter
+    for kind in ("death", "attack"):
+        _o, reply = chatter.gossip_lines(
+            _fact(kind=kind, target_name="Hal Corbin", crime=False), "Ann", "Tom")
+        assert reply in chatter._REPLIES["lawful"]
+        assert "watch" not in reply.lower()
+
+
 def test_gossip_is_said_aloud_with_a_reply(config):
     ann = _npc({"name": "Ann"})
     tom = _npc({"name": "Tom"})
@@ -316,11 +334,43 @@ def test_gossip_is_said_aloud_with_a_reply(config):
     assert id(tom) in said
 
 
+def test_only_townsfolk_say_rumours_aloud(config):
+    """The simulation passes knowledge to and from everyone near, and every
+    exchange was voiced: the player's own character said "I saw it with my
+    own eyes: Dagny the Brigand was killed by someone.", and Vharzul the
+    Ember Wyrm answered a rumour in his cave with "In broad daylight? I'll
+    keep my distance." """
+    ann = _npc({"name": "Ann"})
+    wyrm = _FakeThing([100.0, 0.0, 0.0], {"type": "creature", "npc_role": "dragon",
+                                          "name": "Vharzul the Ember Wyrm"})
+    bandit = _npc({"name": "Wil the Brigand", "aggression": "hostile"})
+    s = _session([ann, wyrm, bandit], _FakePlayer([0, 0, 0]))
+    for speaker, listener in ((s.player_actor, ann), (ann, s.player_actor),
+                              (wyrm, ann), (ann, wyrm), (bandit, ann)):
+        s._on_gossip(speaker, listener, _fact())
+    assert not s.live_barks() and not s.__dict__.get("_bark_queue")
+
+
 def test_small_talk_suits_the_hour():
     from .. import chatter
     opener, reply = chatter.small_talk("Ann", "Tom", 7.0)
     assert (opener, reply) in [(o.format(a="Ann", b="Tom"), r.format(a="Ann", b="Tom"))
                                for o, r in chatter._SMALL_TALK["morning"]]
+
+
+def test_neighbours_call_each_other_by_name_not_by_title():
+    """'Morning, Town Archer.' / 'Sleep well, Kestrel the Guard?' were heard
+    in Millbrook: neighbours used each other's full titles."""
+    from .. import chatter
+    assert chatter.address("Kestrel the Guard") == "Kestrel"
+    assert chatter.address("Ulla of the Watch") == "Ulla"
+    assert chatter.address("Mara") == "Mara"
+    assert chatter.address("Town Archer") == "friend"
+    assert chatter.address("Head Chef") == "friend"
+    for hour in (7.0, 13.0, 19.0, 23.0):
+        opener, reply = chatter.small_talk("Town Archer", "Kestrel the Guard", hour)
+        assert "Town Archer" not in opener + reply
+        assert "the Guard" not in opener + reply
 
 
 def test_two_idle_neighbours_pass_the_time_of_day(config):
@@ -366,3 +416,19 @@ def test_whats_on_your_mind_is_offered_in_conversation(config):
     assert tree["nodes"]["g"]["responses"] == [{"text": "Bye.", "goto": "END"}]
     hostile = _npc({"name": "Brute", "aggression": "hostile"})
     assert s._with_mind_topic(tree, hostile) is tree
+
+
+def test_a_hungry_resident_says_why_there_is_no_bread(config):
+    """The flour shortage reaches the player as people saying so: the flour
+    supply's own reason, aloud, once for each reason each day."""
+    ann = _npc({"name": "Ann", "_food_reason": "The local shop has run out of flour."})
+    far = _npc({"name": "Far", "_food_reason": "Cannot afford flour."})
+    far.pos = [5000, 0, 0]
+    s = _session([ann, far], _FakePlayer([0, 0, 0]))
+    s._update_food_talk()
+    said = {id(thing): text for thing, text, _left in s.live_barks()}
+    assert said[id(ann)] in s.FOOD_LINES["The local shop has run out of flour."]
+    assert id(far) not in said                       # out of earshot
+    s.__dict__["barks"] = {}
+    s._update_food_talk()
+    assert not s.live_barks()                        # once a day for that reason

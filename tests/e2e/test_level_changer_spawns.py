@@ -169,6 +169,39 @@ def test_e_on_the_sprite_loads_the_destination_without_a_confirmation(fio_sessio
     assert _spawned_at(session)[0] == 'DungeonStart'
 
 
+@pytest.mark.gl
+def test_a_level_change_is_made_once(fio_session, maps):
+    """The old session's last published frame still carried the request after
+    the load, and the new session's first paint queued it again: every cave
+    in MiniWind loaded twice, the second load replacing the game session the
+    player had just walked into."""
+    import glm
+
+    hub, dungeon = maps
+    session = fio_session(hub).start_play()
+    seen = _spawns_seen(session)
+    changer = _thing(session, 'ToDungeon')
+    changer.properties['confirm'] = False
+    player = session.logic.player_runtime.player
+    player.pos = glm.vec3(changer.pos[0], 50.0, changer.pos[2])
+    session.step(1)
+    session.window.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_E, Qt.NoModifier))
+    session.step(1)
+    session.paint()
+    session.app.processEvents()             # the dungeon loads
+    assert session.window.file_path == dungeon
+    for _ in range(3):
+        # The next frames, before the new session has published one of its own.
+        session.paint()
+        session.app.processEvents()
+    session.step(5)
+    session.paint()
+    session.app.processEvents()
+    session.logic.session_runtime.stop_monster_ai()
+
+    assert seen == ['DungeonStart']
+
+
 def test_an_empty_destination_spawn_uses_the_destination_primary(fio_session, maps):
     hub, dungeon = maps
     session = fio_session(dungeon).start_play()

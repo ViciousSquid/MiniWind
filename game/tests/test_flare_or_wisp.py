@@ -29,7 +29,7 @@ def test_only_flare_is_ever_swapped_and_never_for_a_wisp_already_known():
 
 
 def test_a_new_mage_may_start_with_wisp_instead_of_flare():
-    lucky = Character.create("Ana", "imperial", "mage", rng=_Roll(0.0))
+    lucky = Character.create("Ana", "valian", "mage", rng=_Roll(0.0))
     assert "wisp" in lucky.known_spells and "flare" not in lucky.known_spells
-    usual = Character.create("Ana", "imperial", "mage", rng=_Roll(0.9))
+    usual = Character.create("Ana", "valian", "mage", rng=_Roll(0.9))
     assert "flare" in usual.known_spells and "wisp" not in usual.known_spells

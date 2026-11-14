@@ -30,15 +30,16 @@ out by the tick, in order with the keys, exactly as a screen's buttons are.
 from __future__ import annotations
 
 import math
+import os
 import time
 
 from PyQt5.QtCore import QPoint, QRect, QRectF, Qt
 from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetrics, QLinearGradient,
-                         QRadialGradient, QPainterPath, QPen, QPixmap)
+                         QRadialGradient, QPainterPath, QPen, QPixmap, QTransform)
 
 from engine.floating_windows import FloatingWindow
 
-from . import drag, hits
+from . import drag, hits, spell_lock
 from . import theme as T
 
 # -- palette: dressed stone and old gilt ------------------------------------
@@ -59,18 +60,186 @@ _OFF_HAND_FILL = QColor(44, 70, 86)
 
 #: The worn slots around the paperdoll: (slot id, label, x, y) with x, y the
 #: slot's centre as fractions of the paperdoll panel.
+#: The paperdoll's two hand slots, by the physical hand.
+HAND_LEFT = "left_hand"
+HAND_RIGHT = "right_hand"
+#: The glove slot's second box, under the right hand: the same slot as the
+#: one under the left hand (a pair of gloves), its picture mirrored.
+GLOVES_RIGHT = "hands_right"
+
+
+def _hand_slot(character, slot):
+    """The equipment slot behind a paperdoll *slot*: a hand slot is the main
+    hand's weapon slot or the other hand's slot, by the character's
+    handedness (a right-hander's right hand is the main hand); any other
+    slot is itself."""
+    if slot == GLOVES_RIGHT:
+        return "hands"
+    if slot not in (HAND_LEFT, HAND_RIGHT):
+        return slot
+    handed = getattr(character, "handed", "right") if character is not None else "right"
+    physical = "left" if slot == HAND_LEFT else "right"
+    return "weapon" if physical == handed else "shield"
+
+
+#: Paperdoll slot sizes: the two hand slots are a little bigger than the
+#: rest, and sit a little further out from the head.
+SLOT_SIZE = 50
+HAND_SLOT_SIZE = 66
+#: Torch, ring and gloves: a little smaller than the rest.
+SMALL_SLOT_SIZE = 42
+SMALL_SLOTS = ("light", "ring", "hands", "hands_right")
+
+#: The faint hand an empty hand slot shows behind its label.
+_HAND_GHOST = QColor(176, 162, 136, 46)
+_HAND_GHOST_EDGE = QColor(196, 182, 150, 60)
+_hand_paths = {}
+
+
+def _hand_path(side):
+    """A bare hand seen from the back, as you see your own, in a unit
+    square: slim fingers spread a little, the thumb out to the side, the
+    wrist narrowing below the palm, all one outline. The left hand's thumb
+    points right (in, toward the body), the right hand's left. Built once
+    per side."""
+    path = _hand_paths.get(side)
+    if path is not None:
+        return path
+
+    def capsule(cx, base_y, width, length, angle):
+        # A finger: a fully rounded bar standing on (cx, base_y), leaning
+        # *angle* degrees (positive leans right).
+        bar = QPainterPath()
+        bar.addRoundedRect(QRectF(-width / 2.0, -length, width, length + width / 2.0),
+                           width / 2.0, width / 2.0)
+        return QTransform().translate(cx, base_y).rotate(angle).map(bar)
+
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0.25, 0.40, 0.44, 0.36), 0.13, 0.13)          # back of hand
+    wrist = QPainterPath()
+    wrist.moveTo(0.31, 0.66)
+    wrist.lineTo(0.61, 0.66)
+    wrist.quadTo(0.58, 0.82, 0.59, 0.99)
+    wrist.lineTo(0.35, 0.99)
+    wrist.quadTo(0.36, 0.82, 0.31, 0.66)
+    wrist.closeSubpath()
+    path = path.united(wrist)
+    # Little, ring, middle and index fingers (left hand: from the left),
+    # fanning out a little from the knuckles.
+    for cx, length, angle in ((0.295, 0.21, -11), (0.395, 0.29, -4),
+                              (0.50, 0.33, 1), (0.605, 0.29, 7)):
+        path = path.united(capsule(cx, 0.47, 0.088, length, angle))
+    # The thumb, from the side of the hand near the wrist, angled out.
+    path = path.united(capsule(0.645, 0.70, 0.10, 0.25, 52))
+    path = path.simplified()
+    if side == "right":
+        path = QTransform(-1, 0, 0, 1, 1, 0).map(path)                       # mirrored
+    _hand_paths[side] = path
+    return path
+
+
+#: The hand an empty hand slot shows: an ink drawing on yellowed paper
+#: (assets/sprites/ui/hand.png, the thumb on the left), mirrored for the
+#: left hand so both thumbs point in toward the head.
+_HAND_ART = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "assets", "sprites", "ui", "hand.png")
+#: How strongly the paper shows: a little subdued, so it stays a background.
+_HAND_ART_OPACITY = 0.8
+#: The L / R label's ink on the paper.
+_HAND_INK = QColor(70, 50, 30)
+_hand_art = {}
+
+
+def _hand_pixmap(side, size, ratio=1.0):
+    """The paper hand for *side* at *size* logical pixels, sharp at the
+    screen's pixel *ratio* (cached), or None when the picture is missing."""
+    key = (side, int(size), round(float(ratio), 2))
+    if key in _hand_art:
+        return _hand_art[key]
+    pm = QPixmap(_HAND_ART)
+    if pm.isNull():
+        _hand_art[key] = None
+        return None
+    px = max(1, int(round(size * ratio)))
+    pm = pm.scaled(px, px, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    if side == "left":
+        pm = pm.transformed(QTransform().scale(-1, 1))
+    pm.setDevicePixelRatio(ratio)
+    _hand_art[key] = pm
+    return pm
+
+
+def _draw_hand_ghost(painter, rect, side) -> bool:
+    """The paper hand an empty *side* hand slot shows, filling *rect* inside
+    the slot's rounded edge. Returns False (having drawn a plain outline hand
+    instead) when the picture is missing."""
+    pm = _hand_pixmap(side, min(rect.width(), rect.height()), T.device_ratio(painter))
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    if pm is not None:
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(rect), 3, 3)
+        painter.setClipPath(clip)
+        painter.setOpacity(_HAND_ART_OPACITY)
+        side_px = int(round(pm.width() / pm.devicePixelRatio()))
+        painter.drawPixmap(rect.x() + (rect.width() - side_px) // 2,
+                           rect.y() + (rect.height() - side_px) // 2, pm)
+        painter.restore()
+        return True
+    size = min(rect.width(), rect.height()) - 16
+    x = rect.x() + (rect.width() - size) / 2.0
+    painter.translate(x, rect.y() + 3)
+    painter.scale(size, size)
+    painter.setBrush(_HAND_GHOST)
+    painter.setPen(QPen(_HAND_GHOST_EDGE, 1.0 / max(1.0, size)))
+    painter.drawPath(_hand_path(side))
+    painter.restore()
+    return False
+
+
+#: How far in from each side the side columns stand (a share of the doll's
+#: width): close to the head. The hand slots stand further out.
+COLUMN_IN = 0.28
+#: Torch and ring stand a touch further in still, nearer the head.
+TORCH_IN = 0.31
+#: How far in the two hand slots stand: close beside the head.
+HAND_IN = 0.17
+#: How far in the Head and Amulet slots stand: closer together, over the
+#: head.
+TOP_IN = 0.26
+#: Where the character's head sits in the doll (a share of its height) and
+#: how big it is drawn: the hand slots stand level with it, on either side,
+#: and the chest, legs and feet below it.
+HEAD_Y = 0.285
+HEAD_SIZE = 120
+#: The hand slots' height: beside the head, a little below its middle.
+HAND_Y = 0.32
+
 PAPERDOLL = (
-    ("head", "Head", 0.14, 0.10),
-    ("chest", "Chest", 0.14, 0.33),
-    ("hands", "Hands", 0.14, 0.56),
-    ("legs", "Legs", 0.14, 0.79),
-    ("amulet", "Amulet", 0.86, 0.10),
-    ("ring", "Ring", 0.86, 0.33),
-    ("shield", "Shield", 0.86, 0.56),
-    ("light", "Torch", 0.86, 0.79),
-    ("weapon", "Weapon", 0.30, 0.93),
-    ("feet", "Feet", 0.70, 0.93),
+    # The two hands sit mid-height on either side: the left hand on the
+    # left, the right hand on the right, each its own slot with its own mouse
+    # button. Which equipment slot backs each depends on handedness
+    # (_hand_slot): the main hand is the weapon slot, the other hand the one
+    # that takes a shield, a second weapon or a spell. A torch has its own
+    # slot (it still takes the off hand: lighting one puts a shield away).
+    # Body armour, legs and feet stand in a column below the head, in body
+    # order.
+    ("head", "Head", TOP_IN, 0.09),
+    (HAND_LEFT, "L", HAND_IN, HAND_Y),        # beside the head
+    ("light", "Torch", TORCH_IN, 0.55),
+    # Gloves under each hand: one slot (the pair), shown twice, the right
+    # one mirrored.
+    ("hands", "Gloves", COLUMN_IN, 0.69),     # gauntlets, bracers, wraps
+    ("amulet", "Amulet", 1.0 - TOP_IN, 0.09),
+    (HAND_RIGHT, "R", 1.0 - HAND_IN, HAND_Y), # beside the head
+    ("ring", "Ring", 1.0 - TORCH_IN, 0.55),
+    (GLOVES_RIGHT, "Gloves", 1.0 - COLUMN_IN, 0.69),
+    ("chest", "Chest", 0.50, 0.555),
+    ("legs", "Legs", 0.50, 0.735),
+    ("feet", "Feet", 0.50, 0.915),
 )
+
+
 
 #: Pack tabs: (label, categories shown; None = everything).
 TABS = (
@@ -141,6 +310,14 @@ def slot_of(item_def):
     return None
 
 
+def _is_light(item_def) -> bool:
+    try:
+        import game.rpg.items as itemdb
+        return itemdb.is_light_source(item_def)
+    except Exception:
+        return False
+
+
 def fits(target, item_def) -> bool:
     """Whether an item may be dropped on *target* (``("equip", slot)``,
     ``("quick", i)``, ``("pack", None)``)."""
@@ -152,6 +329,8 @@ def fits(target, item_def) -> bool:
     if kind == "quick":
         return item_def.category == "weapon"
     if kind == "equip":
+        if key == "shield" and _is_light(item_def):
+            return True                 # a torch takes the off hand (its own slot)
         if key == "shield" and item_def.category == "weapon":
             # The off hand: a second one-handed weapon is dual wielding.
             import game.rpg.equipment as equipment
@@ -335,6 +514,8 @@ class InventoryWindow(FloatingWindow):
         """Equipment, pack and sheet within the supplied body rectangle."""
         self._cells, self._targets, self._buttons = [], [], []
         self.hover = None
+        # Worn metal armour greys every spell out (game/ui/spell_lock.py).
+        self._spell_locked = spell_lock.locked(self._character())
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
         painter.fillRect(QRect(x, y, w, h), _STONE_DARK)
@@ -357,6 +538,7 @@ class InventoryWindow(FloatingWindow):
         # screen too (game/ui/drag.py).
         drag.set_zones(self, self._targets)
         self._draw_pad_focus(painter)
+        spell_lock.flush(painter)          # a greyed spell's tooltip, on top
         painter.restore()
 
     def _draw_view_tabs(self, painter, x, y, w, h):
@@ -382,7 +564,7 @@ class InventoryWindow(FloatingWindow):
             _fit(painter, r, Qt.AlignCenter, label)
             self._buttons.append((QRect(r), self._set_view(key)))
 
-    def _panel(self, painter, rect, title):
+    def _panel(self, painter, rect, title, title_width=None):
         path = QPainterPath()
         path.addRoundedRect(QRectF(rect), 6, 6)
         g = QLinearGradient(0, rect.y(), 0, rect.bottom())
@@ -398,7 +580,10 @@ class InventoryWindow(FloatingWindow):
         painter.drawLine(bar.bottomLeft(), bar.bottomRight())
         painter.setFont(self.f_title)
         painter.setPen(_GOLD)
-        _fit(painter, bar.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
+        room = bar.adjusted(12, 0, 0, 0)
+        if title_width is not None:
+            room.setWidth(min(room.width(), int(title_width)))
+        _fit(painter, room, Qt.AlignVCenter | Qt.AlignLeft, title)
         return QRect(rect.x() + 10, bar.bottom() + 8, rect.width() - 20,
                      rect.bottom() - bar.bottom() - 16)
 
@@ -409,10 +594,12 @@ class InventoryWindow(FloatingWindow):
         painter.drawRoundedRect(rect, 4, 4)
 
     def _slot_box(self, painter, rect, iid, target=None, source=None, label=None,
-                  lit=False, number=None, stack=None):
+                  lit=False, number=None, stack=None, hand=None, mirror=False):
         """One item slot: a sunken frame, its icon and count, its drop state.
         *stack* is what the slot shows when it is not the whole carried stack
-        (one copy of a weapon carried twice)."""
+        (one copy of a weapon carried twice). *hand* ("left" / "right") marks
+        a hand slot: empty, it shows a faint hand behind its label. *mirror*
+        draws the item's picture flipped (the right-hand glove)."""
         # Dragged, or picked up by a click: the slots it fits light up.
         dragging = self._drag or drag.offered()
         drag_def = _item(dragging[2]) if dragging else None
@@ -442,6 +629,10 @@ class InventoryWindow(FloatingWindow):
         if iid and not dragging_this:
             size = rect.width() - 10
             pm = self._icon(iid, size)
+            if mirror and pm is not None and not pm.isNull():
+                ratio = pm.devicePixelRatio()
+                pm = pm.transformed(QTransform().scale(-1, 1))
+                pm.setDevicePixelRatio(ratio)
             if pm is not None and not pm.isNull():
                 painter.drawPixmap(rect.x() + (rect.width() - pm.width()) // 2,
                                    rect.y() + (rect.height() - pm.height()) // 2, pm)
@@ -469,6 +660,15 @@ class InventoryWindow(FloatingWindow):
                     painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), 3, 3)
                 except Exception:
                     pass
+        elif hand and not iid:
+            paper = _draw_hand_ghost(painter, rect.adjusted(2, 2, -2, -2), hand)
+            if label:
+                # In the outer bottom corner, on bare paper clear of the wrist.
+                painter.setFont(self.f_small)
+                painter.setPen(_HAND_INK if paper else QColor(120, 112, 98))
+                corner = Qt.AlignLeft if hand == "left" else Qt.AlignRight
+                _fit(painter, rect.adjusted(6, rect.height() - 17, -6, -3),
+                     corner | Qt.AlignVCenter, label)
         elif label and not iid:
             painter.setFont(self.f_small)
             painter.setPen(QColor(120, 112, 98))
@@ -487,8 +687,9 @@ class InventoryWindow(FloatingWindow):
         (there are no bodies in MiniWind). Faint spokes run from it to the
         slots round it."""
         cx = area.center().x()
-        cy = area.y() + int(area.height() * 0.45)
-        size = 150
+        # High in the doll: chest, legs and feet stand below the head.
+        cy = area.y() + int(area.height() * HEAD_Y)
+        size = HEAD_SIZE
         painter.setPen(QPen(QColor(90, 84, 72, 110), 1, Qt.DashLine))
         for _slot, _label, fx, fy in PAPERDOLL:
             painter.drawLine(cx, cy, int(area.x() + fx * area.width()),
@@ -512,6 +713,8 @@ class InventoryWindow(FloatingWindow):
             rig = eye_rig.rig_for(os.path.join(root, heads.any_head_path(head)), size)
         except Exception:
             rig = None
+        if self._draw_worn_helmet(painter, c, head, cx, cy, size, size):
+            return              # helmeted: only the face shows, through the visor
         if rig is not None:
             eye_rig.draw(painter, rig, cx - rig.head.width() // 2,
                          cy - rig.head.height() // 2, hits.pointer)
@@ -532,9 +735,36 @@ class InventoryWindow(FloatingWindow):
         if pm is not None and not pm.isNull():
             painter.drawPixmap(cx - pm.width() // 2, cy - pm.height() // 2, pm)
 
+    def _draw_worn_helmet(self, painter, c, head, cx, cy, w, h) -> bool:
+        """With a helmet in the head slot, draw the head wearing it over the
+        *w* x *h* head about (*cx*, *cy*): the same picture as the overhead
+        sprite (game/head_gear.py). False with no helmet."""
+        try:
+            import game.head_gear as head_gear
+            import game.rpg.heads as heads
+            helmet = head_gear.helmet_id(c)
+            if not helmet:
+                return False
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            size = max(w, h)
+            return head_gear.draw_worn(painter, os.path.join(root, heads.any_head_path(head)),
+                                       helmet, cx - size / 2.0, cy - size / 2.0, size)
+        except Exception:
+            return False
+
     def _draw_equipment(self, painter, rect):
         c = self._character()
-        inner = self._panel(painter, rect, getattr(c, "name", "Adventurer") if c else "Adventurer")
+        # The name stops short of the Armour Class shield in the bar's middle.
+        inner = self._panel(painter, rect, getattr(c, "name", "Adventurer") if c else "Adventurer",
+                            title_width=rect.width() // 2 - 40)
+        if c is not None:
+            # Current experience, in the title bar's right half, above the
+            # level and class: small, as it grows large.
+            painter.setFont(self.f_small)
+            painter.setPen(_GOLD)
+            _fit(painter, QRect(rect.center().x() + 40, rect.y() + 2,
+                                rect.right() - 12 - (rect.center().x() + 40), 28),
+                 Qt.AlignRight | Qt.AlignVCenter, f"{int(getattr(c, 'xp', 0) or 0)} XP")
         if c is not None:
             try:
                 import game.rpg.classes as classes
@@ -548,16 +778,22 @@ class InventoryWindow(FloatingWindow):
         doll = QRect(inner.x(), inner.y() + 12, inner.width(), 330)
         self._draw_paperdoll_figure(painter, doll)
         worn = self._equipment()
-        s = 50
+        s = SLOT_SIZE
         for slot, label, fx, fy in PAPERDOLL:
-            r = QRect(int(doll.x() + fx * doll.width() - s / 2),
-                      int(doll.y() + fy * doll.height() - s / 2), s, s)
+            hand = {HAND_LEFT: "left", HAND_RIGHT: "right"}.get(slot)
+            mirror = slot == GLOVES_RIGHT
+            size = (HAND_SLOT_SIZE if hand else
+                    SMALL_SLOT_SIZE if slot in SMALL_SLOTS else SLOT_SIZE)
+            r = QRect(int(doll.x() + fx * doll.width() - size / 2),
+                      int(doll.y() + fy * doll.height() - size / 2), size, size)
+            slot = _hand_slot(c, slot)
             iid = worn.get(slot)
             import game.rpg.equipment as eq
             spell = eq.hand_spell(c, "off" if slot == "shield" else "main") \
                 if c is not None and slot in ("weapon", "shield") else None
             self._slot_box(painter, r, iid, target=("equip", slot),
-                           source=("equip", slot, iid) if iid else None, label=label)
+                           source=("equip", slot, iid) if iid else None, label=label,
+                           hand=hand if spell is None else None, mirror=mirror)
             if spell is not None:
                 self._draw_spell_slot(painter, r, spell,
                                       ("spell_hand", "off" if slot == "shield" else "main", spell.id))
@@ -607,15 +843,17 @@ class InventoryWindow(FloatingWindow):
         painter.setPen(_INK)
         _fit(painter, f_left, Qt.AlignLeft | Qt.AlignVCenter,
              "Unarmoured" if weight == "none" else f"{weight.title()} armour")
-        self._draw_ac_badge(painter, QPoint(inner.x() + int(inner.width() * 0.31),
-                                            inner.y() + 40), ar)
+        # Right at the top, in the middle, across the title bar's lower edge.
+        self._draw_ac_badge(painter, QPoint(inner.x() + inner.width() // 2,
+                                            inner.y() - 8), ar)
         painter.setPen(_GOLD)
         _fit(painter, f_mid, Qt.AlignHCenter | Qt.AlignVCenter, f"{gold} gold")
         painter.setPen(_NO if cap and load > cap else _INK)
         _fit(painter, f_right, Qt.AlignRight | Qt.AlignVCenter, f"{load:.0f} / {cap:.0f} wt")
 
     def _draw_ac_badge(self, painter, centre, ac):
-        """Armour Class on a little heater shield, top left of the paperdoll."""
+        """Armour Class on a little heater shield, at the top of the paperdoll,
+        across the title bar."""
         cx, cy = centre.x(), centre.y()
         path = QPainterPath()
         path.moveTo(cx - 20, cy - 22)
@@ -656,9 +894,13 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(QPen(_GOLD if sid == active else _SLOT_EDGE, 2 if sid == active else 1))
             painter.drawRoundedRect(r, 4, 4)
             if not self._draw_spell_art(painter, r.adjusted(4, 4, -4, -4), sid):
+                col = spell_lock.colour(sp.color, self._spell_locked)
                 painter.setBrush(QBrush(col))
                 painter.setPen(QPen(col.darker(160), 1))
                 painter.drawEllipse(r.adjusted(9, 9, -9, -9))
+            if self._spell_locked:
+                spell_lock.veil(painter, r)
+                spell_lock.note(r, True)
             if hits.hovered(r):
                 self.hover = ("spell", sid)
             self._cells.append((QRect(r), ("spell", None, sid)))
@@ -673,18 +915,23 @@ class InventoryWindow(FloatingWindow):
             pm = None
         if pm is None or pm.isNull():
             return False
+        pm = spell_lock.grey(pm, getattr(self, "_spell_locked", False))
         painter.drawPixmap(rect.x() + (rect.width() - pm.width()) // 2,
                            rect.y() + (rect.height() - pm.height()) // 2, pm)
         return True
 
     def _draw_spell_slot(self, painter, rect, spell, source):
         painter.fillRect(rect.adjusted(2, 2, -2, -2), _SLOT)
+        locked = getattr(self, "_spell_locked", False)
         if not self._draw_spell_art(painter, rect.adjusted(6, 3, -6, -19), spell.id):
-            painter.setBrush(QColor(*spell.color))
+            painter.setBrush(spell_lock.colour(spell.color, locked))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(rect.adjusted(12, 5, -12, -19))
+        if locked:
+            spell_lock.veil(painter, rect)
+            spell_lock.note(rect, True)
         painter.setFont(self.f_small)
-        painter.setPen(_INK)
+        painter.setPen(spell_lock.GREY if locked else _INK)
         _fit(painter, rect.adjusted(3, rect.height() - 18, -3, -2),
              Qt.AlignCenter, spell.name)
         self._cells.append((QRect(rect), source))
@@ -770,7 +1017,7 @@ class InventoryWindow(FloatingWindow):
                                 2 if (chosen or sid == active) else 1.4))
             painter.drawRoundedRect(r, 4, 4)
             if not self._draw_spell_art(painter, r.adjusted(6, 6, -6, -6), sid):
-                col_ = QColor(*sp.color)
+                col_ = spell_lock.colour(sp.color, self._spell_locked)
                 glow = QColor(col_)
                 glow.setAlpha(70)
                 painter.setBrush(glow)
@@ -787,6 +1034,9 @@ class InventoryWindow(FloatingWindow):
             painter.setFont(self.f_count)
             painter.setPen(QColor(150, 190, 255))
             painter.drawText(r.adjusted(0, 0, -4, -2), Qt.AlignRight | Qt.AlignBottom, str(cost))
+            if self._spell_locked:
+                spell_lock.veil(painter, r, 4)
+                spell_lock.note(r, True)
             if hits.hovered(r):
                 painter.fillRect(r.adjusted(2, 2, -2, -2), QColor(255, 230, 170, 26))
                 self.hover = ("spell", sid)
@@ -830,6 +1080,7 @@ class InventoryWindow(FloatingWindow):
             lines.append(f"{str(e.get('kind', '')).replace('_', ' ').title()} {mag}")
         for k, line in enumerate(lines[:6]):
             painter.drawText(inner.x(), desc.bottom() + 22 + k * 18, line)
+
 
     def _draw_details(self, painter, rect):
         inner = self._panel(painter, rect, "Details")
@@ -1114,6 +1365,8 @@ class InventoryWindow(FloatingWindow):
         def act():
             def run(session):
                 c = session.game.character
+                if spell_lock.refuse(session, c):
+                    return          # metal armour: greyed out, not selectable
                 c.active_spell = sid
                 try:
                     import game.rpg.equipment as eq
@@ -1235,6 +1488,10 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(QPen(_GOLD, 3))
             painter.drawRoundedRect(node["rect"].adjusted(-2, -2, 2, 2), 4, 4)
             painter.restore()
+            source = node.get("source")
+            if source and source[0] in ("spell", "spell_hand"):
+                # Focus can rest on a greyed spell; it says why it is grey.
+                spell_lock.focus(node["rect"], getattr(self, "_spell_locked", False))
 
     def _at(self, rects, p):
         for r, what in reversed(rects):

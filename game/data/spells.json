@@ -365,7 +365,7 @@
         "duration": 20
       }
     ],
-    "desc": "Redguard surge.",
+    "desc": "Sunborn surge.",
     "element": "magic",
     "projectile_speed": 900.0,
     "color": null,
@@ -715,7 +715,7 @@
         "duration": 30
       }
     ],
-    "desc": "Nord racial shield.",
+    "desc": "Highlander's ward.",
     "element": "magic",
     "projectile_speed": 900.0,
     "color": null,

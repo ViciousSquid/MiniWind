@@ -12,7 +12,7 @@ from .test_cast_controls import _Logic
 
 
 def _caster():
-    c = Character.create("Mage", "imperial", "mage")
+    c = Character.create("Mage", "valian", "mage")
     c.known_spells = ["flare", "heal_minor"]
     c.inventory = [items.make(iid) for iid in
                    ("iron_shortsword", "iron_shield", "short_bow", "torch")]

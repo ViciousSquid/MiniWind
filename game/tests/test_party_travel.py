@@ -10,7 +10,7 @@ from .test_resurrection_follower import _armed_bandit
 
 def _enter(store, map_key, things):
     session = MiniwindSession(_Logic(list(things)), cfg={}, globals_store=store)
-    session.game.character = Character.create("Caster", "imperial", "necromancer")
+    session.game.character = Character.create("Caster", "valian", "necromancer")
     session.needs_char_creation = False
     session.open_screen = None
     eq.equip_spell(session.game.character, "resurrection", "main")

@@ -181,7 +181,7 @@ class OfflineNetwork:
 
 def profiles(rng, count):
     from game.rpg import birthsigns, classes, heads, races
-    race_ids = list(getattr(races, "RACES", {}) or ["imperial"])
+    race_ids = list(getattr(races, "RACES", {}) or ["valian"])
     class_ids = list(getattr(classes, "CLASSES", {}) or ["warrior"])
     sign_ids = list(getattr(birthsigns, "BIRTHSIGNS", {}) or ["none"])
     chosen = rng.sample(list(heads.HEAD_IDS), count)

@@ -4,11 +4,23 @@ The starting quests of Miniwind. Importing this module registers them.
 
 from __future__ import annotations
 
-from .quests import Quest, Stage, register
+from . import quests as _quests
+from .quests import Quest, Stage
+
+
+def register(quest: Quest) -> Quest:
+    """Register a built-in *quest* unless that id is already registered.
+
+    Built-ins are the fallback: a ``.quest`` file or a map-authored quest of
+    the same id always wins, whichever was loaded first. ``load()`` runs again
+    whenever a :class:`GameState` is made (every new game), and used to put the
+    built-ins back over the files the session had already loaded.
+    """
+    return _quests.QUESTS.get(quest.id) or _quests.register(quest)
 
 
 def load() -> None:
-    """Register all built-in quests (idempotent)."""
+    """Register all built-in quests that nothing else has defined (idempotent)."""
 
     register(Quest(
         "mill_bandits", "Trouble at the Old Mill",
@@ -45,15 +57,15 @@ def load() -> None:
     register(Quest(
         "fighters_join", "Proving Your Steel",
         giver="Grunn", faction="fighters", xp=25,
-        desc="The Fighters Guild will take you on if you prove yourself.",
+        desc="The Warrior's Guild will take you on if you prove yourself.",
         rewards={"gold": 50, "rep": ("fighters", 10)},
         stages=[
-            Stage(0, "Grunn of the Fighters Guild will admit me if I clear the "
+            Stage(0, "Grunn of the Warrior's Guild will admit me if I clear the "
                      "skeletons from the barrow.", objective="Clear the barrow",
                   waypoint="skeleton"),
             Stage(10, "The barrow is cleared. I should report to Grunn.",
                   objective="Report to Grunn"),
-            Stage(20, "I am now a member of the Fighters Guild.", finishes=True),
+            Stage(20, "I am now a member of the Warrior's Guild.", finishes=True),
         ],
     ))
 

@@ -414,6 +414,10 @@ class QtGameView(QOpenGLWidget):
         #: Set by a game layer that paints its own death screen (through the
         #: render.overlay hook), so the stock "DIED" screen stays off.
         self.game_death_screen = False
+        #: Set by a game that always draws its own HUD (MiniWind), so the
+        #: stock HUD is never drawn -- not even for the first frame of a play
+        #: session, before the game's overlay has run to say so.
+        self.game_hud = False
         #: A game layer's death screen menu, asked first about every key
         #: while the player is dead. Duck-typed: ``handle_key(event) -> bool``
         #: (True when it used the key). With one installed, Esc on death no
@@ -460,6 +464,9 @@ class QtGameView(QOpenGLWidget):
         self._cached_player_ammo = 0
         self._cached_player_armor = 0
         self._cached_level_complete_ui = None
+        #: The level-complete request last confirmed or cancelled: a frame
+        #: published before that (the old session's last) may still carry it.
+        self._level_complete_done = None
         self._muzzle_flash_duration_frames = 3
 
         self.setAttribute(Qt.WA_OpaquePaintEvent)
@@ -753,6 +760,66 @@ class QtGameView(QOpenGLWidget):
         for tex_name in texture_set:
             self.renderer.load_texture(tex_name, 'textures')
 
+    #: warm_up_play: the most frames it paints, and how long it may take.
+    WARM_UP_FRAMES = 12
+    WARM_UP_SECONDS = 4.0
+
+    def warm_up_play(self, max_frames=None, timeout_s=None):
+        """Paint the first frames of Play now, under the loading bar.
+
+        The first frames of a world are where everything it shows is loaded
+        or built for the first time: the terrain around the player and its
+        grass (a few chunks a frame), every sprite the entity table names,
+        the textures of the models and effects in view, the shaders drawn
+        with for the first time, the game's own HUD caches. Painted here,
+        while the loading bar is up, the first frame the player sees finds
+        them ready instead of stopping for them.
+
+        Waits for the logic thread to publish its first Play frame, then
+        paints until a frame leaves no terrain work for the next one and
+        loads no texture (at most *max_frames*, *timeout_s*). Returns the
+        number of frames painted.
+        """
+        if not self.play_mode or not self.renderer or not self.renderer.ready:
+            return 0
+        logic = self.logic_thread
+        if logic is None or not logic.is_alive() or not getattr(logic, 'running', True):
+            # No logic thread running (a stepped test session): nothing will
+            # publish a play frame to warm up with.
+            return 0
+        max_frames = self.WARM_UP_FRAMES if max_frames is None else max_frames
+        # The monotonic clock: the deadline must pass even where something
+        # has replaced perf_counter (a test pinning the frame clock).
+        deadline = time.monotonic() + (
+            self.WARM_UP_SECONDS if timeout_s is None else timeout_s)
+        state = self.game_state
+        while not state.published('is_play_mode', False):
+            if time.monotonic() > deadline:
+                return 0
+            time.sleep(0.002)
+        textures = getattr(self.renderer, 'texture_manager', None)
+        painted = 0
+        while painted < max_frames and time.monotonic() < deadline:
+            loaded = len(textures) if textures is not None else 0
+            state.try_swap()
+            self.repaint()
+            painted += 1
+            terrain = self._frame_terrain
+            due = int(getattr(terrain, 'work_due', 0) or 0) if terrain is not None else 0
+            if textures is not None and len(textures) != loaded:
+                continue
+            if not due:
+                break
+            # Height grids come from the builder thread: give it a moment.
+            time.sleep(0.01)
+        # The sprite arrays now hold what the first frames drew: room for as
+        # many again, so play's next sprites never make one grow mid-frame.
+        from engine import sprite_layers
+        with self.gl_context():
+            sprite_layers.reserve_all()
+        self.audio.preload_combat_sounds()
+        return painted
+
     def update_grid(self):
         self.grid_dirty = True
 
@@ -963,8 +1030,11 @@ class QtGameView(QOpenGLWidget):
             self._cached_bullet_marks = list(render_state.bullet_marks)
             self._cached_projectiles = np.array(render_state.projectiles, dtype=np.float32).reshape(-1, 3)
             self._cached_monster_rays = list(render_state.monster_debug_rays)
-            self._cached_level_complete_ui = render_state.level_complete_ui
-            self.hud.queue_immediate_level_change(self._cached_level_complete_ui)
+            ui = render_state.level_complete_ui
+            if ui is not None and ui is self._level_complete_done:
+                ui = None       # confirmed or cancelled already (view_hud)
+            self._cached_level_complete_ui = ui
+            self.hud.queue_immediate_level_change(ui)
             self._cached_underwater = render_state.player_underwater
             self._cached_underwater_tint = render_state.underwater_tint
             self._cached_p2_underwater = render_state.player2_underwater
@@ -1039,6 +1109,7 @@ class QtGameView(QOpenGLWidget):
                                           self.show_glasses, self.player1_glasses)
         self._render_config["player_glasses_positions"] = _glass_positions
         self._render_config["player_glasses_sprites"] = _glass_sprites
+        self._render_config["reflected_heads"] = self._reflected_heads(render_state)
         self._render_config["spectator_glasses_active"] = _spectator_active
         self._render_config['player_glasses_self_candidates'] = (
             (True,) * (len(_glass_positions)-len(_spectator_positions))
@@ -1304,7 +1375,10 @@ class QtGameView(QOpenGLWidget):
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         if self.play_mode:
             self.hud._draw_underwater_overlay(painter, render_state)
-        if self.editor.config.getboolean('Display', 'show_fps', fallback=False):
+        # The FPS counter is an editor's readout: a game launched to play
+        # (kiosk mode) keeps it off its screen; F3's sysmon still shows it.
+        if (self.editor.config.getboolean('Display', 'show_fps', fallback=False)
+                and not getattr(self.editor, 'is_kiosk_mode', False)):
             self.hud._draw_fps_counter(painter)
         if self.play_mode and self.show_sprites_in_play_mode:
             self.hud._draw_sprites_text(painter)
@@ -1328,7 +1402,8 @@ class QtGameView(QOpenGLWidget):
                 self.hud._draw_hud(painter, render_state)
         if (self.play_mode and render_state is not None
                 and render_state.damage_marks and not render_state.player_dead
-                and not self._suppress_default_hud):
+                and not self._suppress_default_hud
+                and not getattr(self, 'game_hud', False)):
             # Not part of the HUD's style or opacity: its own setting
             # ([Display] damage_indicators). Player one's, over the whole view.
             # A game that draws its own HUD (and its own hit feedback) keeps
@@ -1573,6 +1648,26 @@ class QtGameView(QOpenGLWidget):
             self._play_mode_hint_timer.stop()
             self._cached_hint_text = None
             self.update()
+
+    def _reflected_heads(self, render_state):
+        """The overhead player's head for the water to reflect (it is drawn
+        outside the entity table, so the sprite pass never sees it)."""
+        lt = self.logic_thread
+        head = getattr(lt, "player_head_sprite", None) if lt is not None else None
+        if not self.play_mode or not head or render_state is None:
+            return ()
+        session = getattr(lt, "game_session", None)
+        if getattr(session, "coop", None) is not None:
+            return ()           # a party's heads are entity-table sprites
+        pos = getattr(render_state, "player_pos", None)
+        if pos is None:
+            return ()
+        try:
+            centre = (float(pos.x), float(pos.y), float(pos.z))
+        except AttributeError:
+            centre = (float(pos[0]), float(pos[1]), float(pos[2]))
+        size = float(self.overhead_sprite_size)
+        return ((head, centre, (size, size), float(render_state.player_angle)),)
 
     def _toggle_splitscreen(self):
         if not self.pointer.splitscreen_allowed():

@@ -1,5 +1,5 @@
 """
-Skills — the heart of the "get better by doing" progression (Elder-Scrolls style).
+Skills — the heart of the "get better by doing" progression.
 
 Every skill:
 
@@ -102,7 +102,8 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
              "the living, summoning spirit beasts, bending creatures to your "
              "will and sensing the life around you."),
     SkillDef(ALCHEMY, "Alchemy", MAGIC, attr.INTELLIGENCE,
-             "Brewing potions and poisons from ingredients."),
+             "Knowing your potions: those you drink restore more. Every "
+             "potion drunk trains it."),
     # --- Stealth ---
     SkillDef(SNEAK, "Sneak", STEALTH, attr.ENDURANCE,
              "Moving unseen; enables devastating sneak attacks."),
@@ -115,15 +116,29 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
     SkillDef(ACROBATICS, "Acrobatics", STEALTH, attr.SPEED,
              "Jumping and cushioning falls."),
     SkillDef(LIGHT_FINGERS, "Light Fingers", STEALTH, attr.ENDURANCE,
-             "Pickpocketing and sleight of hand."),
+             "Sleight of hand: a theft is harder to see done. Every theft "
+             "trains it."),
 ]}
 
 SKILL_IDS: List[str] = list(SKILLS.keys())
 
-#: Skills grouped by specialisation, for the character sheet.
+#: Skills kept off the character sheet, the creator and trainers until a rule
+#: reads them. They stay in every character's block (saves, races and
+#: classes still name them) but nothing trains or uses them. Acrobatics is
+#: "jumping and cushioning falls", and MiniWind has neither.
+HIDDEN = frozenset({ACROBATICS})
+
+
+def is_shown(skill_id: str) -> bool:
+    """Whether *skill_id* is shown to the player (not :data:`HIDDEN`)."""
+    return skill_id not in HIDDEN
+
+
+#: Skills grouped by specialisation, for the character sheet (shown ones only).
 BY_SPEC: Dict[str, List[str]] = {}
 for _sid, _sd in SKILLS.items():
-    BY_SPEC.setdefault(_sd.spec, []).append(_sid)
+    if is_shown(_sid):
+        BY_SPEC.setdefault(_sd.spec, []).append(_sid)
 
 
 def fold(skill_id: str) -> str:

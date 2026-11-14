@@ -1722,5 +1722,23 @@
     "found": [
       "town"
     ]
+  },
+  "corbin_ledger": {
+    "name": "Corbin's Ledger",
+    "category": "book",
+    "value": 5,
+    "weight": 0.3,
+    "desc": "Hal Corbin's accounts, in a careful hand that does not match the man.",
+    "book": "corbin_ledger",
+    "found": [
+      "unique"
+    ]
+  },
+  "toll_purse": {
+    "name": "Hollin's Cross Tolls",
+    "category": "misc",
+    "value": 80,
+    "weight": 0.5,
+    "desc": "A purse of the Cross's mill tolls, sealed with the Reeve's wax. The seal is broken."
   }
 }

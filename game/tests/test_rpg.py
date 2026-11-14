@@ -15,6 +15,8 @@ import os
 import random
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from ..rpg import (attributes as attr, skills as sk, races,
@@ -28,9 +30,9 @@ from ..rpg.dialogue import DictStore
 
 # --- creation --------------------------------------------------------------
 def test_character_creation_applies_race_class_sign():
-    c = Character.create("Test", "nord", "warrior", "warrior", "male")
-    assert c.race_id == "nord" and c.class_id == "warrior"
-    # nord bonus + warrior favoured attr → strength well above base
+    c = Character.create("Test", "highlander", "warrior", "warrior", "male")
+    assert c.race_id == "highlander" and c.class_id == "warrior"
+    # highlander bonus + warrior favoured attr → strength well above base
     assert c.attrs[attr.STRENGTH] >= 50
     # major skills start higher than minors
     assert c.skill(sk.BLADE) >= classes.MAJOR_SKILL_START
@@ -48,14 +50,14 @@ def test_every_race_and_class_builds():
 
 
 def test_birthsign_magicka_bonus():
-    base = Character.create("A", "imperial", "mage", "none")
-    mage = Character.create("B", "imperial", "mage", "mage")
+    base = Character.create("A", "valian", "mage", "none")
+    mage = Character.create("B", "valian", "mage", "mage")
     assert mage.max_magicka > base.max_magicka
 
 
 # --- progression -----------------------------------------------------------
 def test_skill_improves_with_use():
-    c = Character.create("T", "imperial", "warrior", "warrior")
+    c = Character.create("T", "valian", "warrior", "warrior")
     start = c.skill(sk.BLADE)
     for _ in range(200):
         c.use_skill(sk.BLADE, 1.0)
@@ -63,7 +65,7 @@ def test_skill_improves_with_use():
 
 
 def test_major_skill_use_drives_level_up():
-    c = Character.create("T", "imperial", "warrior", "warrior")
+    c = Character.create("T", "valian", "warrior", "warrior")
     assert not c.can_level_up
     # grind a major skill until 10 skill-ups accrue
     guard = 0
@@ -93,7 +95,7 @@ def test_item_db_has_core_items():
 
 
 def test_equip_weapon_sets_kind_and_two_handed_frees_shield():
-    c = Character.create("T", "imperial", "warrior", "warrior")
+    c = Character.create("T", "valian", "warrior", "warrior")
     inv.add_item(c.inventory, items.make("iron_shield"))
     inv.add_item(c.inventory, items.make("iron_longsword"))
     inv.add_item(c.inventory, items.make("long_bow"))
@@ -108,7 +110,7 @@ def test_equip_weapon_sets_kind_and_two_handed_frees_shield():
 
 
 def test_armor_rating_scales_with_skill():
-    c = Character.create("T", "imperial", "warrior", "warrior")
+    c = Character.create("T", "valian", "warrior", "warrior")
     inv.add_item(c.inventory, items.make("iron_cuirass"))
     eq.equip(c, "iron_cuirass")
     low = eq.armor_rating(c)
@@ -119,7 +121,7 @@ def test_armor_rating_scales_with_skill():
 
 # --- combat ----------------------------------------------------------------
 def test_player_melee_hits_and_kills():
-    c = Character.create("T", "nord", "warrior", "warrior")
+    c = Character.create("T", "highlander", "warrior", "warrior")
     c.skills[sk.BLADE] = 100
     c.attrs[attr.ENDURANCE] = 100
     inv.add_item(c.inventory, items.make("steel_longsword"))
@@ -135,7 +137,7 @@ def test_player_melee_hits_and_kills():
 
 
 def test_bow_requires_ammo():
-    c = Character.create("T", "bosmer", "archer", "none")
+    c = Character.create("T", "woodkin", "archer", "none")
     inv.add_item(c.inventory, items.make("short_bow"))
     eq.equip(c, "short_bow")
     # no ammo equipped
@@ -160,15 +162,15 @@ def test_armor_reduces_incoming_damage():
 
 
 def test_race_resistance_applies():
-    nord = Character.create("N", "nord", "warrior", "none")   # 50% frost resist
-    imp = Character.create("I", "imperial", "warrior", "none")
-    n = combat.resolve_incoming(nord, 40, damage_kind="frost")["final"]
+    highlander = Character.create("N", "highlander", "warrior", "none")   # 50% frost resist
+    imp = Character.create("I", "valian", "warrior", "none")
+    n = combat.resolve_incoming(highlander, 40, damage_kind="frost")["final"]
     i = combat.resolve_incoming(imp, 40, damage_kind="frost")["final"]
     assert n < i
 
 
 def test_sneak_attack_multiplies():
-    c = Character.create("T", "khajiit", "assassin", "thief")
+    c = Character.create("T", "tehani", "assassin", "thief")
     c.skills[sk.BLADE] = 80
     c.attrs[attr.ENDURANCE] = 100
     inv.add_item(c.inventory, items.make("iron_dagger"))
@@ -180,9 +182,58 @@ def test_sneak_attack_multiplies():
         assert sneak["damage"] > normal["damage"]
 
 
+def test_a_sneak_attack_needs_a_target_that_has_not_noticed_you():
+    """Sneak damage applies only to a target that has not noticed the
+    player: one asleep, at its day, or fighting someone else -- never one
+    fleeing, fighting you, or hostile, awake and hunting you."""
+    me = 1234
+    unaware = [
+        {"aggression": "hostile", "awake": False, "triggered": False},  # asleep
+        {"aggression": "passive", "triggered": True},                   # townsfolk
+        {"aggression": "defensive", "triggered": True, "awake": False},  # a guard on duty
+        {"aggression": "hostile", "awake": True, "triggered": False,
+         "_aggro_target": 999},                                         # fighting another
+        {"aggression": "hostile", "awake": True, "triggered": True,
+         "_aggro_target": me},                                          # parked: a memory
+    ]
+    aware = [
+        {"aggression": "hostile", "awake": True, "triggered": False},   # hunting you
+        {"aggression": "hostile", "awake": True, "triggered": False,
+         "_aggro_target": me},                                          # fighting you
+        {"aggression": "passive", "triggered": True, "sched_state": "FLEE"},
+    ]
+    for props in unaware:
+        assert not combat.has_noticed(props, (me,)), props
+    for props in aware:
+        assert combat.has_noticed(props, (me,)), props
+    # Your own companion, hostile to monsters, is not hunting you.
+    assert not combat.has_noticed({"aggression": "hostile", "awake": True,
+                                   "team": "player"}, (me,))
+
+    c = Character.create("T", "tehani", "assassin", "thief")
+    c.skills[sk.BLADE] = 80
+    inv.add_item(c.inventory, items.make("iron_dagger"))
+    eq.equip(c, "iron_dagger")
+    target = {"health": 500, "armour_class": 1}
+
+    def strike(props, **kw):
+        return combat.player_attack(c, dict(target, **props), sneaking=True,
+                                    rng=random.Random(4), **kw)
+
+    plain = combat.player_attack(c, dict(target), sneaking=False, rng=random.Random(4))
+    sleeping = strike(unaware[0])
+    hunting = strike(aware[0])
+    assert plain["hit"] and sleeping["hit"] and hunting["hit"]
+    assert sleeping["sneak"] and sleeping["damage"] == pytest.approx(plain["damage"] * 6, abs=0.2)
+    assert not hunting["sneak"] and hunting["damage"] == plain["damage"]
+    # The caller's judgement wins over the properties when given.
+    assert not strike(unaware[0], noticed=True)["sneak"]
+    assert strike(aware[0], noticed=False)["sneak"]
+
+
 # --- magic -----------------------------------------------------------------
 def test_cast_spends_magicka_and_can_fizzle():
-    c = Character.create("T", "altmer", "mage", "mage")
+    c = Character.create("T", "highkin", "mage", "mage")
     c.known_spells = ["flare"]
     c.active_spell = "flare"
     before = c.magicka
@@ -191,7 +242,7 @@ def test_cast_spends_magicka_and_can_fizzle():
 
 
 def test_self_heal_spell_restores_health():
-    c = Character.create("T", "breton", "healer", "mage")
+    c = Character.create("T", "wyrfolk", "healer", "mage")
     c.known_spells.append("heal")
     c.max_magicka = 500
     c.magicka = 500
@@ -215,7 +266,7 @@ def test_quest_flow():
 
 
 def test_gamestate_completes_quest_and_rewards():
-    gs = GameState.new_game(DictStore(), "T", "imperial", "warrior", rng=random.Random(1))
+    gs = GameState.new_game(DictStore(), "T", "valian", "warrior", rng=random.Random(1))
     gold0 = gs.character.gold
     gs.start_quest("wolves")
     gs.complete_quest("wolves")
@@ -224,7 +275,7 @@ def test_gamestate_completes_quest_and_rewards():
 
 
 def test_kill_counts_progress_wolf_quest():
-    gs = GameState.new_game(DictStore(), "T", "imperial", "scout", rng=random.Random(1))
+    gs = GameState.new_game(DictStore(), "T", "valian", "scout", rng=random.Random(1))
     gs.start_quest("wolves")
     for _ in range(5):
         gs._count_kill("wolf")
@@ -241,7 +292,7 @@ def test_loot_table_rolls_items():
 
 # --- guilds ----------------------------------------------------------------
 def test_guild_join_and_promotion():
-    c = Character.create("T", "imperial", "warrior", "warrior")
+    c = Character.create("T", "valian", "warrior", "warrior")
     assert guilds.join(c, "fighters")
     assert guilds.is_member(c, "fighters")
     guilds.add_reputation(c, "fighters", 25)
@@ -249,7 +300,7 @@ def test_guild_join_and_promotion():
 
 
 def test_disposition_reflects_personality_and_bounty():
-    c = Character.create("T", "imperial", "rogue", "rogue")  # high personality-ish
+    c = Character.create("T", "valian", "rogue", "rogue")  # high personality-ish
     npc = {"disposition_base": 50, "faction": "villagers"}
     d0 = guilds.disposition(c, npc)
     c.bounty = 400
@@ -286,7 +337,7 @@ def test_data_driven_quest_loads_and_runs():
          "stages": [{"index": 0, "journal": "Start.", "objective": "Go"},
                     {"index": 10, "journal": "Done.", "finishes": True}]}
     assert quests.load_definitions([q]) == 1
-    gs = GameState.new_game(DictStore(), "T", "imperial", "warrior", rng=random.Random(1))
+    gs = GameState.new_game(DictStore(), "T", "valian", "warrior", rng=random.Random(1))
     assert gs.start_quest("custom_hunt")
     g0 = gs.character.gold
     gs.quests.set_stage("custom_hunt", 10)          # finishing stage completes it
@@ -296,7 +347,7 @@ def test_data_driven_quest_loads_and_runs():
 
 # --- save / load -----------------------------------------------------------
 def test_character_full_roundtrip():
-    gs = GameState.new_game(DictStore(), "Hero", "dunmer", "nightblade", "shadow",
+    gs = GameState.new_game(DictStore(), "Hero", "ashfolk", "nightblade", "shadow",
                             rng=random.Random(7))
     c = gs.character
     c.gold = 777

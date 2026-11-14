@@ -8,7 +8,8 @@ Pure, deterministic-ish formulas (an optional RNG is injected for tests). Covers
   luck-weighted critical chance;
 * **incoming damage mitigation** for the player — armour rating, active shield
   effects, blocking, and elemental resistances from the character;
-* **hit chance** — fatigue/endurance/weapon-skill vs a target's endurance.
+* **to hit** — every attack is d20 + the attacker's bonus against the
+  target's Armour Class (game/rpg/armour_class.py), the player's included.
 
 Creature-vs-creature and creature ranged travel are handled by the engine's
 :class:`~engine.monster_ai.MonsterAI` (now fantasy: melee & arrows, no guns);
@@ -19,13 +20,14 @@ stats live.
 from __future__ import annotations
 
 import random
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from . import attributes as attr
 from . import skills as sk
 from . import items
 from . import equipment as eq
 from . import charisma
+from . import armour_class as ac_rules
 from ..diceroll import DiceRoller, check_target, roll_check
 
 
@@ -35,37 +37,30 @@ from ..diceroll import DiceRoller, check_target, roll_check
 #: Two weapons at once cost accuracy: each hand's chance to hit is scaled by
 #: this, and a pair of crossbows scatters its bolts by up to DUAL_WIELD_SPREAD
 #: degrees. A trade some fighters decline (game.held_weapons).
-DUAL_WIELD_ACCURACY = 0.8
+DUAL_WIELD_ACCURACY = 0.8      # (old percentile rule; see armour_class.DUAL_WIELD_PENALTY)
 DUAL_WIELD_SPREAD = 5.0
 
 
-def hit_chance(character, weapon_skill: int, target_endurance: int = 40,
-               fatigue_frac: float = 1.0) -> float:
-    """Probability [0.05, 0.95] that a swing/shot lands.
-
-    Weapon skill + endurance/luck + fatigue, minus the
-    target's endurance (every living thing has one, see
-    :func:`charisma.core`). Fatigue below full drags the chance down.
-    """
-    end = character.attrs.get(attr.ENDURANCE, 40)
-    luck = character.attrs.get(attr.LUCK, 40)
-    attack = weapon_skill + end * 0.2 + luck * 0.1
-    attack *= (0.5 + 0.5 * max(0.0, min(1.0, fatigue_frac)))
-    defend = target_endurance * 0.15
-    chance = (attack - defend) / 100.0
-    return max(0.05, min(0.95, chance))
+def hit_chance(character, weapon_skill: int, target_ac: int = ac_rules.BASE_AC,
+               fatigue_frac: float = 1.0, *, melee: bool = True,
+               dual: bool = False) -> float:
+    """The chance the player's d20 + attack bonus (weapon skill, Luck, melee
+    Strength, winded and two-weapon penalties) reaches *target_ac*."""
+    bonus = ac_rules.player_attack_bonus(character, weapon_skill, melee=melee,
+                                         fatigue=fatigue_frac, dual=dual)
+    return ac_rules.to_hit(bonus, target_ac)
 
 
 def _target_name(target_props: Dict) -> str:
     return str(target_props.get("display_name") or target_props.get("name") or "")
 
 
-def _hit_why(character, skill_id: str, skill: int, target_endurance: int,
+def _hit_why(character, skill_id: str, skill: int, bonus: int, target_ac: int,
              fatigue_frac: float, chance: float) -> str:
-    """What went into a hit chance, in the player's terms:
-    ``Blade 35 vs their Endurance 40, winded — 48%``."""
-    parts = [f"{sk.label(skill_id)} {skill} vs their Endurance {target_endurance}"]
-    if fatigue_frac < 0.75:
+    """What went into a to-hit roll, in the player's terms:
+    ``d20 +5 (Blade 35) vs Armour Class 12, winded — 70%``."""
+    parts = [f"d20 {bonus:+d} ({sk.label(skill_id)} {skill}) vs Armour Class {target_ac}"]
+    if fatigue_frac < ac_rules.WINDED_BELOW:
         parts.append("winded")
     if eq.dual_wielding(character):
         parts.append("two weapons")
@@ -79,8 +74,9 @@ def strength_factor(strength: int) -> float:
 
 
 def critical_chance(character) -> float:
-    """Probability a landed blow is a critical (x1.5 damage), from Luck."""
-    return 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
+    """Probability a landed blow is a critical (x1.5 damage), from Luck --
+    the same rule every NPC rolls by (armour_class.crit_chance)."""
+    return ac_rules.CRIT_BASE + character.attrs.get(attr.LUCK, 40) * ac_rules.CRIT_PER_LUCK
 
 
 def attack_odds(character, target_props: Dict, hand: str = "main",
@@ -89,33 +85,82 @@ def attack_odds(character, target_props: Dict, hand: str = "main",
     the HUD shows them over a target.
 
     ``{"hit_chance", "hit_target", "sure_hit", "crit_chance", "crit_target",
-    "why"}`` -- the same numbers :func:`player_attack` will roll against. A
-    *sure_hit* (a lone melee weapon in reach) needs no hit roll at all.
+    "why", "ac", "bonus"}`` -- the same numbers :func:`player_attack` will
+    roll against: d20 + the attack bonus against the target's Armour Class.
+    Every attack rolls (*sure_hit* is kept for old callers and ignored).
     """
     w = eq.hand_weapon(character, hand)
+    kind = w.get("kind", items.KIND_MELEE) if w else items.KIND_MELEE
     skill_id = w.get("skill", sk.BLADE) if w else sk.BLADE
     skill = character.skill(skill_id)
-    target_end = charisma.core(target_props, attr.ENDURANCE)
+    target_ac = ac_rules.of(target_props)
     fatigue = character.stamina / character.max_stamina if character.max_stamina else 1.0
-    chance = hit_chance(character, skill, target_end, fatigue)
-    if eq.dual_wielding(character):
-        chance *= DUAL_WIELD_ACCURACY
+    dual = eq.dual_wielding(character)
+    bonus = ac_rules.player_attack_bonus(character, skill, melee=kind == items.KIND_MELEE,
+                                         fatigue=fatigue, dual=dual)
+    chance = ac_rules.to_hit(bonus, target_ac)
     crit = critical_chance(character)
     return {"hit_chance": chance, "hit_target": check_target(chance),
-            "sure_hit": bool(sure_hit),
+            "sure_hit": False, "ac": target_ac, "bonus": bonus,
             "crit_chance": crit, "crit_target": check_target(crit),
-            "why": _hit_why(character, skill_id, skill, target_end, fatigue, chance)}
+            "why": _hit_why(character, skill_id, skill, bonus, target_ac, fatigue, chance)}
 
 
 # ---------------------------------------------------------------------------
 # Player outgoing damage
 # ---------------------------------------------------------------------------
-def base_ranged_damage(character, *, hand="main", ammo=None, draw=1.0):
-    """An arrow's physical energy before critical/sneak and class bonuses."""
+#: The dice a weapon's damage is rolled on (see :func:`damage_die`).
+DAMAGE_DICE = (4, 6, 8, 10, 12)
+
+
+def damage_die(base: float, weapon=None) -> Tuple[int, float]:
+    """The die a weapon of *base* damage rolls, and the flat amount added to
+    it: ``(sides, flat)``, so the roll averages *base*. An item can name its
+    own die (``"damage_die": "d8"``); otherwise it is the largest of
+    :data:`DAMAGE_DICE` whose average does not pass *base* (a d4 at least)."""
+    sides = None
+    own = weapon.get("damage_die") if weapon is not None else None
+    if own:
+        try:
+            sides = int(str(own).lower().lstrip("1").lstrip("d"))
+        except ValueError:
+            sides = None
+    if sides is None:
+        sides = DAMAGE_DICE[0]
+        for die in DAMAGE_DICE:
+            if (die + 1) / 2.0 <= base:
+                sides = die
+    return sides, float(base) - (sides + 1) / 2.0
+
+
+def roll_damage(base: float, weapon=None, *, dice=None, rng=None,
+                target_name: str = "") -> Dict:
+    """Roll a weapon's damage die: ``{"base", "face", "sides", "flat"}`` --
+    *base* replaced by the die's face plus its flat amount (never below 1).
+    With *dice*, the roll is shown beside the to-hit d20."""
+    sides, flat = damage_die(base, weapon)
+    if dice is not None:
+        name = getattr(weapon, "name", None) or "Unarmed"
+        label = f"Damage ({name}: d{sides}{flat:+.0f})" if round(flat) else \
+            f"Damage ({name}: d{sides})"
+        result = dice.request_roll(f"1d{sides}", source="combat.damage",
+                                   context={"label": label, "damage_die": True,
+                                            "target": target_name})
+        face = int(result.get("roll_result", 1))
+    else:
+        roll = getattr(rng, "randint", None) or random.randint
+        face = int(roll(1, sides))
+    return {"base": max(1.0, face + flat), "face": face, "sides": sides, "flat": flat}
+
+
+def base_ranged_damage(character, *, hand="main", ammo=None, draw=1.0, base=None):
+    """An arrow's physical energy before critical/sneak and class bonuses
+    (*base* replaces the weapon's own damage: its rolled damage die)."""
     weapon = eq.hand_weapon(character, hand)
     if weapon is None or weapon.get("kind") not in items.RANGED_KINDS:
         return 0.0
-    base = float(weapon.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
+    if base is None:
+        base = float(weapon.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
     skill = character.skill(weapon.get("skill", sk.MARKSMAN))
     damage = base * (0.4 + skill / 110.0) + (float(ammo.get("damage", 0)) if ammo else 0)
     if weapon.get("kind") == items.KIND_BOW:
@@ -123,11 +168,62 @@ def base_ranged_damage(character, *, hand="main", ammo=None, draw=1.0):
     return damage
 
 
+def has_noticed(target_props: Dict, you=()) -> bool:
+    """Whether the target has noticed the player, so a sneak attack on it is
+    no sneak attack. It has if it is:
+
+    * fleeing (``sched_state`` FLEE);
+    * live (not parked) with its combat mark on you (*you*: the ids the
+      player goes by -- their actor, their engine player);
+    * live, hostile, awake and marked on no one else: the combat AI hunts
+      the player with such an actor (a sleeping one has not seen you yet).
+
+    Anyone else -- asleep, going about their day, fighting someone else --
+    has not."""
+    p = target_props or {}
+    if str(p.get("sched_state", "")).upper() == "FLEE":
+        return True
+    if p.get("triggered", False):
+        return False                     # parked: its mark is only a memory
+    mark = p.get("_aggro_target")
+    if mark is not None:
+        return mark in tuple(you or ())
+    side = str(p.get("faction") or p.get("team") or "").lower()
+    return (str(p.get("aggression", "")).lower() == "hostile"
+            and bool(p.get("awake")) and side != "player")
+
+
+#: A blow struck from behind -- from the target's blind spot -- rolls for
+#: double damage: a d20 check at this chance (a sneak attack's bigger
+#: multiplier stands instead, when it applies).
+BEHIND_CHANCE = 0.5
+BEHIND_DAMAGE = 2.0
+
+
+def roll_from_behind(dice, rng, against: str, *, quiet: bool = False, detail: bool = False):
+    """Roll whether a blow from behind *against* someone does double damage
+    (a d20 check at :data:`BEHIND_CHANCE`, on *dice* when given). Returns
+    whether it does, or with *detail* ``(does, roll or None)``."""
+    if dice is None:
+        hit = (rng or random).random() < BEHIND_CHANCE
+        return (hit, None) if detail else hit
+    context = {"against_name": against}
+    if quiet:
+        context.update(quiet=True, npc=True)
+    label = f"Roll to strike {against} from behind" if against else "Roll to strike from behind"
+    roll = roll_check(dice, BEHIND_CHANCE, label, source="combat.behind",
+                      why=f"From the blind spot: {BEHIND_CHANCE * 100:.0f}% chance of "
+                          f"x{BEHIND_DAMAGE:g} damage", context=context)
+    hit = bool(roll["success"])
+    return (hit, roll) if detail else hit
+
+
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
                   draw: float = 1.0, rng: Optional[random.Random] = None,
                   dice: Optional[DiceRoller] = None,
                   guaranteed_hit: bool = False, power: float = 1.0,
-                  hand: str = "main") -> Dict:
+                  hand: str = "main", noticed: Optional[bool] = None,
+                  from_behind: bool = False) -> Dict:
     """Resolve a player attack against a creature's ``properties`` dict.
 
     Returns a result dict::
@@ -139,14 +235,17 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     ``skill``/``difficulty`` back to :meth:`Character.use_skill` so combat
     trains the weapon skill.
 
-    ``guaranteed_hit`` skips the hit-chance roll for melee swings only (bows
-    and staves still roll normally). The caller sets this when the target was
-    already confirmed to be in melee range and squarely faced — camera pitch
-    plays no part in that check, so a close, faced target should never whiff.
+    Every attack rolls d20 + the attack bonus against the target's Armour
+    Class. ``guaranteed_hit`` is kept for old callers and no longer skips the
+    roll: a melee swing at a close, faced target rolls like any other.
 
     ``hand`` is which weapon strikes: ``"main"`` or ``"off"`` (the second
     weapon of a dual wielder). Each hand is its own attack, with its own
     weapon, hit roll and damage.
+
+    A sneak attack needs ``sneaking`` and a target that has not noticed the
+    player: ``noticed`` says so, or, left None, :func:`has_noticed` judges
+    by the target's properties alone.
     """
     rng = rng or random
     w = eq.hand_weapon(character, hand)
@@ -161,7 +260,6 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         base = float(w.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
 
     skill = character.skill(skill_id)
-    target_end = charisma.core(target_props, attr.ENDURANCE)
     fatigue_frac = character.stamina / character.max_stamina if character.max_stamina else 1.0
 
     result = {"hit": False, "damage": 0.0, "crit": False, "sneak": False,
@@ -173,27 +271,40 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         result["no_ammo"] = True
         return result
 
-    hit_probability = hit_chance(character, skill, target_end, fatigue_frac)
-    if eq.dual_wielding(character):
-        hit_probability *= DUAL_WIELD_ACCURACY
-    if guaranteed_hit and kind == items.KIND_MELEE:
-        # Near + facing, confirmed by the caller: always connects.
-        result["hit_probability"] = hit_probability
-    elif dice is not None:
+    # Every attack rolls: d20 + the attack bonus against the target's Armour
+    # Class (game/rpg/armour_class.py), melee included.
+    target_ac = ac_rules.of(target_props)
+    bonus = ac_rules.player_attack_bonus(
+        character, skill, melee=kind == items.KIND_MELEE, fatigue=fatigue_frac,
+        dual=eq.dual_wielding(character))
+    hit_probability = ac_rules.to_hit(bonus, target_ac)
+    result["ac"], result["attack_bonus"] = target_ac, bonus
+    result["hit_probability"] = hit_probability
+    if dice is not None:
         # Resolved on a d20, not a percentile die: every roll is shown to the
         # player and there is no d100 in this game (see diceroll.CHECK_DIE).
         hit_roll = roll_check(
             dice, hit_probability, f"Roll to hit {_target_name(target_props)}".strip(),
             source="combat.hit",
-            why=_hit_why(character, skill_id, skill, target_end, fatigue_frac,
+            why=_hit_why(character, skill_id, skill, bonus, target_ac, fatigue_frac,
                          hit_probability),
-            context={"skill": skill_id, "target": target_props.get("name", "")})
+            context={"skill": skill_id, "target": target_props.get("name", ""),
+                     "against_name": _target_name(target_props),
+                     "attack_bonus": bonus, "armour_class": target_ac})
         result["hit_roll"] = hit_roll
         if not hit_roll["success"]:
             return result
     elif rng.random() > hit_probability:
         return result  # miss
     result["hit"] = True
+
+    # --- the weapon's damage die: base becomes the die + its flat amount ---
+    rolled = roll_damage(base, w, dice=dice, rng=rng,
+                         target_name=str(target_props.get("name", "")))
+    result.update(damage_face=rolled["face"], damage_die=rolled["sides"],
+                  damage_flat=rolled["flat"],
+                  damage_name=(w.name if w is not None else "Unarmed"))
+    base = rolled["base"]
 
     # --- base scaling by skill (0.4x at 0 skill → ~1.3x at 100) ---
     dmg = base * (0.4 + skill / 110.0)
@@ -204,7 +315,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         # A gathered blow (a warrior's charged fist) multiplies it.
         dmg *= max(0.1, float(power))
     elif kind in items.RANGED_KINDS:
-        dmg = base_ranged_damage(character, hand=hand, ammo=shot, draw=draw)
+        dmg = base_ranged_damage(character, hand=hand, ammo=shot, draw=draw, base=base)
     elif kind == items.KIND_STAFF:
         dmg *= 0.7 + character.skill(sk.OFFENSIVE) / 100.0
 
@@ -212,14 +323,21 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     import game.rpg.classes as _classes
     dmg *= _classes.damage_mult(character)
 
-    # --- sneak attack ---
-    if sneaking:
+    # --- sneak attack: only on a target that has not noticed you ---
+    if noticed is None:
+        noticed = has_noticed(target_props)
+    if sneaking and not noticed:
         mult = 3.0 if kind == items.KIND_MELEE else 2.0
         # a dagger sneak is the assassin's classic ×6
         if w and w.id.endswith("dagger"):
             mult = 6.0
         dmg *= mult
         result["sneak"] = True
+    elif from_behind:
+        # Struck from the target's blind spot: a roll for double damage.
+        if roll_from_behind(dice, rng, _target_name(target_props)):
+            dmg *= BEHIND_DAMAGE
+            result["behind"] = True
 
     # --- critical (luck-weighted) ---
     crit_chance = critical_chance(character)
@@ -234,7 +352,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     else:
         is_critical = rng.random() < crit_chance
     if is_critical:
-        dmg *= 1.5
+        dmg *= ac_rules.CRIT_DAMAGE
         result["crit"] = True
 
     # tougher targets train the skill more
@@ -248,7 +366,9 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
 # ---------------------------------------------------------------------------
 def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physical",
                      blocking: bool = False, rng: Optional[random.Random] = None,
-                     dice: Optional[DiceRoller] = None, attacker: str = "") -> Dict:
+                     dice: Optional[DiceRoller] = None, attacker: str = "",
+                     attack_bonus: Optional[int] = None,
+                     attacker_props: Optional[Dict] = None) -> Dict:
     """Apply armour, shield, block and resistance to *raw_damage*.
 
     Returns ``{"final", "blocked", "armor", "resisted", "armor_class"}``. Does
@@ -268,25 +388,35 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     result = {"final": dmg, "blocked": 0.0, "armor": 0.0, "resisted": 0.0,
               "armor_class": eq.armor_class_worn(character)}
 
-    # Armour Class: a well-armoured, nimble body turns some blows aside
-    # completely before anything else is weighed.
+    # Armour Class: the attacker rolls d20 + their attack bonus against it;
+    # a miss is a blow the armour (or a nimble body) turned aside, before
+    # anything else is weighed.
     if damage_kind == "physical" and dmg > 0:
         result["ac"] = eq.armour_class(character)
-        deflect = eq.deflect_chance(character)
-        if dice is not None and deflect > 0.0:
+        bonus = ac_rules.TYPICAL_ATTACK_BONUS if attack_bonus is None else int(attack_bonus)
+        chance = ac_rules.to_hit(bonus, result["ac"])
+        result["attack_bonus"] = bonus
+        if dice is not None:
             roll = roll_check(
-                dice, 1.0 - deflect, f"{attacker or 'Your foe'} rolls to hit you",
+                dice, chance, f"{attacker or 'Your foe'} rolls to hit you",
                 source="combat.incoming",
-                why=f"against your Armour Class {result['ac']}",
-                context={"quiet": True, "against_player": True})
+                why=f"d20 {bonus:+d} against your Armour Class {result['ac']}",
+                context={"quiet": True, "against_player": True,
+                         "attack_bonus": bonus, "armour_class": result["ac"]})
             result["defence_roll"] = roll
             deflected = not roll["success"]
         else:
-            deflected = rng.random() < deflect
+            deflected = rng.random() >= chance
         if deflected:
             result["deflected"] = True
             result["final"] = 0.0
             return result
+        # It landed: the attacker rolls for a critical hit, as the player
+        # does (armour_class.crit_chance, from its Luck).
+        if ac_rules.roll_crit(attacker_props, rng=rng, name=attacker):
+            result["crit"] = True
+            dmg *= ac_rules.CRIT_DAMAGE
+            result["final"] = dmg
 
     # A held block is an attempted saving throw, not guaranteed mitigation.
     if blocking and damage_kind == "physical" and dmg > 0 and character.stamina > 0:
@@ -297,9 +427,12 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
             dmg, block_skill, character.attrs.get(attr.ENDURANCE, 40),
             character.stamina / max(1, character.max_stamina), shield=shield,
             dice=dice, rng=rng, defender=character.name or "You",
+            armour_class=eq.armour_class(character),
+            luck=character.attrs.get(attr.LUCK, 40), level=character.level,
         )
         dmg = saved["damage"]
-        result.update(blocked=saved["blocked"], block_roll=saved["block_roll"])
+        result.update(blocked=saved["blocked"], block_roll=saved["block_roll"],
+                      fate=saved["fate"], fate_line=saved["fate_line"])
         character.use_skill(sk.BLOCK, 1.0)
 
     # Armour rating: each point reduces damage with diminishing returns.
@@ -317,10 +450,13 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
         soak = min(dmg, shield_mag * 0.5)
         dmg -= soak
 
-    # Elemental / magical resistances from race + effects.
+    # Elemental / magical resistances from race + birthsign + effects (the
+    # Apprentice's sign is a weakness: negative).
+    import game.rpg.birthsigns as birthsigns
     resist = 0.0
     race = races.get(character.race_id)
     resist += race.resistances.get(damage_kind, 0.0)
+    resist += birthsigns.get(character.birthsign_id).resistances.get(damage_kind, 0.0)
     resist += character.effect_magnitude("resist_" + damage_kind) / 100.0
     if damage_kind == "magic":
         resist += character.attrs.get(attr.ENDURANCE, 40) * 0.002

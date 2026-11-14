@@ -189,6 +189,27 @@ def _deterministic_rngs():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _quest_registry_restored():
+    """Give every test the quest registry it started with.
+
+    MiniWind's quest registry (``game.rpg.quests.QUESTS``) is process-wide.
+    Built-ins never overwrite a quest that is already registered (a ``.quest``
+    file or a map's own), so a test that loaded files or authored a quest
+    would otherwise decide which version every later test sees.
+    """
+    module = sys.modules.get("game.rpg.quests")
+    before = dict(module.QUESTS) if module is not None else None
+    yield
+    module = sys.modules.get("game.rpg.quests")
+    if module is None:
+        return
+    module.QUESTS.clear()
+    if before is not None:
+        module.QUESTS.update(before)
+    module.VERSION[0] += 1
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _plugins_loaded_before_isolation():
     """Load the plugins once, before any per-test registry snapshot is taken.
@@ -342,14 +363,57 @@ def _snapshot_plugin_state():
             # otherwise take over Play in every later test of the process --
             # Fio's stock weapons then never fire, since the game owns the
             # player's shots.
-            list(getattr(manager, "_builtin_games", [])))
+            list(getattr(manager, "_builtin_games", [])),
+            # Engine-wide state a game sets while it installs or a session
+            # starts: MiniWind eases every actor's turns (game.facing.install
+            # sets engine.monster_facing.TURN_RATE) and hooks the monster AI's
+            # class (its steering, shots and damage filter). Fio's own monster
+            # tests are written for stock monsters, so a test that left them
+            # set -- a session never stopped -- must not hand them on.
+            _engine_hooks())
+
+
+#: ``(module, owner attribute or None, attribute)`` of the engine-wide
+#: settings a game may set: restored after every test.
+_ENGINE_HOOKS = (
+    ("engine.monster_facing", None, "TURN_RATE"),
+    ("engine.monster_ai", "MonsterAI", "_steer_hook"),
+    ("engine.monster_ai", "MonsterAI", "_shot_hook"),
+    ("engine.monster_ai", "MonsterAI", "_attack_style_hook"),
+    ("engine.monster_ai", "MonsterAI", "_damage_filter"),
+    ("engine.monster_ai", "MonsterAI", "_damage_filter_kinds"),
+    ("engine.monster_ai", "MonsterAI", "_hear_hook"),
+    # The editor's live settings MiniWind's sessions read (settings.ini):
+    # a test that hands them a config must not leave it to the next.
+    ("game.runtime", None, "_editor_config"),
+)
+
+
+def _hook_owner(module_name, owner):
+    module = sys.modules.get(module_name)
+    if module is None:
+        return None
+    return getattr(module, owner, None) if owner else module
+
+
+def _engine_hooks():
+    saved = []
+    for module_name, owner, name in _ENGINE_HOOKS:
+        target = _hook_owner(module_name, owner)
+        if target is not None and name in vars(target):
+            saved.append((module_name, owner, name, vars(target)[name]))
+    return saved
 
 
 def _restore_plugin_state(snapshot):
     if snapshot is None:
         return
     (manager, enabled, auto_enabled, io_registrations, services,
-     builtin_games) = snapshot
+     builtin_games, engine_hooks) = snapshot
+    for module_name, owner, name, value in engine_hooks:
+        target = _hook_owner(module_name, owner)
+        if target is not None:
+            setattr(target, name, value)
     for plugin, was_enabled in enabled.items():
         plugin.enabled = was_enabled
     # Written directly, so the manager's caches keyed on the enabled set (the

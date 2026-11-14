@@ -11,10 +11,10 @@ they need nothing beyond a QPainter and the session. Selection lives in
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QRect, QRectF, Qt
+from PyQt5.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
-from . import drag, fonts, hits, trade_anim
+from . import drag, fonts, hits, spell_lock, trade_anim
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
@@ -47,9 +47,14 @@ def _sel(session):
 # ===========================================================================
 # Dispatch
 # ===========================================================================
+#: How dark the world is behind character creation (and behind other screens).
+CREATION_DIM = 235
+SCREEN_DIM = 180
+
+
 def draw(painter, session, w, h):
     screen = session.open_screen
-    T.dim_screen(painter, w, h, alpha=180 if screen != "charcreate" else 235)
+    T.dim_screen(painter, w, h, alpha=SCREEN_DIM if screen != "charcreate" else CREATION_DIM)
     fn = _DRAW.get(screen)
     if fn:
         fn(painter, session, w, h)
@@ -85,6 +90,8 @@ _SCREEN_BODY_SIZE = {
     "lockpicking": (820, 560),
     "training": (760, 600),
     "tutor": (820, 600),
+    "tutorial": (720, 360),
+    "tutorial_tip": (620, 240),
 }
 
 
@@ -190,7 +197,7 @@ _CC_STEPS = ["identity", "fortune", "class", "birthsign", "confirm"]
 #: How long one die tumbles before it settles, and the stagger between dice.
 _ROLL_TUMBLE = 0.85
 _ROLL_STAGGER = 0.14
-_DEFAULT_RACE = "imperial"          # simplified creator asks no race / gender
+_DEFAULT_RACE = "valian"          # simplified creator asks no race / gender
 _MAX_NAME = 18
 _HEAD_PIXMAP_CACHE = {}
 
@@ -242,7 +249,7 @@ def _draw_charcreate(painter, session, w, h):
         _cc_list(painter, inner.x(), ty, list_w, ids, s["class"],
                  lambda i: classes.get(i).label, field="class")
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
-        majors = ", ".join(sk.label(m) for m in k.major_skills)
+        majors = ", ".join(sk.label(m) for m in k.major_skills if sk.is_shown(m))
         no_magic = "" if k.magic else f"\n\n{classes.NO_MAGIC_NOTE}"
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    k.label, k.desc + f"\n\nSpecialisation: {k.specialisation}"
@@ -279,6 +286,9 @@ def _draw_charcreate(painter, session, w, h):
                    "Begin your adventure, or go back to change anything.")
         _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)
         hint = "Enter begin    Esc back"
+        if _tutorial_offered(session):
+            _draw_tutorial_box(painter, QRect(tx, inner.bottom() - 100, 260, 26), s)
+            hint = "Enter begin    T show tutorial    Esc back"
 
     # Back / Next (Begin on the last step), above the key hints.
     bw_, bh_ = 128, 32
@@ -529,6 +539,10 @@ def _handle_charcreate(session, key):
             if _roll_settled(s):
                 _cc_roll(session)
             return True
+    elif step == "confirm" and _tutorial_offered(session):
+        if key in ("t", "up", "down", "space"):
+            s["tutorial"] = not s.get("tutorial", True)
+            return True
     elif step in ("class", "birthsign"):
         ids = (classes.CREATION_CLASS_IDS if step == "class"
                else birthsigns.CREATION_BIRTHSIGN_IDS)
@@ -567,6 +581,208 @@ def _finish_charcreate(session):
         _cc_roll(session)
     session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head,
                                 handed=s.get("handed", "right"), rolls=s.get("rolls"))
+    if _tutorial_offered(session) and s.get("tutorial", True):
+        import game.tutorial as tutorial
+        store = getattr(session, "store", None)
+        if store is not None:
+            store.set(tutorial.ON_KEY, "1")       # tips follow, once each
+        open_tutorial(session)
+
+
+# ===========================================================================
+# Tutorial (experimental: settings.ini [developer] enable_tutorial)
+# ===========================================================================
+def _tutorial_offered(session) -> bool:
+    check = getattr(session, "tutorial_enabled", None)
+    try:
+        return bool(check()) if check is not None else False
+    except Exception:
+        return False
+
+
+def _toggle_tutorial(session):
+    s = _cc(session)
+    s["tutorial"] = not s.get("tutorial", True)
+
+
+def _draw_tutorial_box(painter, rect, s):
+    """Character creation's "Show tutorial" checkbox (ticked by default)."""
+    on = s.get("tutorial", True)
+    hot = hits.hovered(rect)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    box = QRect(rect.x(), rect.y() + (rect.height() - 18) // 2, 18, 18)
+    painter.setBrush(QColor(34, 30, 44, 235))
+    painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD, 1.5))
+    painter.drawRoundedRect(box, 3, 3)
+    if on:
+        painter.setPen(QPen(T.GOLD_BRIGHT, 2.4))
+        painter.drawLine(box.x() + 4, box.y() + 9, box.x() + 8, box.y() + 13)
+        painter.drawLine(box.x() + 8, box.y() + 13, box.x() + 14, box.y() + 5)
+    painter.restore()
+    T.text(painter, box.right() + 10, box.y() + 14, "Show tutorial", size=12,
+           color=T.GOLD_BRIGHT if hot else T.INK, family="Georgia")
+    hits.add(QRect(rect), _toggle_tutorial, "Show tutorial")
+
+
+def open_tutorial(session):
+    _sel(session)["tutorial"] = {"page": 0}
+    session.open_screen = "tutorial"
+
+
+def _tutorial_turn(step):
+    def action(session):
+        _handle_tutorial(session, "return" if step > 0 else "left")
+    return action
+
+
+def _close_tutorial(session):
+    _sel(session).pop("tutorial", None)
+    if session.open_screen == "tutorial":
+        session.open_screen = None
+
+
+def _draw_tutorial(painter, session, w, h):
+    import game.tutorial as tutorial
+    st = _sel(session).setdefault("tutorial", {"page": 0})
+    book = tutorial.pages()
+    page = max(0, min(int(st.get("page", 0)), len(book) - 1))
+    title, lines = book[page]
+    x, y, bw, bh = _panel_rect(w, h, 0.56, 0.42)
+    inner = T.panel(painter, x, y, bw, bh)
+    ty = T.heading(painter, inner, title, f"Tutorial  ·  {page + 1} of {len(book)}")
+    line_y = ty + 14
+    metrics = QFontMetrics(T.font(13, False, False, "Georgia"))
+    line_w = inner.width() - 16
+    for line in lines:
+        tall = metrics.boundingRect(QRect(0, 0, line_w, 400), Qt.TextWordWrap, line).height()
+        T.text_in(painter, QRect(inner.x() + 8, line_y, line_w, tall + 4), line,
+                  size=13, color=T.INK, align=Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
+                  family="Georgia")
+        line_y += tall + 12
+    # page dots
+    cx = inner.x() + inner.width() // 2 - (len(book) - 1) * 9
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    for i in range(len(book)):
+        painter.setBrush(T.GOLD_BRIGHT if i == page else T.DIM)
+        painter.drawEllipse(QRectF(cx + i * 18 - 4, inner.bottom() - 70, 8, 8))
+    painter.restore()
+    bw_, bh_ = 120, 30
+    by = inner.bottom() - 22 - bh_
+    button(painter, QRect(inner.x(), by, bw_, bh_), "Back", _tutorial_turn(-1), enabled=page > 0)
+    button(painter, QRect(inner.x() + inner.width() // 2 - bw_ // 2, by, bw_, bh_), "Skip",
+           _close_tutorial)
+    button(painter, QRect(inner.right() - bw_, by, bw_, bh_),
+           "Finish" if page == len(book) - 1 else "Next", _tutorial_turn(1), primary=True)
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+              tutorial.hint(page, len(book)), size=10, color=T.DIM, align=T.ALIGN_CENTER,
+              family="Georgia")
+
+
+def _handle_tutorial(session, key):
+    import game.tutorial as tutorial
+    st = _sel(session).setdefault("tutorial", {"page": 0})
+    count = len(tutorial.pages())
+    if key in ("return", "enter", "right", "d", "space"):
+        if st["page"] >= count - 1:
+            _close_tutorial(session)
+        else:
+            st["page"] += 1
+        return True
+    if key in ("left", "a", "backspace"):
+        st["page"] = max(0, st["page"] - 1)
+        return True
+    if key in ("escape", "esc"):
+        _close_tutorial(session)
+        return True
+    return True
+
+
+def open_tutorial_tip(session, name):
+    _sel(session)["tutorial_tip"] = name
+    session.open_screen = "tutorial_tip"
+
+
+def _close_tutorial_tip(session):
+    _sel(session).pop("tutorial_tip", None)
+    if session.open_screen == "tutorial_tip":
+        session.open_screen = None
+
+
+#: How much room the minimap's eye takes inside a line of text.
+TIP_EYE_W = 24
+
+
+def _rich_lines(metrics, text, width):
+    """*text* wrapped into lines of words, ``{eye}`` kept as one word the
+    width of the eye: ``[[word, ...], ...]``."""
+    space = metrics.horizontalAdvance(" ")
+    lines, line, used = [], [], 0
+    for word in text.split():
+        parts = word.replace("{eye}", "\0{eye}\0").split("\0")
+        ww = sum(TIP_EYE_W if p == "{eye}" else metrics.horizontalAdvance(p) for p in parts if p)
+        if line and used + space + ww > width:
+            lines.append(line)
+            line, used = [], 0
+        line.append(word)
+        used += (space if used else 0) + ww
+    if line:
+        lines.append(line)
+    return lines
+
+
+def _draw_rich_text(painter, x, y, width, text, size=13, line_h=24):
+    """Draw *text* wrapped, the token ``{eye}`` as the minimap's witness eye
+    itself (game/ui/law_marks.py). Returns the y below the last line."""
+    from . import law_marks
+    font = T.font(size, False, False, "Georgia")
+    metrics = QFontMetrics(font)
+    space = metrics.horizontalAdvance(" ")
+    for line in _rich_lines(metrics, text, width):
+        cx = x
+        for i, word in enumerate(line):
+            if i:
+                cx += space
+            for part in word.replace("{eye}", "\0{eye}\0").split("\0"):
+                if not part:
+                    continue
+                if part == "{eye}":
+                    law_marks.draw_witness(painter, QPointF(cx + TIP_EYE_W / 2, y + line_h / 2 - 2),
+                                           {"identified": True, "reporting": True}, radius=7.0)
+                    cx += TIP_EYE_W
+                else:
+                    T.text(painter, cx, y + line_h - 7, part, size=size, color=T.INK,
+                           family="Georgia")
+                    cx += metrics.horizontalAdvance(part)
+        y += line_h
+    return y
+
+
+def _draw_tutorial_tip(painter, session, w, h):
+    import game.tutorial as tutorial
+    name = _sel(session).get("tutorial_tip")
+    found = tutorial.tip(name)
+    if not found:
+        _close_tutorial_tip(session)
+        return
+    title, text = found
+    x, y, bw, bh = _panel_rect(w, h, 0.5, 0.3)
+    inner = T.panel(painter, x, y, bw, bh)
+    ty = T.heading(painter, inner, title, "Tutorial")
+    _draw_rich_text(painter, inner.x() + 8, ty + 10, inner.width() - 16, text)
+    bw_, bh_ = 120, 30
+    button(painter, QRect(inner.x() + inner.width() // 2 - bw_ // 2, inner.bottom() - 22 - bh_,
+                          bw_, bh_), "OK", _close_tutorial_tip, primary=True)
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+              tutorial.tip_hint(), size=10, color=T.DIM, align=T.ALIGN_CENTER, family="Georgia")
+
+
+def _handle_tutorial_tip(session, key):
+    if key in ("return", "enter", "space", "escape", "esc", "a"):
+        _close_tutorial_tip(session)
+    return True
 
 
 # ===========================================================================
@@ -654,7 +870,7 @@ def _draw_item_detail(painter, x, y, w, stack, c):
     # equipment summary at the top
     T.text(painter, x, y + 12, "Equipped", size=12, color=T.GOLD_BRIGHT, bold=True)
     slot_labels = [("weapon", "Weapon"), ("shield", "Shield"), ("head", "Head"),
-                   ("chest", "Body"), ("hands", "Hands"), ("legs", "Legs"),
+                   ("chest", "Body"), ("hands", "Gloves"), ("legs", "Legs"),
                    ("feet", "Feet"), ("ammo", "Ammo")]
     yy = y + 30
     for slot, label in slot_labels:
@@ -1100,6 +1316,8 @@ def _ready_spell(session, spell_id):
         return
     _spellbook_selection(session, spells)["row"] = index
     c = session.game.character
+    if spell_lock.refuse(session, c):
+        return                  # highlighted, but metal armour stops selecting it
     c.active_spell = spell_id
     eq._refresh_weapon_kind(c)
     session.notify(f"Selected {spells[index].name}", 1.5)
@@ -1132,6 +1350,9 @@ def _draw_spells(painter, session, w, h):
     first = page * page_size
     pages = max(1, (len(spells) + page_size - 1) // page_size)
     fm = QFontMetrics(T.font(11, family="Segoe UI"))
+    # Worn metal armour greys every spell out: a row still highlights, but
+    # cannot be selected, and its tooltip says why (game/ui/spell_lock.py).
+    locked = spell_lock.locked(c)
     for i in range(first, min(first + page_size, len(spells))):
         spell = spells[i]
         ry = top + (i - first) * 24
@@ -1140,6 +1361,11 @@ def _draw_spells(painter, session, w, h):
             painter.fillRect(row_rect, T.SELECT)
         active = c.active_spell == spell.id
         col = T.GOLD_BRIGHT if i == st["row"] else (T.MAGICKA.lighter(150) if active else T.INK)
+        if locked:
+            col = spell_lock.GREY.lighter(130) if i == st["row"] else spell_lock.GREY
+            spell_lock.note(row_rect, True)
+            if i == st["row"] and controls.gamepad():
+                spell_lock.focus(row_rect, True)
         cost = rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell)
         painter.fillRect(QRect(inner.x() + 2, ry + 3, 3, 14), _rarity_color(spell.rarity))
         label = fm.elidedText(("✦ " if active else "") + spell.name,
@@ -1223,6 +1449,7 @@ def _draw_spells(painter, session, w, h):
                f"Drag a spell to the shortcut bar, or press 1-9 · {K_SPELLS.upper()}/Esc close"),
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+    spell_lock.flush(painter)          # a greyed spell's tooltip, on top
 
 
 #: Rarity colours for spells, commonest first (game.rpg.magic.RARITIES).
@@ -1289,10 +1516,15 @@ def _draw_spell_hands(painter, session, area, selected):
         T.text_in(painter, rect.adjusted(6, 4, -6, -48),
                   f"{physical.title()} hand · {mouse}", size=11, color=T.GOLD_BRIGHT,
                   align=T.ALIGN_CENTER)
+        locked = spell is not None and spell_lock.locked(c)
         T.text_in(painter, rect.adjusted(6, 30, -6, -6),
                   spell.name if spell else item.name if item else "Empty",
-                  size=10, color=QColor(*spell.color) if spell else T.INK,
+                  size=10, color=(spell_lock.GREY if locked else
+                                  QColor(*spell.color) if spell else T.INK),
                   align=int(Qt.AlignCenter | Qt.TextWordWrap))
+        if locked:
+            spell_lock.veil(painter, rect, 5)
+            spell_lock.note(rect, True)
         painter.restore()
     slot = _strip_slot_of(session, selected)
     note = (f"On the shortcut bar as {slot + 1}: press {slot + 1} for the left hand, "
@@ -2056,7 +2288,8 @@ _DRAW = {
     "character": _draw_character, "journal": _draw_journal,
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
     "container": _draw_container, "quest": _draw_quest,
-    "lockpicking": _draw_lockpicking,
+    "lockpicking": _draw_lockpicking, "tutorial": _draw_tutorial,
+    "tutorial_tip": _draw_tutorial_tip,
     "training": lambda p, s, w, h: _teaching().draw_training(p, s, w, h),
     "tutor": lambda p, s, w, h: _teaching().draw_tutor(p, s, w, h),
 }
@@ -2065,7 +2298,8 @@ _HANDLE = {
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
     "container": _handle_container, "quest": _handle_quest,
-    "lockpicking": _handle_lockpicking,
+    "lockpicking": _handle_lockpicking, "tutorial": _handle_tutorial,
+    "tutorial_tip": _handle_tutorial_tip,
     "book": lambda session, key: _handle_book(session, key),
     "map": _handle_map,
     "training": lambda session, key: _teaching().handle_training(session, key),

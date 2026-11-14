@@ -167,3 +167,40 @@ def test_knock_icon_is_a_loadable_spell_icon(qt_app):
     pixmap = QtGui.QPixmap(str(path))
     assert not pixmap.isNull()
     assert (pixmap.width(), pixmap.height()) == (100, 100)
+
+
+def test_each_lock_looks_like_what_it_locks():
+    """One minigame, one set of mechanics; the art follows the lock: a crate's
+    padlock, an abandoned chest's rusted lock, a strongbox's iron, fine brass."""
+    from game.ui.lockpicking import lock_style
+    assert lock_style({"container_kind": "crate"}) == "padlock"
+    assert lock_style({"display_name": "Rusted Lockbox", "container_kind": "chest"}) == "rusted"
+    assert lock_style({"display_name": "Barrow Chest", "lock_difficulty": "expert"}) == "rusted"
+    assert lock_style({"display_name": "Bandits' Strongbox"}) == "iron"
+    assert lock_style({"display_name": "Toll Chest", "lock_difficulty": "adept"}) == "iron"
+    assert lock_style({"display_name": "Chest", "lock_difficulty": "master"}) == "ornate"
+    assert lock_style({"lock_style": "padlock", "display_name": "Strongbox"}) == "padlock"
+    chest = {"id": "abc-123", "display_name": "Chest", "lock_difficulty": "apprentice"}
+    assert lock_style(chest) == lock_style(dict(chest)), "the same lock every time"
+
+
+@pytest.mark.parametrize("style", ["ornate", "iron", "rusted", "padlock"])
+def test_every_lock_style_draws(qt_app, style):
+    from types import SimpleNamespace
+    from PyQt5.QtGui import QColor, QImage, QPainter
+    from game.rpg.lockpicking import LockpickAttempt
+    from game.ui import lockpicking as L
+    a = LockpickAttempt("adept", 30, seed=style)
+    thing = SimpleNamespace(properties={"display_name": "Box", "lock_style": style})
+    session = SimpleNamespace(lockpick_attempt=a, lockpick_thing=thing, game=SimpleNamespace(
+        character=SimpleNamespace(inventory=[{"id": "lockpick", "qty": 2}])))
+    img = QImage(820, 560, QImage.Format_ARGB32)
+    img.fill(QColor(0, 0, 0))
+    p = QPainter(img)
+    try:
+        L.draw(p, session, 0, 0, 820, 560)
+    finally:
+        p.end()
+    lock_area = img.copy(40, 130, 400, 320)
+    colours = {lock_area.pixel(x, y) for x in range(0, 400, 7) for y in range(0, 320, 7)}
+    assert len(colours) > 20, "the lock was drawn"

@@ -19,7 +19,7 @@ class _Character:
     magicka, max_magicka = 10, 40
     stamina, max_stamina = 80, 100
     level, gold, can_level_up = 3, 120, False
-    race_id = "nord"
+    race_id = "highlander"
     class_id = "warrior"
 
     def can_use_magic(self):
@@ -132,3 +132,13 @@ def test_only_the_north_badge_lags_and_each_session_has_its_own_compass(qt_app, 
         assert abs(badges[-1] - session.rotation) < math.radians(1)
     finally:
         painter.end()
+
+
+def test_the_ring_sits_square_in_the_top_left_corner():
+    """No fins: the ring is the frame's left edge, as far from the window's
+    left as from its top."""
+    for size in ((1280, 720), (1920, 1080), (800, 600)):
+        f = hud_frame.layout(*size)
+        assert f.cx - f.R == pytest.approx(hud_frame.MARGIN)
+        assert f.cy - f.R == pytest.approx(hud_frame.MARGIN)
+    assert not hasattr(hud_frame, "_paint_back")

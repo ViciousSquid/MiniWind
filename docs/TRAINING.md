@@ -72,7 +72,7 @@ standing.
 | Thalen the Smith | Millbrook | Blunt, Heavy Armour (Apprentice) | — |
 | Ysolde Steelhand | Hollin's Cross | Blade, Light Armour (Journeyman) | — |
 | Fenwick the Hunter | Fenwick's Lodge | Marksman, Sneak (Journeyman) | — |
-| Osric the Ferryman | Reedhollow | Athletics, Acrobatics (Journeyman) | — |
+| Osric the Ferryman | Reedhollow | Athletics (Journeyman) | — |
 | Aldric the Reeve | Hollin's Cross | Speechcraft, Mercantile (Expert) | — |
 | Wynn | The Wanderer's Rest | Speechcraft, Light Fingers (Journeyman) | — |
 | Nell | The Pilgrim's Lantern | Mercantile, Security (Journeyman) | — |

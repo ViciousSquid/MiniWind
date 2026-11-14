@@ -30,7 +30,7 @@ class _Logic(FioLogic):
 def _session(arrows=10):
     s = rt.MiniwindSession(_Logic(), cfg={"start_hour": 12.0,
                                           "minutes_per_day": 999999.0})
-    s.begin_new_character("T", "imperial", "warrior", "none", "male", head="head01")
+    s.begin_new_character("T", "valian", "warrior", "none", "male", head="head01")
     c = s.game.character
     inv.add_item(c.inventory, items.make("short_bow"))
     s.game.equip("short_bow")

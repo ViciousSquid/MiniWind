@@ -167,6 +167,17 @@ class ViewAudio:
             if f.lower().endswith((".wav", ".mp3", ".ogg")) and (only is None or f in only):
                 self._load_sound_to_cache(f, os.path.join(sound_dir, f))
 
+    def preload_combat_sounds(self):
+        """Decode the sounds a fight starts with -- the player's pain cries
+        and the monsters' shots -- now (under the loading bar), not the first
+        time each plays: a pain cry's decode was 0.1 s of the frame the
+        player is first hurt in."""
+        from engine.logic_triggers import PAIN_SOUNDS
+        from engine.monster_constants import (MONSTER_SHOOT_SOUND_DEFAULT,
+                                              MONSTER_SHOOT_SOUNDS)
+        shots = set(MONSTER_SHOOT_SOUNDS.values()) | {MONSTER_SHOOT_SOUND_DEFAULT}
+        self.preload_sounds(only=set(PAIN_SOUNDS) | {f"assets/sounds/{name}" for name in shots})
+
     def _ensure_pygame_mixer(self) -> bool:
         """Initialize pygame mixer if it isn't already active.
 
@@ -418,6 +429,17 @@ class ViewAudio:
 
             loops = -1 if request.get('looping') else 0
 
+            # A loop already playing this file keeps playing: the request
+            # only sets its volume (a howl that rises and falls with the
+            # wind without restarting). If the mixer dropped it, it starts.
+            if (request.get('keep_playing') and loops and entity_id is not None
+                    and entity_id in speaker_channels
+                    and speaker_mix.get(entity_id, {}).get('file') == sound_file):
+                meta = speaker_mix[entity_id]
+                meta['volume'] = volume
+                apply_mix(speaker_channels[entity_id], meta)
+                continue
+
             # If this speaker is already looping, stop the old channel first so
             # a re-trigger does not stack a second copy on top of itself.
             if entity_id is not None:
@@ -436,6 +458,7 @@ class ViewAudio:
                     'radius': request.get('radius', 512.0),
                     'global': bool(request.get('global', False)),
                     'volume': volume,
+                    'file': sound_file,
                     # Music and sound have their own volumes.
                     'music': is_music(sound_file),
                 }

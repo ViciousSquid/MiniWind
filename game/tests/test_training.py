@@ -9,7 +9,7 @@ JOURNEYMAN_OCCULT = {"trainer": {"skills": ["occult", "conjuration"], "rank": "J
 
 
 def _mage(gold=10000):
-    c = Character.create("T", "breton", "necromancer", "none")
+    c = Character.create("T", "wyrfolk", "necromancer", "none")
     c.gold = gold
     return c
 
@@ -73,7 +73,7 @@ def test_the_price_function_is_the_merchants():
 
 
 def test_a_warrior_is_turned_away_from_magic_but_not_from_steel():
-    w = Character.create("W", "nord", "warrior", "none")
+    w = Character.create("W", "highlander", "warrior", "none")
     w.gold = 1000
     assert training.train(w, JOURNEYMAN_OCCULT, sk.OCCULT)["reason"] == "warrior"
     blade = {"trainer": {"skills": ["blade"], "rank": 75}}

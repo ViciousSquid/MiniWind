@@ -226,3 +226,20 @@ def test_spawn_inventory_parses_string_and_list_forms():
     # list of {id, qty} shorthand
     by_id2 = {it["id"]: it["qty"] for it in fn([{"id": "gold", "qty": 7}])}
     assert by_id2 == {"gold": 7}
+
+
+def test_an_unnamed_actor_is_called_what_it_is_not_its_editor_counter():
+    """Spawn points make actors with no name of their own; the editor's
+    counter ("Creature_21") used to be what roll boxes and barks called them."""
+    from game import entities
+    made = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "bandit"})
+    assert made.properties["display_name"] == "Bandit"
+    fiend = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "monster",
+                                                          "name": "Creature_19"})
+    assert fiend.properties["display_name"] == "Fiend"
+    named = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "wolf",
+                                                          "name": "Greyback"})
+    assert named.properties["display_name"] == "Greyback"
+    kept = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "wolf",
+                                                         "display_name": "Old Grey"})
+    assert kept.properties["display_name"] == "Old Grey"

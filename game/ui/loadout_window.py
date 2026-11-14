@@ -5,8 +5,13 @@ chrome) with two tabs:
 * **Inventory** — the weapons the player carries. Click one to equip it (click
   the equipped one again to go unarmed). The equipped weapon is highlighted and
   drives left-mouse melee / bow attacks.
-* **Spells** — the spells the player knows. Click one to make it the *active*
-  spell; the active spell is highlighted and is cast with right-mouse.
+* **Spells** — the spells the player knows. The two hands are separate
+  slots with their own buttons: left-click a spell to ready it in the left
+  hand (the left mouse button casts it), right-click to ready it in the right
+  hand (the right mouse button casts it); click it again in that hand to put
+  it away. Each row is tagged L / R with the hand(s) holding it. While worn
+  metal armour stops casting, the spells are greyed out and cannot be readied,
+  and hovering one shows why.
 
 Opened with **I** during play and left open while fighting (it doesn't pause the
 world). It subclasses the engine's :class:`FloatingWindow` so it lives in the
@@ -203,38 +208,77 @@ class LoadoutWindow(FloatingWindow):
 
     def _draw_spells(self, painter, x, top, w):
         spells = self._spells()
-        active = self._active_spell()
         if not spells:
             painter.setPen(_MUTED)
             painter.drawText(x + 10, top + 20, "You know no spells.")
             return
+        import game.ui.spell_lock as spell_lock
+        # Worn metal armour greys every spell out: not selectable, and the
+        # row's tooltip says why.
+        locked = spell_lock.locked(self._character())
+        held = self._held_hands()
         for i, (sid, sp) in enumerate(spells):
             r = self._row_rect(x, top, w, i)
-            sel = (sid == active)
+            sel = sid in held.values()
             painter.fillRect(r, _SEL if sel else _ROW)
             if sel:
                 painter.fillRect(QRect(r.x(), r.y(), 3, r.height()), _SEL_LINE)
             # element colour swatch
             col = QColor(*sp.color) if getattr(sp, "color", None) else QColor(160, 120, 220)
+            if locked:
+                col = QColor(spell_lock.GREY)
             cy = r.y() + (r.height() - self.ICON) // 2
             painter.setBrush(QBrush(col))
             painter.setPen(QPen(col.darker(150), 1))
             painter.drawEllipse(r.x() + 8, cy, self.ICON, self.ICON)
-            painter.setPen(_WHITE if sel else _TEXT)
+            painter.setPen(spell_lock.GREY if locked else _WHITE if sel else _TEXT)
             painter.setFont(self.body_font)
             painter.drawText(r.x() + 8 + self.ICON + 8, r.y() + r.height() // 2 + 4, sp.name)
+            spell_lock.note(r, locked)
             painter.setFont(self.small_font)
             painter.setPen(_GOLD if sel else _MUTED)
             cost = int(getattr(sp, "base_cost", 0) or 0)
             painter.drawText(QRect(r.right() - 66, r.y(), 60, r.height()),
                              Qt.AlignVCenter | Qt.AlignRight, f"{cost} mp")
+            # Which hand(s) hold it: L / R, as the mouse buttons that cast it.
+            for k, side in enumerate(s for s in ("left", "right") if held.get(s) == sid):
+                tag = QRect(r.right() - 96 + k * 16, r.y() + (r.height() - 14) // 2, 14, 14)
+                painter.setBrush(spell_lock.GREY if locked else _GOLD)
+                painter.setPen(Qt.NoPen)
+                painter.drawRoundedRect(tag, 2, 2)
+                painter.setPen(QColor(20, 16, 10))
+                painter.drawText(tag, Qt.AlignCenter, "L" if side == "left" else "R")
             self._row_rects.append((r, "spell", sid))
         painter.setPen(_MUTED)
         painter.setFont(self.small_font)
         painter.drawText(x + 8, top + len(spells) * self.ROW_H + 14,
-                         "Click to ready • Right-mouse casts")
+                         "Left-click: left hand (LMB) • Right-click: right hand (RMB)")
+        spell_lock.flush(painter)      # a greyed spell's tooltip, on top
+
+    def _held_hands(self):
+        """``{"left": spell_id, "right": spell_id}`` for the physical hands
+        that hold a spell."""
+        c = self._character()
+        out = {}
+        if c is None:
+            return out
+        try:
+            import game.rpg.equipment as eq
+            for side in ("left", "right"):
+                spell = eq.hand_spell(c, eq.relative_hand(c, side))
+                if spell is not None:
+                    out[side] = spell.id
+        except Exception:
+            pass
+        return out
 
     # ---- interaction -----------------------------------------------------
+    def handle_mouse_press(self, event):
+        # Which button: the left readies a spell in the left hand, the right
+        # in the right hand (see handle_body_click).
+        self._press_hand = "right" if event.button() == Qt.RightButton else "left"
+        return super().handle_mouse_press(event)
+
     def handle_body_click(self, x, y):
         from PyQt5.QtCore import QPoint
         p = QPoint(x, y)
@@ -247,7 +291,7 @@ class LoadoutWindow(FloatingWindow):
                 if kind == "weapon":
                     self._equip(iid)
                 else:
-                    self._select_spell(iid)
+                    self._ready_in_hand(iid, getattr(self, "_press_hand", "left"))
                 return True
         return False
 
@@ -266,20 +310,13 @@ class LoadoutWindow(FloatingWindow):
         except Exception:
             pass
 
-    def _select_spell(self, spell_id):
-        c = self._character()
-        if c is None:
-            return
-        c.active_spell = spell_id
-        try:
-            import game.rpg.equipment as eq
-            eq._refresh_weapon_kind(c)
-        except Exception:
-            pass
-        try:
-            self.session.notify(f"Selected {self._name_of_spell(spell_id)}")
-        except Exception:
-            pass
+    def _ready_in_hand(self, spell_id, hand):
+        """Ready *spell_id* in the physical *hand* ("left" / "right"), or put
+        it away if that hand holds it already -- from the game tick, like
+        every other change the game UI makes. Worn metal armour refuses it
+        (MiniwindSession.equip_hand_spell)."""
+        from . import hits
+        hits.queue(lambda session, sid=spell_id, h=hand: session.ready_spell(sid, h))
 
     def _name_of(self, item_id):
         try:

@@ -481,7 +481,7 @@ class ViewHud:
             return
         # A game layer that draws its own richer HUD through the render.overlay
         # hook sets this so the stock HUD does not overlap it.
-        if self.view._suppress_default_hud:
+        if self.view._suppress_default_hud or getattr(self.view, 'game_hud', False):
             return
         # A LogicCamera owns the player's view completely: no HUD is shown
         # while the cinematic is running.
@@ -940,6 +940,9 @@ class ViewHud:
         ui = getattr(self.view, '_cached_level_complete_ui', None)
         if not ui:
             return
+        # Acted on once: the frame the old session last published still
+        # carries this request after the load, and must not make it again.
+        self.view._level_complete_done = ui
         target_map = ui.get('target_map', '')
         if ui.get('generate_level'):
             self.view.editor.generate_level_signal.emit(dict(ui.get('generator_params') or {}))
@@ -951,6 +954,7 @@ class ViewHud:
             self.view.logic_thread.interaction_runtime.level_complete_ui = None
 
     def _cancel_level_complete(self):
+        self.view._level_complete_done = self.view._cached_level_complete_ui
         self.view._cached_level_complete_ui = None
         self.view._level_complete_btn_rect = None
         if self.view.logic_thread:

@@ -66,6 +66,18 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
     #: (terrain program only; TerrainGL.BIOME_TEXTURE_UNIT).
     GEO_TRANSFORM_UNIT = 14
 
+    @staticmethod
+    def water_quality_from_config(settings):
+        """settings.ini [Renderer] water_quality (high / low) as a water tier:
+        'expensive' unless it says low."""
+        quality = 'high'
+        if settings is not None:
+            try:
+                quality = str(settings.get('Renderer', 'water_quality', fallback='high')).strip().lower()
+            except Exception:
+                quality = 'high'
+        return 'cheap' if quality in ('low', 'cheap') else 'expensive'
+
     def __init__(self, config=None, *, texture_loader=None):
         super().__init__(texture_loader)
         self.render_stats.details['sprite texture array'] = self._describe_sprite_layers
@@ -107,9 +119,11 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             #: settings.ini [Renderer] grass_quality: how much grass grows
             #: (Terrain.GRASS_QUALITIES: high, medium, low, off; wheat always
             #: grows). An older file's low_grass = True was half the grass.
-            legacy = 'medium' if config.getboolean('Renderer', 'low_grass', fallback=False) else 'high'
-            self.grass_quality = str(config.get('Renderer', 'grass_quality',
-                                                fallback=legacy)).strip().lower() or legacy
+            # (settings.ini, not frame input: read through another name.)
+            ini = config
+            legacy = 'medium' if ini.getboolean('Renderer', 'low_grass', fallback=False) else 'high'
+            self.grass_quality = str(ini.get('Renderer', 'grass_quality',
+                                             fallback=legacy)).strip().lower() or legacy
             try:
                 shadow_size = config.getint('Renderer', 'shadow_map_size', fallback=self.SHADOW_MAP_SIZE)
             except Exception:
@@ -120,11 +134,13 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             self.grass_enabled = True
             self.grass_quality = 'high'
             shadow_size = self.SHADOW_MAP_SIZE
-        #: Session-only debug cap on water quality (see WATER_QUALITIES).
-        #: Quality itself is per water brush (``water_high_quality``);
-        #: 'expensive' lets each brush choose, 'cheap' forces every brush
-        #: cheap. Set by the console's r_waterquality, never saved.
-        self.water_quality = 'expensive'
+        #: Water quality for every water surface (see WATER_QUALITIES):
+        #: 'expensive' (high, the default) -- depth, soft shores, caustics,
+        #: reflections -- or 'cheap'. A graphics setting, settings.ini
+        #: [Renderer] water_quality (high / low), and the console's
+        #: r_waterquality; a brush's own "High quality" flag no longer
+        #: lowers it.
+        self.water_quality = self.water_quality_from_config(config)
         # Clamp to a sane, power-of-two-ish range. Lower = faster, blockier.
         self.shadow_map_size = max(256, min(2048, int(shadow_size)))
         # How angled brushes' faces are batched (PassesMixin.GEO_BATCHING):
@@ -691,8 +707,7 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         self._effects_write_depth = bool(
             current_mode == RENDER_MODE_LIT and len(water_brushes)
             and getattr(self, 'water_quality', 'expensive') == 'expensive'
-            and getattr(self, 'water_enabled', True)
-            and bool(_tbl.water_high_quality[water_brushes].any()))
+            and getattr(self, 'water_enabled', True))
         if effect_slots is not None and len(effect_slots):
             self.draw_effects_instanced(
                 projection, view, etable, effect_slots,
@@ -701,6 +716,8 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
                 editor_time=config.get('time', 0.0),
                 camera_pos=camera_pos)
 
+        # The water drawn below reflects these (passes._draw_water_reflections).
+        self._reflect_source = (etable, sprite_slots) if len(sprite_slots) else None
         if len(sprite_slots):
             self.draw_sprites_instanced(
                 projection, view, etable, sprite_slots, camera_pos=camera_pos)
@@ -740,7 +757,7 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         if self._sprite_layers is not None:
             self._sprite_layers.cleanup()
             self._sprite_layers = None
-        for attr in ('_glass_scene_texture', '_water_depth_texture'):
+        for attr in ('_glass_scene_texture', '_water_depth_texture', '_sky_clouds_tex'):
             tex = getattr(self, attr, 0)
             if tex:
                 gl.glDeleteTextures([tex])

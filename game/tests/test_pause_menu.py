@@ -193,6 +193,17 @@ def test_the_root_page_offers_its_options_in_order(app):
     assert _labels(menu) == ["RESUME", "MAP", "GAME", "OPTIONS", "EDITOR", "QUIT"]
 
 
+def test_a_game_launched_to_play_offers_no_editor(app):
+    """The launcher's PLAY runs in kiosk mode: the player came to play, so the
+    pause menu never offers to leave for the editor."""
+    menu = _menu()
+    menu.editor.is_kiosk_mode = True
+    menu.open()
+    assert _labels(menu) == ["RESUME", "MAP", "GAME", "OPTIONS", "QUIT"]
+    _choose(menu, "QUIT")
+    assert menu.page == "confirm"
+
+
 def test_the_death_screen_opens_straight_onto_load_and_backs_out_to_it(app):
     menu = _menu([{"map": "Miniwind", "saved_at": "", "summary": ""}, None, None])
     menu.open_load()
@@ -363,9 +374,9 @@ def _graphics(menu):
     page = _options(menu)
     _row(page, "advanced")
     menu.handle_key(_key(QtCore.Qt.Key_Return))
-    assert [r[0] for r in page.rows()] == ["graphics", "advanced_back"]
+    assert [r[0] for r in page.rows()] == ["graphics", "record", "advanced_back"]
     menu.handle_key(_key(QtCore.Qt.Key_Return))
-    assert [r[0] for r in page.rows()] == ["grass", "graphics_back"]
+    assert [r[0] for r in page.rows()] == ["grass", "water", "grass_fire", "graphics_back"]
     return page
 
 
@@ -382,6 +393,48 @@ def test_advanced_graphics_holds_the_grass_and_escape_climbs_back(app):
     assert page.section == "advanced" and menu.page == "options"
     menu.handle_key(_key(QtCore.Qt.Key_Escape))
     assert page.section is None and menu.page == "options"
+
+
+def test_graphics_sets_water_high_or_low(app):
+    menu = _menu()
+    state = {"q": "high"}
+    menu.editor.pause_menu_water_quality = lambda: state["q"]
+    menu.editor.pause_menu_set_water_quality = lambda q: state.update(q=q)
+    page = _graphics(menu)
+    assert dict((k, v) for k, _l, v, _o in page.rows())["water"] == "High"
+    _row(page, "water")
+    menu.handle_key(_key(QtCore.Qt.Key_Return))
+    assert state["q"] == "low"
+    assert dict((k, v) for k, _l, v, _o in page.rows())["water"] == "Low"
+
+
+def test_graphics_turns_grass_fires_on_and_off(app):
+    menu = _menu()
+    state = {"on": True}
+    menu.editor.pause_menu_grass_fire = lambda: state["on"]
+    menu.editor.pause_menu_set_grass_fire = lambda on: state.update(on=bool(on))
+    page = _graphics(menu)
+    assert dict((k, v) for k, _l, v, _o in page.rows())["grass_fire"] == "On"
+    _row(page, "grass_fire")
+    menu.handle_key(_key(QtCore.Qt.Key_Return))
+    assert state["on"] is False
+    assert dict((k, v) for k, _l, v, _o in page.rows())["grass_fire"] == "Off"
+    assert "scorches the ground" in page._note("grass_fire")
+
+
+def test_advanced_turns_encounter_recording_on_and_off(app):
+    menu = _menu()
+    state = {"on": False}
+    menu.editor.pause_menu_record_encounters = lambda: state["on"]
+    menu.editor.pause_menu_set_record_encounters = lambda on: state.update(on=bool(on))
+    page = _graphics(menu)
+    menu.handle_key(_key(QtCore.Qt.Key_Escape))      # back up to Advanced
+    rows = {k: v for k, _l, v, _o in page.rows()}
+    assert rows["record"] == "Off"
+    _row(page, "record")
+    page.change("record")
+    assert state["on"] and {k: v for k, _l, v, _o in page.rows()}["record"] == "On"
+    _draw(menu)
 
 
 def test_the_grass_slider_steps_through_four_stops_and_applies_at_once(app):

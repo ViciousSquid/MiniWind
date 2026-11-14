@@ -99,6 +99,10 @@ class TerrainFrame:
         'grass_fade_start', 'grass_max_distance', 'grass_segments',
         'grass_blade_width',
         'paint_display', 'paint_maps', 'paint_versions', 'paint_epoch', 'paint_resolution',
+        # Mip chains made on the builder thread: chunk -> (the paint array
+        # it was made from, [level arrays]), and the chunks whose chain is
+        # being made (a renderer waits for those rather than making one).
+        'paint_chains', 'paint_chains_pending',
         'paint_page_layers', 'height_page_layers', 'max_gradient_stops',
         'triangle_count',
         # Regional biomes (engine/terrain_biomes.py): the RGBA weights a
@@ -113,7 +117,8 @@ class TerrainFrame:
     )
 
     #: Fields a frame may leave out (a renderer reads them as None).
-    _OPTIONAL = ('biome_map', 'biome_version', 'biome_bounds', 'grass_pushers')
+    _OPTIONAL = ('biome_map', 'biome_version', 'biome_bounds', 'grass_pushers',
+                 'paint_chains', 'paint_chains_pending')
 
     def __init__(self, **fields):
         for name in self._OPTIONAL:
@@ -188,3 +193,78 @@ def frustum_planes(view_projection):
         norm(m[0][3] + sign * m[0][row], m[1][3] + sign * m[1][row],
              m[2][3] + sign * m[2][row], m[3][3] + sign * m[3][row])
         for row in range(3) for sign in (1.0, -1.0))
+
+
+# ---------------------------------------------------------------------------
+# Paint mip chains: pure NumPy, made on the terrain's builder thread for the
+# chunks streaming in, and by a renderer for any other.
+# ---------------------------------------------------------------------------
+
+#: Side of a paint page's smallest mip level. Enough levels that paint in the
+#: distance does not shimmer; few enough that a chunk's edge texels are not
+#: averaged far into its neighbour's missing ones. (Three levels at 256 a
+#: chunk, four at 512.)
+PAINT_MIP_FLOOR = 32
+
+#: Side of the tiles :func:`paint_mip` skips when they hold no paint.
+PAINT_MIP_TILE = 32
+
+
+def paint_mip_levels(side: int) -> int:
+    """Mip levels a paint page of *side* texels has beyond the first."""
+    side = int(side)
+    if side <= PAINT_MIP_FLOOR:
+        return 0
+    return int(round(math.log2(side / float(PAINT_MIP_FLOOR))))
+
+
+def _paint_mip_block(paint):
+    """:func:`paint_mip` of a block of paint with even sides."""
+    alpha = paint[..., 3].astype(np.uint32)
+    weighted = paint[..., :3].astype(np.uint32) * alpha[..., None]
+    weight = alpha[0::2, 0::2] + alpha[1::2, 0::2] + alpha[0::2, 1::2] + alpha[1::2, 1::2]
+    colour = (weighted[0::2, 0::2] + weighted[1::2, 0::2]
+              + weighted[0::2, 1::2] + weighted[1::2, 1::2])
+    out = np.zeros(weight.shape + (4,), dtype=np.uint8)
+    some = weight > 0
+    w = weight[some][:, None]
+    out[..., :3][some] = ((colour[some] + (w >> 1)) // w).astype(np.uint8)
+    out[..., 3] = ((weight + 2) >> 2).astype(np.uint8)
+    return out
+
+
+def paint_mip(paint):
+    """*paint* (n, n, 4 uint8) at half the side, colour weighted by alpha
+    (an unpainted texel is black, and must not darken its neighbours).
+
+    Integer arithmetic, and only the rows of tiles that hold paint (a road
+    crosses a fraction of a chunk): the same texels as the float version it
+    replaced at a quarter of the time (19.5 against 4.5 ms a 512 chain)."""
+    n2 = paint.shape[0]
+    out = np.zeros((n2 // 2, n2 // 2, 4), dtype=np.uint8)
+    t = min(PAINT_MIP_TILE, n2)
+    k = n2 // t
+    if k * t != n2:
+        return _paint_mip_block(paint[:n2 // 2 * 2, :n2 // 2 * 2])
+    alive = paint[..., 3].reshape(k, t, k, t).any(axis=(1, 3))
+    rows, cols = np.nonzero(alive)
+    for r in np.unique(rows).tolist():
+        here = cols[rows == r]
+        c0, c1 = int(here.min()) * t, (int(here.max()) + 1) * t
+        out[r * t // 2:(r + 1) * t // 2, c0 // 2:c1 // 2] = _paint_mip_block(
+            paint[r * t:(r + 1) * t, c0:c1])
+    return out
+
+
+def paint_chain(paint, side):
+    """*paint* and its mip levels, each C-contiguous uint8, ready to upload
+    (a chunk streaming in, or its paint changing). 4.5 ms for a 512 road
+    chunk: see :func:`paint_mip`."""
+    data = np.ascontiguousarray(paint, dtype=np.uint8)
+    chain = [data]
+    for level in range(1, paint_mip_levels(side) + 1):
+        if side >> level < 1:
+            break
+        data = np.ascontiguousarray(paint_mip(data))
+        chain.append(data)
+    return chain

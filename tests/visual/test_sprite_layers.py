@@ -381,3 +381,73 @@ def test_building_the_array_leaves_the_pixel_store_as_qt_expects(renderer, conte
     assert gl.glGetIntegerv(gl.GL_UNPACK_ALIGNMENT) == 4
     assert gl.glGetIntegerv(gl.GL_UNPACK_ROW_LENGTH) == 0
     assert gl.glGetIntegerv(gl.GL_PACK_ALIGNMENT) == 4
+
+
+def test_layers_come_from_the_files_never_a_gpu_readback(renderer, context):
+    """A sprite texture loaded from a file fills its layer from that file:
+    the pixels are byte for byte the ones a readback would return, and the
+    array -- grown and refilled included -- reads nothing back from the GPU,
+    which stalls a real driver's pipeline. A texture made in code, with no
+    file behind it, is still read back."""
+    from engine.renderer.core.resources import ResourcesMixin
+    from engine.sprite_layers import SpriteLayers
+
+    def load(name, folder):
+        return int(ResourcesMixin.load_texture(renderer, name, folder))
+
+    small = load('head06.png', 'sprites/heads')
+    for tex in (small, load('dragon01.png', 'sprites/heads')):
+        decoded = renderer.texture_pixels(tex)
+        read = SpriteLayers._read_texture(tex)
+        assert decoded is not None and decoded.size == read.size
+        assert decoded.tobytes() == read.tobytes()
+
+    layers = renderer._sprite_layer_array()
+    assert layers.layers_for([small]) is not None
+    big = load('dragon01.png', 'sprites/heads')
+    assert layers.layers_for([small, big]) is not None     # grows: refills
+    assert layers.size == 512 and layers.count == 2
+    assert layers.readbacks == 0
+
+    made_in_code = _solid((10, 200, 10))
+    assert renderer.texture_pixels(made_in_code) is None
+    assert layers.layers_for([made_in_code]) is not None
+    assert layers.readbacks == 1
+
+
+def _array_layers(layers):
+    """Level 0 of every layer of *layers*' array, as a uint8 array."""
+    import OpenGL.GL as gl
+    gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, layers.texture)
+    gl.glPixelStorei(gl.GL_PACK_ALIGNMENT, 1)
+    raw = gl.glGetTexImage(gl.GL_TEXTURE_2D_ARRAY, 0, gl.GL_RGBA,
+                           gl.GL_UNSIGNED_BYTE, outputType=bytes)
+    gl.glPixelStorei(gl.GL_PACK_ALIGNMENT, 4)
+    gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, 0)
+    return np.frombuffer(raw, np.uint8).reshape(layers.capacity, layers.size, layers.size, 4)
+
+
+def test_reserving_room_keeps_every_layer_and_reads_nothing_back(renderer, context):
+    """The first frames of play give each array room for what is to come
+    (reserve_all): the array is reallocated once, every layer it held keeps
+    its pixels, and later sprites land without the array growing."""
+    from engine import sprite_layers
+    from engine.renderer.core.resources import ResourcesMixin
+
+    names = ('head06.png', 'head13.png', 'head93.png')
+    ids = [int(ResourcesMixin.load_texture(renderer, n, 'sprites/heads')) for n in names]
+    layers = renderer._sprite_layer_array()
+    assert layers.layers_for(ids) is not None
+    before = _array_layers(layers)[:3].copy()
+    assert layers.capacity == 8
+    sprite_layers.reserve_all()                       # 3 held -> room for 8
+    assert layers.capacity == 8
+    layers.reserve(20)
+    assert layers.capacity == 32 and layers.count == 3
+    assert np.array_equal(_array_layers(layers)[:3], before)
+    more = [int(ResourcesMixin.load_texture(renderer, 'head%d.png' % i, 'sprites/heads'))
+            for i in range(20, 40)]
+    texture = layers.texture
+    assert layers.layers_for(more) is not None
+    assert layers.texture == texture                  # no growth, no refill
+    assert layers.readbacks == 0

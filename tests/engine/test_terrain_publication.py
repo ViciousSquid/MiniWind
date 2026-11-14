@@ -221,3 +221,96 @@ def test_frustum_planes_match_the_tables_convention():
     ahead, behind = (0.0, 150.0, -500.0), (0.0, 150.0, 500.0)
     inside = lambda p: all(a * p[0] + b * p[1] + c * p[2] + d >= 0 for a, b, c, d in planes)
     assert inside(ahead) and not inside(behind)
+
+
+def test_view_ready_says_when_the_ground_around_a_point_is_built(background):
+    """After a jump, chunks stream in over a few frames and the camera sees
+    through the world until they do; ``view_ready`` lets a game wait for the
+    ground before uncovering the view."""
+    terrain = background(seed=7)
+    terrain.set_streaming(True, radius=900.0)
+    cs = terrain.chunk_size
+    far = glm.vec3(terrain.offset_x + (terrain.max_chunk_x - 3) * cs, 0.0,
+                   terrain.offset_z + (terrain.max_chunk_z - 3) * cs)
+    assert not terrain.view_ready(far.x, far.z, 700.0), "nothing is resident there yet"
+    gate = threading.Event()
+    real = terrain._grid_heights
+    terrain._grid_heights = lambda *a: (gate.wait(5.0), real(*a))[1]
+    terrain.advance(far)                        # resident, but not built
+    assert terrain.table.count > 0
+    assert not terrain.view_ready(far.x, far.z, 700.0)
+    gate.set()
+    terrain._grid_heights = real
+    _settle(terrain, far)
+    assert terrain.view_ready(far.x, far.z, 700.0)
+    # A radius beyond the stream radius can never be resident: it is capped.
+    assert terrain.view_ready(far.x, far.z, 50000.0)
+
+
+def _grassy(terrain):
+    terrain.set_biome('grassy_hills')
+    terrain.set_bounds(-1, 0, -1, 0)
+    terrain.set_grass(True, density=0.05, height_range=(0, 1))
+    terrain.meadow_grass = True
+    return terrain
+
+
+def _settle_grass(terrain, camera=ORIGIN, frames=600):
+    _settle(terrain, camera)
+    for _ in range(frames):
+        terrain.advance(camera)
+        if not terrain.work_due and not terrain.grass_pending():
+            return
+        if terrain.BACKGROUND_BUILDS:
+            time.sleep(0.002)
+    raise AssertionError("the grass did not finish growing")
+
+
+def test_background_grass_is_grown_on_the_builder_and_is_the_same(background):
+    """Grass is 75-600 ms of numpy a chunk: grown on the TerrainBuilder
+    thread, never the caller's, and blade for blade what growing it here
+    gives."""
+    inline = _grassy(Terrain(seed=11))
+    _settle_grass(inline)
+    threaded = _grassy(background(seed=11))
+    callers = []
+    real = threaded._generate_grass_blades
+    threaded._generate_grass_blades = (
+        lambda *a: callers.append(threading.current_thread().name) or real(*a))
+    _settle_grass(threaded)
+    assert callers and set(callers) == {'TerrainBuilder'}
+    a, b = inline.table, threaded.table
+    grown = 0
+    for coord, slot in a.slot_of_coord.items():
+        other = b.slot_of_coord[coord]
+        mine, theirs = inline.products.grass.get(slot), threaded.products.grass.get(other)
+        assert (mine is None) == (theirs is None)
+        if mine is not None:
+            np.testing.assert_array_equal(mine[2], theirs[2])
+            grown += len(mine[2])
+    assert grown, "no grass grew at all"
+
+
+def test_grass_for_a_slot_that_was_reused_is_dropped(background):
+    terrain = _grassy(background(seed=5))
+    _settle(terrain)
+    gate = threading.Event()
+    real = terrain._generate_grass_blades
+    terrain._generate_grass_blades = lambda *a: (gate.wait(5.0), real(*a))[1]
+    terrain.advance(ORIGIN)                     # asks the builder for grass
+    asked = dict(terrain._growing)
+    assert asked
+    table = terrain.table
+    released = list(asked)
+    table.release(np.array(released))           # those chunks go away
+    terrain._released(np.array(released))
+    gate.set()
+    terrain._generate_grass_blades = real
+    deadline = time.time() + 5.0
+    while terrain._build_results.empty() and time.time() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.05)
+    terrain._collect_built()
+    for slot in released:
+        assert slot not in terrain.products.grass
+    assert not terrain.grass_pending()

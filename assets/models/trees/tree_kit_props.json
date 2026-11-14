@@ -1,0 +1,1445 @@
+{
+  "description": "Placement reference, not an automatically loaded map. Give duplicates fresh IDs. Non-solid scenery; use separate trunk collision brushes.",
+  "things": [
+    {
+      "type": "prop",
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Oak Sapling",
+        "id": "7d4f6e7d-9623-5a79-819e-e2f1ecd3c522",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_oak_sapling.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1200,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Oak Mature",
+        "id": "af23eda7-4d9c-5dfb-b940-f78d904dbcc6",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_oak_mature.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Oak Ancient",
+        "id": "ffb78af5-5745-5d5c-b1b6-d83e33f5e7ab",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_oak_ancient.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        3600,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Oak Autumn",
+        "id": "372d539b-ab5b-5ae1-ac4d-2136156efa3b",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_oak_autumn.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        4800,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Oak Bare",
+        "id": "20f64a16-06c4-5fa4-9e1c-7f2815253852",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_oak_bare.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        6000,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Maple Green",
+        "id": "982a0a7f-940a-53c9-a235-805c759f26b1",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_maple_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        7200,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Maple Gold",
+        "id": "f682a456-6e2c-53f3-b20b-3d381eb236c0",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_maple_gold.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        8400,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Maple Orange",
+        "id": "074acdc9-6c28-5797-8487-118f084d34a3",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_maple_orange.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        0,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Maple Crimson",
+        "id": "98244825-9f30-5376-ad0f-5e2a99ae8f54",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_maple_crimson.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1200,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Birch Green",
+        "id": "ce758c59-2239-5c6f-a05d-f96d1575fdd5",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_birch_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Birch Gold",
+        "id": "a3faa8fd-3a0c-5442-b3e3-b71326e43750",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_birch_gold.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        3600,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Birch Twin",
+        "id": "c04e0a0c-9296-5308-a25e-4008b4f11212",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_birch_twin.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        4800,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Birch Bare",
+        "id": "4f7b392f-57c1-5c10-89af-2577fe641f7d",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_birch_bare.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        6000,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Beech Green",
+        "id": "a74c6815-c5c3-586b-ad8b-e10133f39600",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_beech_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        7200,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Beech Copper",
+        "id": "5429c376-06ce-5c66-a1d2-521639ddfe3e",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_beech_copper.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        8400,
+        0,
+        1500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Beech Bare",
+        "id": "68ddb22a-40b8-5a2c-b6a6-44bcfd45dc28",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_beech_bare.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        0,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Rowan Green",
+        "id": "23940a02-9045-590c-a5b2-10a80691c4c5",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_rowan_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1200,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Rowan Red",
+        "id": "5d683ed4-31bf-5ea9-b648-10bf3035fe3a",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_rowan_red.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Rowan Gold",
+        "id": "bbd29b12-5c9a-59fd-9538-ffdf5467d58a",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_rowan_gold.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        3600,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Willow Green",
+        "id": "4ab74261-a34e-5d38-9157-27ac8318cb1a",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_willow_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        4800,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Willow Gold",
+        "id": "3c61857a-5898-5950-a4b2-835e189d6761",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_willow_gold.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        6000,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Willow Bare",
+        "id": "9b147fb5-31fe-506b-a030-25dbdc370613",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_willow_bare.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        7200,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Poplar Green",
+        "id": "2c471adf-3879-5ab4-9ce5-fe93f344c11e",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_poplar_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        8400,
+        0,
+        3000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Poplar Gold",
+        "id": "d084b64f-5dac-5fe1-a123-6c72572139fd",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_poplar_gold.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        0,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Poplar Bare",
+        "id": "1ce24ef3-05cc-5649-ba68-8065d57d2399",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_poplar_bare.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1200,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Pine Young",
+        "id": "93d3bec3-117f-5a9c-a7e4-6a1bbf6f55e4",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_pine_young.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Pine Tall",
+        "id": "9ebe4b91-b1b7-5103-9dd1-7b82f316812d",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_pine_tall.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        3600,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Pine Windswept",
+        "id": "bea55fd6-2bfd-541c-ace6-1137995f32f5",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_pine_windswept.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        4800,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Spruce Green",
+        "id": "06df26f2-78de-5468-ae64-5bec3dc131fb",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_spruce_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        6000,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Spruce Blue",
+        "id": "fb7cb433-5198-51b2-9110-cacc7834d80a",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_spruce_blue.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        7200,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Spruce Snow",
+        "id": "c6b00d40-3dd7-5c15-800f-ec6ddd3f7f2b",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_spruce_snow.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        8400,
+        0,
+        4500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Fir Dense",
+        "id": "1611b9c7-b1ca-5383-8e4b-3be6d32a3fc6",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_fir_dense.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        0,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Fir Snow",
+        "id": "e37765ec-ee38-58e2-bb91-c750575869ff",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_fir_snow.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1200,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Cedar Spreading",
+        "id": "d1a981b1-0eff-58a9-9874-9d4ac7d5f333",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_cedar_spreading.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Cedar Blue",
+        "id": "a616be7e-eed6-5437-8c6e-9ea237f37ba3",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_cedar_blue.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        3600,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Cypress Column",
+        "id": "54d12e93-a6d3-5953-a749-0a20e6e3a5a3",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_cypress_column.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        4800,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Cypress Twisted",
+        "id": "24f59a07-d56b-5939-a648-0525c6943dee",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_cypress_twisted.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        6000,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Larch Green",
+        "id": "845f8b5a-3c69-564a-9189-9c1d0c45a118",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_larch_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        7200,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Larch Gold",
+        "id": "2e822e5e-1e03-5b9f-8a3e-894503455bd4",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_larch_gold.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        8400,
+        0,
+        6000
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Larch Bare",
+        "id": "08d0909d-b778-5c19-9ccd-662fc7a7bea0",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_larch_bare.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        0,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Dead Stag",
+        "id": "14cc2410-26dc-5b08-98f6-71e016cf671f",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_dead_stag.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1200,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Dead Snag",
+        "id": "175e87ea-c040-5bd6-bf43-649febd3a6d7",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_dead_snag.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Dead Lightning",
+        "id": "5b673260-7bcf-5272-9c76-d1e268629c74",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_dead_lightning.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        3600,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Palm Oasis",
+        "id": "e9e3dddd-fe87-5032-95d6-c557eef9ed4f",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_palm_oasis.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        4800,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Palm Bent",
+        "id": "4b953355-2f46-5b58-a403-278fb1931f92",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_palm_bent.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        6000,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Apple Green",
+        "id": "facc0fe5-26b2-5d51-9cca-94cda9ec6e51",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_apple_green.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        7200,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Apple Autumn",
+        "id": "01fd016e-35d6-5038-bc77-e9c6c43de27f",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_apple_autumn.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        8400,
+        0,
+        7500
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Hawthorn Bare",
+        "id": "89a0f476-e1ed-5177-8464-9f538e4c7cfb",
+        "render_mode": "model",
+        "model_path": "assets/models/trees/tree_hawthorn_bare.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    }
+  ]
+}

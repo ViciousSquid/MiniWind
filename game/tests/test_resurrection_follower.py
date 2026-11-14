@@ -12,7 +12,7 @@ def _raised():
                     faction="bandits", team="bandits", aggression="hostile",
                     dead=True, health=0, max_health=40)
     session = MiniwindSession(_Logic([corpse]), cfg={})
-    session.game.character = Character.create("Caster", "imperial", "necromancer")
+    session.game.character = Character.create("Caster", "valian", "necromancer")
     session.needs_char_creation = False
     session.open_screen = None
     assert eq.equip_spell(session.game.character, "resurrection", "main")
@@ -112,7 +112,7 @@ def _enter(globals_store, thing):
     """Enter the map: a fresh session over *thing*, with what the map remembers."""
     from .test_sim import _FakeGlobals   # noqa: F401  (the store type)
     session = MiniwindSession(_Logic([thing]), cfg={}, globals_store=globals_store)
-    session.game.character = Character.create("Caster", "imperial", "necromancer")
+    session.game.character = Character.create("Caster", "valian", "necromancer")
     session.needs_char_creation = False
     session.open_screen = None
     eq.equip_spell(session.game.character, "resurrection", "main")

@@ -45,7 +45,7 @@ def test_older_or_invalid_behavior_saves_get_stable_defaults(saved):
 @pytest.fixture
 def party(monkeypatch):
     def member(pid, pos, bot):
-        game = GameState.new_game(DictStore(), pid, "imperial", "warrior")
+        game = GameState.new_game(DictStore(), pid, "valian", "warrior")
         session = SimpleNamespace(
             game=game, nav=None, _attack_cooldown=0, _cast_cooldown=0,
             _cancel_bow_draw=lambda: None,

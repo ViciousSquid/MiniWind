@@ -9,9 +9,9 @@ out of its mouth in a widening cone toward the player, and anyone standing in
 the cone burns (``breath_damage`` fire damage every :data:`BURN_EVERY`
 seconds). Then the flames park again.
 
-Which of the FIRE settings (``fire01..05.gif``) the flames use is chosen with
-the console: ``dragonfire 1`` .. ``dragonfire 5``. The choice is kept in the
-game's state store, so it holds across saves and visits.
+The flames look like every other fire in the game (:mod:`game.fire_look`:
+``[GAME] fire_style`` in settings.ini; the console's ``dragonfire N`` changes
+it for the session).
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ import math
 import random
 
 from engine.change_journal import touch
+
+from . import fire_look
 
 BREATH_RANGE = 1150.0
 BREATH_SECONDS = 1.9
@@ -30,15 +32,11 @@ CONE_HALF_ANGLE = math.radians(20.0)
 BURN_EVERY = 0.3
 #: Where the pool waits: well below the floor.
 PARK_DEPTH = -3000.0
-STORE_KEY = "dragonfire"
-#: The dragon's fire, unless the console's ``dragonfire N`` chose another:
-#: fire02, as every fire is.
-DEFAULT_SETTING = 2
-FIRE_SETTINGS = 5
+FIRE_SETTINGS = fire_look.STYLES
 
 
 def fire_texture(setting: int) -> str:
-    return f"assets/textures/effects/fire{int(setting):02d}.gif"
+    return fire_look.texture_for(setting)
 
 
 class DragonFire:
@@ -59,25 +57,22 @@ class DragonFire:
                           and t.properties.get("breathes_fire")]
         for t in self.flames:
             self._desync(t)
-        setting = self.session.store.get(STORE_KEY, None)
-        try:
-            chosen = DEFAULT_SETTING if setting in (None, "false") else int(float(setting))
-        except (TypeError, ValueError):
-            chosen = DEFAULT_SETTING
-        if not self.set_setting(chosen, remember=False):
-            self.set_setting(DEFAULT_SETTING, remember=False)
+        self.set_setting(fire_look.style(), remember=False)
         self._park()
 
     def set_setting(self, setting: int, remember: bool = True) -> bool:
-        """Every flame in the pool uses FIRE setting *setting* (1..5)."""
-        if not 1 <= int(setting) <= FIRE_SETTINGS:
+        """Every flame in the pool uses fire style *setting*
+        (1..:data:`game.fire_look.STYLES`); *remember* makes it every fire's
+        look for the rest of the session (the console's ``dragonfire N``)."""
+        if remember:
+            if not fire_look.set_for_session(setting):
+                return False
+        elif not 1 <= int(setting) <= FIRE_SETTINGS:
             return False
         path = fire_texture(setting)
         for t in self.flames:
             t.properties["fire_texture"] = path
             touch(t)
-        if remember:
-            self.session.store.set(STORE_KEY, int(setting))
         return True
 
     # -- per tick --------------------------------------------------------------
@@ -169,6 +164,11 @@ class DragonFire:
             t.properties["height"] = 90.0 * grow
             touch(t)
         self._parked = False
+        if travelled >= span * 0.6:
+            # Where the jet comes down, the grass catches (game/grass_fire.py).
+            catch = getattr(self.session, "ignite_grass", None)
+            if catch is not None:
+                catch([mx + fx * span * 0.85, y, mz + fz * span * 0.85], dragon)
 
     def _desync(self, t):
         """Start this flame's fire animation at its own random point (and give

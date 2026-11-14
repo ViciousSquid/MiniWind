@@ -368,11 +368,44 @@ def cmd_pause(ctx, args):
     return None
 
 
-def cmd_dragonfire(ctx, args):
-    """dragonfire 1..5 -- which FIRE setting the dragon's breath is made of.
+def cmd_weather(ctx, args):
+    """weather [sunny|overcast|rain|storm] [hours] -- what the sky is doing
+    (game/weather.py); with a kind, the sky turns to it -- fading in as
+    weather does -- for a spell or *hours*. ``sunny`` is clear sky."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    weather = getattr(session, "weather", None)
+    if weather is None:
+        debug_log("Error", "weather: Play Mode only.")
+        return None
+    parts = str(args or "").split()
+    if not parts:
+        snap = weather.snapshot()
+        debug_log("Info", f"weather: {snap['kind']} for {snap['left']:.1f} h more; rain "
+                          f"{snap['rain']:.2f}, ground wet {snap['wet']:.2f}.")
+        return None
+    hours = None
+    if len(parts) > 1:
+        try:
+            hours = float(parts[1])
+        except ValueError:
+            hours = None
+    if not weather.set(parts[0].lower(), hours):
+        debug_log("Error", "weather: sunny, overcast, rain or storm.")
+        return None
+    msg = f"Weather: {parts[0].lower()}."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
 
-    The breath is a stream of the engine's FIRE Effects (game/dragon_fire.py);
-    this picks their fire (fire01..fire05). The choice is remembered."""
+
+def cmd_dragonfire(ctx, args):
+    """dragonfire 1..4 -- the look of every fire, for this session.
+
+    All fire is the engine's FIRE Effect in one look (game/fire_look.py,
+    ``[GAME] fire_style`` in settings.ini); this changes it until the game is
+    closed: the dragon's breath at once, every fire lit from now on."""
     from .dragon_fire import FIRE_SETTINGS
     session = getattr(ctx.logic_thread, "_miniwind", None)
     fire = getattr(session, "dragon_fire", None)
@@ -381,8 +414,9 @@ def cmd_dragonfire(ctx, args):
         debug_log("Error", "dragonfire: Play Mode only.")
         return None
     if not text:
-        current = session.store.get("dragonfire", None)
-        debug_log("Info", f"dragonfire: setting {current or 1} "
+        from . import fire_look
+        current = fire_look.style()
+        debug_log("Info", f"dragonfire: fire style {current} "
                           f"({len(fire.flames)} flames in this map). Use dragonfire 1..{FIRE_SETTINGS}.")
         return None
     try:
@@ -392,12 +426,54 @@ def cmd_dragonfire(ctx, args):
     if not fire.set_setting(setting):
         debug_log("Error", f"dragonfire: pick 1..{FIRE_SETTINGS}.")
         return None
-    msg = f"Dragon fire set to {setting}."
+    msg = f"Fire style set to {setting} for this session."
     debug_log("Info", msg)
     toast = getattr(ctx.main_window, "show_toast", None)
     if toast is not None:
         toast(msg)
     return None
+
+
+def _toggle_overlay(ctx, key, what):
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None or not hasattr(session, "toggle_debug_overlay"):
+        debug_log("Error", f"{what}: Play Mode only.")
+        return None
+    on = session.toggle_debug_overlay(key)
+    msg = f"{what.capitalize()} {'shown' if on else 'hidden'}."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
+def cmd_worldmap(ctx, args):
+    """worldmap -- (editor) the world map in a window of its own, with the
+    editor camera on it, refreshed ten times a second."""
+    if ctx.play_mode:
+        debug_log("Error", "worldmap: editor only (in Play, the map is in the pause menu).")
+        return None
+    if ctx.main_window is None:
+        debug_log("Error", "worldmap: needs the editor window.")
+        return None
+    from .ui import worldmap_window
+    worldmap_window.toggle(ctx.main_window)
+    return None
+
+
+def cmd_viewcone(ctx, args):
+    """viewcone -- show or hide every head's view cone (yellow) and so its
+    blind spot; settings.ini ``[developer] view_cones = true`` starts with
+    them shown."""
+    return _toggle_overlay(ctx, "view_cones", "view cones")
+
+
+def cmd_showsound(ctx, args):
+    """showsound -- show or hide the noise you make (a light blue circle: how
+    far off you can be heard), and shouts and fights around you; settings.ini
+    ``[developer] show_sound = true`` starts with it shown."""
+    return _toggle_overlay(ctx, "show_sound", "sound")
 
 
 def cmd_storyteller(ctx, args):
@@ -676,8 +752,16 @@ COMMANDS = (
      "— Time controls (rewind, play/pause, speed) and teleport to any cave (Play Mode)"),
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
+    (("weather",), cmd_weather,
+     "[sunny|overcast|rain|storm] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
+    (("worldmap",), cmd_worldmap,
+     "— (Editor) The world map in a window, with the editor camera on it (10 Hz)"),
+    (("viewcone", "viewcones"), cmd_viewcone,
+     "— Show/hide every head's view cone and blind spot (debug; settings.ini: [developer] view_cones)"),
+    (("showsound",), cmd_showsound,
+     "— Show/hide how far your noise carries, and shouts and fights near you (debug; settings.ini: [developer] show_sound)"),
     (("dragonfire",), cmd_dragonfire,
-     "1..5 — Which FIRE setting the dragon breathes (remembered)"),
+     "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,
      "[on|off] — Torches near you cast shadows; no argument toggles (saved)"),
     (("pause", "freeze"), cmd_pause,

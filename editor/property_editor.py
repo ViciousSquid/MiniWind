@@ -21,7 +21,6 @@ from editor import state_values as _sv
 from editor.portal_links import sync_group_to
 from engine.brush_geometry import GEO_RUNTIME_KEYS
 from engine.monster_constants import MONSTER_VARIANTS
-from engine.constants import water_high_quality
 from editor.tooltips import set_tooltips_enabled
 from editor.form_layout import configure_property_forms
 
@@ -1753,25 +1752,13 @@ class PropertyEditor(QWidget):
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
 
-        quality_cb = _make_checkbox(
-            "High quality",
-            water_high_quality(brush),
-            lambda c: self.update_object_prop('water_high_quality', c),
-            _Style.CHECKBOX)
-        quality_cb.setToolTip(
-            "This water brush only.\n"
-            "On: depth-based colour, shoreline foam, caustics and reflections\n"
-            "of the scene. Off: cheap water - waves, refraction and sky\n"
-            "reflection only (faster).")
-        self._widgets['water_quality_cb'] = quality_cb
-
         plane_cb = _make_checkbox(
             "Draw top surface only",
             brush.get('water_plane', False),
             lambda c: self.update_object_prop('water_plane', c),
             _Style.CHECKBOX)
         self._widgets['water_plane_cb'] = plane_cb
-        layout.addLayout(_hbox(quality_cb, plane_cb, spacing=16))
+        layout.addLayout(_hbox(plane_cb, spacing=16))
 
         form = QFormLayout()
         form.setSpacing(6)

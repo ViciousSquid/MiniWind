@@ -42,10 +42,10 @@ from typing import Any, Mapping, Optional, Protocol, Sequence, Tuple, runtime_ch
 
 Vec3 = Tuple[float, float, float]
 
-#: Water cost tiers a renderer honours as a session cap over each water
-#: brush's own "High quality" flag (``RenderTable.water_high_quality``):
-#: ``'expensive'`` lets every brush choose; ``'cheap'`` forces all of them to
-#: the cheap path. A renderer without such a distinction treats both alike.
+#: Water cost tiers, for all water at once: ``'expensive'`` (high, the
+#: default) or ``'cheap'`` (low) -- the graphics setting [Renderer]
+#: water_quality. A brush's old "High quality" flag is ignored. A renderer
+#: without such a distinction treats both alike.
 WATER_QUALITIES = ('cheap', 'expensive')
 
 
@@ -110,6 +110,9 @@ FRAME_INPUT = {
     'spectator_glasses_active': 'bool: spectator appearances remain visible independently of normal player glasses',
     'player_glasses_positions': 'tuple of (x, y, z) per visible player',
     'player_glasses_sprites': 'tuple of sprite-texture keys, one per position',
+    'reflected_heads': 'tuple of (image path, (x, y, z) centre, (w, h) size, heading radians): '
+                       'heads drawn outside the entity table (the overhead player) that water '
+                       'reflects like the sprites near it',
     'player_glasses_self_candidates': 'optional bool per pair: remote spectators cannot be mistaken for the viewer in mirrors',
 }
 

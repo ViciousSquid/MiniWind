@@ -7,6 +7,7 @@ import math
 import time
 
 from .. import fio
+from . import MAX_PARTY
 from ..rpg.character import Character
 
 FIELDS = frozenset(
@@ -88,6 +89,65 @@ def identity(thing):
     return str(thing.properties.get("id") or thing.properties.get("name") or "")
 
 
+#: What a client needs of a roll to show it exactly as the host does. The
+#: tumble and finishes are rebuilt from "seed", so the host's cached visuals
+#: (dice_visuals) never travel: the frame stays small.
+ROLL_FIELDS = ("result", "companion", "followups", "elapsed", "duration", "side",
+               "against", "kind", "seed", "player_id")
+
+
+def _roll(box):
+    return {k: clean(box[k]) for k in ROLL_FIELDS if k in box}
+
+
+def rolls_out(session):
+    """A player's dice exactly as the host rolled them, for every client: the
+    same numbers, throw and finishes (all from the roll's own seed) -- their
+    own roll, and the roll box over anyone near them, by the roller's
+    identity (objects never travel). Part of the world frame already sent:
+    never a message of its own."""
+    own = session.dice_animation
+    return {
+        "dice_animation": _roll(own) if own else None,
+        "roll_boxes": [
+            dict(_roll(box), actor_id=identity(box["actor"]))
+            for box in (session.__dict__.get("roll_boxes") or {}).values()
+            if getattr(box.get("actor"), "properties", None) is not None
+            and identity(box["actor"])
+        ],
+    }
+
+
+def _same_roll(old, new):
+    """*old* (already shown here) is the roll *new* describes: keep it, its
+    dice already built, and only bring its clock into step with the host's."""
+    if isinstance(old, dict) and old.get("seed") == new.get("seed") \
+            and old.get("result") == new.get("result") \
+            and old.get("companion") == new.get("companion"):
+        old["elapsed"] = new.get("elapsed", old.get("elapsed", 0.0))
+        old["followups"] = new.get("followups", old.get("followups"))
+        return old
+    return None
+
+
+def rolls_in(session, data, here, avatar, pid):
+    """The host's dice (rolls_out) onto a client's *session*: each roller
+    found again here by identity (*here*), the player's own as *avatar*."""
+    own = data.get("dice_animation")
+    if isinstance(own, dict):
+        own = _same_roll(session.dice_animation, own) or dict(own)
+        own["actor"], own["player_id"] = avatar, pid
+    session.dice_animation = own
+    shown = session.__dict__.get("roll_boxes") or {}
+    boxes = {}
+    for box in data.get("roll_boxes") or []:
+        roller = here.get(str(box.get("actor_id", ""))) if isinstance(box, dict) else None
+        if roller is not None:
+            kept = _same_roll(shown.get(id(roller)), box)
+            boxes[id(roller)] = kept or dict(box, actor=roller)
+    session.__dict__["roll_boxes"] = boxes
+
+
 def capture(coop):
     from engine.savegame import _capture_moving_brushes
 
@@ -152,7 +212,7 @@ def capture(coop):
             "cast_cooldown": s._cast_cooldown,
             "log": clean(s.game.log[-20:]),
             "roll_log": clean(s.roll_log),
-            "dice_animation": clean(s.dice_animation) if not p.bot else None,
+            **rolls_out(s),
         }
     values = coop.party_quests.store.all()
     world = {
@@ -201,7 +261,7 @@ def apply(coop, message):
     entities = message.get("entities")
     if (
         not isinstance(players, dict)
-        or not 1 <= len(players) <= 4
+        or not 1 <= len(players) <= MAX_PARTY
         or not isinstance(entities, list)
     ):
         raise ValueError("Invalid authoritative world frame.")
@@ -309,7 +369,7 @@ def apply(coop, message):
             s._cast_cooldown = float(data.get("cast_cooldown", 0.0))
             s.game.log = list(data.get("log", []))
             s.roll_log = list(data.get("roll_log", []))
-            s.dice_animation = data.get("dice_animation") if not context.bot else None
+            rolls_in(s, data, here, context.actor, pid)
             for field in (
                 "dialogue_npc",
                 "merchant_npc",

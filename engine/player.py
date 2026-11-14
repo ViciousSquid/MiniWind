@@ -327,6 +327,9 @@ class Player:
         #: Multiplier on how fast the player can move, for a game to slow
         #: them (a heavy load, a snare). 1.0 is the stock speed.
         self.move_speed_scale = 1.0
+        #: Multiplier on how far a sleeping monster sees the player to wake
+        #: (MonsterAI._player_wake_range), for a game to hide them (sneaking).
+        self.visibility_scale = 1.0
         self.mouse_sensitivity = 0.0015
         self.width, self.height, self.depth = PLAYER_HULL_SIZE
         self.camera_height = 40.0  # Offset from pos.y
@@ -770,12 +773,12 @@ class Player:
                 self.pos.x + self.velocity.x * delta, self.pos.y, self.pos.z):
             full, cover = cover.full, None
             aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
-        self._move_with_collision(delta, aabb_brushes, axis='x')
+        self._move_with_collision(delta, aabb_brushes, axis='x', terrain=terrain)
         if cover is not None and not cover.holds(
                 self.pos.x, self.pos.y, self.pos.z + self.velocity.z * delta):
             full, cover = cover.full, None
             aabb_brushes, mesh_brushes, mesh_shapes = _gather(*full)
-        self._move_with_collision(delta, aabb_brushes, axis='z')
+        self._move_with_collision(delta, aabb_brushes, axis='z', terrain=terrain)
 
         # B. Vertical Y Movement
         self.pos.y += self.velocity.y * delta
@@ -1054,9 +1057,15 @@ class Player:
             self._waterjump_cooldown = 0.7
             return
 
-    def _move_with_collision(self, delta, aabb_brushes, axis):
+    def _move_with_collision(self, delta, aabb_brushes, axis, terrain=None):
         """
         Handles movement along a specific axis with collision detection.
+
+        A horizontal step onto *terrain* higher than the feet is a lift (the
+        terrain pass raises the player onto it), and needs headroom there as
+        a stair lip does: under a low ceiling -- the underside of a jetty over
+        a rising lake bed -- the ground used to push the head into the brush,
+        and from inside it every move in every direction was refused.
         """
         # 1. Determine velocity component based on axis
         if axis == 'z':
@@ -1093,15 +1102,28 @@ class Player:
                 # stair "lip": a low obstacle is climbed instead of walked into.
                 if axis in ('x', 'z') and self._try_step_up(aabb_brushes, orig_pos):
                     return
-                # Collision detected: revert position and stop movement
-                self.pos = orig_pos
-                if axis == 'z':
-                    self.velocity.z = 0
-                elif axis == 'x':
-                    self.velocity.x = 0
-                else:
-                    self.velocity.y = 0
+                self._revert_move(orig_pos, axis)
                 return
+
+        if axis != 'y' and terrain is not None and terrain.is_solid():
+            ground = terrain.get_height_at_safe(self.pos.x, self.pos.z)
+            if ground is not None and ground > p_min.y:
+                lift = glm.vec3(0.0, ground - p_min.y, 0.0)
+                l_min, l_max = p_min + lift, p_max + lift
+                for brush in aabb_brushes:
+                    if not self._has_headroom(brush, l_min, l_max):
+                        self._revert_move(orig_pos, axis)
+                        return
+
+    def _revert_move(self, orig_pos, axis):
+        """Collision: back to where the move began, that axis stopped."""
+        self.pos = orig_pos
+        if axis == 'z':
+            self.velocity.z = 0
+        elif axis == 'x':
+            self.velocity.x = 0
+        else:
+            self.velocity.y = 0
 
     def _try_step_up(self, aabb_brushes, orig_pos):
         """

@@ -3,6 +3,11 @@
 The mill and its rotor are ordinary Props. ``mill_rotor_for`` on the rotor
 names the mill's stable entity id. The tower owns the ordinary, persistent
 item inventory that farmers deliver to and the player can open.
+
+A mill can be *held*: ``mill_held_by`` names whoever holds it (the Old Mill's
+bandit chief). While anyone of that name lives, the mill is idle -- no one
+delivers to it or buys from it, and its sails stand still -- and once they are
+dead (however they died) it is an ordinary working mill again.
 """
 
 from __future__ import annotations
@@ -18,6 +23,9 @@ from .rpg import inventory, items
 
 MILL = "windmill"
 ROTOR_FOR = "mill_rotor_for"
+HELD_BY = "mill_held_by"
+IDLE = "mill_idle"              # set while the mill's holder lives
+HOLD_CHECK_SECONDS = 2.0
 WHEAT = "wheat"
 FLOUR = "flour"
 WHEAT_PER_FLOUR = 10
@@ -100,7 +108,7 @@ def mill_flour(mill, hours: float) -> int:
 def is_producing(mill) -> bool:
     props = mill.properties
     return (not props.get("_bw_parked_disabled", props.get("disabled"))
-            and not props.get("dead") and wheat_stock(mill) > 0)
+            and not props.get("dead") and not props.get(IDLE) and wheat_stock(mill) > 0)
 
 
 def _basis(props):
@@ -195,14 +203,15 @@ class Windmills:
         self.logic = logic
         self.mills: list[_Mill] = []
         self._bodies: dict[str, object] = {}
+        self._hold_clock = 0.0
 
     def bodies(self) -> tuple:
         return tuple(self._bodies.values())
 
     def find(self, entity_id):
         body = self._bodies.get(entity_id)
-        if body is None or body.properties.get("dead") or body.properties.get(
-                "_bw_parked_disabled", body.properties.get("disabled")):
+        if body is None or body.properties.get("dead") or body.properties.get(IDLE) or (
+                body.properties.get("_bw_parked_disabled", body.properties.get("disabled"))):
             return None
         return body
 
@@ -231,8 +240,41 @@ class Windmills:
             mill = _Mill(body, rotor, RotorMotion(angle=angle % 360.0))
             mill.place()
             self.mills.append(mill)
+        self.check_holders(things)
+        # And again on the first update: actors placed at play start may
+        # not all be in the world yet.
+        self._hold_clock = HOLD_CHECK_SECONDS
+
+    def check_holders(self, things=None) -> None:
+        """Idle each held mill while anyone of its holder's name lives."""
+        held = [b for b in self._bodies.values() if b.properties.get(HELD_BY)]
+        if not held:
+            return
+        if things is None:
+            things = fio.things(self.logic)
+        living = set()
+        for t in things:
+            p = getattr(t, "properties", None) or {}
+            if p.get("dead") or not p.get("name"):
+                continue
+            try:
+                if float(p.get("health", 1.0)) <= 0.0:
+                    continue
+            except (TypeError, ValueError):
+                pass
+            living.add(str(p.get("name")))
+            if p.get("display_name"):
+                living.add(str(p.get("display_name")))
+        for body in held:
+            idle = str(body.properties[HELD_BY]) in living
+            if bool(body.properties.get(IDLE)) != idle:
+                body.properties[IDLE] = idle
 
     def update(self, delta: float) -> None:
+        self._hold_clock += max(0.0, float(delta))
+        if self._hold_clock >= HOLD_CHECK_SECONDS:
+            self._hold_clock = 0.0
+            self.check_holders()
         for mill in self.mills:
             mill.motion.advance(delta, is_producing(mill.body))
             mill.place()

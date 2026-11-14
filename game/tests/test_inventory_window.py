@@ -36,7 +36,7 @@ class _Store:
 
 def _session(*ids):
     s = MiniwindSession.__new__(MiniwindSession)
-    s.game = GameState.new_game(_Store(), "Tester", "imperial", "warrior")
+    s.game = GameState.new_game(_Store(), "Tester", "valian", "warrior")
     c = s.game.character
     c.inventory.clear()
     c.equipment.clear()
@@ -123,7 +123,8 @@ def test_unarmoured_is_armour_class_ten():
     c = s.game.character
     c.attrs["endurance"] = 40
     assert eq.armour_class(c) == eq.BASE_AC
-    assert eq.deflect_chance(c) == 0.0
+    # A typical foe (d20 +7) still misses an unarmoured body on a 1 or 2.
+    assert eq.deflect_chance(c) == pytest.approx(0.10)
 
 
 def test_plate_raises_armour_class_more_than_cloth():

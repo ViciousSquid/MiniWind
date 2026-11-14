@@ -245,6 +245,10 @@ class ResourcesMixin:
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
             self._texture_dimensions[tex_cache_name] = (img.width, img.height)
+            if frames is None:
+                # The file it holds, so the sprite array can take its pixels
+                # from there rather than read them back (texture_pixels).
+                self.__dict__.setdefault('_texture_files', {})[int(tex_id)] = texture_path
             gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
@@ -261,6 +265,17 @@ class ResourcesMixin:
         except Exception as e:
             print(f"Error loading texture '{texture_name}': {e}")
             return self.load_texture('default.png', 'textures')
+
+    def texture_pixels(self, tex_id):
+        """The image a still texture from :meth:`load_texture` was uploaded
+        with -- decoded from its file again, flipped as it was -- or None for
+        any other texture. What the sprite array fills its layers from
+        instead of reading the texture back from the GPU."""
+        path = self.__dict__.get('_texture_files', {}).get(int(tex_id))
+        if path is None:
+            return None
+        from PIL import Image
+        return Image.open(asset_source(path)).convert("RGBA").transpose(Image.FLIP_TOP_BOTTOM)
 
     # --------------------------------------------------------------------------
     # Animated (GIF) textures

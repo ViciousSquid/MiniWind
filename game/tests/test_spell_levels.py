@@ -54,7 +54,7 @@ def test_switch_effects_and_instant_kills_do_not_scale():
 
 
 def test_the_player_raises_a_spell_with_experience():
-    c = Character.create("T", "breton", "mage", "none")
+    c = Character.create("T", "wyrfolk", "mage", "none")
     cost = c.spell_upgrade_cost("flare")
     assert cost == magic.get("flare").xp_per_level
     assert not c.upgrade_spell("flare")              # no experience yet
@@ -68,7 +68,7 @@ def test_the_player_raises_a_spell_with_experience():
 
 
 def test_a_mastered_spell_cannot_rise():
-    c = Character.create("T", "breton", "mage", "none")
+    c = Character.create("T", "wyrfolk", "mage", "none")
     c.spell_levels["flare"] = magic.get("flare").max_level
     c.xp = 10 ** 6
     assert c.spell_upgrade_cost("flare") == 0 and not c.upgrade_spell("flare")

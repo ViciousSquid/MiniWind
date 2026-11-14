@@ -20,6 +20,8 @@ _OPENERS = {
                   "I was there! {What}."),
     "heard": ("I heard it happen: {what}.", "There was such a commotion. {What}."),
     "told": ("Did you hear? {What}.", "They're saying {what}.", "Word is, {what}."),
+    "certain": ("Did you hear? It's true: {what}.", "It's certain, {what}.",
+                "Everyone knows it by now: {what}."),
 }
 
 #: The listener's reply, by what sort of news it is (the event kind's tags).
@@ -27,8 +29,14 @@ _REPLIES = {
     "grave": ("Gods preserve us.", "Dead? I'll bar my door tonight.",
               "Someone should fetch the watch."),
     "violence": ("In broad daylight? I'll keep my distance.", "The watch had better hear of this."),
+    # A lawful killing or fight -- bandits cut down on the road -- is news, not
+    # a crime: nobody sends for the watch over it.
+    "lawful": ("Good riddance.", "One less cutthroat on the road, then.",
+               "Can't say I'll miss them."),
     "property": ("I'll keep a hand on my purse.", "Thieves, here? Lock everything."),
     "social": ("Kind of them.", "Well, that's good to hear for once."),
+    "fire": ("Fire? Gods keep it from my roof.", "There goes the harvest, then.",
+             "Bread'll be dear this winter, you mark me."),
     "": ("Is that so?", "Huh. Who'd have thought.", "You don't say."),
 }
 
@@ -84,11 +92,16 @@ def gossip_lines(fact: Dict, speaker: str = "", listener: str = "") -> Tuple[str
     import game.sim.knowledge as knowledge
     what = knowledge.phrase(fact)
     source = str(fact.get("source", "told"))
+    tags = events.kind_spec(fact.get("kind", ""))["tags"]
+    if "certain" in tags and source != "witnessed":
+        source = "certain"
     salt = (speaker, listener, fact.get("e", 0))
     opener = _pick(_OPENERS.get(source, _OPENERS["told"]), *salt).format(
         what=what, What=what[:1].upper() + what[1:])
-    tags = events.kind_spec(fact.get("kind", ""))["tags"]
-    kind = next((t for t in ("grave", "violence", "property", "social") if t in tags), "")
+    kind = next((t for t in ("fire", "grave", "violence", "property", "social") if t in tags), "")
+    import game.sim.crime as crime
+    if kind in ("grave", "violence") and not crime.is_crime(fact):
+        kind = "lawful"
     return opener, _pick(_REPLIES[kind], *salt)
 
 
@@ -104,8 +117,26 @@ def justified_line(kind: str, victim: str = "", speaker: str = "") -> str:
         victim=victim, Victim=victim[:1].upper() + victim[1:])
 
 
+def address(display_name: str) -> str:
+    """What a neighbour calls someone: their given name ("Kestrel" for
+    "Kestrel the Guard", "Ulla" for "Ulla of the Watch"), or "friend" for
+    someone known only by a job ("Town Archer", "Head Chef")."""
+    name = str(display_name or "").strip()
+    cuts = [name.find(joint) for joint in (" the ", " of ") if joint in name]
+    if cuts:
+        return name[:min(cuts)].strip() or "friend"
+    words = name.split()
+    if len(words) != 1:
+        return "friend"
+    return name
+
+
 def small_talk(a: str, b: str, hour: float) -> Tuple[str, str]:
-    """``(opener, reply)`` for *a* passing the time of day with *b*."""
+    """``(opener, reply)`` for *a* passing the time of day with *b*.
+
+    *a* and *b* are display names; each is addressed as a neighbour would
+    (:func:`address`), never "Morning, Town Archer."."""
     part = _part_of_day(hour)
     opener, reply = _pick(_SMALL_TALK[part], a, b, part, int(hour))
+    a, b = address(a), address(b)
     return opener.format(a=a, b=b), reply.format(a=a, b=b)

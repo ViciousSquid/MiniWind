@@ -555,3 +555,26 @@ def test_a_dead_supplier_stays_dead_even_if_the_map_is_left_immediately(supply):
     session.memory.load('supplier-death')
     session.memory.apply()
     assert shop.properties['dead'] and shop.properties['health'] == 0
+
+
+def test_a_shop_buys_from_its_own_mill_when_it_works(supply, logic):
+    """A shop with a mill of its own (``flour_mill``) goes to the nearest
+    working mill while its own is held, and back to its own once it works."""
+    from engine.prop_entity import Prop as _Prop
+    from ..windmills import HELD_BY
+    session, mill, shop, _buyer = supply
+    own, _own_rotor = _pair(logic, 'own_mill', producing=False, pos=(2600, 0, 0))
+    own.properties[HELD_BY] = "Hal Corbin"
+    hal = _Prop(properties={"name": "Hal Corbin", "health": 80})
+    logic.editor_state.things.append(hal)
+    shop.properties["flour_mill"] = own.properties["id"]
+    session.windmills.install()
+    _reindex(session)
+    session._decide(shop)
+    assert shop.properties["flour_job"]["source"] == mill.properties["id"]   # held: Mara's
+    session.flour_supply._cancel(shop)
+    shop.properties.pop("flour_day", None)
+    hal.properties["dead"] = True
+    session.windmills.check_holders()
+    session._decide(shop)
+    assert shop.properties["flour_job"]["source"] == own.properties["id"]    # its own again

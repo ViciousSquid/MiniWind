@@ -5,6 +5,8 @@ the overhead camera; thinned by the grass setting, gone at Off -- where the
 wheat fields, a crop the farms and the seasons depend on, still grow in full.
 """
 
+import importlib
+
 import numpy as np
 import pytest
 
@@ -12,7 +14,9 @@ pytest.importorskip("OpenGL", reason="engine.terrain imports PyOpenGL")
 
 from engine import terrain_biomes as tb   # noqa: E402
 from engine.terrain import Terrain        # noqa: E402
-from game import meadow                   # noqa: E402
+
+# Fio's own suite may not import MiniWind's game package by name.
+meadow = importlib.import_module("game.meadow")
 
 pytestmark = [pytest.mark.qt, pytest.mark.miniwind]
 
@@ -82,3 +86,19 @@ def test_the_grass_setting_thins_the_meadow_and_off_leaves_only_the_wheat(terrai
     assert wheat_high > 0
     # At Off every blade left is wheat, and all of the wheat is there.
     assert sum(len(b) for b in off) == wheat_high
+
+
+def test_only_wheat_grows_in_a_wheat_field(terrain):
+    """No meadow grass in a field: the meadow stops where the wheat starts."""
+    meadow.apply(terrain)
+    slots = _slots(terrain)
+    assert sum(len(terrain._generate_meadow_blades(s)) for s in slots) > 0
+    # The west half a wheat field, the east half ordinary ground.
+    biome_map = np.zeros((16, 16, 5), dtype=np.uint8)
+    biome_map[:, :8, tb.WHEAT] = 255
+    terrain.set_biome_map(biome_map)
+    blades = np.concatenate([terrain._generate_meadow_blades(s) for s in slots])
+    assert len(blades)                                   # still grass beside the field
+    weights = terrain.biome_weights_batch(blades[:, 0], blades[:, 2])
+    assert weights[:, tb.WHEAT].max() < 0.5              # none of it in the field
+    assert sum(len(terrain._generate_wheat_blades(s)) for s in slots) > 0

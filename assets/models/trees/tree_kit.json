@@ -1,0 +1,980 @@
+{
+  "player_height": 100,
+  "units": "Fio units; 1 unit approximately 1.8 cm",
+  "up_axis": "Y",
+  "origin": "ground-level trunk center",
+  "model_scale": [
+    1,
+    1,
+    1
+  ],
+  "model_rotation": [
+    0,
+    0,
+    0
+  ],
+  "material": "Tree_palette",
+  "texture": "tree_palette.png",
+  "models": [
+    {
+      "name": "tree_oak_sapling",
+      "obj": "tree_oak_sapling.obj",
+      "glb": "tree_oak_sapling.glb",
+      "triangle_count": 1252,
+      "height": 165.0,
+      "bounds_min": [
+        -64.551938,
+        0.0,
+        -59.392694
+      ],
+      "bounds_max": [
+        69.73606,
+        165.0,
+        63.550184
+      ],
+      "species": "oak",
+      "season": "green",
+      "seed": 10
+    },
+    {
+      "name": "tree_oak_mature",
+      "obj": "tree_oak_mature.obj",
+      "glb": "tree_oak_mature.glb",
+      "triangle_count": 1252,
+      "height": 570.0,
+      "bounds_min": [
+        -313.714188,
+        0.0,
+        -261.688986
+      ],
+      "bounds_max": [
+        360.254889,
+        570.0,
+        312.071143
+      ],
+      "species": "oak",
+      "season": "green",
+      "seed": 11
+    },
+    {
+      "name": "tree_oak_ancient",
+      "obj": "tree_oak_ancient.obj",
+      "glb": "tree_oak_ancient.glb",
+      "triangle_count": 1252,
+      "height": 760.0,
+      "bounds_min": [
+        -474.50449,
+        0.0,
+        -415.077672
+      ],
+      "bounds_max": [
+        540.819916,
+        760.0,
+        475.088369
+      ],
+      "species": "oak",
+      "season": "green",
+      "seed": 12
+    },
+    {
+      "name": "tree_oak_autumn",
+      "obj": "tree_oak_autumn.obj",
+      "glb": "tree_oak_autumn.glb",
+      "triangle_count": 1252,
+      "height": 580.0,
+      "bounds_min": [
+        -315.068624,
+        0.0,
+        -276.160092
+      ],
+      "bounds_max": [
+        366.83682,
+        580.0,
+        327.910845
+      ],
+      "species": "oak",
+      "season": "russet",
+      "seed": 13
+    },
+    {
+      "name": "tree_oak_bare",
+      "obj": "tree_oak_bare.obj",
+      "glb": "tree_oak_bare.glb",
+      "triangle_count": 1318,
+      "height": 620.0,
+      "bounds_min": [
+        -323.189853,
+        0.0,
+        -347.029604
+      ],
+      "bounds_max": [
+        415.105543,
+        620.0,
+        376.214606
+      ],
+      "species": "oak",
+      "season": "bare",
+      "seed": 14
+    },
+    {
+      "name": "tree_maple_green",
+      "obj": "tree_maple_green.obj",
+      "glb": "tree_maple_green.glb",
+      "triangle_count": 970,
+      "height": 430.0,
+      "bounds_min": [
+        -179.133374,
+        0.0,
+        -158.303365
+      ],
+      "bounds_max": [
+        220.710854,
+        430.0,
+        193.539436
+      ],
+      "species": "maple",
+      "season": "lime",
+      "seed": 20
+    },
+    {
+      "name": "tree_maple_gold",
+      "obj": "tree_maple_gold.obj",
+      "glb": "tree_maple_gold.glb",
+      "triangle_count": 970,
+      "height": 460.0,
+      "bounds_min": [
+        -195.422634,
+        0.0,
+        -190.649469
+      ],
+      "bounds_max": [
+        243.765121,
+        460.0,
+        211.573445
+      ],
+      "species": "maple",
+      "season": "gold",
+      "seed": 21
+    },
+    {
+      "name": "tree_maple_orange",
+      "obj": "tree_maple_orange.obj",
+      "glb": "tree_maple_orange.glb",
+      "triangle_count": 970,
+      "height": 510.0,
+      "bounds_min": [
+        -228.557653,
+        0.0,
+        -201.888213
+      ],
+      "bounds_max": [
+        280.147233,
+        510.0,
+        244.513422
+      ],
+      "species": "maple",
+      "season": "orange",
+      "seed": 22
+    },
+    {
+      "name": "tree_maple_crimson",
+      "obj": "tree_maple_crimson.obj",
+      "glb": "tree_maple_crimson.glb",
+      "triangle_count": 970,
+      "height": 450.0,
+      "bounds_min": [
+        -190.724148,
+        0.0,
+        -184.31882
+      ],
+      "bounds_max": [
+        236.505809,
+        450.0,
+        202.014776
+      ],
+      "species": "maple",
+      "season": "crimson",
+      "seed": 23
+    },
+    {
+      "name": "tree_birch_green",
+      "obj": "tree_birch_green.obj",
+      "glb": "tree_birch_green.glb",
+      "triangle_count": 1096,
+      "height": 490.0,
+      "bounds_min": [
+        -136.702575,
+        0.0,
+        -144.168982
+      ],
+      "bounds_max": [
+        186.086128,
+        490.0,
+        157.622072
+      ],
+      "species": "birch",
+      "season": "lime",
+      "seed": 30
+    },
+    {
+      "name": "tree_birch_gold",
+      "obj": "tree_birch_gold.obj",
+      "glb": "tree_birch_gold.glb",
+      "triangle_count": 1096,
+      "height": 530.0,
+      "bounds_min": [
+        -152.338727,
+        0.0,
+        -146.804482
+      ],
+      "bounds_max": [
+        200.707818,
+        530.0,
+        175.267787
+      ],
+      "species": "birch",
+      "season": "amber",
+      "seed": 31
+    },
+    {
+      "name": "tree_birch_twin",
+      "obj": "tree_birch_twin.obj",
+      "glb": "tree_birch_twin.glb",
+      "triangle_count": 1140,
+      "height": 580.0,
+      "bounds_min": [
+        -177.57423,
+        0.0,
+        -177.320002
+      ],
+      "bounds_max": [
+        239.556772,
+        580.0,
+        200.007649
+      ],
+      "species": "birch_twin",
+      "season": "gold",
+      "seed": 32
+    },
+    {
+      "name": "tree_birch_bare",
+      "obj": "tree_birch_bare.obj",
+      "glb": "tree_birch_bare.glb",
+      "triangle_count": 1134,
+      "height": 510.0,
+      "bounds_min": [
+        -194.50222,
+        0.0,
+        -186.841741
+      ],
+      "bounds_max": [
+        235.379686,
+        510.0,
+        209.412637
+      ],
+      "species": "birch",
+      "season": "bare",
+      "seed": 33
+    },
+    {
+      "name": "tree_beech_green",
+      "obj": "tree_beech_green.obj",
+      "glb": "tree_beech_green.glb",
+      "triangle_count": 1252,
+      "height": 650.0,
+      "bounds_min": [
+        -270.101561,
+        0.0,
+        -257.05063
+      ],
+      "bounds_max": [
+        314.867566,
+        650.0,
+        291.258973
+      ],
+      "species": "beech",
+      "season": "green",
+      "seed": 40
+    },
+    {
+      "name": "tree_beech_copper",
+      "obj": "tree_beech_copper.obj",
+      "glb": "tree_beech_copper.glb",
+      "triangle_count": 1252,
+      "height": 620.0,
+      "bounds_min": [
+        -267.639737,
+        0.0,
+        -261.748446
+      ],
+      "bounds_max": [
+        312.68182,
+        620.0,
+        281.458919
+      ],
+      "species": "beech",
+      "season": "copper",
+      "seed": 41
+    },
+    {
+      "name": "tree_beech_bare",
+      "obj": "tree_beech_bare.obj",
+      "glb": "tree_beech_bare.glb",
+      "triangle_count": 1318,
+      "height": 660.0,
+      "bounds_min": [
+        -308.144689,
+        0.0,
+        -332.319875
+      ],
+      "bounds_max": [
+        382.883074,
+        660.0,
+        347.125031
+      ],
+      "species": "beech",
+      "season": "bare",
+      "seed": 42
+    },
+    {
+      "name": "tree_rowan_green",
+      "obj": "tree_rowan_green.obj",
+      "glb": "tree_rowan_green.glb",
+      "triangle_count": 1222,
+      "height": 295.0,
+      "bounds_min": [
+        -126.673428,
+        0.0,
+        -115.07667
+      ],
+      "bounds_max": [
+        155.488605,
+        295.0,
+        133.90254
+      ],
+      "species": "rowan",
+      "season": "lime",
+      "seed": 50
+    },
+    {
+      "name": "tree_rowan_red",
+      "obj": "tree_rowan_red.obj",
+      "glb": "tree_rowan_red.glb",
+      "triangle_count": 1222,
+      "height": 340.0,
+      "bounds_min": [
+        -155.05539,
+        0.0,
+        -130.690602
+      ],
+      "bounds_max": [
+        173.897749,
+        340.0,
+        151.813788
+      ],
+      "species": "rowan",
+      "season": "red",
+      "seed": 51
+    },
+    {
+      "name": "tree_rowan_gold",
+      "obj": "tree_rowan_gold.obj",
+      "glb": "tree_rowan_gold.glb",
+      "triangle_count": 1222,
+      "height": 320.0,
+      "bounds_min": [
+        -149.773504,
+        0.0,
+        -131.383958
+      ],
+      "bounds_max": [
+        166.890066,
+        320.0,
+        151.459484
+      ],
+      "species": "rowan",
+      "season": "gold",
+      "seed": 52
+    },
+    {
+      "name": "tree_willow_green",
+      "obj": "tree_willow_green.obj",
+      "glb": "tree_willow_green.glb",
+      "triangle_count": 1630,
+      "height": 500.0,
+      "bounds_min": [
+        -286.814683,
+        0.0,
+        -252.064491
+      ],
+      "bounds_max": [
+        309.135639,
+        500.0,
+        290.018828
+      ],
+      "species": "willow",
+      "season": "olive",
+      "seed": 60
+    },
+    {
+      "name": "tree_willow_gold",
+      "obj": "tree_willow_gold.obj",
+      "glb": "tree_willow_gold.glb",
+      "triangle_count": 1630,
+      "height": 470.0,
+      "bounds_min": [
+        -258.72012,
+        0.0,
+        -235.216631
+      ],
+      "bounds_max": [
+        302.464761,
+        470.0,
+        275.178339
+      ],
+      "species": "willow",
+      "season": "amber",
+      "seed": 61
+    },
+    {
+      "name": "tree_willow_bare",
+      "obj": "tree_willow_bare.obj",
+      "glb": "tree_willow_bare.glb",
+      "triangle_count": 1318,
+      "height": 510.0,
+      "bounds_min": [
+        -350.479497,
+        0.0,
+        -353.73249
+      ],
+      "bounds_max": [
+        426.977799,
+        510.0,
+        388.265478
+      ],
+      "species": "willow",
+      "season": "bare",
+      "seed": 62
+    },
+    {
+      "name": "tree_poplar_green",
+      "obj": "tree_poplar_green.obj",
+      "glb": "tree_poplar_green.glb",
+      "triangle_count": 1012,
+      "height": 730.0,
+      "bounds_min": [
+        -122.116559,
+        0.0,
+        -118.983652
+      ],
+      "bounds_max": [
+        150.025429,
+        730.0,
+        130.775434
+      ],
+      "species": "poplar",
+      "season": "lime",
+      "seed": 70
+    },
+    {
+      "name": "tree_poplar_gold",
+      "obj": "tree_poplar_gold.obj",
+      "glb": "tree_poplar_gold.glb",
+      "triangle_count": 1012,
+      "height": 760.0,
+      "bounds_min": [
+        -123.265861,
+        0.0,
+        -122.916856
+      ],
+      "bounds_max": [
+        155.355184,
+        760.0,
+        139.573391
+      ],
+      "species": "poplar",
+      "season": "gold",
+      "seed": 71
+    },
+    {
+      "name": "tree_poplar_bare",
+      "obj": "tree_poplar_bare.obj",
+      "glb": "tree_poplar_bare.glb",
+      "triangle_count": 1050,
+      "height": 700.0,
+      "bounds_min": [
+        -150.963795,
+        0.0,
+        -153.0706
+      ],
+      "bounds_max": [
+        185.373874,
+        700.0,
+        165.381744
+      ],
+      "species": "poplar",
+      "season": "bare",
+      "seed": 72
+    },
+    {
+      "name": "tree_pine_young",
+      "obj": "tree_pine_young.obj",
+      "glb": "tree_pine_young.glb",
+      "triangle_count": 904,
+      "height": 260.0,
+      "bounds_min": [
+        -83.1786,
+        0.0,
+        -66.652431
+      ],
+      "bounds_max": [
+        78.71342,
+        260.0,
+        67.939098
+      ],
+      "species": "pine",
+      "season": "evergreen",
+      "seed": 80
+    },
+    {
+      "name": "tree_pine_tall",
+      "obj": "tree_pine_tall.obj",
+      "glb": "tree_pine_tall.glb",
+      "triangle_count": 904,
+      "height": 820.0,
+      "bounds_min": [
+        -224.167824,
+        0.0,
+        -196.496444
+      ],
+      "bounds_max": [
+        246.904639,
+        820.0,
+        197.418726
+      ],
+      "species": "pine",
+      "season": "evergreen",
+      "seed": 81
+    },
+    {
+      "name": "tree_pine_windswept",
+      "obj": "tree_pine_windswept.obj",
+      "glb": "tree_pine_windswept.glb",
+      "triangle_count": 640,
+      "height": 590.0,
+      "bounds_min": [
+        -176.257687,
+        0.0,
+        -185.28631
+      ],
+      "bounds_max": [
+        283.738968,
+        590.0,
+        201.925418
+      ],
+      "species": "pine_wind",
+      "season": "evergreen",
+      "seed": 82
+    },
+    {
+      "name": "tree_spruce_green",
+      "obj": "tree_spruce_green.obj",
+      "glb": "tree_spruce_green.glb",
+      "triangle_count": 904,
+      "height": 690.0,
+      "bounds_min": [
+        -206.482745,
+        0.0,
+        -195.252512
+      ],
+      "bounds_max": [
+        196.633989,
+        690.0,
+        181.448518
+      ],
+      "species": "spruce",
+      "season": "evergreen",
+      "seed": 90
+    },
+    {
+      "name": "tree_spruce_blue",
+      "obj": "tree_spruce_blue.obj",
+      "glb": "tree_spruce_blue.glb",
+      "triangle_count": 904,
+      "height": 610.0,
+      "bounds_min": [
+        -181.222773,
+        0.0,
+        -173.261828
+      ],
+      "bounds_max": [
+        187.8838,
+        610.0,
+        170.585127
+      ],
+      "species": "spruce",
+      "season": "blue",
+      "seed": 91
+    },
+    {
+      "name": "tree_spruce_snow",
+      "obj": "tree_spruce_snow.obj",
+      "glb": "tree_spruce_snow.glb",
+      "triangle_count": 1336,
+      "height": 650.0,
+      "bounds_min": [
+        -197.178047,
+        0.0,
+        -180.779338
+      ],
+      "bounds_max": [
+        190.901492,
+        650.0,
+        185.434751
+      ],
+      "species": "spruce",
+      "season": "snow",
+      "seed": 92
+    },
+    {
+      "name": "tree_fir_dense",
+      "obj": "tree_fir_dense.obj",
+      "glb": "tree_fir_dense.glb",
+      "triangle_count": 1036,
+      "height": 730.0,
+      "bounds_min": [
+        -185.717691,
+        0.0,
+        -171.390717
+      ],
+      "bounds_max": [
+        185.647765,
+        730.0,
+        175.020107
+      ],
+      "species": "fir",
+      "season": "evergreen",
+      "seed": 100
+    },
+    {
+      "name": "tree_fir_snow",
+      "obj": "tree_fir_snow.obj",
+      "glb": "tree_fir_snow.glb",
+      "triangle_count": 1540,
+      "height": 780.0,
+      "bounds_min": [
+        -205.779684,
+        0.0,
+        -180.820834
+      ],
+      "bounds_max": [
+        200.884015,
+        780.0,
+        173.175024
+      ],
+      "species": "fir",
+      "season": "snow",
+      "seed": 101
+    },
+    {
+      "name": "tree_cedar_spreading",
+      "obj": "tree_cedar_spreading.obj",
+      "glb": "tree_cedar_spreading.glb",
+      "triangle_count": 640,
+      "height": 640.0,
+      "bounds_min": [
+        -347.421178,
+        0.0,
+        -365.375047
+      ],
+      "bounds_max": [
+        357.483672,
+        640.0,
+        298.655997
+      ],
+      "species": "cedar",
+      "season": "evergreen",
+      "seed": 110
+    },
+    {
+      "name": "tree_cedar_blue",
+      "obj": "tree_cedar_blue.obj",
+      "glb": "tree_cedar_blue.glb",
+      "triangle_count": 640,
+      "height": 700.0,
+      "bounds_min": [
+        -387.321517,
+        0.0,
+        -382.355788
+      ],
+      "bounds_max": [
+        372.265072,
+        700.0,
+        330.16407
+      ],
+      "species": "cedar",
+      "season": "blue",
+      "seed": 111
+    },
+    {
+      "name": "tree_cypress_column",
+      "obj": "tree_cypress_column.obj",
+      "glb": "tree_cypress_column.glb",
+      "triangle_count": 332,
+      "height": 660.0,
+      "bounds_min": [
+        -74.520682,
+        0.0,
+        -73.797734
+      ],
+      "bounds_max": [
+        85.819302,
+        660.0,
+        60.626963
+      ],
+      "species": "cypress",
+      "season": "evergreen",
+      "seed": 120
+    },
+    {
+      "name": "tree_cypress_twisted",
+      "obj": "tree_cypress_twisted.obj",
+      "glb": "tree_cypress_twisted.glb",
+      "triangle_count": 332,
+      "height": 580.0,
+      "bounds_min": [
+        -61.336407,
+        0.0,
+        -61.986889
+      ],
+      "bounds_max": [
+        74.022687,
+        580.0,
+        51.999463
+      ],
+      "species": "cypress",
+      "season": "olive",
+      "seed": 121
+    },
+    {
+      "name": "tree_larch_green",
+      "obj": "tree_larch_green.obj",
+      "glb": "tree_larch_green.glb",
+      "triangle_count": 976,
+      "height": 650.0,
+      "bounds_min": [
+        -164.494206,
+        0.0,
+        -171.936549
+      ],
+      "bounds_max": [
+        198.219123,
+        650.0,
+        174.057693
+      ],
+      "species": "larch",
+      "season": "lime",
+      "seed": 130
+    },
+    {
+      "name": "tree_larch_gold",
+      "obj": "tree_larch_gold.obj",
+      "glb": "tree_larch_gold.glb",
+      "triangle_count": 976,
+      "height": 670.0,
+      "bounds_min": [
+        -188.159217,
+        0.0,
+        -190.628055
+      ],
+      "bounds_max": [
+        203.689722,
+        670.0,
+        194.283968
+      ],
+      "species": "larch",
+      "season": "gold",
+      "seed": 131
+    },
+    {
+      "name": "tree_larch_bare",
+      "obj": "tree_larch_bare.obj",
+      "glb": "tree_larch_bare.glb",
+      "triangle_count": 952,
+      "height": 650.0,
+      "bounds_min": [
+        -179.776769,
+        0.0,
+        -201.649974
+      ],
+      "bounds_max": [
+        203.90102,
+        650.0,
+        201.619669
+      ],
+      "species": "larch",
+      "season": "bare",
+      "seed": 132
+    },
+    {
+      "name": "tree_dead_stag",
+      "obj": "tree_dead_stag.obj",
+      "glb": "tree_dead_stag.glb",
+      "triangle_count": 1184,
+      "height": 560.0,
+      "bounds_min": [
+        -275.488711,
+        0.0,
+        -217.142
+      ],
+      "bounds_max": [
+        310.297683,
+        560.0,
+        282.944755
+      ],
+      "species": "dead",
+      "season": "bare",
+      "seed": 140
+    },
+    {
+      "name": "tree_dead_snag",
+      "obj": "tree_dead_snag.obj",
+      "glb": "tree_dead_snag.glb",
+      "triangle_count": 668,
+      "height": 390.0,
+      "bounds_min": [
+        -85.584636,
+        0.0,
+        -87.721571
+      ],
+      "bounds_max": [
+        117.190875,
+        390.0,
+        98.098353
+      ],
+      "species": "snag",
+      "season": "bare",
+      "seed": 141
+    },
+    {
+      "name": "tree_dead_lightning",
+      "obj": "tree_dead_lightning.obj",
+      "glb": "tree_dead_lightning.glb",
+      "triangle_count": 1228,
+      "height": 680.0,
+      "bounds_min": [
+        -249.356142,
+        0.0,
+        -277.094664
+      ],
+      "bounds_max": [
+        319.163365,
+        680.0,
+        287.990567
+      ],
+      "species": "lightning",
+      "season": "bare",
+      "seed": 142
+    },
+    {
+      "name": "tree_palm_oasis",
+      "obj": "tree_palm_oasis.obj",
+      "glb": "tree_palm_oasis.glb",
+      "triangle_count": 624,
+      "height": 510.0,
+      "bounds_min": [
+        -188.08094,
+        0.0,
+        -217.82746
+      ],
+      "bounds_max": [
+        280.835417,
+        510.0,
+        236.869165
+      ],
+      "species": "palm",
+      "season": "palm",
+      "seed": 150
+    },
+    {
+      "name": "tree_palm_bent",
+      "obj": "tree_palm_bent.obj",
+      "glb": "tree_palm_bent.glb",
+      "triangle_count": 624,
+      "height": 620.0,
+      "bounds_min": [
+        -139.181082,
+        0.0,
+        -263.008583
+      ],
+      "bounds_max": [
+        426.996509,
+        620.0,
+        285.999862
+      ],
+      "species": "palm",
+      "season": "palm",
+      "seed": 151
+    },
+    {
+      "name": "tree_apple_green",
+      "obj": "tree_apple_green.obj",
+      "glb": "tree_apple_green.glb",
+      "triangle_count": 1432,
+      "height": 260.0,
+      "bounds_min": [
+        -122.986199,
+        0.0,
+        -117.05529
+      ],
+      "bounds_max": [
+        150.435557,
+        260.0,
+        130.00045
+      ],
+      "species": "apple",
+      "season": "green",
+      "seed": 160
+    },
+    {
+      "name": "tree_apple_autumn",
+      "obj": "tree_apple_autumn.obj",
+      "glb": "tree_apple_autumn.glb",
+      "triangle_count": 1432,
+      "height": 280.0,
+      "bounds_min": [
+        -137.384276,
+        0.0,
+        -113.895451
+      ],
+      "bounds_max": [
+        165.80121,
+        280.0,
+        147.911968
+      ],
+      "species": "apple",
+      "season": "orange",
+      "seed": 161
+    },
+    {
+      "name": "tree_hawthorn_bare",
+      "obj": "tree_hawthorn_bare.obj",
+      "glb": "tree_hawthorn_bare.glb",
+      "triangle_count": 1452,
+      "height": 270.0,
+      "bounds_min": [
+        -162.310331,
+        0.0,
+        -145.150725
+      ],
+      "bounds_max": [
+        190.267594,
+        270.0,
+        177.247154
+      ],
+      "species": "hawthorn",
+      "season": "bare",
+      "seed": 170
+    }
+  ]
+}

@@ -232,15 +232,23 @@ def _miniwind_inspection(entity, logic):
 
 
 
+#: How much of a screen shake the HUD takes (0: none -- as in the Infinity
+#: Engine games, the interface stays put while the world rattles, which makes
+#: the shake read harder).
+HUD_SHAKE = 0.0
+
+
 def _hud_jolt(session, height):
     """The HUD's share of a screen shake, in pixels (0, 0 when still)."""
+    if HUD_SHAKE <= 0.0:
+        return 0.0, 0.0
     cam = fio.camera(getattr(session, "logic", None))
     level = getattr(cam, "shake_level", None)
     strength = level() if callable(level) else 0.0
     if strength <= 0.0:
         return 0.0, 0.0
     now = time.perf_counter()
-    amp = strength * height * 0.6
+    amp = strength * height * 0.6 * HUD_SHAKE
     return (amp * math.sin(now * 67.0), amp * math.cos(now * 53.0))
 
 
@@ -264,6 +272,9 @@ class MiniwindGame:
     description = ("MiniWind — a small living fantasy RPG: character creation, "
                    "skills, magic, quests, factions, schedules, melee & archery.")
     category = "MiniWind"
+    #: MiniWind has no split screen (F9 / the console's ``ss``): local players
+    #: share one overhead view through Multiplayer's local co-op instead.
+    allows_splitscreen = False
     # Marks this object as a built-in game to the manager's shared registries so
     # its entities surface under a native MiniWind menu, never the Plugins menu.
     is_builtin_game = True
@@ -280,7 +291,7 @@ class MiniwindGame:
         from .entities import (NPC, Creature, GameSettings, MiniwindSettings,
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
                                MiniwindTrigger, Spellbook,
-                               SPELLBOOK_COVERS, Container, CONTAINER_KINDS)
+                               SPELLBOOK_COVERS, Container, CONTAINER_KINDS, NoticeBoard)
         import game.rpg.bestiary as bestiary
         import game.rpg.items as rpg_items
         import game.rpg.magic as rpg_magic
@@ -293,6 +304,7 @@ class MiniwindGame:
         api.register_entity(CreatureSpawn, menu_label="Spawn Point")
         api.register_entity(Marker, menu_label="Path / Schedule Marker")
         api.register_entity(Container, menu_label="Container (chest / barrel)")
+        api.register_entity(NoticeBoard, menu_label="Notice Board")
         api.register_entity(GameSettings, menu_label="Game Settings")
         # A map may hold at most one Game Settings marker — it configures the
         # single game clock / start scenario, so a second one is meaningless.
@@ -818,6 +830,27 @@ class MiniwindGame:
         host.on("render.overlay", self._on_overlay)
         host.on("render.post_scene", self._on_post_scene)
         host.on("render.pre_sprites", self._on_pre_sprites)
+        host.on("render.pre_scene", self._on_pre_scene)
+
+    def _on_pre_scene(self, ev):
+        """Before the world is drawn: tell the renderer what sky the water
+        reflects -- the hour, the cloud, the wind's drift (game/sky.py) --
+        and the wind the grass sways in (game/wind.py grass_sway)."""
+        renderer = ev.get("renderer")
+        if not ev.get("play_mode"):
+            # Out of Play the editor's grass sways in the default breeze, not
+            # in the last storm played.
+            if getattr(renderer, "grass_wind", None) is not None:
+                renderer.grass_wind = None
+            return
+        host = getattr(self, "_host", None)
+        session = getattr(getattr(host, "logic", None), "_miniwind", None)
+        if session is None or renderer is None:
+            return
+        import game.sky as sky
+        import game.wind as wind
+        renderer.sky_state, renderer.sky_drift = sky.state(session)
+        renderer.grass_wind = wind.grass_sway(getattr(session, "wind", None))
 
     def _on_pre_sprites(self, ev):
         """Draw what lies on the floor, before Fio's effects and actors so they
@@ -868,9 +901,20 @@ class MiniwindGame:
                 arrow_art.draw_arrows(projection, view, arrows)
         if lenses:
             magic_gl.draw_lenses(projection, view, lenses)
+        # Rain on the camera's glass, over everything in the world
+        # (game/lens_water.py).
+        water = getattr(session, "lens_water", None)
+        if water is not None and water.drops and session.weather_enabled():
+            if fx is None:
+                import game.ui.magic_gl as magic_gl
+            magic_gl.draw_wet_lens(water.frame())
 
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
+        # The water's sky clouds bake on their own thread while the game
+        # loads and the character is made (engine/sky_clouds.py).
+        from engine import sky_clouds
+        sky_clouds.prepare()
         logic._miniwind = None
         logic.game_session = None
         settings = self._find_settings(logic)
@@ -896,6 +940,10 @@ class MiniwindGame:
         if party_lobby is not None:
             session.coop.install_world()
         if session.needs_char_creation:
+            if party_lobby is None:
+                # The world's faces now, under the loading bar, rather than
+                # all at once when the character is made.
+                session.preassign_npc_heads()
             session.open_screen = "charcreate"
             # Freeze the world from frame zero so no combat/sound runs behind the
             # character-creation screen before the first plugin tick.
@@ -930,6 +978,9 @@ class MiniwindGame:
             if getattr(session, "coop", None) is not None:
                 session.coop.leave()
             session.leave_map()            # raised followers go with the player
+            # A fight still open when the player walks out of a cave is over:
+            # recorded now, it rides the store into the next map's session.
+            session.encounters.close()
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None
@@ -1187,6 +1238,12 @@ class MiniwindGame:
 
         npc = session.nearest_talkable(player.pos, TALK_RADIUS)
         if npc is not None:
+            blocked = session.talk_block(npc)
+            if blocked:
+                # No talking in a fight, nor with anyone in one: say why.
+                ctx.set_prompt(blocked, priority=5)
+                session.interact_prompt = blocked
+                return
             name = npc.properties.get("display_name") or npc.properties.get("name", "NPC")
             verb = "trade with" if npc.properties.get("merchant") else "talk to"
             prompt = f"{controls.press('interact')} to {verb} {name}"
@@ -1258,6 +1315,7 @@ class MiniwindGame:
                     "result": preview.get("result"),
                     "elapsed": elapsed,
                     "duration": DICE_DISPLAY_DURATION,
+                    "started_at": started_at,      # the throw's seed: the same every frame
                 }
                 try:
                     import game.ui.hud as hud
@@ -1322,6 +1380,8 @@ class MiniwindGame:
             # full-screen draw where no window manager exists (e.g. headless).
             self._serve_map_request(session, viewport)
             windowed = self._sync_overlay_windows(session, viewport, w, h)
+            if windowed:
+                self._dim_behind_creation(painter, session, w, h)
             # One of Fio's cutscenes owns the view: no game HUD and no
             # loadout popup over it (Fio hides its own HUD likewise).
             if fio.cutscene_active(session.logic):
@@ -1340,7 +1400,17 @@ class MiniwindGame:
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 # Blood on the world, under the night and the HUD.
                 hud.draw_gore(painter, session, viewport, w, h)
+                # Debug overlays, when asked for (view cones, noise).
+                import game.ui.debug_overlays as debug_overlays
+                debug_overlays.draw(painter, session, viewport, w, h)
                 hud.draw_time_tint(painter, session, w, h, viewport)
+                # The weather over the world, under the HUD (game/ui/rain.py).
+                weather = getattr(session, "weather", None)
+                if weather is not None and session.weather_enabled():
+                    import game.ui.rain as rain
+                    rain.draw(painter, weather, session.wind.vector(), w, h, time.perf_counter(),
+                              lightning=getattr(session, "lightning", None),
+                              to_screen=hud.world_projector(viewport, w, h))
                 # Magic's screen washes (a resurrection's dark red, a frost
                 # hit's rime) over the world, under the HUD.
                 import game.ui.magic_overlay as magic_overlay
@@ -1365,7 +1435,7 @@ class MiniwindGame:
                 if now - getattr(session, "_worldmap_checked_at", -1e9) >= 1.0:
                     session._worldmap_checked_at = now
                     worldmap.ensure_for(logic, viewport)
-                # The HUD jolts with the screen (game/runtime.py shake()).
+                # The HUD takes HUD_SHAKE of a screen shake (none, by default).
                 jolt = _hud_jolt(session, h)
                 painter.translate(*jolt)
                 hud.draw(painter, session, w, h)
@@ -1382,6 +1452,7 @@ class MiniwindGame:
                 # label is never hidden under a toast.
                 inspector.draw_pick_hover(painter, viewport, w, h)
                 self._serve_autosave(session, viewport)
+                self._serve_capture(session, viewport)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
                 if session.open_screen is None and session.dialogue is None \
@@ -1391,6 +1462,11 @@ class MiniwindGame:
                     hud.draw_thoughts(painter, session, viewport, w, h)
                     hud.draw_floats(painter, session, viewport, w, h)
                     hud.draw_player_block(painter, session, viewport, w, h)
+                # Roll boxes over a conversation, a search or a lock too:
+                # persuading, looting and picking roll dice (kept clear of
+                # the window, which is drawn over them).
+                if hud.shows_roll_boxes(session):
+                    hud.draw_roll_boxes(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
                 # "!" / "?" over heightened NPCs (a guard coming to arrest
@@ -1428,7 +1504,8 @@ class MiniwindGame:
         "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
         "quest": "Current Quest",
         "lockpicking": "Lockpicking",
-        "training": "Training", "tutor": "Spell Tutor",
+        "training": "Training", "tutor": "Spell Tutor", "tutorial": "Tutorial",
+        "tutorial_tip": "Tutorial",
     }
 
     def _close_overlay_screen(self, session, screen):
@@ -1704,6 +1781,9 @@ class MiniwindGame:
                 click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
                 wants_cursor = True
             window_cls = CallbackWindow
+            if key == "screen:charcreate":
+                from .ui.creation_window import CreationWindow
+                window_cls = CreationWindow
             if key == "screen:lockpicking":
                 from .ui.lockpicking import LockpickWindow
                 window_cls = LockpickWindow
@@ -1737,6 +1817,41 @@ class MiniwindGame:
             bw, bh = dialogue_ui.window_body_size(session)
             cur.set_body_size(bw, bh)
         return True
+
+    @staticmethod
+    def _dim_behind_creation(painter, session, w, h):
+        """Darken the world behind character creation, as the full-screen
+        draw does (game/ui/screens.py): the game has not begun yet."""
+        if session.open_screen != "charcreate" and not session.needs_char_creation:
+            return
+        import game.ui.theme as T
+        import game.ui.screens as screens
+        T.dim_screen(painter, w, h, alpha=screens.CREATION_DIM)
+
+    @staticmethod
+    def _serve_capture(session, viewport):
+        """Take the screenshot the encounter recorder asked for
+        (game/encounters.py), on the UI thread, after this frame is drawn."""
+        recorder = getattr(session, "encounters", None)
+        if recorder is None or viewport is None:
+            return
+        if recorder.saves_root is None:
+            root = getattr(getattr(viewport, "editor", None), "root_dir", None)
+            if root:
+                import os
+                recorder.saves_root = os.path.join(root, "saves")
+        due, recorder.capture_due = recorder.capture_due, None
+        if not due:
+            return
+        path = due[0]
+        from PyQt5.QtCore import QTimer
+
+        def grab():
+            try:
+                viewport.grabFramebuffer().save(path)
+            except Exception:
+                pass
+        QTimer.singleShot(0, grab)
 
     @staticmethod
     def _serve_autosave(session, viewport):

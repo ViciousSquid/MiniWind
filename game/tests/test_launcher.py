@@ -250,6 +250,50 @@ def test_play_and_edit_report_the_choice(app, ini):
     assert edit.choice == lx.EDIT
 
 
+def test_continue_is_offered_only_with_a_save_and_resumes_the_newest(app, ini, tmp_path):
+    """PLAY used to start a new game even with an autosave on disk."""
+    assert lx.resume_save(str(tmp_path)) is None
+    saves = tmp_path / "saves"
+    saves.mkdir()
+    (saves / "slot2.fiosave").write_text("{}")
+    os.utime(saves / "slot2.fiosave", (1000, 1000))
+    (saves / "autosave.fiosave").write_text("{}")
+    os.utime(saves / "autosave.fiosave", (2000, 2000))
+    (saves / "quicksave.fiosave").write_text("{}")      # not one CONTINUE resumes
+    assert lx.resume_save(str(tmp_path))[0] == "autosave"
+    os.utime(saves / "slot2.fiosave", (3000, 3000))
+    assert lx.resume_save(str(tmp_path))[0] == "slot2"
+
+
+def test_continue_and_new_game_report_their_choice(app, ini, monkeypatch):
+    monkeypatch.setattr(lx, "resume_save", lambda root: ("autosave", "saves/autosave.fiosave"))
+    dialog = lx.Launcher(ROOT, ini)
+    assert dialog.continue_button is not None
+    assert dialog.play_button.text() == "NEW GAME"
+    dialog.show()
+    app.processEvents()
+
+    def span(widget):
+        left = widget.mapTo(dialog, widget.rect().topLeft())
+        return left.x(), left.x() + widget.width(), left.y()
+    cont, play, edit = (span(dialog.continue_button), span(dialog.play_button),
+                        span(dialog.edit_button))
+    assert cont[0] == play[0] and cont[1] == edit[1] and cont[2] < play[2], \
+        "CONTINUE sits above NEW GAME and EDIT, as wide as the two"
+    dialog.continue_button.click()
+    assert dialog.choice == lx.PLAY and lx.chosen_resume() == "autosave"
+
+    dialog = lx.Launcher(ROOT, ini)
+    dialog.play_button.click()
+    assert dialog.choice == lx.PLAY and lx.chosen_resume() is None
+
+    monkeypatch.setattr(lx, "resume_save", lambda root: None)
+    dialog = lx.Launcher(ROOT, ini)
+    assert dialog.continue_button is None and dialog.play_button.text() == "PLAY"
+    dialog.edit_button.click()
+    assert lx.chosen_resume() is None
+
+
 def test_escape_and_dismissal_mean_the_editor(ui):
     assert ui.choice == lx.EDIT, "the safe answer before anything is chosen"
     ui.keyPressEvent(_key(QtCore.Qt.Key_Escape))

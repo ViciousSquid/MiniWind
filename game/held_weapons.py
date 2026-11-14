@@ -49,7 +49,7 @@ DUAL_WIELD_ROLES = {"bandit": 0.45, "mercenary": 0.45, "adventurer": 0.4,
 #: above, still sometimes carries a second.
 DUAL_WIELD_ANY = 0.15
 TWIN_CHANCE = 0.5
-#: Two weapons cost accuracy (game.rpg.combat.DUAL_WIELD_ACCURACY), so not
+#: Two weapons cost accuracy (game.rpg.armour_class.DUAL_WIELD_PENALTY), so not
 #: everyone pairs them: a crossbowman takes a second crossbow at this share of
 #: the chance above, and a marksman, who trusts one well-aimed shot, never.
 CROSSBOW_PAIR_SHARE = 0.5

@@ -91,6 +91,10 @@ def _patch_editor_menu():
             _add_tools_menu_entries(MainWindow)
         except Exception as exc:
             _log(f"MiniWind Tools-menu entries failed: {exc}")
+        try:
+            _add_debug_menu_entries(MainWindow)
+        except Exception as exc:
+            _log(f"MiniWind Debug-menu entries failed: {exc}")
         # MiniWind's world comes from its settlement tools, not Fio's
         # procedural map generator: it is not offered (Tools and Terrain menus
         # share the one action).
@@ -233,6 +237,34 @@ def _hide_camera_dropdown(MainWindow):
         if spacer is not None and spacer.spacerItem() is not None:
             layout.removeItem(spacer)
     combo.hide()
+
+
+def _add_debug_menu_entries(MainWindow):
+    """Debug > World Map: the world map in a window with the editor camera on
+    it (the ``worldmap`` console command), after Position, the other camera
+    tool."""
+    debug = getattr(MainWindow, "debug_menu", None)
+    if debug is None or getattr(debug, "_miniwind_world_map_added", False):
+        return
+    from PyQt5.QtWidgets import QAction
+
+    def open_map(_checked=False):
+        from .ui import worldmap_window
+        worldmap_window.toggle(MainWindow)
+
+    action = QAction("World Map", MainWindow)
+    action.setToolTip("The world map in a window, with the editor camera on it; "
+                      "click the map to move the camera there (console: worldmap)")
+    action.triggered.connect(open_map)
+    actions = debug.actions()
+    position = getattr(MainWindow, "position_action", None)
+    after = actions.index(position) + 1 if position in actions else len(actions)
+    if after < len(actions):
+        debug.insertAction(actions[after], action)
+    else:
+        debug.addAction(action)
+    MainWindow.world_map_action = action
+    debug._miniwind_world_map_added = True
 
 
 def _add_tools_menu_entries(MainWindow):
@@ -554,6 +586,10 @@ GAME_SETTINGS = (
     ("visualise_dice_rolls", "Visualise dice rolls",
      "Show every dice roll the game makes (checks, attacks, the console's "
      "'roll') as animated dice over the game.", False),
+    ("stack_dialogs", "Stack dialogs",
+     "Roll boxes over people standing close together join one stack, the "
+     "attacker's roll at the top. Off: each box stays over its roller, even "
+     "where boxes overlap.", True),
     ("show_dialogue_heads", "Show dialogue heads",
      "Show the character's head beside the conversation window when talking "
      "to an NPC. The head always matches the NPC's world sprite.", True),
@@ -566,6 +602,13 @@ GAME_SETTINGS = (
      "blows a body apart.", True),
     ("screen_shake", "Screen shake",
      "Killing blows, critical hits and heavy blows taken jolt the screen.", True),
+    ("grass_fire", "Grass fires",
+     "Fire spreads through long grass before the wind and leaves the ground "
+     "scorched, setting alight anyone caught in it. Off: a fire on the ground "
+     "burns where it falls and goes no further.", True),
+    ("weather", "Weather",
+     "Cloud, rain and storms come and go; rain puts fires out and wet grass "
+     "barely burns. Off: the sky stays clear.", True),
     ("torch_shadows", "Torch shadows",
      "Carried torches near you (the NEAR simulation distance) are dynamic "
      "lights that cast shadows. Costs some frame time; the renderer's shadow "
@@ -673,6 +716,10 @@ def install_play_menu(view):
     # last autosave, a saved game, a new game (game/ui/death_screen.py); the
     # engine's stays off, and Esc on it no longer leaves for the editor.
     view.game_death_screen = True
+    # And its own HUD, from the first frame of every play session: the stock
+    # health readout used to flash up (a big orange "80") behind character
+    # creation until the game's overlay first ran.
+    view.game_hud = True
     from .ui.death_screen import DeathMenu
     view.death_menu = DeathMenu(view)
     install_wheel_zoom(view)

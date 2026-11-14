@@ -102,7 +102,7 @@ Linux. An unavailable log directory does not prevent the game from starting.
 |--------|---------|
 | **Character creation** | 10 races (each with attribute/skill bonuses, resistances and a daily power), 13 classes, 10 birthsigns, or your own custom class. |
 | **6 attributes** | Strength, Endurance, Speed, Intelligence, Charisma, Luck — driving every derived stat and roll. Strength, Endurance and Charisma are rolled at creation and belong to every living thing in the Vale. |
-| **17 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Offensive, Defensive, Occult, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
+| **16 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Offensive, Defensive, Occult, Alchemy, Sneak, Security, Mercantile, Speechcraft, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
 | **Derived pools** | Health, Magicka and Stamina, recomputed from attributes; passive magicka/stamina regen. |
 | **Combat** | Melee (charge weapons, dual wield, off-hand strikes), archery with a real draw for NPCs and player alike, spells; hit chance, criticals, sneak attacks, blocking, armour mitigation and elemental resistance — all through the engine-native dice service. |
 | **Magic** | 30 spells across three schools (Offensive, Defensive and Occult), spell tutors and skill trainers in the settlements, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |

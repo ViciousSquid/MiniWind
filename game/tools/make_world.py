@@ -175,11 +175,11 @@ def build(base_path: str) -> dict:
                                        "lockpick", "torch", "book_marksman", "book_blade"],
                                 dialogue=elowen_dialogue, disposition_base=50))
 
-    # Grunn — Fighters Guild, barrow quest + join.
+    # Grunn — Warrior's Guild, barrow quest + join.
     grunn_dialogue = {
         "start": "g",
         "nodes": {
-            "g": {"text": "The Fighters Guild always needs strong arms. Prove yourself.",
+            "g": {"text": "The Warrior's Guild always needs strong arms. Prove yourself.",
                   "responses": [
                       {"text": "How do I prove myself?", "goto": "quest",
                        "condition": {"key": "quest.fighters_join.state", "not_equals": "active"}},

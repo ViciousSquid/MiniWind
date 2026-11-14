@@ -69,3 +69,33 @@ def test_without_a_zoom_the_camera_is_left_alone():
     s, cam = _session(height=750.0)
     s._ease_zoom(1 / 60)
     assert cam.overhead_height == 750.0
+
+
+def test_zooming_out_waits_for_the_ground_it_would_show(monkeypatch):
+    """Zooming out widens the view onto terrain that streams in over a few
+    frames; the camera rose first and the screen's edges showed the void."""
+    import game.fio as fio
+    s, cam = _session()
+    cam.overhead_height = 800.0
+    ready = {"now": False}
+    terrain = type("T", (), {"view_ready": lambda self, x, z, r: ready["now"]})()
+    monkeypatch.setattr(fio, "terrain", lambda logic: terrain)
+    monkeypatch.setattr(s, "_player_pos", lambda: [0.0, 0.0, 0.0])
+    s.zoom_height = 1600.0
+    for _ in range(30):
+        s._ease_zoom(1 / 60)
+    assert cam.overhead_height == 800.0, "not one step higher before the ground is there"
+    ready["now"] = True
+    for _ in range(600):
+        s._ease_zoom(1 / 60)
+    assert cam.overhead_height == pytest_approx(1600.0)
+    ready["now"] = False
+    s.zoom_height = 600.0                         # zooming in never waits
+    for _ in range(600):
+        s._ease_zoom(1 / 60)
+    assert cam.overhead_height == pytest_approx(600.0)
+
+
+def pytest_approx(v):
+    import pytest
+    return pytest.approx(v, abs=1.0)

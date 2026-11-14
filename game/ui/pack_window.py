@@ -78,7 +78,10 @@ class PackWindow(InventoryWindow):
             self.map = MapPage(read_data=self._map_data, update=self._update,
                                on_close=self._close_action,
                                on_waypoint=lambda x, z, pick: self._queue(
-                                   lambda session: session.toggle_waypoint(x, z, pick)))
+                                   lambda session: session.toggle_waypoint(x, z, pick)),
+                               check_travel=lambda name: self.session.fast_travel_check(name),
+                               on_travel=lambda name: self._queue(
+                                   lambda session: session.fast_travel(name)))
         revision = getattr(self.session, "_statistics_map_revision", 0)
         if changed or revision != self._map_revision:
             self.map.open(getattr(self.session, "_statistics_map_focus", None))

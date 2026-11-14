@@ -238,6 +238,10 @@ class SessionHooks(jn.WorldHooks):
             touch(t)
         return n
 
+    def storming(self):
+        storming = getattr(self.w.session, "storming", None)
+        return bool(storming()) if storming is not None else False
+
     def player_bounty(self):
         c = getattr(self.w.session.game, "character", None)
         return int(getattr(c, "bounty", 0) or 0)

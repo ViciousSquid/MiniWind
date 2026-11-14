@@ -30,6 +30,8 @@ as a MiniWind RPG map and configures the clock + starting scenario.
 
 from __future__ import annotations
 
+import re
+
 import os
 
 try:
@@ -56,7 +58,7 @@ _ART_ALIAS = {
     "bandit_archer": "bandit", "bandit_chief": "bandit",
     "guard_archer": "guard",
     "skeleton": "monster", "skeleton_archer": "monster", "wraith": "monster",
-    "bear": "wolf", "boar": "wolf", "mudcrab": "wolf",
+    "bear": "wolf", "boar": "wolf", "crab": "wolf",
 }
 # MiniWind art lives under the engine's ``assets/`` tree (namespaced), because
 # every Fio sprite loader — the 3D billboard renderer, the editor 2D icons and
@@ -168,6 +170,15 @@ def _actor_2d_pixmap(actor, icon=False):
     return pix
 
 
+#: The editor's automatic names ("Creature_21", "NPC_3", "Monster_7").
+_AUTO_NAME = re.compile(r"(?:Creature|NPC|Monster|Npc)_\d+")
+
+
+#: Every actor's view cone (degrees): it sees 120 degrees to either side of
+#: the way it faces; the 120 degrees behind it are its blind spot.
+VIEW_CONE_DEGREES = 240.0
+
+
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
     """Fill the properties both actor entities share, from the bestiary template.
 
@@ -189,7 +200,14 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     tmpl = bestiary.get(role)
 
     # identity / faction
-    p.setdefault("display_name", p.get("name", tmpl.name if tmpl else default_role.title()))
+    kind_name = tmpl.name if tmpl else default_role.title()
+    name = p.get("name")
+    if not name or _AUTO_NAME.fullmatch(str(name)):
+        # An actor nobody named (one a spawn point made, say) has only the
+        # editor's counter for a name, "Creature_21": what it is says more,
+        # and that is what its roll boxes, barks and the player read.
+        name = kind_name
+    p.setdefault("display_name", name)
     faction = tmpl.faction if tmpl else default_faction
     p.setdefault("faction", faction)
     if not p.get("team"):
@@ -233,6 +251,15 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     p.setdefault("creature_level", tmpl.level if tmpl else 1)
     p.setdefault("xp_value", tmpl.xp if tmpl else 0)
     p.setdefault("move_speed", tmpl.speed if tmpl else 90.0)
+    # Heads face a way, so they have a view cone and a blind spot behind
+    # (engine.monster_facing.in_view_cone; game/rpg/combat.py's strike from
+    # behind).
+    p.setdefault("view_cone", VIEW_CONE_DEGREES)
+    # Enemies hear: footsteps, blows and shouts within their hearing range
+    # wake a sleeper and send an awake one to look (game/noise.py, Fio's
+    # monster AI ``can_hear``).
+    if str(p.get("aggression", "")).lower() == "hostile":
+        p.setdefault("can_hear", True)
     for kind, frac in (tmpl.resistances if tmpl else {}).items():
         p.setdefault(f"resist_{kind}", frac)
 
@@ -638,6 +665,24 @@ def _make_thing_pair(init_fn, icon):
 
 ItemPickup = _make_thing_pair(_init_item_pickup, "assets/sprites/pickup.png")
 ItemPickup.__name__ = ItemPickup.__qualname__ = "ItemPickup"
+
+#: A town's notice board, as the overhead camera sees it.
+NOTICE_BOARD_SPRITE = "assets/sprites/miniwind/topdown/notice_board.png"
+
+
+def _init_notice_board(self):
+    """A town's notice board: the player reads it (E) like a conversation --
+    the writ on their head, the watch's appeals, who set out and why, news
+    travellers brought (game.runtime.notice_board_posts)."""
+    p = self.properties
+    p["type"] = "notice_board"
+    p.setdefault("display_name", "Notice Board")
+    p.setdefault("use_radius", 120.0)
+    p["custom_idle"] = NOTICE_BOARD_SPRITE
+
+
+NoticeBoard = _make_thing_pair(_init_notice_board, NOTICE_BOARD_SPRITE)
+NoticeBoard.__name__ = NoticeBoard.__qualname__ = "NoticeBoard"
 
 
 # ---------------------------------------------------------------------------

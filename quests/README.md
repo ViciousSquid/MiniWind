@@ -39,17 +39,30 @@ One quest per file, named `<id>.quest`. Example (`a_word_with_wick.quest`):
 | `faction`  | Optional guild/faction the quest belongs to.                        |
 | `desc`     | Opening text the giver speaks when offering the quest.              |
 | `xp`       | XP awarded on completion.                                            |
-| `rewards`  | `gold`, `items` (`[["item_id", qty], ...]`), `rep` (`["faction", n]`). |
+| `rewards`  | `gold`, `items` (`[["item_id", qty], ...]`), `rep` (`["faction", n]`), and optional `returns` (`[{"item": "toll_purse", "gold": 40, "rep": 5}]`): things the giver is glad to have back. If the player still carries one when the quest completes, the giver takes it and adds that gold and reputation; keeping it is the player's choice. |
 | `stages`   | Ordered stages; each has an `index`, `journal`, `objective`, and an optional completion `condition`. A stage with `"finishes": true` completes the quest. |
+| `chapter`, `chapter_title` | Optional. A chapter of the main story (1, 2, …) and its title: finishing the quest shows the card "Chapter One complete · The Old Mill". |
+| `starts_on_new_game` | Optional. `true` starts the quest for every new character, so the journal and the quest arrow have somewhere to begin. *Trouble at the Old Mill* is the only one. |
+
+### Stage extras
+
+| Field      | Meaning                                                              |
+|------------|---------------------------------------------------------------------|
+| `waypoint` | Where the quest arrow points on a stage with no machine-readable target (a place, NPC, monster type or item id). Never advances the quest. |
+| `call`     | On a `talk` stage: a line the person you are sent to calls out once, over their head, as the stage begins, if they are near enough to be heard ("You! New face!"). |
+| `say`      | On a `talk` stage: the line the person you were sent to opens the conversation with while you are on that stage ("Go on." then leads to their usual talk). Tokens read the world as it is: `{shelf_flour}` (flour on the speaker's own shelf: "no flour", "one sack of flour", "3 sacks of flour"), `{mill_wheat}` and `{mill_flour}` (in the working windmill nearest the speaker: "no", "12 measures of", "1 sack of"). |
+| `heard`    | Optional, with a `talk` condition: `{"death": "Hal Corbin", "say": "Word got here before you did."}`. Once the talk target knows of that death (they saw it, or the news reached them), they say this line instead of `say`. |
 
 ### Stage conditions
 
 A stage auto-advances when its `condition` is met (leave `kind` as `none` for a
 stage advanced only by dialogue `advance_quest`):
 
-- `talk`  — `target` = NPC name/role
+- `talk`  — `target` = NPC name/role; met by a conversation held *while on
+  the stage* (having spoken to them before the quest began does not count)
 - `fetch` — `target` = item id, `count` = how many to hold
-- `kill`  — `target` = monster_type / role / name, `count` = how many
+- `kill`  — `target` = monster_type / role / name / faction, `count` = how many
+  (a faction such as `bandits` counts every member: bandits, archers, chiefs)
 - `visit` — `target` = a location marker's name
 - `roll`  — `notation` = dice expression, `target` = minimum total
 

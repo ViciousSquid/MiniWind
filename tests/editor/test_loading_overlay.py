@@ -194,3 +194,29 @@ def test_a_game_that_sets_fonts_gets_the_staged_bar_instead_of_the_panel(qt_app)
     with overlay.busy('Loading cave01', 'Reading the map', 5):
         assert not overlay.bar.isVisibleTo(overlay)  # back to the panel alone
     host.close()
+
+
+def test_a_share_maps_nested_stages_into_its_part_of_the_bar(qt_app):
+    """Opening a map then starting play: each operation's own 0-100 moves
+    the bar through its share, instead of stalling behind the first."""
+    host = QWidget()
+    overlay = LoadingOverlay(host)
+    with overlay.busy('Loading village', 'Reading the map', 5):
+        with overlay.share(0, 40):
+            overlay.step('Building terrain', 50)
+            assert overlay.value == 20
+            overlay.step('Drawing the world', 100)
+            assert overlay.value == 40
+        overlay.step('Starting the game', 40)
+        with overlay.share(40, 100):
+            with overlay.busy('Starting the game', 'Building the world', 5):
+                assert overlay.value == 43
+                with overlay.share(50, 100):          # shares nest
+                    overlay.step('Restarted', 50)
+                    assert overlay.value == 85
+            overlay.step('Drawing the world', 70)
+            assert overlay.value == 85                # never moves back
+        overlay.step('Done', 100)
+        assert overlay.value == 95                    # the ceiling holds
+    assert not overlay.active
+    host.close()

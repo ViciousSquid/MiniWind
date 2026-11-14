@@ -47,7 +47,10 @@ def test_the_skills_tab_shows_every_skill_and_a_click_picks_one(qt_app):
     skills_tab()
     assert win.showing == "skills"
     _paint(win)
-    assert {sid for _r, sid in win._skill_nodes} == set(sk.SKILLS)
+    # Every skill a rule reads; a hidden one (Acrobatics) waits until one does.
+    shown = {sid for _r, sid in win._skill_nodes}
+    assert shown == {s for s in sk.SKILLS if sk.is_shown(s)}
+    assert sk.ACROBATICS not in shown and len(shown) == len(sk.SKILLS) - 1
     rect, sid = win._skill_nodes[0]
     action = next(act for r, act in win._buttons if r == rect)
     action()

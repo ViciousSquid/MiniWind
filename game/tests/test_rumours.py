@@ -257,3 +257,25 @@ def test_a_notice_board_posts_the_writ_appeals_departures_and_news():
     session.notice_board_posts = lambda b: MiniwindSession.notice_board_posts(session, b)
     bare = MiniwindSession._notice_board_tree(session, board)
     assert bare["nodes"]["board"]["text"].startswith("The board is bare")
+
+
+def test_a_notice_board_posts_the_flour_on_nearby_shelves():
+    """Millbrook's board says what Elowen has on her shelf: the real stock and
+    price, or none -- the mill's trouble, where the player reads the news."""
+    from ..runtime import MiniwindSession
+    from ..rpg import items
+    board = SimpleNamespace(properties=dict(type="notice_board"), pos=[0, 0, 0])
+    empty = SimpleNamespace(properties={"display_name": "Elowen the Trader", "inventory": []},
+                            pos=[300, 0, 0])
+    full = SimpleNamespace(properties={"display_name": "Hollin Brewer",
+                                       "inventory": [items.make("flour", 3)]}, pos=[900, 0, 0])
+    far = SimpleNamespace(properties={"display_name": "Old Maud", "inventory": []},
+                          pos=[9000, 0, 0])
+    session = SimpleNamespace(flour_supply=SimpleNamespace(
+        shops={"a": empty, "b": full, "c": far}),
+        BOARD_SHOP_RADIUS=MiniwindSession.BOARD_SHOP_RADIUS,
+        _dist2d=lambda a, b: ((a[0] - b[0]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5)
+    posts = MiniwindSession._flour_notices(session, board)
+    assert posts[0] == "FLOUR at Elowen the Trader's: none today."
+    assert posts[1].startswith("FLOUR at Hollin Brewer's: 3 sacks, ") and posts[1].endswith(" gold each.")
+    assert len(posts) == 2                                  # Old Maud is too far

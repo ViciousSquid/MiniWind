@@ -31,7 +31,7 @@ def test_the_extremes_have_names_of_their_own():
 def test_a_roll_moves_its_attribute_both_ways():
     assert cha.delta_for(18) > 0 > cha.delta_for(3)
     assert cha.delta_for(10) in (-2, 0, 2)
-    c = Character.create("A", "imperial", "warrior")
+    c = Character.create("A", "valian", "warrior")
     before = dict(c.attrs)
     cha.apply_rolls(c, {"strength": [6, 6, 6], "endurance": [1, 1, 1],
                         "personality": [3, 3, 4]})
@@ -131,7 +131,7 @@ def test_carrying_too_much_slows_the_player_to_a_third():
     s.logic = _Logic()
     s.clock = GameClock()
     s.notifications = []
-    s.game = GameState.new_game(_Store(), "Mule", "imperial", "warrior")
+    s.game = GameState.new_game(_Store(), "Mule", "valian", "warrior")
     s._update_encumbrance()
     assert player.move_speed_scale == 1.0
     for _ in range(40):
@@ -139,3 +139,65 @@ def test_carrying_too_much_slows_the_player_to_a_third():
     s._update_encumbrance()
     assert player.move_speed_scale == ENCUMBERED_SPEED
     assert s.notifications[-1]["text"] == "You are encumbered!"
+
+
+def test_charisma_counts_once_in_prices():
+    """Prices: factor = 1 - Mercantile / 300 (no Charisma); Charisma's only
+    say is the face multiplier. Two plain faces pay the same; a striking one
+    pays the face's 0.9 once, not twice."""
+    from ..runtime import MiniwindSession
+    from ..rpg import attributes as attr, charisma as cha
+    from ..rpg.character import Character
+
+    def prices(charisma):
+        s = MiniwindSession.__new__(MiniwindSession)
+        c = Character.create("Trader", "valian", "warrior")
+        c.skills["mercantile"] = 30
+        c.attrs[attr.PERSONALITY] = charisma
+        s.game = type("G", (), {"character": c})()
+        return s._price(1000, True), s._price(1000, False)
+
+    factor = 1.0 - 30 / 300.0
+    assert prices(40) == prices(54)                  # both plain: Charisma is the face only
+    assert prices(40) == (int(1000 * (2.0 - factor)), int(1000 * factor * 0.8))
+    buy, sell = prices(80)                           # striking
+    assert cha.tier(80) == cha.STRIKING
+    assert buy == int(1000 * (2.0 - factor) * 0.9)
+    assert sell == int(1000 * factor * 0.8 / 0.9)
+
+
+def test_speed_sets_the_players_pace():
+    """Speed moves you at 1 + (Speed - 40) x 0.0025 of the usual pace (0.90
+    at 0, 1.15 at 100), and encumbrance's third multiplies on top."""
+    import pytest
+    from ..runtime import MiniwindSession, ENCUMBERED_SPEED
+    from ..rpg import attributes as attr, items
+    from ..rpg.character import Character
+    from ..rpg.gametime import GameClock
+
+    class _Player:
+        move_speed_scale = 1.0
+        pos = [0.0, 0.0, 0.0]
+
+    player = _Player()
+
+    class _Logic:
+        class player_runtime:
+            pass
+    _Logic.player_runtime.player = player
+
+    c = Character.create("Hare", "valian", "warrior")
+    assert c.move_speed_factor == pytest.approx(1.0)       # Speed 40
+    s = MiniwindSession.__new__(MiniwindSession)
+    s.logic = _Logic()
+    s.clock = GameClock()
+    s.notifications = []
+    s.game = type("G", (), {"character": c})()
+    for speed, pace in ((0, 0.90), (40, 1.0), (70, 1.075), (100, 1.15)):
+        c.attrs[attr.SPEED] = speed
+        s._update_encumbrance()
+        assert player.move_speed_scale == pytest.approx(pace)
+    for _ in range(40):
+        c.inventory.append(items.make("plate_armour", 1))
+    s._update_encumbrance()
+    assert player.move_speed_scale == pytest.approx(1.15 * ENCUMBERED_SPEED)

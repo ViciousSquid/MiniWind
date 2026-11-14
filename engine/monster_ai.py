@@ -25,6 +25,7 @@ from .change_journal import JOURNAL, STATE, set_positions, touch
 from . import monster_table
 from .monster_constants import (MONSTER_EYE_RISE, monster_body_rise,
                                 monster_eye_rise)
+from . import monster_facing
 from .monster_facing import face_direction
 from .spatial import TIER_DORMANT, tier_of
 from .brush_placement import world_bounds
@@ -201,6 +202,27 @@ class MonsterAI:
     #: that monster's target for this step -- a corner on the way round a
     #: wall -- and None leaves it heading straight for the target.
     _steer_hook = None
+    #: ``hook(monster)``: a monster has just heard something -- woken to a
+    #: noise, or turned to go and look where one came from. A game shows it
+    #: (MiniWind: an "!" over its head); the AI does not wait on it.
+    _hear_hook = None
+
+    @classmethod
+    def set_hear_hook(cls, hook):
+        cls._hear_hook = hook
+
+    @classmethod
+    def clear_hear_hook(cls, hook=None):
+        if hook is None or cls._hear_hook == hook:
+            cls._hear_hook = None
+
+    def _heard(self, monster):
+        hook = MonsterAI._hear_hook
+        if hook is not None:
+            try:
+                hook(monster)
+            except Exception as exc:  # a game's display must not stop the AI
+                debug_log("MonsterAI", f"hear hook failed: {exc}")
 
     @classmethod
     def install_steer_hook(cls, hook):
@@ -266,6 +288,18 @@ class MonsterAI:
         if model is None:
             return bool(team_a) and bool(team_b) and team_a != team_b
         return model.is_hostile(team_a, team_b)
+
+    def _player_wake_range(self) -> float:
+        """How near the player must come for a sleeping monster to see them
+        and wake: :data:`MONSTER_SIGHT_RANGE` times the player's
+        ``visibility_scale`` (1.0 unless a game sets it: a sneaking player is
+        harder to see), as ``move_speed_scale`` scales the pace."""
+        player = getattr(self.lt.player_runtime, 'player', None)
+        try:
+            scale = float(getattr(player, 'visibility_scale', 1.0))
+        except (TypeError, ValueError):
+            scale = 1.0
+        return MONSTER_SIGHT_RANGE * max(0.0, scale)
 
     def _hunts_player(self, thing) -> bool:
         model = self.hostility
@@ -488,7 +522,8 @@ all accumulated time when it runs, so simulation time is not lost.
         pos32 = t.pos[:n].astype(np.float32)
         px, py, pz = float(player_pos[0]), float(player_pos[1]), float(player_pos[2])
         player32 = np.array((px, py, pz), dtype=np.float32)
-        sight_sq = MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
+        wake_range = self._player_wake_range()
+        sight_sq = wake_range * wake_range
         nearest = None
         scalar = np.zeros(n, dtype=bool)
 
@@ -508,6 +543,13 @@ all accumulated time when it runs, so simulation time is not lost.
             seen = (d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2]) <= sight_sq
             if hunts is not None:
                 seen &= hunts[watching]          # the player wakes only hunters
+            # A monster with a view cone does not see the player in its blind
+            # spot (engine.monster_facing.in_view_cone).
+            for i in np.flatnonzero(seen):
+                row = int(watching[i])
+                if (props[row].get(monster_facing.VIEW_CONE_KEY)
+                        and not monster_facing.in_view_cone(monsters[row], px, pz)):
+                    seen[i] = False
             woke = seen.copy()
             teamed = ~seen & (t.team[:n][watching] >= 0)
             if teamed.any():
@@ -975,8 +1017,11 @@ all accumulated time when it runs, so simulation time is not lost.
                 # Sight of the player (squared distance — threshold-only compare)
                 diff_to_player = player_pos - glm.vec3(thing.pos)
                 dist_to_player_sq = glm.dot(diff_to_player, diff_to_player)
-                if (dist_to_player_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
-                        and self._hunts_player(thing)):
+                wake_range = self._player_wake_range()
+                if (dist_to_player_sq <= wake_range * wake_range
+                        and self._hunts_player(thing)
+                        and monster_facing.in_view_cone(
+                            thing, float(player_pos[0]), float(player_pos[2]))):
                     woke_reason = 'sight'
                 else:
                     # Sight of an enemy-team monster
@@ -998,6 +1043,7 @@ all accumulated time when it runs, so simulation time is not lost.
                 # by _investigate_sounds on the out-of-sight path.
                 if woke_reason is None and self._hears_noise(thing) is not None:
                     woke_reason = 'sound'
+                    self._heard(thing)
                     if self.monster_debug_active:
                         name = thing.properties.get('name', '?')
                         debug_log("MonsterAI", f"{name} woke to a noise")
@@ -1890,6 +1936,8 @@ the scalar fallback for callers that do not have the dense table.
                 elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                     monster.pos = [slide_z.x, slide_z.y, slide_z.z]
 
+        if state.get('investigating_sound') is None:
+            self._heard(monster)            # it turns to go and look
         state['investigating_sound'] = (sound_pos, current_time + 3.0)
 
         if self.monster_debug_active:

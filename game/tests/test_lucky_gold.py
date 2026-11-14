@@ -56,7 +56,7 @@ def test_the_unlucky_find_what_is_there():
 
 def test_the_fortune_page_says_so():
     from ..rpg.character import Character
-    ch = Character.create("L", "imperial", "thief", "none")
+    ch = Character.create("L", "valian", "thief", "none")
     ch.attrs[attr.LUCK] = 75
     rows = {name: (value, good) for name, value, _why, good in fortune.benefits(ch)}
     assert rows["Gold found"] == ("+10%", True)

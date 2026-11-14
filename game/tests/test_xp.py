@@ -25,7 +25,7 @@ from .fio_logic import FioLogic
 
 
 def _character():
-    return Character.create("T", "imperial", "warrior")
+    return Character.create("T", "valian", "warrior")
 
 
 def test_experience_alone_earns_a_level():
@@ -60,7 +60,7 @@ def test_a_completed_quest_awards_its_experience_and_tells_listeners():
                                  [quests.Stage(0, "Go.", objective="Go"),
                                   quests.Stage(10, "Done.", finishes=True)],
                                  xp=25))
-    gs = GameState.new_game(DictStore(), "T", "imperial", "warrior",
+    gs = GameState.new_game(DictStore(), "T", "valian", "warrior",
                             rng=random.Random(1))
     heard = []
     gs.add_xp_listener(heard.append)
@@ -87,7 +87,7 @@ def _session():
     from ..runtime import MiniwindSession
     s = MiniwindSession(_Logic(), cfg={"start_hour": 12.0,
                                        "minutes_per_day": 999999.0})
-    s.begin_new_character("T", "imperial", "warrior", "none", "male", head="head01")
+    s.begin_new_character("T", "valian", "warrior", "none", "male", head="head01")
     s.floaters = []
     return s
 

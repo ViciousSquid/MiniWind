@@ -1,8 +1,8 @@
 """Visual tier: the two water tiers, on a real OpenGL context.
 
-Quality is per water brush (``water_high_quality``, default on); the
-renderer's ``water_quality`` is only a session debug cap ('cheap' forces every
-brush cheap). 'cheap' water is the depth-less look. 'expensive' water copies the depth
+All water is high quality unless the graphics setting says low: the
+renderer's ``water_quality`` ([Renderer] water_quality) decides for every
+brush, and a brush's old ``water_high_quality`` flag is ignored. 'cheap' water is the depth-less look. 'expensive' water copies the depth
 buffer once per water pass (plain GL 3.3 glCopyTexSubImage2D) for depth
 absorption, shoreline foam, caustics and screen-space reflections. Both must
 draw without GL errors, and the expensive tier must actually change the frame.
@@ -94,7 +94,7 @@ def test_cheap_water_makes_no_depth_copy(context):
     try:
         renderer.water_quality = 'cheap'
         calls = []
-        renderer._capture_scene_depth = lambda: calls.append(1) or True
+        renderer._capture_scene_depth = lambda rect=None: calls.append(1) or True
         from engine.view_distance import ViewDistance
         renderer.view_distance = ViewDistance(8000.0)
         brushes, things = pool_scene()
@@ -113,10 +113,21 @@ def test_cheap_water_makes_no_depth_copy(context):
         renderer.cleanup()
 
 
-def test_a_brush_with_high_quality_off_draws_the_cheap_look(context):
+def test_all_water_is_high_quality_whatever_the_brush_flag(context):
     capped = render(context, 'cheap')
-    brush_cheap = render(context, 'expensive', high_quality=False)
-    brush_high = render(context, 'expensive', high_quality=True)
-    assert np.abs(brush_cheap - capped).mean() < 0.5
+    flag_off = render(context, 'expensive', high_quality=False)
+    flag_on = render(context, 'expensive', high_quality=True)
+    assert np.abs(flag_off - flag_on).mean() < 0.5
     lower = slice(SIZE // 2, SIZE)
-    assert np.abs(brush_high[lower] - brush_cheap[lower]).mean() > 3.0
+    assert np.abs(flag_off[lower] - capped[lower]).mean() > 3.0
+
+
+def test_the_setting_is_read_from_settings_ini():
+    import configparser
+    from engine.renderer.forward import ForwardRenderer
+    for value, expected in (('high', 'expensive'), ('Low', 'cheap'), (None, 'expensive')):
+        config = configparser.ConfigParser()
+        if value:
+            config['Renderer'] = {'water_quality': value}
+        assert ForwardRenderer.water_quality_from_config(config) == expected
+    assert ForwardRenderer.water_quality_from_config(None) == 'expensive'

@@ -87,6 +87,16 @@ def launched_party():
     return active()
 
 
+def launched_resume():
+    """The save the launcher's CONTINUE chose (a ``saves/`` name), or None.
+
+    Asked by the application bootstrap (main.py) once the map is open in
+    play, like :func:`launched_party`; it then loads that save.
+    """
+    from .ui.launcher import chosen_resume
+    return chosen_resume()
+
+
 def close_party() -> None:
     """Close the launcher's multiplayer party (sockets, discovery)."""
     from .multiplayer.lobby import finish

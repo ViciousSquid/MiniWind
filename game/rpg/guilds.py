@@ -127,17 +127,35 @@ def disposition(character, npc_props: Dict) -> int:
     return max(0, min(100, disp))
 
 
-def persuade(character, npc_props: Dict, rng=None) -> Dict:
-    """A speechcraft check that nudges an NPC's disposition up (or down on fail)."""
+def persuade(character, npc_props: Dict, rng=None, dice=None, side="ally") -> Dict:
+    """A speechcraft check that nudges an NPC's disposition up (or down on fail).
+
+    With *dice* (the session's dice service) it is a d20 check the player
+    watches in their roll box, like every other chance; the result carries
+    the roll as ``"roll"``; *side* is the NPC's side, for the colour its name
+    is shown in there."""
     import random
     rng = rng or random
     import game.rpg.skills as sk
     speech = character.skill(sk.SPEECHCRAFT)
     luck = character.attrs.get(attr.LUCK, 40)
-    chance = (speech + luck * 0.2) / 100.0
+    chance = max(0.05, min(0.95, (speech + luck * 0.2) / 100.0))
     character.use_skill(sk.SPEECHCRAFT, 1.0)
-    if rng.random() <= max(0.05, min(0.95, chance)):
+    roll = None
+    if dice is not None:
+        from ..diceroll import roll_check
+        name = str(npc_props.get("display_name") or npc_props.get("name") or "them")
+        roll = roll_check(dice, chance, f"Persuade {name}", source="dialogue.persuade",
+                          why=f"Speechcraft {int(speech)} + Luck {int(luck)} × 0.2 — "
+                              f"{chance * 100:.0f}%",
+                          context={"against_name": name, "against_side": side})
+        won = bool(roll["success"])
+    else:
+        won = rng.random() <= chance
+    if won:
         npc_props["disposition_offset"] = int(npc_props.get("disposition_offset", 0)) + 8
-        return {"success": True, "disposition": disposition(character, npc_props)}
+        return {"success": True, "disposition": disposition(character, npc_props),
+                "roll": roll}
     npc_props["disposition_offset"] = int(npc_props.get("disposition_offset", 0)) - 4
-    return {"success": False, "disposition": disposition(character, npc_props)}
+    return {"success": False, "disposition": disposition(character, npc_props),
+            "roll": roll}

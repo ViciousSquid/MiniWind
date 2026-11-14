@@ -13,9 +13,9 @@ Given an unbuilt map it writes a world in which:
   mountains (high ground above the settlements' level is very costly, cliffs
   all but impassable), keeps off open water and reuses road already laid, so
   forks become junctions. A smooth noise field in the cost and a gentle
-  sideways wander make roads meander the way Morrowind's and Oblivion's do,
-  rather than ruling lines between towns.
-* **Terrain stamping** paints ``track.jpg`` along every road into the
+  sideways wander make roads meander as old country roads do, rather than
+  ruling lines between towns.
+* **Terrain stamping** paints ``flagstone.jpg`` along every road into the
   terrain's baked texture paint (``Terrain.stamp_texture_at``), so the road is
   part of the saved ground and grass does not grow on it.
 * **PathNodes** named ``ROAD_0001``... stand along each road on the ground,
@@ -82,7 +82,7 @@ MAX_SLOPE = 0.35
 STEEP_COST = 400.0
 #: Mountains: ground above the settlements' own level costs up to
 #: 1 + HIGH_COST times as much, so roads go round high ground, through the
-#: valleys and passes, as Morrowind's and Oblivion's do.
+#: valleys and passes, as old roads do.
 HIGH_COST = 30.0
 HIGH_ABOVE = 40.0
 #: Meander: a smooth noise field (features about MEANDER_SCALE across)
@@ -100,7 +100,7 @@ REUSE = 0.55
 #: Stepping through open water costs this many times more.
 WATER_COST = 40.0
 #: Road paint: brush radius, spacing between stamps and edge softness.
-ROAD_TEXTURE = "assets/textures/track.jpg"
+ROAD_TEXTURE = "assets/textures/flagstone.jpg"
 ROAD_RADIUS = 96.0
 STAMP_SPACING = 56.0
 STAMP_FEATHER = 0.55

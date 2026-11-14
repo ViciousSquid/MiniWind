@@ -167,3 +167,32 @@ def test_a_ward_gently_breathes():
         sizes.append(float(sprites[sprites[:, 8] == mf.BUBBLE][0, 3]))
     assert max(sizes) - min(sizes) > mf.WARD_SIZE * mf.WARD_PULSE
     assert max(sizes) <= mf.WARD_SIZE * (1 + mf.WARD_PULSE) + 1e-3
+
+
+def test_a_cast_pulses_a_fisheye_bubble_in_the_rings_colour_and_is_gone():
+    fx, clock = _fx()
+    look = mf.look_for("flare")
+    fx.cast((0.0, 0.0, 0.0), look)
+    sizes = []
+    for age in (0.01, 0.07, mf.CAST_PULSE_OUT):
+        clock.t = 100.0 + age
+        sprites, lenses, _t = fx.frame()
+        bubble = sprites[sprites[:, 8] == mf.BUBBLE]
+        assert len(bubble) == 1 and np.allclose(bubble[0, 4:7], look["colour"], atol=1e-3)
+        assert any(l[6] == tuple(look["colour"]) for l in lenses)        # it bends the world
+        sizes.append(float(bubble[0, 3]))
+    assert sizes[0] < 0.6 * mf.CAST_PULSE_SIZE < sizes[1] < sizes[2]   # out of a dot
+    clock.t = 100.0 + mf.CAST_PULSE_SECONDS * 0.9
+    fading = fx.frame()[0]
+    assert fading[fading[:, 8] == mf.BUBBLE][0, 7] < 0.2               # fading out
+    clock.t = 100.0 + mf.CAST_PULSE_SECONDS + 0.01
+    sprites, lenses, _t = fx.frame()
+    assert not len(sprites[sprites[:, 8] == mf.BUBBLE]) and not lenses
+
+
+def test_a_fizzle_makes_no_pulse():
+    """Only a cast that works calls MagicFX.cast; nothing else pulses."""
+    fx, clock = _fx()
+    fx.impact((0.0, 56.0, 0.0), mf.look_for("flare"))
+    sprites, _l, _t = fx.frame()
+    assert not len(sprites[sprites[:, 8] == mf.BUBBLE])

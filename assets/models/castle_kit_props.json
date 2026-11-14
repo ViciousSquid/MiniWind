@@ -1,0 +1,95 @@
+{
+  "description": "Flat-X-socket assembly at scale 1: tower (0), wall (480), gatehouse (1248); next wall (2016). Model Props are scenery: add structural collision brushes separately. Give duplicates fresh entity IDs.",
+  "things": [
+    {
+      "type": "prop",
+      "pos": [
+        0,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Castle tower",
+        "id": "f791cee0-f3fb-57fc-8459-81929705b19b",
+        "render_mode": "model",
+        "model_path": "assets/models/castle_tower.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        480,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Town wall",
+        "id": "ba8225e4-688d-5fd7-a67f-71e16ff94272",
+        "render_mode": "model",
+        "model_path": "assets/models/town_wall.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1248,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Castle gatehouse",
+        "id": "6634fe21-88e2-53b9-98fe-ad2a9d1b66ab",
+        "render_mode": "model",
+        "model_path": "assets/models/castle_gatehouse.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    }
+  ]
+}

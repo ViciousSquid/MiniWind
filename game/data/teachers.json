@@ -24,7 +24,7 @@
     "teaches_spells": ["frostbite", "sp_feather", "sp_nighteye", "heal_minor"]
   },
   "Osric": {
-    "trainer": {"skills": ["athletics", "acrobatics"], "rank": "Journeyman"}
+    "trainer": {"skills": ["athletics"], "rank": "Journeyman"}
   },
   "Grunn": {
     "trainer": {"skills": ["blade", "blunt", "block", "heavy_armor"], "rank": "Expert"}

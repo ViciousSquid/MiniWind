@@ -37,6 +37,9 @@ _OPENERS = {
     "told": ("Word is {what}", "I heard {what}", "They're saying {what}"),
     "doubt": ("They say, though I can't swear to it, that {what}",
               "Only a rumour, mind, but {what}"),
+    # News nobody doubts (an event kind tagged "certain": a fire, seen for
+    # miles), however many mouths it passed through.
+    "certain": ("It's true: {what}", "No word of a lie, {what}", "It's certain: {what}"),
 }
 
 
@@ -95,6 +98,8 @@ def line(fact: Dict, place_of: Optional[Callable] = None, today=None,
     source = str(fact.get("source", knowledge.SOURCE_TOLD))
     if source == knowledge.SOURCE_TOLD and certainty < 0.5:
         source = "doubt"
+    if "certain" in kind_spec(fact.get("kind", ""))["tags"] and source != knowledge.SOURCE_WITNESSED:
+        source = "certain"
     text = _pick(_OPENERS.get(source, _OPENERS["told"]), speaker, fact.get("e", 0)).format(what=what)
     cause = fact.get("cause")
     if isinstance(cause, dict) and cause.get("faction"):

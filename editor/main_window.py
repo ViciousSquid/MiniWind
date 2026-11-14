@@ -213,15 +213,20 @@ class _SavedLevelFile:
 
 def _read_level_json(path):
     """A map's JSON: from a mounted ``.fiopak`` data package when one holds
-    it (``maps/cave01.json``), else the loose file."""
+    it (``maps/cave01.json``), else the loose file; with its terrain paint
+    put back from its stamp file (engine.terrain_stamp.merge_level_paint)."""
+    from engine import terrain_stamp
+    data = None
     try:
         from engine import asset_archives
         if asset_archives.in_archive(path):
-            return json.loads(asset_archives.read(path).decode('utf-8'))
+            data = json.loads(asset_archives.read(path).decode('utf-8'))
     except ImportError:
         pass
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    if data is None:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    return terrain_stamp.merge_level_paint(data, path)
 
 class MainWindow(QMainWindow):
     #: A LevelChanger asks for a map: ``(map path, destination spawn)``, the
@@ -704,7 +709,8 @@ class MainWindow(QMainWindow):
                 
             save_path = os.path.join(autosave_dir, save_name)
             
-            write_json_atomic(save_path, self.state.get_level_data(), indent=4)
+            from engine import terrain_stamp
+            terrain_stamp.write_level(save_path, self.state.get_level_data(), indent=4)
 
             print(f"[Autosave] Saved to {save_path}")
             return save_path
@@ -2828,7 +2834,9 @@ class MainWindow(QMainWindow):
                 }
             """)
 
-        with _loading_overlay(self).busy("Starting the game", "Building the world", 40):
+        # The stages' percentages are of starting play (an operation that
+        # opens a map first gives this its share of the bar: share()).
+        with _loading_overlay(self).busy("Starting the game", "Building the world", 5):
             self._capture_pre_play_world()
             # Play runs on the complete authored world, not the editor's cells.
             self.state.materialize_editor_world()
@@ -2839,8 +2847,14 @@ class MainWindow(QMainWindow):
                 # A played package's cutscenes are read from the package.
                 logic.package = self._package
             physics_enabled = self.config.getboolean('Settings', 'physics', fallback=True)
+            _loading_step(self, "Bringing the world to life", 25)
             self.view_3d.toggle_play_mode(player_start, physics_enabled)
             self.apply_gore_setting()
+            # The first frames of play -- the ground and grass around the
+            # player, every sprite and model in view, first-use shaders and
+            # the game's HUD -- painted here, not in front of the player.
+            _loading_step(self, "Drawing the world", 70)
+            self.view_3d.warm_up_play()
             # The play world is built: settle the collector while the
             # loading bar is still up (engine/gc_policy.py).
             gc_policy.settle()
@@ -4896,7 +4910,9 @@ class MainWindow(QMainWindow):
         self.stop_mover_preview()
 
         try:
-            write_json_atomic(self.file_path, self.state.get_level_data(), indent=4)
+            # The terrain's paint goes to <map>.stamp beside it.
+            from engine import terrain_stamp
+            terrain_stamp.write_level(self.file_path, self.state.get_level_data(), indent=4)
             print(f"Level saved to {self.file_path}")
             self.unsaved_changes = False
             self.update_title()
@@ -5206,8 +5222,9 @@ class MainWindow(QMainWindow):
             play_stopped = was_playing and spawn is None
             if was_playing and not play_stopped:
                 print("[MainWindow] Restarting Play Mode with new level...")
-                _loading_step(self, "Restarting play", 85)
-                self._start_play(spawn)
+                _loading_step(self, "Restarting play", 70)
+                with _loading_overlay(self).share(70, 100):
+                    self._start_play(spawn)
                 if (loadout is not None
                         and self.view_3d.play_mode):
                     logic.session_runtime.restore_loadout(loadout)

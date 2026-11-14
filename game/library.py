@@ -9,7 +9,9 @@ Every book item names the places it is found in with ``"found"`` in
 * ``shrine`` -- at shrines, chapels and holy ruins;
 * ``wild`` -- in caves, ruins, camps and the nests of things under the hills;
 * ``bandit`` -- in brigand camps and on brigands;
-* ``cult`` -- among the Ashen Circle.
+* ``cult`` -- among the Ashen Circle;
+* ``unique`` -- one copy in the whole world, authored where it lies (Hal
+  Corbin's ledger, on Hal Corbin): never laid out, stocked or rolled as loot.
 
 The world tool (game/tools/furnish_world.py) lays books out by these, the
 merchants stock them by these (game/ui/screens.py), and the loot tables
@@ -43,7 +45,8 @@ SHRINE = "shrine"
 WILD = "wild"
 BANDIT = "bandit"
 CULT = "cult"
-PLACES = (TOWN, SHOP, SHRINE, WILD, BANDIT, CULT)
+UNIQUE = "unique"
+PLACES = (TOWN, SHOP, SHRINE, WILD, BANDIT, CULT, UNIQUE)
 
 #: Roles that keep no shelf for books.
 NO_BOOK_ROLES = frozenset({"blacksmith", "armourer", "farmer"})
