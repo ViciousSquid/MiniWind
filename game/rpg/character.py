@@ -34,6 +34,8 @@ from . import birthsigns
 
 #: Major-skill increases needed to earn one character level.
 SKILL_UPS_PER_LEVEL = 10
+#: Max stamina each point of Athletics gained adds, for good.
+ATHLETICS_STAMINA = 1.0
 #: Stamina a second of sprinting costs (a fresh 100 lasts about eight seconds).
 SPRINT_STAMINA_PER_SECOND = 12.0
 #: The level-up choice: which attribute grows, by :data:`LEVEL_ATTR_GAIN`.
@@ -279,9 +281,11 @@ class Character:
 
     #: health accumulated from levelling (added on top of endurance*2)
     _accum_health: float = 0.0
-    #: magicka and stamina a save from before the level-up page kept from the
-    #: old pool-based level-up (nothing adds to magicka now)
+    #: magicka a save from before the level-up page kept from the old
+    #: pool-based level-up (nothing adds to it now)
     _accum_magicka: float = 0.0
+    #: stamina from Athletics rises (:data:`ATHLETICS_STAMINA` a point), plus
+    #: any an old save's pool-based level-ups gave
     _accum_stamina: float = 0.0
 
     @property
@@ -329,9 +333,11 @@ class Character:
             del self._skill_raises[:-16]
         gov = sk.governing_attribute(skill_id)
         self._level_attr_gains[gov] = self._level_attr_gains.get(gov, 0) + 1
-        # Athletics/heavy skills also nudge derived pools live.
-        if skill_id in (sk.ATHLETICS,):
-            self.max_stamina += 1
+        # Each Athletics point is +1 max stamina for good: kept with the
+        # other gains, so recompute_derived keeps it too.
+        if skill_id == sk.ATHLETICS:
+            self._accum_stamina += ATHLETICS_STAMINA
+            self.max_stamina += ATHLETICS_STAMINA
         if skill_id in self.major_skills:
             self.xp_progress += 1
 

@@ -94,3 +94,28 @@ def test_walking_the_player_gets_stamina_back():
     assert not s._sprint(0.1)
     c.regen(1.0, False)
     assert c.stamina > 10.0
+
+
+# ------------------------------------------------------------ Athletics
+
+def test_an_athletics_rise_keeps_its_stamina_through_recalculation():
+    """Each Athletics point is +1 max stamina for good: a recalculation (an
+    attribute change, a level-up, a save and load) does not take it away."""
+    from ..rpg import skills as sk
+    from ..rpg.character import ATHLETICS_STAMINA, Character
+    c = Character.create("Runner", "sunborn", "warrior")
+    before = c.max_stamina
+    start = c.skill(sk.ATHLETICS)
+    while c.skill(sk.ATHLETICS) < start + 3:
+        c.use_skill(sk.ATHLETICS, 5.0)
+    assert c.max_stamina == pytest.approx(before + 3 * ATHLETICS_STAMINA)
+    c.recompute_derived(reset_current=False)
+    assert c.max_stamina == pytest.approx(before + 3 * ATHLETICS_STAMINA)
+    c.train_skill(sk.ATHLETICS)                    # a trainer's point counts too
+    c.recompute_derived(reset_current=False)
+    assert c.max_stamina == pytest.approx(before + 4 * ATHLETICS_STAMINA)
+    again = Character.from_dict(c.to_dict())
+    assert again.max_stamina == pytest.approx(c.max_stamina)
+    c.xp = c.xp_needed
+    c.level_up(chosen_attrs=["luck"])              # leaves STR and END alone
+    assert c.max_stamina == pytest.approx(before + 4 * ATHLETICS_STAMINA)

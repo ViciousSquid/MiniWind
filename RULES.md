@@ -239,7 +239,9 @@ Each level adds +25% magnitude, +12.5% duration and +10% cost.
 
 * **Max health** = END × 2 + level gains + birthsign.
 * **Max magicka** = INT × 1.5 + birthsign (0 for a class with no magic).
-* **Max stamina** = (STR + 3 × END) × 0.5 + gains + birthsign.
+* **Max stamina** = (STR + 3 × END) × 0.5 + Athletics gains + birthsign.
+  Every point of Athletics you gain (by use or from a trainer) adds **+1**
+  max stamina for good.
 * **Regeneration per second:** magicka `max × 0.02 × (0.5 + END/100)` (none
   under the Golem); stamina `max × 0.15` (not while sprinting). Health does
   not regenerate — only spells, potions, food (bread and flour, 8 each) and
@@ -785,8 +787,6 @@ Places where the code does not yet do what something in the game describes:
   some birthsign descriptions leave out bonuses they give.
 * **Sneak** is trained but read by no rule; **Acrobatics**, **Light Fingers**
   and **Alchemy** are neither trained nor read.
-* An **Athletics** rise adds +1 max stamina that the next recalculation
-  removes.
 * Sneak-attack damage applies whenever sneaking is on, even if the target has
   already seen you.
 * **Charisma** counts twice in prices.
