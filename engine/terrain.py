@@ -368,6 +368,22 @@ DEFAULT_GRASS_ENABLED = True
 # MAIN TERRAIN CLASS
 # ============================================================================
 
+class _ChunkRow:
+    """One chunk's row of a :class:`TerrainTable`, copied, at index 0.
+
+    What growing a chunk's grass reads of the table (its origin, size and
+    grid coordinates), taken on the thread that writes the table, so the
+    builder thread can grow the blades without reading it."""
+
+    __slots__ = ('size', 'world', 'coord')
+
+    def __init__(self, table, slot):
+        rows = slice(slot, slot + 1)
+        self.size = np.array(table.size[rows])
+        self.world = np.array(table.world[rows])
+        self.coord = np.array(table.coord[rows])
+
+
 class Terrain:
     # Terrain inside this radius is a protected high-detail zone. A chunk is
     # never allowed to change LOD while any part of it lies within 4096 world
@@ -612,6 +628,8 @@ class Terrain:
         # The builder thread (BACKGROUND_BUILDS): slot -> the allocation
         # order it was asked for, the requests and the finished grids.
         self._building: Dict[int, int] = {}
+        # Grass grown on the same thread: slot -> the order it was asked for.
+        self._growing: Dict[int, int] = {}
         self._build_requests: "queue.Queue" = queue.Queue()
         self._build_results: "queue.Queue" = queue.Queue()
         self._builder = None
@@ -1359,7 +1377,7 @@ class Terrain:
     #: the ground it grows on.
     meadow_colour = None
 
-    def _generate_grass_blades(self, slot: int) -> np.ndarray:
+    def _generate_grass_blades(self, slot: int, table=None) -> np.ndarray:
         """Per-blade instance records ``(x, y, z, size, yaw, tint, r, g, b)``.
 
         Wheat fields and tundra heath, wherever the biome map paints them,
@@ -1367,19 +1385,23 @@ class Terrain:
         :attr:`meadow_grass` is on, the meadow scattered over ordinary
         ground. Ordinary terrain otherwise stays clear of meadow grass and
         swamp reeds.
+
+        *table* is the chunk table to read the chunk's row from: this
+        terrain's own, or a :class:`_ChunkRow` snapshot of one row (at index
+        0) when the blades are grown on the builder thread.
         """
         parts = []
         if self.meadow_grass:
-            parts.append(self._generate_meadow_blades(slot))
+            parts.append(self._generate_meadow_blades(slot, table))
         if self.biome_map is not None:
-            parts.append(self._generate_wheat_blades(slot))
-            parts.append(self._generate_tundra_blades(slot))
+            parts.append(self._generate_wheat_blades(slot, table))
+            parts.append(self._generate_tundra_blades(slot, table))
         parts = [p for p in parts if len(p)]
         if not parts:
             return np.empty((0, 9), dtype=np.float32)
         return np.concatenate(parts) if len(parts) > 1 else parts[0]
 
-    def _generate_meadow_blades(self, slot: int) -> np.ndarray:
+    def _generate_meadow_blades(self, slot: int, table=None) -> np.ndarray:
         """Deterministic per-blade instance records ``(x, y, z, size, yaw, tint)``.
 
         Tufts are scattered over the chunk and each spreads a handful of
@@ -1389,7 +1411,7 @@ class Terrain:
         layer (high rock and snow, low sand), in broad noise clearings and
         wherever the biome map paints a wheat field, desert or snowfield.
         """
-        table = self.table
+        table = self.table if table is None else table
         size = float(table.size[slot])
         density = self.grass_density if self.meadow_density is None else self.meadow_density
         limit = self.GRASS_MAX_PER_CHUNK
@@ -1492,10 +1514,10 @@ class Terrain:
                 np.repeat(tuft_slope, per_tuft))
         return data
 
-    def _generate_wheat_blades(self, slot: int) -> np.ndarray:
+    def _generate_wheat_blades(self, slot: int, table=None) -> np.ndarray:
         """Wheat: dense clumps of tall golden stalks wherever the biome map
         paints a field, with its own budget so a field is never sparse."""
-        table = self.table
+        table = self.table if table is None else table
         size = float(table.size[slot])
         x0 = float(table.world[slot, 0])
         z0 = float(table.world[slot, 1])
@@ -1608,14 +1630,14 @@ class Terrain:
         :data:`DEFAULT_GRASS_HEIGHT`, and the shader multiplies by the map's."""
         return DEFAULT_GRASS_HEIGHT / max(float(self.grass_height), 0.5)
 
-    def _generate_tundra_blades(self, slot: int) -> np.ndarray:
+    def _generate_tundra_blades(self, slot: int, table=None) -> np.ndarray:
         """Tundra heath: dense, tall leafy shrub-grass wherever the biome map's
         fifth channel paints it, green with drifts of flame-orange, red and
         gold shoots (:func:`terrain_biomes.tundra_colours`). Its own budget,
         like wheat, so a heath is never sparse."""
         if self.biome_map is None or self.biome_map.shape[2] <= terrain_biomes.TUNDRA:
             return np.empty((0, 9), dtype=np.float32)
-        table = self.table
+        table = self.table if table is None else table
         size = float(table.size[slot])
         x0 = float(table.world[slot, 0])
         z0 = float(table.world[slot, 1])
@@ -1892,6 +1914,7 @@ class Terrain:
             self.products.drop(slots)
             for slot in slots:
                 self._building.pop(int(slot), None)
+                self._growing.pop(int(slot), None)
 
     def cleanup(self):
         """Drop every chunk. No GL here: a renderer's side goes with the
@@ -1970,9 +1993,16 @@ class Terrain:
             in_view = visible & (dist_sq <= reach_sq)
             wanted = np.nonzero(table.grass_dirty[slots] & table.built[slots] & in_view)[0]
             nearest = wanted[np.argsort(dist_sq[wanted], kind='stable')]
-            for i in nearest[:self.MAX_UPDATES_PER_FRAME]:
-                self._build_grass(int(slots[i]))
-            self.work_due += max(0, len(nearest) - self.MAX_UPDATES_PER_FRAME)
+            if self.BACKGROUND_BUILDS:
+                # Grown on the builder thread, published by _collect_built:
+                # a chunk's blades are 75-600 ms of numpy, far too long for a
+                # frame (the largest hitch of walking into new country).
+                self._request_grass([int(slots[i]) for i in nearest])
+                self.work_due += len(nearest) + len(self._growing)
+            else:
+                for i in nearest[:self.MAX_UPDATES_PER_FRAME]:
+                    self._build_grass(int(slots[i]))
+                self.work_due += max(0, len(nearest) - self.MAX_UPDATES_PER_FRAME)
             grown = self.products.grass
             if grown:
                 far = [int(slot) for slot in slots[dist_sq > reach_sq * 2.56].tolist()
@@ -2034,6 +2064,29 @@ class Terrain:
                 target=self._builder_loop, name='TerrainBuilder', daemon=True)
             self._builder.start()
 
+    def _request_grass(self, slots):
+        """Hand grass to grow to the builder thread, nearest first.
+
+        Each request carries a snapshot of its chunk's row (_ChunkRow), so
+        the thread never reads the table, which only this thread writes; the
+        blades are published here by :meth:`_collect_built`, and only if the
+        row still holds the same chunk. A slot waits at most once."""
+        table = self.table
+        for slot in slots:
+            if slot in self._growing or len(self._growing) >= self.BUILD_QUEUE_LIMIT:
+                continue
+            order = int(table.order[slot])
+            self._growing[slot] = order
+            # Dirtied again while in flight (a season, a quality change):
+            # grown again once this lands.
+            table.grass_dirty[slot] = False
+            self._build_requests.put(('grass', slot, order, _ChunkRow(table, slot)))
+        if self._growing and (self._builder is None or not self._builder.is_alive()):
+            self._builder_stop = False
+            self._builder = threading.Thread(
+                target=self._builder_loop, name='TerrainBuilder', daemon=True)
+            self._builder.start()
+
     def _builder_loop(self):
         requests, results = self._build_requests, self._build_results
         while not self._builder_stop:
@@ -2043,6 +2096,14 @@ class Terrain:
                 continue
             if job is None:                     # stop_builder's wake-up
                 break
+            if job[0] == 'grass':
+                _kind, slot, order, row = job
+                try:
+                    blades = self._generate_grass_blades(0, row)
+                except Exception:
+                    blades = None               # grown again next frame
+                results.put(('grass', slot, order, blades))
+                continue
             slot, order, resolution, world_x, world_z, size = job
             try:
                 heights = self._grid_heights(world_x, world_z, size, resolution)
@@ -2058,9 +2119,13 @@ class Terrain:
         table = self.table
         while True:
             try:
-                slot, order, resolution, heights = self._build_results.get_nowait()
+                result = self._build_results.get_nowait()
             except queue.Empty:
                 return
+            if result[0] == 'grass':
+                self._collect_grass(*result[1:])
+                continue
+            slot, order, resolution, heights = result
             if self._building.get(slot) == order:
                 del self._building[slot]
             if (heights is None or slot >= table.capacity or not table.live[slot]
@@ -2072,6 +2137,18 @@ class Terrain:
             edited = bool(table.dirty[slot])
             self._store_heights(slot, resolution, heights)
             table.dirty[slot] = edited
+
+    def _collect_grass(self, slot, order, blades):
+        """Publish blades the builder thread grew (this thread)."""
+        table = self.table
+        if self._growing.get(slot) == order:
+            del self._growing[slot]
+        if slot >= table.capacity or not table.live[slot] or int(table.order[slot]) != order:
+            return
+        if blades is None:
+            table.grass_dirty[slot] = True
+            return
+        self.products.put(self.products.grass, slot, order, blades)
 
     def stop_builder(self):
         """Stop the builder thread and forget what it was asked for."""
@@ -2092,10 +2169,18 @@ class Terrain:
             if slot < table.capacity and table.live[slot] and int(table.order[slot]) == order:
                 table.dirty[slot] = True
         self._building.clear()
+        for slot, order in self._growing.items():
+            if slot < table.capacity and table.live[slot] and int(table.order[slot]) == order:
+                table.grass_dirty[slot] = True
+        self._growing.clear()
 
     def builds_pending(self) -> int:
         """Grids asked of the builder thread and not yet stored."""
         return len(self._building)
+
+    def grass_pending(self) -> int:
+        """Chunks' grass asked of the builder thread and not yet published."""
+        return len(self._growing)
 
 
     def get_2d_contours(self, axis1: str, axis2: str, view_bounds: Tuple[float, float, float, float], resolution: int = 32) -> List[Tuple[List[float], List[float], float]]:
