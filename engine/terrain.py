@@ -168,29 +168,103 @@ class PerlinNoise:
 _PAINT_PACKERS = None
 
 
-def _pack_paint(paint):
-    """One paint chunk as base64 text of its zlib stream."""
-    import base64, zlib
+def _pack_raw(paint):
+    """One paint chunk's zlib stream, as a map saves it (before base64)."""
+    import zlib
     # Level 1: a 256 chunk in under half the time of level 6 for the same
     # size (measured: 2.2 against 5.1 ms a chunk, 85 KB either way).
-    payload = zlib.compress(np.ascontiguousarray(paint).tobytes(), 1)
-    return base64.b64encode(payload).decode('ascii')
+    return zlib.compress(np.ascontiguousarray(paint).tobytes(), 1)
 
 
-def _compress_paint(paints):
-    """:func:`_pack_paint` of each of *paints*, in order; several at once
-    when there are several (the arrays are never written after they are
+def _pack_paint(paint):
+    """One paint chunk as base64 text of its zlib stream."""
+    import base64
+    return base64.b64encode(_pack_raw(paint)).decode('ascii')
+
+
+def _compress_paint(paints, pack=_pack_paint):
+    """*pack* (:func:`_pack_paint`) of each of *paints*, in order; several at
+    once when there are several (the arrays are never written after they are
     stored, so reading them from other threads is safe)."""
     global _PAINT_PACKERS
     if len(paints) < 2:
-        return [_pack_paint(paint) for paint in paints]
+        return [pack(paint) for paint in paints]
     if _PAINT_PACKERS is None:
         import os
         from concurrent.futures import ThreadPoolExecutor
         _PAINT_PACKERS = ThreadPoolExecutor(
             max_workers=max(1, min(4, os.cpu_count() or 1)),
             thread_name_prefix='TerrainPaintPack')
-    return list(_PAINT_PACKERS.map(_pack_paint, paints))
+    return list(_PAINT_PACKERS.map(pack, paints))
+
+
+class _PackedPaint:
+    """One chunk's paint, packed as a map saves it (its zlib stream), and,
+    while the chunk is resident, unpacked as well.
+
+    A paint array is never written in place -- a bake copies it -- so the
+    stream stays the array's for its whole life. The unpacked array is
+    read-only to keep it so."""
+
+    __slots__ = ('data', 'shape', 'painted', 'array')
+
+    def __init__(self, data, shape, painted, array=None):
+        self.data = data
+        self.shape = tuple(shape)
+        #: Whether any texel has alpha (a chunk without is not saved).
+        self.painted = bool(painted)
+        self.array = array
+
+    def unpack(self):
+        """The array, unpacked now if it is not (and kept until its chunk
+        stops being resident)."""
+        array = self.array
+        if array is None:
+            array = self.read()
+            self.array = array
+        return array
+
+    def read(self):
+        """The array, unpacked for this one read if it is not kept."""
+        array = self.array
+        if array is None:
+            import zlib
+            array = np.frombuffer(zlib.decompress(self.data), dtype=np.uint8).reshape(self.shape)
+        return array
+
+
+class _PaintMaps(dict):
+    """``chunk -> paint array``, where a chunk away from the camera holds
+    only its packed paint (:class:`_PackedPaint`), unpacked when read.
+
+    The shipped overworld's paint is 107 chunks of 1 MB; packed, all of it is
+    8 MB, and only the few resident chunks are kept unpacked."""
+
+    __slots__ = ()
+
+    def __getitem__(self, key):
+        value = dict.__getitem__(self, key)
+        return value.unpack() if type(value) is _PackedPaint else value
+
+    def get(self, key, default=None):
+        value = dict.get(self, key, default)
+        return value.unpack() if type(value) is _PackedPaint else value
+
+    def pop(self, key, *default):
+        value = dict.pop(self, key, *default)
+        return value.read() if type(value) is _PackedPaint else value
+
+    def items(self):
+        return [(key, value.read() if type(value) is _PackedPaint else value)
+                for key, value in dict.items(self)]
+
+    def values(self):
+        return [value.read() if type(value) is _PackedPaint else value
+                for value in dict.values(self)]
+
+    def copy(self):
+        """A copy sharing every chunk, packed or not."""
+        return _PaintMaps(dict.items(self))
 
 
 class TerrainFeatures:
@@ -495,7 +569,7 @@ class Terrain:
         # albedo map at TERRAIN_PAINT_RESOLUTION². The source image is sampled
         # once by the editor and the resulting colour/coverage becomes part
         # of the terrain data itself.
-        self.texture_paint_maps: Dict[Tuple[int, int], np.ndarray] = {}
+        self.texture_paint_maps: Dict[Tuple[int, int], np.ndarray] = _PaintMaps()
         # Placed texture stamps. Each record (id, texture, x, z, radius,
         # angle, feather, opacity) is also baked into texture_paint_maps, which
         # stays what renders and what the game loads; the records let the
@@ -503,7 +577,10 @@ class Terrain:
         # texture_paint_base is the paint no stamp record owns (maps painted
         # before stamps were kept), composited under the stamps.
         self.paint_stamps: List[dict] = []
-        self.texture_paint_base: Dict[Tuple[int, int], np.ndarray] = {}
+        self.texture_paint_base: Dict[Tuple[int, int], np.ndarray] = _PaintMaps()
+        # The chunks resident when paint was last packed and unpacked for
+        # them (_settle_paint).
+        self._paint_resident = None
         # Editor-only: selected stamps draw tinted from _paint_display, which
         # overrides texture_paint_maps for the chunks they touch.
         self.selected_stamp_ids: set = set()
@@ -743,8 +820,8 @@ class Terrain:
         for name in ('texture_paint_maps', 'texture_paint_base'):
             maps = getattr(self, name, None)
             if maps:
-                setattr(self, name, {key: self._resample_paint(paint, res)
-                                     for key, paint in maps.items()})
+                setattr(self, name, _PaintMaps(
+                    {key: self._resample_paint(paint, res) for key, paint in maps.items()}))
 
     def paint_page_layers(self) -> int:
         """Layers a paint page has at this terrain's paint resolution."""
@@ -1953,6 +2030,8 @@ class Terrain:
                                      self.offset_x, self.offset_z)
         table = self.table
         self._collect_built()
+        if self.BACKGROUND_BUILDS:
+            self._settle_paint()
         slots = table.live_slots()
         cam_x = float(camera_pos.x)
         cam_z = float(camera_pos.z)
@@ -2096,6 +2175,21 @@ class Terrain:
                 continue
             if job is None:                     # stop_builder's wake-up
                 break
+            if job[0] == 'paint':
+                _kind, fresh, unpack = job
+                for record in unpack:
+                    try:
+                        record.unpack()
+                    except Exception:
+                        pass                    # unpacked when it is read
+                try:
+                    packed = [(key, array, _pack_raw(array), bool(np.any(array[..., 3])))
+                              for key, array in fresh]
+                except Exception:
+                    packed = []
+                if packed:
+                    results.put(('paint', packed))
+                continue
             if job[0] == 'grass':
                 _kind, slot, order, row = job
                 try:
@@ -2125,6 +2219,9 @@ class Terrain:
             if result[0] == 'grass':
                 self._collect_grass(*result[1:])
                 continue
+            if result[0] == 'paint':
+                self._store_packed(result[1])
+                continue
             slot, order, resolution, heights = result
             if self._building.get(slot) == order:
                 del self._building[slot]
@@ -2137,6 +2234,72 @@ class Terrain:
             edited = bool(table.dirty[slot])
             self._store_heights(slot, resolution, heights)
             table.dirty[slot] = edited
+
+    # -- paint: packed away from the camera ----------------------------------
+
+    def _paint_to_pack(self, resident):
+        """Drop the unpacked arrays of packed chunks that are not *resident*,
+        and return ``[(chunk, array)]``: the chunks away from them whose paint
+        is not packed yet (baked since, or never packed)."""
+        maps, base = self.texture_paint_maps, self.texture_paint_base
+        fresh = []
+        for paints in (maps, base):
+            for key, value in dict.items(paints):
+                if key in resident:
+                    continue
+                if type(value) is _PackedPaint:
+                    value.array = None
+                elif value is not None and (paints is maps or dict.get(maps, key) is not value):
+                    fresh.append((key, value))
+        return fresh
+
+    def _pack_paint(self, fresh):
+        """Pack the ``(chunk, array)`` pairs of *fresh*, here and now."""
+        if fresh:
+            data = _compress_paint([array for _key, array in fresh], pack=_pack_raw)
+            self._store_packed([(key, array, packed, None) for (key, array), packed
+                                in zip(fresh, data)])
+
+    def _store_packed(self, packed):
+        """Put packed paint in place of the arrays it was packed from, in
+        both paint dicts (they share arrays): only where the dict still holds
+        that same array, so a bake made meanwhile is never undone."""
+        resident = self._paint_resident or ()
+        for key, array, data, painted in packed:
+            if painted is None:
+                painted = np.any(array[..., 3])
+            record = _PackedPaint(data, array.shape, painted,
+                                  array if key in resident else None)
+            for paints in (self.texture_paint_maps, self.texture_paint_base):
+                if dict.get(paints, key) is array:
+                    dict.__setitem__(paints, key, record)
+
+    def _settle_paint(self):
+        """Keep paint unpacked only for the resident chunks: as chunks stream
+        in, theirs is unpacked on the builder thread; as they leave, theirs
+        is dropped (packed first, there too, if it was baked meanwhile)."""
+        resident = frozenset(self.table.slot_of_coord)
+        if resident == self._paint_resident:
+            return
+        self._paint_resident = resident
+        fresh = self._paint_to_pack(resident)
+        unpack = []
+        for paints in (self.texture_paint_maps, self.texture_paint_base):
+            for key in resident:
+                value = dict.get(paints, key)
+                if type(value) is _PackedPaint and value.array is None:
+                    unpack.append(value)
+        if not fresh and not unpack:
+            return
+        self._build_requests.put(('paint', fresh, unpack))
+        self._start_builder()
+
+    def _start_builder(self):
+        if self._builder is None or not self._builder.is_alive():
+            self._builder_stop = False
+            self._builder = threading.Thread(
+                target=self._builder_loop, name='TerrainBuilder', daemon=True)
+            self._builder.start()
 
     def _collect_grass(self, slot, order, blades):
         """Publish blades the builder thread grew (this thread)."""
@@ -2762,7 +2925,7 @@ class Terrain:
             self._drop_drag_cache()
             self._recompose_paint(changed)
         else:
-            self.texture_paint_base = dict(self.texture_paint_maps)
+            self.texture_paint_base = self.texture_paint_maps.copy()
             self._paint_changed_grass(tuple(changed))
             for key in changed:
                 self._touch_texture_paint(key)
@@ -3144,7 +3307,7 @@ class Terrain:
                 feather=radius * float(np.clip(feather, 0.0, 1.0)),
                 opacity=opacity, tiled=True)
             if changed:
-                self.texture_paint_base = dict(self.texture_paint_maps)
+                self.texture_paint_base = self.texture_paint_maps.copy()
             return changed
         # Free paint lives in the base layer, under the placed stamps.
         changed = self._bake_texture_rect(
@@ -3637,9 +3800,9 @@ class Terrain:
         """Erase all baked terrain texture paint and placed stamps."""
         if self.texture_paint_maps:
             self.table.mark_grass_dirty()
-        self.texture_paint_maps = {}
+        self.texture_paint_maps = _PaintMaps()
         self._paint_epoch += 1
-        self.texture_paint_base = {}
+        self.texture_paint_base = _PaintMaps()
         self.paint_stamps = []
         self.selected_stamp_ids = set()
         self._paint_display = {}
@@ -3670,13 +3833,16 @@ class Terrain:
         res = self.TERRAIN_PAINT_RESOLUTION
         fresh = {}
         entries = []
-        ordered = sorted(maps.items())
+        # As stored: a chunk away from the camera is its packed stream
+        # already (_PackedPaint), saved as it is, with no array to compress.
+        ordered = sorted(dict.items(maps))
         # The chunks whose arrays were replaced since the last call are
         # compressed together on a few threads (zlib works without the GIL):
         # a stamp click replaces four to nine, and their compression was
         # most of the click.
         stale = [paint for (cx, cz), paint in ordered
-                 if not ((cache.get((cx, cz)) or (None,))[0] is paint)
+                 if type(paint) is not _PackedPaint
+                 and not ((cache.get((cx, cz)) or (None,))[0] is paint)
                  and paint is not None and paint.shape == (res, res, 4)
                  and np.any(paint[..., 3])]
         packed = dict(zip(map(id, stale), _compress_paint(stale)))
@@ -3684,6 +3850,11 @@ class Terrain:
             hit = cache.get((cx, cz))
             if hit is not None and hit[0] is paint:
                 entry = hit[1]
+            elif type(paint) is _PackedPaint:
+                entry = None
+                if paint.painted and paint.shape == (res, res, 4):
+                    entry = {'coord': [int(cx), int(cz)],
+                             'data': base64.b64encode(paint.data).decode('ascii')}
             elif id(paint) not in packed:
                 entry = None
             else:
@@ -3780,7 +3951,7 @@ class Terrain:
         one); a chunk saved at another is resampled.
         """
         import base64, zlib
-        maps = {}
+        maps = _PaintMaps()
         res = int(saved_res or self.TERRAIN_PAINT_RESOLUTION)
         target = self.TERRAIN_PAINT_RESOLUTION
         expected = res * res * 4
@@ -4065,7 +4236,7 @@ class Terrain:
             self.texture_paint_base = self._decode_texture_paint(
                 data.get('texture_paint_base', []), saved_res)
         else:
-            self.texture_paint_base = dict(self.texture_paint_maps)
+            self.texture_paint_base = self.texture_paint_maps.copy()
         self.selected_stamp_ids = set()
         self._paint_display = {}
         self._paint_epoch += 1
@@ -4076,6 +4247,10 @@ class Terrain:
             for stamp in self.paint_stamps:
                 keys |= self._stamp_chunks(stamp)
             self._recompose_paint(keys)
+        # No chunk is resident yet: all of the paint is packed, here under
+        # the loading bar, and unpacked as its chunks stream in.
+        self._paint_resident = None
+        self._pack_paint(self._paint_to_pack(frozenset()))
 
         # Sculpt offsets
         self.sculpt_offsets = {}
