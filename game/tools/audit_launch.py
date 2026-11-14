@@ -1,7 +1,7 @@
 """Launch audit: the game started as a player starts it, and every hitch.
 
     LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1600x900x24" \\
-        python tools/audit_launch.py [--map maps/miniwind_world.json]
+        python game/tools/audit_launch.py [--map maps/miniwind_world.json]
             [--seconds 60] [--route millbrook|country|still] [--sprint]
             [--continue] [--size 960x540] [--json OUT] [--no-sampler]
 
@@ -78,7 +78,7 @@ ap.add_argument('--capture-loading', metavar='DIR',
                 help='save a picture of the window at every loading-bar stage (perturbs timing)')
 ap.add_argument('--gc-census', action='store_true',
                 help='every 5 s of play: unfrozen objects tracked, and which types grew (perturbs timing)')
-ap.add_argument('--tree', default=os.path.join(HERE, '..'))
+ap.add_argument('--tree', default=os.path.join(HERE, '..', '..'))
 args = ap.parse_args()
 tree = os.path.abspath(args.tree)
 os.chdir(tree)
