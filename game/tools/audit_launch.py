@@ -76,6 +76,8 @@ ap.add_argument('--capture-play', metavar='PNG',
                 help='save a picture of the window 3 s into the measured play')
 ap.add_argument('--capture-loading', metavar='DIR',
                 help='save a picture of the window at every loading-bar stage (perturbs timing)')
+ap.add_argument('--trace-tuples', action='store_true',
+                help='with --gc-census: where the tuples surviving into the oldest generation were allocated (tracemalloc from play on; slows everything)')
 ap.add_argument('--gc-census', action='store_true',
                 help='every 5 s of play: unfrozen objects tracked, and which types grew (perturbs timing)')
 ap.add_argument('--tree', default=os.path.join(HERE, '..', '..'))
@@ -123,7 +125,23 @@ spans = collections.defaultdict(list)   # label -> [(start_ms, dur_ms, thread)]
 gc_events = []        # (start_ms, dur_ms, generation)
 frames = []           # (start_ms, paint_ms)
 ticks = []            # (start_ms, dur_ms)
-samples = []          # (ms, thread key, stack tuple of (file, func))
+# The stack samples, in columns the collector never walks: sample time (ms),
+# thread (0 main, 1 logic) and the index of its stack in `stacks`. Kept as
+# tuples they were ~1000 objects a second surviving into the oldest
+# generation -- the audit's own, inflating every full collection it timed.
+import array                                                  # noqa: E402
+sample_ms = array.array('d')
+sample_thread = array.array('b')
+sample_stack = array.array('i')
+stacks = []           # each distinct stack once: tuple of (file, func)
+stack_ids = {}
+THREAD_KEYS = ('main', 'logic')
+
+
+def samples():
+    """``(ms, thread key, stack)`` of every sample."""
+    for t, key, index in zip(sample_ms, sample_thread, sample_stack):
+        yield t, THREAD_KEYS[key], stacks[index]
 counters = collections.Counter()
 slow_calls = []       # (ms, label, first str arg, dur ms): span calls over 2 ms
 
@@ -237,7 +255,14 @@ def sampler():
                 code = frame.f_code
                 stack.append((code.co_filename, code.co_name))
                 frame = frame.f_back
-            samples.append((t, key, tuple(stack)))
+            stack = tuple(stack)
+            index = stack_ids.get(stack)
+            if index is None:
+                index = stack_ids[stack] = len(stacks)
+                stacks.append(stack)
+            sample_ms.append(t)
+            sample_thread.append(THREAD_KEYS.index(key))
+            sample_stack.append(index)
 
 
 # --------------------------------------------------------------- the run
@@ -294,7 +319,7 @@ def attribute(a, b, thread_key, top=4):
     for start, dur, gen in in_window(gc_events, a, b):
         named[f'GC gen{gen}'] += dur
     cats, funcs = collections.Counter(), collections.Counter()
-    for t, key, stack in samples:
+    for t, key, stack in samples():
         if a <= t < b and key == thread_key:
             cats[classify(stack)] += args.sample_ms
             funcs[where(stack)] += args.sample_ms
@@ -368,7 +393,7 @@ def summarise():
     report['counters'] = dict(counters)
     # Sampled main-thread time by category over the whole play window.
     main = collections.Counter()
-    for t, key, stack in samples:
+    for t, key, stack in samples():
         if key == 'main' and t >= play_from:
             main[classify(stack)] += args.sample_ms
     report['main_thread_sampled_ms_by_category'] = dict(main.most_common())
@@ -753,6 +778,9 @@ def start_play(window):
     report['rss_timeline_mb'] = []
     for i in range(1, int(args.seconds // 5) + 1):
         after(i * 5000, lambda: report['rss_timeline_mb'].append(round(rss_mb(), 1)))
+    if args.trace_tuples:
+        import tracemalloc
+        tracemalloc.start(12)
     if args.gc_census:
         report['gc_census'] = []
         base = census()
@@ -766,7 +794,40 @@ def start_play(window):
             shapes = collections.Counter(
                 (len(o), tuple(type(x).__name__ for x in o[:4]))
                 for o in gc.get_objects(generation=2) if type(o) is tuple)
+            sites = None
+            if args.trace_tuples:
+                import tracemalloc
+                sites = collections.Counter()
+                for o in gc.get_objects(generation=2):
+                    if type(o) is not tuple:
+                        continue
+                    tb = tracemalloc.get_object_traceback(o)
+                    if tb is None:
+                        continue
+                    own = [f for f in tb if f.filename.startswith(tree) and '/tools/' not in f.filename]
+                    if not own:
+                        continue
+                    first = own[0]
+                    caller = own[1] if len(own) > 1 else None
+                    sites[f'{os.path.relpath(first.filename, tree)}:{first.lineno}'
+                          + (f' < {os.path.relpath(caller.filename, tree)}:{caller.lineno}' if caller else '')] += 1
+                sites = sites.most_common(15)
+            samples3 = None
+            if args.trace_tuples:
+                found = [o for o in gc.get_objects(generation=2)
+                         if type(o) is tuple and len(o) == 3 and type(o[0]) is float
+                         and type(o[1]) is str and type(o[2]) is tuple][-400:]
+                holders = collections.Counter()
+                for o in found[::40]:
+                    for r in gc.get_referrers(o):
+                        if r is found:
+                            continue
+                        holders[f'{type(r).__name__} len={len(r) if hasattr(r, "__len__") else "?"}'] += 1
+                samples3 = {'examples': [repr(o)[:160] for o in found[-5:]],
+                            'holders': holders.most_common(6)}
             report['gc_census'].append({
+                'gen2_tuple_samples': samples3,
+                'gen2_tuple_sites': sites,
                 's': round((now_ms() - report['play_from_ms']) / 1e3, 1),
                 'tracked': sum(counts.values()), 'frozen': gc.get_freeze_count(),
                 'gen2_tuple_shapes': [[n, list(k)] for k, n in shapes.most_common(8)],
