@@ -17,7 +17,7 @@ tests look for, at two levels:
   heightfield path, and again from the frozen CPU meshes with the old
   pass-through vertex shader and the *same* fragment shader and uniform state.
 
-The preserved quirks (downward flat normal, per-chunk colour normalisation,
+The preserved quirks (downward flat normal,
 the iz-only variation, LOD-dependent colour) are part of what must match.
 """
 

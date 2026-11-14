@@ -303,3 +303,26 @@ def test_rows_from_an_old_chunk_size_or_offset_are_released():
 
     released = t.prune_stale_geometry(2048.0, 100.0, 0.0)
     assert len(released) == 25 and t.count == 0
+
+
+def test_one_height_has_one_colour_on_every_chunk():
+    """Untextured terrain coloured each chunk by its own lowest and highest
+    point, so one height was a different colour on neighbouring chunks: a
+    hard straight seam along every chunk border. The colour reads the whole
+    terrain's height range now."""
+    import numpy as np
+    from engine.terrain import Terrain
+    t = Terrain(seed=11)
+    t.set_biome('grassy_hills')
+    t.set_bounds(-2, 1, -2, 1)
+    t.set_use_textures(False)
+    t.table.ensure_bounds(t._chunk_bounds(), t.chunk_size, t.offset_x, t.offset_z)
+    slots = [int(s) for s in t.table.live_slots()]
+    for s in slots:
+        t.table.min_y[s], t.table.max_y[s] = 10.0 * s, 10.0 * s + 50.0 + s
+        t.table.built[s] = True
+    y = np.linspace(-30.0, 120.0, 16, dtype=np.float32)
+    slope = np.zeros_like(y)
+    colours = [t._ground_colors(s, y, y, slope) for s in slots]
+    for c in colours[1:]:
+        np.testing.assert_allclose(c, colours[0], atol=1e-6)

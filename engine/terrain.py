@@ -1742,12 +1742,10 @@ class Terrain:
                     self._normalized_layer_height(raw), slope,
                     self._layer_heights(), a.layer_blend, a.slope_rock, averages)
                 return np.clip(out, 0.0, 1.0).astype(np.float32)
-        # Biome vertex colours, normalised by the chunk's own height range as
-        # terrain.vert does.
-        table = self.table
-        lo, hi = float(table.min_y[slot]), float(table.max_y[slot])
-        if not table.built[slot] or hi <= lo:
-            lo, hi = self._layer_height_range()
+        # Biome vertex colours, normalised by the whole terrain's height range
+        # as terrain.vert does (one colour per height on every chunk: no seam
+        # at a chunk's border).
+        lo, hi = self._layer_height_range()
         out = self._get_colors_batch(y, (np.asarray(y) - lo) / max(hi - lo, 1e-3)) * 1.1
         return np.clip(out, 0.0, 1.0).astype(np.float32)
 

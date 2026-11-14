@@ -506,6 +506,12 @@ class TerrainGL:
         gl.glUniform3fv(u['uGradC'], limit, C)
         gl.glUniform1fv(u['uGradW'], limit, W)
         gl.glUniform3fv(u['uGradD'], limit, D)
+        # The whole terrain's height range: the vertex colour reads the
+        # gradient against it (one colour per height on every chunk).
+        loc = u.get('uHeightRange', -1)
+        if loc != -1:
+            lo, hi = (self.frame.appearance or {}).get('uHeightRange', (0.0, 1.0))
+            gl.glUniform2f(loc, float(lo), float(hi))
 
     def _index_vao(self, res: int) -> int:
         """The vertex array a chunk of *res* quads a side is drawn with: no

@@ -1701,8 +1701,10 @@ precision highp int;
 // position, the flat face normal, the per-triangle colour, the UV and the
 // smooth normal. The arithmetic follows the old NumPy builder step by step
 // (float32 throughout), including its quirks, which are preserved on purpose:
-// the face normal points down (cross(+x, +z) = -y), colour is normalised by
-// the chunk's own height range, and the "variation" seed reduces to iz.
+// the face normal points down (cross(+x, +z) = -y) and the "variation" seed
+// reduces to iz. (Colour is no longer normalised by the chunk's own height
+// range, which coloured the same height differently on each chunk: a hard
+// seam along every chunk border.)
 out vec3 FragPos;
 out mediump vec3 Normal;
 out mediump vec3 VertexColor;
@@ -1720,6 +1722,10 @@ uniform highp sampler2DArray uHeights;
 uniform ivec2 uChunkI;     // (quads per side, texture layer)
 uniform vec3  uChunkX;     // (world x, world z, grid step), as float32
 uniform vec2  uChunkY;     // (chunk min height, height range; 1 when flat)
+// The whole terrain's (low, high) height (shared with terrain.frag's layers):
+// the colour gradient is read against it, so a height has one colour on every
+// chunk and neighbouring chunks meet without a seam.
+uniform highp vec2 uHeightRange;
 uniform float uTiling;     // Terrain.TILING_SCALE
 uniform int   uFlatMode;
 
@@ -1795,7 +1801,8 @@ void main() {
         VertexColor = vec3(0.7);
     } else {
         float meanHeight = (pa.y + pb.y + pc.y) / 3.0;   // "centroid" is reserved
-        float norm = clamp((meanHeight - uChunkY.x) / uChunkY.y, 0.0, 1.0);
+        float norm = clamp((meanHeight - uHeightRange.x)
+                           / max(uHeightRange.y - uHeightRange.x, 1e-3), 0.0, 1.0);
         int seed = second ? ((ix + 1000) * 1000 + iz + 1000) % 100
                           : (ix * 1000 + iz) % 100;
         float variation = (float(seed) / 100.0 - 0.5) * 0.08;
@@ -2910,7 +2917,8 @@ def _terrain_indexed_sources():
         VertexColor = vec3(0.7);
     } else {
         float meanHeight = (pa.y + pb.y + pc.y) / 3.0;
-        float norm = clamp((meanHeight - uChunkY.x) / uChunkY.y, 0.0, 1.0);
+        float norm = clamp((meanHeight - uHeightRange.x)
+                           / max(uHeightRange.y - uHeightRange.x, 1e-3), 0.0, 1.0);
         int seed = second ? ((ix + 1000) * 1000 + iz + 1000) % 100
                           : (ix * 1000 + iz) % 100;
         float variation = (float(seed) / 100.0 - 0.5) * 0.08;

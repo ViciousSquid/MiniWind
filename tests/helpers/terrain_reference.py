@@ -8,7 +8,7 @@ per-chunk residency / visibility / LOD / build-queue logic that walked a
 
 It is kept so the new pipeline can be proven against the *old behaviour*, not
 against itself. Do not "fix" anything in this module: the downward flat
-normal, the per-chunk colour normalisation, the ``iz``-only variation and the
+normal, the ``iz``-only variation and the
 LOD-dependent colours are the behaviour being preserved. A deliberate visual
 change to the engine is made in the engine, and the parity test that pins it
 is updated alongside, on purpose.
@@ -145,7 +145,11 @@ def reference_chunk_mesh(terrain, world_x, world_z, size, resolution):
 
     min_height = float(heights.min())
     max_height = float(heights.max())
-    height_range = max_height - min_height if max_height > min_height else 1.0
+    # Colour reads the whole terrain's height range, as terrain.vert now does
+    # (per-chunk normalisation coloured one height differently on each chunk:
+    # a hard seam at every chunk border).
+    colour_lo, colour_hi = terrain._layer_height_range()
+    colour_range = colour_hi - colour_lo if colour_hi - colour_lo >= 1e-3 else 1e-3
 
     y00 = heights[:-1, :-1]
     y10 = heights[1:, :-1]
@@ -186,7 +190,7 @@ def reference_chunk_mesh(terrain, world_x, world_z, size, resolution):
         colors1 = np.full((num_quads, 3), 0.7, dtype=np.float32)
     else:
         centroid_y1 = (y00 + y10 + y01).flatten() / 3.0
-        norm_h1 = (centroid_y1 - min_height) / height_range
+        norm_h1 = (centroid_y1 - colour_lo) / colour_range
         colors1 = reference_colors(terrain.biome, centroid_y1, norm_h1)
         var_seed1 = (ix_qg.flatten() * 1000 + iz_qg.flatten()) % 100
         variation1 = (var_seed1 / 100.0 - 0.5) * 0.08
@@ -210,7 +214,7 @@ def reference_chunk_mesh(terrain, world_x, world_z, size, resolution):
         colors2 = np.full((num_quads, 3), 0.7, dtype=np.float32)
     else:
         centroid_y2 = (y10 + y11 + y01).flatten() / 3.0
-        norm_h2 = (centroid_y2 - min_height) / height_range
+        norm_h2 = (centroid_y2 - colour_lo) / colour_range
         colors2 = reference_colors(terrain.biome, centroid_y2, norm_h2)
         var_seed2 = ((ix_qg.flatten() + 1000) * 1000 + iz_qg.flatten() + 1000) % 100
         variation2 = (var_seed2 / 100.0 - 0.5) * 0.08
