@@ -13,6 +13,12 @@ What it does to fire (:mod:`game.grass_fire`, :mod:`game.burning`):
 * wet ground barely catches (its fuel is scaled by :meth:`Weather.dryness`);
 * someone burning, and a Flare's fire on the ground, go out sooner.
 
+What a storm does besides (:attr:`Weather.storm` eases in and out with it):
+the wind blows a gale in gusts (:mod:`game.wind`), the grass and the fields
+thrash in it, lightning strikes now and then (:mod:`game.lightning`), and no
+one travels -- fast travel is refused, and the parties on the roads stay put
+until it passes (:meth:`Weather.storming`).
+
 The look is drawn by :mod:`game.ui.rain` over the scene. It is plain state
 advanced by game time -- no Qt, no GL -- so it is tested headless.
 """
@@ -43,6 +49,10 @@ SOAK_PER_HOUR = 1.5
 DRY_PER_HOUR = 0.12
 #: How dark the sky is over each (a wash over the scene, 0..1).
 GLOOM_OF = {CLEAR: 0.0, OVERCAST: 0.18, RAIN: 0.3, STORM: 0.45}
+#: How stormy the air is in each (0..1): the gale, the lightning.
+STORM_OF = {CLEAR: 0.0, OVERCAST: 0.0, RAIN: 0.0, STORM: 1.0}
+#: What a player is told when a storm forbids travel.
+NO_TRAVEL_TEXT = "No one travels in this storm."
 
 
 class Weather:
@@ -52,6 +62,7 @@ class Weather:
         self.left = self._spell(kind)
         self.rain = RAIN_OF[kind]
         self.gloom = GLOOM_OF[kind]
+        self.storm = STORM_OF[kind]
         self.wet = 0.0
         #: A spell forced from the console: (kind, hours) or None.
         self.forced = False
@@ -72,6 +83,7 @@ class Weather:
         self.forced = True
         if at_once:
             self.rain, self.gloom = RAIN_OF[kind], GLOOM_OF[kind]
+            self.storm = STORM_OF[kind]
         return True
 
     def update(self, hours: float) -> None:
@@ -87,6 +99,7 @@ class Weather:
         k = min(1.0, EASE_PER_HOUR * hours)
         self.rain += (RAIN_OF[self.kind] - self.rain) * k
         self.gloom += (GLOOM_OF[self.kind] - self.gloom) * k
+        self.storm += (STORM_OF[self.kind] - self.storm) * k
         if self.rain > 0.05:
             self.wet = min(1.0, self.wet + SOAK_PER_HOUR * self.rain * hours)
         else:
@@ -105,6 +118,11 @@ class Weather:
     def raining(self) -> bool:
         return self.rain > 0.08
 
+    def storming(self) -> bool:
+        """Whether it storms: from the moment the sky turns to a storm until
+        it turns to something else (no one travels in it)."""
+        return self.kind == STORM
+
     def dryness(self) -> float:
         """How readily grass burns (0 soaked .. 1 dry)."""
         return max(0.05, 1.0 - 0.9 * self.wet)
@@ -115,13 +133,16 @@ class Weather:
 
     def snapshot(self) -> dict:
         return {"kind": self.kind, "left": round(self.left, 3), "rain": round(self.rain, 3),
-                "gloom": round(self.gloom, 3), "wet": round(self.wet, 3)}
+                "gloom": round(self.gloom, 3), "storm": round(self.storm, 3),
+                "wet": round(self.wet, 3)}
 
     def restore(self, data) -> None:
         if not isinstance(data, dict) or data.get("kind") not in KINDS:
             return
         self.kind = data["kind"]
-        for key in ("left", "rain", "gloom", "wet"):
+        # A save from before storms had their own level: as stormy as its sky.
+        self.storm = STORM_OF[self.kind]
+        for key in ("left", "rain", "gloom", "storm", "wet"):
             try:
                 setattr(self, key, float(data.get(key, getattr(self, key))))
             except (TypeError, ValueError):

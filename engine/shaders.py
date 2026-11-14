@@ -2230,7 +2230,14 @@ out vec3 GroundColor;
 uniform mat4 projection;
 uniform mat4 view;
 uniform float time;
+// The wind (TerrainGL.grass_wind): how hard (0.65 a fair breeze; past ~1 a
+// storm's gale, which adds fast gusts and a violent flutter), which way (a
+// zero vector is the default heading), and how far its gust field has rolled
+// along that way so far -- accumulated on the CPU, so a turning or
+// strengthening wind never jumps the pattern.
 uniform float windStrength;
+uniform vec2 uWindDir;
+uniform vec2 uWindScroll;
 uniform vec3 cameraPos;
 uniform int uSegments;
 uniform float uLodStart;
@@ -2344,11 +2351,19 @@ void main() {
                         cameraSide.x * sin(turn) + cameraSide.y * cos(turn));
 
     // Wind: a slow Perlin field rolling across the world, biased downwind,
-    // plus a small per-blade flutter.
-    vec2 windDir = normalize(vec2(1.0, 0.35));
-    float wave = cnoise(iPosition.xz * 0.012 - windDir * time * 0.6);
-    float strong = (wave * 0.5 + 0.2) * windStrength * height;
-    float gentle = sin(time * 1.9 + seedA * 10.0) * 0.08 * height;
+    // plus a small per-blade flutter. A gale adds a finer, faster field of
+    // gusts that lays the grass over and a hard flutter on top.
+    vec2 windDir = dot(uWindDir, uWindDir) > 1e-6 ? normalize(uWindDir)
+                                                  : normalize(vec2(1.0, 0.35));
+    float wave = cnoise(iPosition.xz * 0.012 - uWindScroll);
+    float gale = smoothstep(0.8, 1.1, windStrength);
+    float gust = cnoise(iPosition.xz * 0.021 - uWindScroll * 2.7);
+    float strong = ((wave * 0.5 + 0.2) * windStrength
+                    + gale * (gust * 0.65 + 0.45)) * height;
+    // However hard it blows, a blade lies down rather than stretching.
+    strong = clamp(strong, -0.6 * height, 1.3 * height);
+    float gentle = (sin(time * 1.9 + seedA * 10.0) * 0.08
+                    + gale * sin(time * 11.0 + seedB * 20.0) * 0.2) * height;
     float bendStrength = mix(0.15, 0.45, seedA) * height;
     float bendStart = mix(0.0, 0.3, seedB);
 

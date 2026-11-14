@@ -833,16 +833,23 @@ class MiniwindGame:
 
     def _on_pre_scene(self, ev):
         """Before the world is drawn: tell the renderer what sky the water
-        reflects -- the hour, the cloud, the wind's drift (game/sky.py)."""
+        reflects -- the hour, the cloud, the wind's drift (game/sky.py) --
+        and the wind the grass sways in (game/wind.py grass_sway)."""
+        renderer = ev.get("renderer")
         if not ev.get("play_mode"):
+            # Out of Play the editor's grass sways in the default breeze, not
+            # in the last storm played.
+            if getattr(renderer, "grass_wind", None) is not None:
+                renderer.grass_wind = None
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
-        renderer = ev.get("renderer")
         if session is None or renderer is None:
             return
         import game.sky as sky
+        import game.wind as wind
         renderer.sky_state, renderer.sky_drift = sky.state(session)
+        renderer.grass_wind = wind.grass_sway(getattr(session, "wind", None))
 
     def _on_pre_sprites(self, ev):
         """Draw what lies on the floor, before Fio's effects and actors so they
@@ -1383,7 +1390,9 @@ class MiniwindGame:
                 weather = getattr(session, "weather", None)
                 if weather is not None and session.weather_enabled():
                     import game.ui.rain as rain
-                    rain.draw(painter, weather, session.wind.vector(), w, h, time.perf_counter())
+                    rain.draw(painter, weather, session.wind.vector(), w, h, time.perf_counter(),
+                              lightning=getattr(session, "lightning", None),
+                              to_screen=hud.world_projector(viewport, w, h))
                 # Magic's screen washes (a resurrection's dark red, a frost
                 # hit's rime) over the world, under the HUD.
                 import game.ui.magic_overlay as magic_overlay

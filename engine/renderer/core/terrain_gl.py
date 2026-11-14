@@ -25,6 +25,7 @@ from engine import glraw
 from OpenGL.GL.shaders import compileProgram, compileShader
 
 from engine import shaders
+from engine.renderer.core import grass_wind
 from engine.terrain_frame import grass_vertex_count, heightfield_indices
 from engine.terrain_table import GRID_BORDER, STORED_GRID
 
@@ -175,6 +176,11 @@ class TerrainGL:
         self._failed_programs = set()
         self.grass_tex = self.rock_tex = self.sand_tex = self.snow_tex = 0
         self.grass_time = 0.0
+        #: The wind the grass sways in this frame (a renderer's
+        #: ``grass_wind``, set for the length of :meth:`render`), and how far
+        #: its gust field has rolled (core/grass_wind.py).
+        self.grass_wind = None
+        self.grass_scroll = (0.0, 0.0)
         self._height_pages = []
         self._page_layers = 0
         self._paint_pages = []
@@ -292,6 +298,8 @@ class TerrainGL:
             'grassColor': gl.glGetUniformLocation(self.grass_shader_program, 'grassColor'),
             'cameraPos': gl.glGetUniformLocation(self.grass_shader_program, 'cameraPos'),
             'windStrength': gl.glGetUniformLocation(self.grass_shader_program, 'windStrength'),
+            'uWindDir': gl.glGetUniformLocation(self.grass_shader_program, 'uWindDir'),
+            'uWindScroll': gl.glGetUniformLocation(self.grass_shader_program, 'uWindScroll'),
             'uFogEnabled': gl.glGetUniformLocation(self.grass_shader_program, 'uFogEnabled'),
             'uFogColor': gl.glGetUniformLocation(self.grass_shader_program, 'uFogColor'),
             'uFogStart': gl.glGetUniformLocation(self.grass_shader_program, 'uFogStart'),
@@ -605,8 +613,12 @@ class TerrainGL:
         import time
         now = time.perf_counter()
         last = getattr(self, '_grass_last_time', now)
-        self.grass_time = (self.grass_time + max(0.0, min(now - last, 0.1))) % 100000.0
+        step = max(0.0, min(now - last, 0.1))
+        self.grass_time = (self.grass_time + step) % 100000.0
         self._grass_last_time = now
+        wind_dir, wind_strength = grass_wind.resolve(self.grass_wind)
+        self.grass_scroll = grass_wind.advance_scroll(
+            self.grass_scroll, wind_dir, wind_strength, step)
         gl.glUseProgram(self.grass_shader_program)
         u = self.grass_uniforms
         glraw.uniform_matrix4fv(gl, u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
@@ -614,7 +626,11 @@ class TerrainGL:
         gl.glUniform1f(u['time'], self.grass_time)
         gl.glUniform3f(u['grassColor'], *self.frame.grass_color)
         gl.glUniform3f(u['cameraPos'], float(camera_pos.x), float(camera_pos.y), float(camera_pos.z))
-        gl.glUniform1f(u['windStrength'], 0.65)
+        gl.glUniform1f(u['windStrength'], wind_strength)
+        if u.get('uWindDir', -1) != -1:
+            gl.glUniform2f(u['uWindDir'], *wind_dir)
+        if u.get('uWindScroll', -1) != -1:
+            gl.glUniform2f(u['uWindScroll'], *self.grass_scroll)
         gl.glUniform3f(u['grassTipColor'], *self.frame.grass_tip_colour)
         gl.glUniform1i(u['uMatchGround'], 1 if self.frame.grass_match_ground else 0)
         gl.glUniform1i(u['uTipAuto'], 1 if self.frame.grass_tip_auto else 0)
@@ -1056,17 +1072,20 @@ class TerrainGL:
 
     def render(self, frame, projection, view, camera_pos, frustum_planes=None,
                active_lights_count=0, shadow_cubemaps=None, shadow_unit_base=4,
-               env_uniforms=None, draw_grass=True):
+               env_uniforms=None, draw_grass=True, grass_wind=None):
         """Draw the published *frame* with the current GL context.
 
         ``draw_grass=False`` leaves the grass pass out whatever the frame
-        asks for (the renderer's ``[Renderer] grass`` setting)."""
+        asks for (the renderer's ``[Renderer] grass`` setting).
+        *grass_wind* is ``(dir x, dir z, strength)`` for the grass to sway
+        in (core/grass_wind.py), or None for the default breeze."""
         self.visible_chunks = 0
         self.culled_chunks = 0
         self.total_triangles = 0
         if frame is None or not frame.enabled:
             return
         self.frame = frame
+        self.grass_wind = grass_wind
         try:
             self._render(projection, view, camera_pos, frustum_planes,
                          active_lights_count, shadow_cubemaps, shadow_unit_base,

@@ -5,20 +5,26 @@ The camera looks down on the Vale, so a falling drop is seen end-on: near
 the camera it is big, soft and out of focus, far out toward the edge of the
 view; it streaks in toward the middle as it falls away, smaller and sharper,
 to the ground -- then splashes, a small ring opening where it lands. The wind leans the
-streaks. Under it the scene is washed cooler and darker as the cloud
-thickens, and a storm lights everything, now and then, white.
+streaks (hard in a storm's gale). Under it the scene is washed cooler and
+darker as the cloud thickens, and a storm's lightning (game/lightning.py)
+lights everything white -- a strike close enough to see drawn as a jagged
+bolt down to where it hits, glowing on the ground there.
 
 Drawn over the world and under the HUD, as flat 2D. Nothing is kept between
 frames: every drop is placed from its index and the clock, so it costs one
-batched line draw and one batch of rings, however long it rains.
+batched line draw and one batch of rings, however long it rains. A bolt,
+for the third of a second it shows, is two more batched line draws and a
+glow where it hits.
 """
 
 from __future__ import annotations
 
 import math
 
-from PyQt5.QtCore import QLineF, QRect, QRectF, Qt
+from PyQt5.QtCore import QLineF, QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QPen
+
+from ..lightning import BOLT_SECONDS, flicker
 
 #: Drops on screen at full rain (the screen's area at 1280 x 720).
 DROPS = 260
@@ -35,8 +41,17 @@ BAND_LOOK = ((11.0, 30, (195, 210, 238)), (3.0, 90, (210, 222, 242)),
              (1.2, 190, (230, 238, 250)))
 SPLASH_SECONDS = 0.22
 SPLASH_RADIUS = 7.0
-#: How far the wind leans a drop (pixels across its fall at full wind).
+#: How far the wind leans a drop (pixels across its fall at full wind; a
+#: storm's gale blows past full).
 WIND_LEAN = 40.0
+#: A bolt: how far up the screen it starts (share of the height), how many
+#: times its path is split and jogged, how far a jog goes (share of the
+#: segment), and its glow and core (width px, colour).
+BOLT_RISE = 0.6
+BOLT_SPLITS = 5
+BOLT_JAG = 0.35
+BOLT_GLOW = (13.0, (140, 165, 255))
+BOLT_CORE = (3.0, (250, 252, 255))
 
 
 def _hash(i, k):
@@ -45,8 +60,11 @@ def _hash(i, k):
     return x - math.floor(x)
 
 
-def draw(painter, weather, wind, width, height, now) -> None:
-    """The rain, the gloom and the lightning for *weather* this instant."""
+def draw(painter, weather, wind, width, height, now, lightning=None, to_screen=None) -> None:
+    """The rain, the gloom and the lightning for *weather* this instant.
+    *lightning* is the storm's strikes (game/lightning.py) and *to_screen*
+    ``(x, y, z) -> (px, py) or None`` projects where they hit; without
+    them a storm only flashes, now and then."""
     if weather is None:
         return
     gloom = float(getattr(weather, "gloom", 0.0))
@@ -58,10 +76,18 @@ def draw(painter, weather, wind, width, height, now) -> None:
         painter.fillRect(QRect(0, 0, width, height), QColor(22, 30, 44, int(150 * gloom)))
     if rain > 0.02:
         _drops(painter, rain, wind, width, height, now)
-    if getattr(weather, "kind", "") == "storm":
-        flash = _lightning(now)
-        if flash > 0.0:
-            painter.fillRect(QRect(0, 0, width, height), QColor(235, 240, 255, int(150 * flash)))
+    if lightning is not None:
+        flash = lightning.flash()
+    else:
+        flash = _lightning(now) if getattr(weather, "kind", "") == "storm" else 0.0
+    if flash > 0.0:
+        painter.fillRect(QRect(0, 0, width, height), QColor(235, 240, 255, int(150 * flash)))
+    # The bolt over its own flash, so the wash never dims it.
+    if lightning is not None and to_screen is not None:
+        for strike, age in lightning.bolts():
+            at = to_screen(strike.x, strike.y, strike.z)
+            if at is not None:
+                _bolt(painter, strike.seed, at, age, width, height)
     painter.restore()
 
 
@@ -115,8 +141,67 @@ def _drops(painter, rain, wind, width, height, now) -> None:
         painter.drawEllipse(QRectF(px - r, py - r * 0.6, r * 2, r * 1.2))
 
 
+def bolt_path(seed, end, width, height):
+    """The jagged bolt for strike *seed* coming down to *end* (px), as
+    ``(trunk, branches)``: lists of points from the sky to the ground.
+    Placed from the seed alone, so a bolt keeps its shape while it shows."""
+    ex, ey = end
+    sx = ex + (_hash(seed, 1) - 0.5) * width * 0.35
+    sy = ey - height * BOLT_RISE * (0.7 + 0.3 * _hash(seed, 2))
+    trunk = [(sx, sy), (ex, ey)]
+    for level in range(BOLT_SPLITS):
+        out = [trunk[0]]
+        for i, (a, b) in enumerate(zip(trunk, trunk[1:])):
+            seg = math.hypot(b[0] - a[0], b[1] - a[1])
+            jog = (_hash(seed, 10 + level * 37 + i) - 0.5) * 2.0 * BOLT_JAG * seg
+            # Jog across the segment, so the path zigzags rather than bunching.
+            nx, ny = (-(b[1] - a[1]) / seg, (b[0] - a[0]) / seg) if seg > 1e-6 else (0.0, 0.0)
+            out.append(((a[0] + b[0]) * 0.5 + nx * jog, (a[1] + b[1]) * 0.5 + ny * jog))
+            out.append(b)
+        trunk = out
+    branches = []
+    for k in range(1 + int(_hash(seed, 3) * 2.0)):
+        i = int(len(trunk) * (0.2 + 0.5 * _hash(seed, 4 + k)))
+        bx, by = trunk[i]
+        length = height * (0.08 + 0.1 * _hash(seed, 6 + k))
+        angle = math.pi * 0.5 + (0.6 + 0.5 * _hash(seed, 8 + k)) * (1 if k % 2 else -1)
+        points = [(bx, by)]
+        for j in range(1, 5):
+            t = j / 4.0
+            wob = (_hash(seed, 40 + k * 7 + j) - 0.5) * length * 0.25
+            points.append((bx + math.cos(angle) * length * t + wob,
+                           by + math.sin(angle) * length * t))
+        branches.append(points)
+    return trunk, branches
+
+
+def _bolt(painter, seed, end, age, width, height) -> None:
+    """A strike in view: its bolt, a soft glow round it and a white core,
+    flickering with the flash, and the ground lit where it hits."""
+    # The bolt stays lit through the flash's dark beat (the eye holds it).
+    bright = max(flicker(age), 0.6 if age < BOLT_SECONDS else 0.0)
+    if bright <= 0.0:
+        return
+    trunk, branches = bolt_path(seed, end, width, height)
+    lines = [QLineF(a[0], a[1], b[0], b[1])
+             for path in [trunk, *branches] for a, b in zip(path, path[1:])]
+    painter.setRenderHint(painter.Antialiasing, True)
+    for (width_px, rgb), alpha in ((BOLT_GLOW, 120), (BOLT_CORE, 255)):
+        pen = QPen(QColor(*rgb, int(alpha * bright)), width_px)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLines(lines)
+    painter.setPen(Qt.NoPen)
+    for radius, alpha in ((34.0, 70), (16.0, 170)):
+        painter.setBrush(QColor(225, 232, 255, int(alpha * bright)))
+        painter.drawEllipse(QPointF(end[0], end[1]), radius, radius * 0.65)
+    painter.setBrush(Qt.NoBrush)
+
+
 def _lightning(now) -> float:
-    """A storm's flash: 0 most of the time; now and then a double flicker."""
+    """A storm's flash with no strikes to go by (a caller passing no
+    lightning): 0 most of the time; now and then a double flicker."""
     slot = math.floor(now / 7.0)
     if _hash(int(slot), 9) > 0.55:
         return 0.0
