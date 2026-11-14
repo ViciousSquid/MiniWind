@@ -6,8 +6,9 @@ The whole map's picture (:class:`game.ui.worldmap.WorldMap`: terrain, biome
 regions, water, woods and buildings, painted once in the background and
 cached) with the editor camera on it -- where it is and which way it looks --
 refreshed ten times a second as the camera moves. A plain Qt tool window:
-it floats over the editor, opens at 800 x 600 and can be shrunk to 640 x
-480 (the map scales to fit), and closing it stops its timer. Only one is open at a time; the command raises it again.
+it floats over the editor, opens at 800 x 600 and can be shrunk to 320 x
+240 (the map scales to fit), and closing it stops its timer. Only one is
+open at a time; the command raises it again.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from . import worldmap
 REFRESH_MS = 100
 #: The window's largest and smallest sizes; the map scales to fit.
 MAX_SIZE = (800, 600)
-MIN_SIZE = (640, 480)
+MIN_SIZE = (320, 240)
 CAMERA = QColor(255, 210, 60)
 CAMERA_EDGE = QColor(30, 20, 10)
 BACKGROUND = QColor(22, 20, 26)
@@ -39,7 +40,7 @@ class WorldMapWindow(QWidget):
         self.main_window = main_window
         self.setWindowTitle("World Map")
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        # 800 x 600 at most, and it shrinks (the map scales) to 640 x 480.
+        # 800 x 600 at most, and it shrinks (the map scales) to 320 x 240.
         self.setMaximumSize(*MAX_SIZE)
         self.setMinimumSize(*MIN_SIZE)
         self.resize(*MAX_SIZE)
