@@ -192,11 +192,18 @@ def test_toggling_high_dpi_writes_through_and_warns_it_needs_a_restart(ui, ini):
     assert not ui.high_dpi_note.isVisible(), "back to what is running: no warning"
 
 
-def test_it_shows_the_game_version_and_the_engine_build_apart(ui):
-    from game.rpg import GAME_NAME, GAME_VERSION
-    with open(os.path.join(ROOT, "editor", "version.txt")) as f:
-        engine = f.read().strip().replace("version", "", 1).strip()
-    assert ui.version_label.text() == f"{GAME_NAME} {GAME_VERSION} · Fio {engine}"
+def test_it_shows_each_version_file_line_in_the_launcher(ui):
+    version = lx.read_version(ROOT)
+    assert ui.version_label.text() == version
+    assert len(version.splitlines()) >= 2
+
+
+def test_version_line_preserves_newlines_from_the_file(tmp_path):
+    directory = tmp_path / "editor"
+    directory.mkdir()
+    expected = "version 0.5.0.0\\nFio version 3.5.0.1211"
+    (directory / "version.txt").write_text(expected + "\\n")
+    assert lx.version_line(str(tmp_path)) == expected
 
 
 def test_a_missing_version_file_is_not_an_error(tmp_path):
@@ -211,8 +218,9 @@ def test_the_version_is_plain_text_with_room_for_all_of_it(ui, app):
     style = ui.version_label.styleSheet()
     assert "background:transparent" in style.replace(" ", "")
     assert not ui.version_label.autoFillBackground()
-    needed = QtGui.QFontMetricsF(
-        ui.version_label.font()).horizontalAdvance(ui.version_label.text())
+    metrics = QtGui.QFontMetricsF(ui.version_label.font())
+    needed = max(metrics.horizontalAdvance(line)
+                 for line in ui.version_label.text().splitlines())
     assert ui.version_label.minimumWidth() >= needed
 
 
