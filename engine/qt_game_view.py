@@ -810,6 +810,7 @@ class QtGameView(QOpenGLWidget):
         from engine import sprite_layers
         with self.gl_context():
             sprite_layers.reserve_all()
+        self.audio.preload_combat_sounds()
         return painted
 
     def update_grid(self):

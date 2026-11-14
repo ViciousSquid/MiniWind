@@ -289,3 +289,33 @@ def test_starting_the_view_decodes_only_large_sounds_and_those_in_the_background
     view.audio.sound_pool.clear()
     view.audio._init_sound_system()
     assert view.audio.sound_pool == want and len(started) == 1
+
+
+def test_combat_sounds_are_decoded_before_the_first_fight(main_window, project, monkeypatch):
+    """The player's pain cries and the monsters' shots are decoded as play
+    starts (warm_up_play), not in the frame each is first heard; the rest of
+    the archive is left to its own first use."""
+    from engine.logic_triggers import PAIN_SOUNDS
+    from engine.monster_constants import MONSTER_SHOOT_SOUNDS
+
+    view = main_window.view_3d
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(view.audio, '_ensure_pygame_mixer', lambda: True)
+    view.audio.sound_pool.clear()
+    with zipfile.ZipFile(project / 'assets/sounds.fiopak', 'w') as archive:
+        for member in PAIN_SOUNDS:
+            archive.writestr(member, b'pain')
+        for name in set(MONSTER_SHOOT_SOUNDS.values()):
+            archive.writestr('assets/sounds/' + name, b'shot')
+        archive.writestr('assets/sounds/music_30sec.wav', b'not combat')
+    loaded = set()
+
+    def load_bytes(names, data):
+        loaded.update(names)
+        return True
+
+    monkeypatch.setattr(view.audio, '_load_sound_bytes_to_cache', load_bytes)
+    view.audio.preload_combat_sounds()
+    assert set(PAIN_SOUNDS) <= loaded
+    assert {'assets/sounds/' + n for n in MONSTER_SHOOT_SOUNDS.values()} <= loaded
+    assert not any('music_30sec' in name for name in loaded)
