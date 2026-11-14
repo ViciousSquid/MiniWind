@@ -8,6 +8,8 @@ from PyQt5 import QtGui  # noqa: E402
 
 from ..ui import theme as T  # noqa: E402
 
+pytestmark = pytest.mark.qt
+
 
 def _draw(painter, key, slot=None):
     return T.sprite(painter, key, 20, 10, lambda p: p.fillRect(0, 0, 20, 10, QtGui.QColor("red")),
