@@ -383,6 +383,9 @@ _ENGINE_HOOKS = (
     ("engine.monster_ai", "MonsterAI", "_damage_filter"),
     ("engine.monster_ai", "MonsterAI", "_damage_filter_kinds"),
     ("engine.monster_ai", "MonsterAI", "_hear_hook"),
+    # The editor's live settings MiniWind's sessions read (settings.ini):
+    # a test that hands them a config must not leave it to the next.
+    ("game.runtime", None, "_editor_config"),
 )
 
 

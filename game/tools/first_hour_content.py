@@ -18,9 +18,9 @@ or anything it does not name.
 * **Hal Corbin's band.** The spawner's four anonymous bandits and the two
   "Bandit Archer"s are now Hal Corbin and three named men, tuned for a
   level-1 or 2 character, one archer on the far side. Hal carries the ledger.
-* **The Old Mill grinds again.** It had no mill: now a windmill beside the
-  old mill house, held (idle) while Hal Corbin lives, which Hollin's Cross
-  buys from when it works. Its strongbox holds the Cross's stolen tolls.
+* **The Old Mill's strongbox** holds the Cross's stolen tolls; the camp
+  stands on the ground (an invisible slab over it is gone). Mara's is the
+  only windmill in the Vale.
 * **Locked chests.** Only 14 of 330 containers were locked. Chests and
   hoards are now locked nine times in ten and crates half the time, with a
   lock as hard as what they guard; sacks, barrels and urns have none.
@@ -309,12 +309,16 @@ OLD_MILL_BAND = (
          carries=(("iron_arrow", 6),)),
 )
 
-#: The Old Mill's own windmill, idle while Hal Corbin holds it
-#: (game/windmills.py ``mill_held_by``): a copy of Mara's mill, sunk into the
-#: ground as hers is.
+#: The Old Mill windmill this tool once added (removed: Mara's is the only
+#: windmill in the Vale; see :func:`one_windmill_only`).
 OLD_MILL_WINDMILL = dict(name="old_mill_windmill", sails="old_mill_sails",
-                         pos=(9100.0, 226.0, -5800.0), rotation=(0.0, 30.0, 0.0),
+                         pos=(9100.0, 150.0, -5800.0), rotation=(0.0, 30.0, 0.0),
                          held_by="Hal Corbin")
+#: An invisible slab (nodraw, 1,616 x 1,776, top at 244) lay over the whole
+#: Old Mill camp, 50-90 units above the ground: its edges were walls no one
+#: walking up could climb, so no farmer could reach the mill's door. The camp
+#: stands on the ground itself now.
+OLD_MILL_SLAB = "b74c0988-958e-4b46-9da5-56f91533f829"
 
 
 def old_mill_band(world, log):
@@ -352,53 +356,6 @@ def old_mill_band(world, log):
         things.append({"type": "creature", "pos": list(spec["pos"]),
                        "properties": props, "io_connections": []})
         log.append(f"Old Mill: placed {spec['name']} ({spec['role']})")
-
-
-def old_mill_windmill(world, log):
-    """The Old Mill had no mill at all: the Cross's mill is a copy of Mara's,
-    held -- idle -- while Hal Corbin lives, a working mill once he is dead."""
-    import copy
-    import uuid
-    things = world["things"]
-    spec = OLD_MILL_WINDMILL
-    if _by_name(things, spec["name"]):
-        return
-    body0 = next((t for t in _by_name(things, "windmill") if t["properties"].get("windmill")), None)
-    sails0 = next((t for t in things if body0 is not None and t["properties"].get(
-        "mill_rotor_for") == body0["properties"].get("id")), None)
-    if body0 is None or sails0 is None:
-        raise SystemExit("no windmill to copy for the Old Mill")
-    body, sails = copy.deepcopy(body0), copy.deepcopy(sails0)
-    bid = str(uuid.uuid5(uuid.NAMESPACE_URL, "miniwind:old-mill:windmill"))
-    body["pos"] = list(spec["pos"])
-    bp = body["properties"]
-    bp.update(name=spec["name"], id=bid, display_name="The Old Mill",
-              rotation=list(spec["rotation"]), mill_held_by=spec["held_by"])
-    bp["inventory"] = []
-    for key in ("mill_progress", "mill_updated_at", "flour_queue", "_bw_parked_disabled"):
-        bp.pop(key, None)
-    sails["pos"] = [spec["pos"][0], spec["pos"][1] + 550.0, spec["pos"][2]]
-    sp = sails["properties"]
-    sp.update(name=spec["sails"], id=str(uuid.uuid5(uuid.NAMESPACE_URL, "miniwind:old-mill:sails")),
-              mill_rotor_for=bid, rotation=list(spec["rotation"]))
-    things.extend([body, sails])
-    log.append("Old Mill: placed its windmill, held while Hal Corbin lives")
-
-
-def the_cross_buys_from_its_mill(world, log):
-    """Hollin's Cross has always bought its flour from the Old Mill; while
-    the mill is held, its brewer goes to the nearest working mill instead
-    (game/flour_supply.py ``flour_mill``)."""
-    mills = _by_name(world["things"], OLD_MILL_WINDMILL["name"])
-    if not mills:
-        return
-    mid = mills[0]["properties"]["id"]
-    for t in world["things"]:
-        p = t["properties"]
-        if p.get("display_name") == "Hollin Brewer" and p.get("flour_target"):
-            if p.get("flour_mill") != mid:
-                p["flour_mill"] = mid
-                log.append("Hollin Brewer: buys from the Old Mill when it works")
 
 
 def the_tolls_in_the_strongbox(world, log):
@@ -536,11 +493,35 @@ def thornback_cellar_inside(cave, log):
                    "measures of the stolen flour")
 
 
+def old_mill_on_the_ground(world, log):
+    """No invisible slab over the Old Mill camp: it stands on the ground."""
+    for brush in world.get("brushes", ()):
+        if brush.get("id") == OLD_MILL_SLAB and not brush.get("hidden"):
+            brush["hidden"] = True
+            log.append("Old Mill: the invisible slab over the camp is gone")
+
+
+def one_windmill_only(world, log):
+    """Mara's is the only windmill in the Vale (a second one is the author's
+    to place): the Old Mill windmill this tool once added, its sails, and
+    Hollin Brewer's preference for it go."""
+    names = (OLD_MILL_WINDMILL["name"], OLD_MILL_WINDMILL["sails"])
+    gone = [t for t in world["things"] if t["properties"].get("name") in names]
+    for t in gone:
+        world["things"].remove(t)
+    if gone:
+        log.append("Old Mill: no windmill of its own (Mara's is the only one)")
+    for t in world["things"]:
+        p = t["properties"]
+        if p.get("display_name") == "Hollin Brewer" and p.pop("flour_mill", None):
+            log.append("Hollin Brewer: buys from the nearest working mill")
+
+
 STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
          send_stray_skeletons_home, rename_their_chests, place_first_locks,
-         lock_the_chests, aldric_is_the_turn_in, old_mill_band, old_mill_windmill,
-         the_cross_buys_from_its_mill, the_tolls_in_the_strongbox, put_up_notice_boards,
-         hals_brother_rook, thornback_cellar)
+         lock_the_chests, aldric_is_the_turn_in, old_mill_band,
+         the_tolls_in_the_strongbox, put_up_notice_boards,
+         hals_brother_rook, thornback_cellar, old_mill_on_the_ground, one_windmill_only)
 
 
 def apply(world):

@@ -558,9 +558,8 @@ def test_a_dead_supplier_stays_dead_even_if_the_map_is_left_immediately(supply):
 
 
 def test_a_shop_buys_from_its_own_mill_when_it_works(supply, logic):
-    """Hollin's Cross buys from the Old Mill (``flour_mill``): while Hal
-    Corbin holds it, its brewer goes to the nearest working mill instead, and
-    back to its own once the mill works again."""
+    """A shop with a mill of its own (``flour_mill``) goes to the nearest
+    working mill while its own is held, and back to its own once it works."""
     from engine.prop_entity import Prop as _Prop
     from ..windmills import HELD_BY
     session, mill, shop, _buyer = supply

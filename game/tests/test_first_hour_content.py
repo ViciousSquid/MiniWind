@@ -73,14 +73,14 @@ def test_the_first_hour_has_locks_to_pick(world):
     assert box["owner"] == "Aldric" and [s["id"] for s in box["inventory"]] == ["toll_purse"]
 
 
-def test_the_old_mill_has_a_mill_held_by_hal_corbin(world):
-    by = {t["properties"].get("name"): t for t in world["things"]}
-    mill = by["old_mill_windmill"]
-    assert mill["properties"]["windmill"] and mill["properties"]["mill_held_by"] == "Hal Corbin"
-    assert by["old_mill_sails"]["properties"]["mill_rotor_for"] == mill["properties"]["id"]
-    brewer = [t["properties"] for t in world["things"]
-              if t["properties"].get("display_name") == "Hollin Brewer"][0]
-    assert brewer["flour_mill"] == mill["properties"]["id"]
+def test_marras_is_the_only_windmill(world):
+    """Mara's windmill, by Millbrook, is the only one in the Vale; the Old
+    Mill camp stands on the ground (no invisible slab walls it off)."""
+    mills = [t["properties"] for t in world["things"] if t["properties"].get("windmill")]
+    assert [p["name"] for p in mills] == ["windmill"]
+    assert not any(t["properties"].get("flour_mill") for t in world["things"])
+    slab = [b for b in world["brushes"] if b.get("id") == "b74c0988-958e-4b46-9da5-56f91533f829"]
+    assert slab and slab[0]["hidden"] is True
 
 
 def test_most_chests_are_locked_and_locks_vary(world):

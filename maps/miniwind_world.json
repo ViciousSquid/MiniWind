@@ -3913,7 +3913,8 @@
             "uv_angle": {
                 "top": 0.0
             },
-            "id": "b74c0988-958e-4b46-9da5-56f91533f829"
+            "id": "b74c0988-958e-4b46-9da5-56f91533f829",
+            "hidden": true
         },
         {
             "pos": [
@@ -676179,8 +676180,7 @@
                 "sched_state": "IDLE",
                 "io_enabled": true,
                 "flour_target": 8,
-                "gold": 30,
-                "flour_mill": "3dd67831-98b2-5f04-b403-ec485610ade8"
+                "gold": 30
             },
             "io_connections": []
         },
@@ -764833,115 +764833,6 @@
                         "description": "A plain iron-tipped arrow."
                     }
                 ]
-            },
-            "io_connections": []
-        },
-        {
-            "type": "prop",
-            "pos": [
-                9100.0,
-                226.0,
-                -5800.0
-            ],
-            "properties": {
-                "render_mode": "model",
-                "rotation": [
-                    0.0,
-                    30.0,
-                    0.0
-                ],
-                "model_path": "assets/models/windmill_body.glb",
-                "type": "prop",
-                "io_enabled": true,
-                "name": "old_mill_windmill",
-                "id": "3dd67831-98b2-5f04-b403-ec485610ade8",
-                "sprite_path": "assets/sprites/pickup.png",
-                "sprite_size": [
-                    32.0,
-                    32.0
-                ],
-                "carry_enabled": false,
-                "carry_reach": 110.0,
-                "carry_distance": 55.0,
-                "carry_offset": [
-                    0.0,
-                    -6.0,
-                    0.0
-                ],
-                "drop_velocity": 0.0,
-                "drop_angular_velocity": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "collect_enabled": false,
-                "collect_type": "item",
-                "collect_value": 25,
-                "collect_activation": "walk_over",
-                "collect_collected": false,
-                "collect_respawns": false,
-                "collect_respawn_time": 20.0,
-                "collect_key_name": "blue_key",
-                "collect_item": "gun1",
-                "collect_custom_sprite": "",
-                "mass": 1.0,
-                "collision_size": [
-                    0.0,
-                    0.0,
-                    0.0
-                ],
-                "physics_enabled": false,
-                "no_collision": true,
-                "collision_shape": "auto",
-                "gravity": true,
-                "friction": 0.55,
-                "linear_damping": 0.08,
-                "angular_damping": 0.12,
-                "disabled": false,
-                "scale": [
-                    1,
-                    1,
-                    1
-                ],
-                "windmill": true,
-                "display_name": "The Old Mill",
-                "inventory": [],
-                "use_radius": 280.0,
-                "owner": "8e3851c7_edf9_4d1f_b9ea_37a0b6161d38",
-                "owner_name": "Bram the Farmer",
-                "owner_faction": "villagers",
-                "mill_held_by": "Hal Corbin"
-            },
-            "io_connections": []
-        },
-        {
-            "type": "prop",
-            "pos": [
-                9100.0,
-                776.0,
-                -5800.0
-            ],
-            "properties": {
-                "type": "prop",
-                "name": "old_mill_sails",
-                "id": "c566110e-76c0-58d5-a587-148e8b45ea30",
-                "render_mode": "model",
-                "model_path": "assets/models/windmill_rotor.glb",
-                "mill_rotor_for": "3dd67831-98b2-5f04-b403-ec485610ade8",
-                "rotation": [
-                    0.0,
-                    30.0,
-                    0.0
-                ],
-                "scale": [
-                    1,
-                    1,
-                    1
-                ],
-                "carry_enabled": false,
-                "collect_enabled": false,
-                "physics_enabled": false,
-                "no_collision": true
             },
             "io_connections": []
         },

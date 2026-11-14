@@ -98,7 +98,7 @@
         "target": "Aldric",
         "count": 1
       },
-      "say": "Corbin's book? Give it here. \"Flour out, eleven sacks, to the boat.\" \"Silver, for mill-work, paid at the south shore.\" The south shore means Mirrormere, and a boat on Mirrormere means someone on the water saw it. Old Maud at Reedhollow sees every boat that crosses. The mill's yours to thank for, and so is the Cross's bread, when its sails start again.",
+      "say": "Corbin's book? Give it here. \"Flour out, eleven sacks, to the boat.\" \"Silver, for mill-work, paid at the south shore.\" The south shore means Mirrormere, and a boat on Mirrormere means someone on the water saw it. Old Maud at Reedhollow sees every boat that crosses. The Cross can buy its own grain again, and Millbrook's shelves should fill.",
       "heard": {
         "death": "Hal Corbin",
         "say": "Word got here before you did: Hal Corbin's dead at the Old Mill, and folk are saying who did it. Is that his book? Give it here. \"Flour out, eleven sacks, to the boat.\" \"Silver, for mill-work, paid at the south shore.\" The south shore means Mirrormere, and a boat on Mirrormere means someone on the water saw it. Old Maud at Reedhollow sees every boat that crosses."
@@ -106,7 +106,7 @@
     },
     {
       "index": 60,
-      "journal": "Aldric paid me for Hal Corbin and his ledger. With the Old Mill working again, Hollin's Cross can grind its own grain and Millbrook's shelves should fill. The flour went south, to Mirrormere; Old Maud at Reedhollow sees every boat on that water.",
+      "journal": "Aldric paid me for Hal Corbin and his ledger. With the Old Mill's bandits gone, the roads are clear and Millbrook's shelves should fill. The flour went south, to Mirrormere; Old Maud at Reedhollow sees every boat on that water.",
       "objective": "Aldric paid me for Hal Corbin and his ledger.",
       "finishes": true
     }

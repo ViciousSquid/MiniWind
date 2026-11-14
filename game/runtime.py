@@ -6297,7 +6297,9 @@ class MiniwindSession(SettlementLaw):
             if isinstance(props, dict) and now >= props.get("_yelled_at", 0.0) + 3.0:
                 props["_yelled_at"] = now
                 from .noise import YELL_NOISE
-                self.make_noise(list(thing.pos), YELL_NOISE, "yell")
+                make_noise = getattr(self, "make_noise", None)
+                if make_noise is not None:
+                    make_noise(list(thing.pos), YELL_NOISE, "yell")
 
     def bark_later(self, thing, text, delay: float) -> None:
         """Have *thing* say *text* after *delay* seconds -- the reply in an

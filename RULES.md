@@ -851,13 +851,14 @@ It does nothing for anything else you do, and hearing is unchanged.
   while it has wheat; its sails turn only then. Farmers carry their wheat to
   the nearest working mill; shops send for flour, or walk for it, before
   they open, and a shelf holds only what really reached it.
-* A mill can be **held**. The Old Mill's windmill is held by Hal Corbin:
-  while anyone of that name lives it is idle (nobody delivers to it or buys
-  from it, and its sails stand still). Within 2 seconds of his death,
-  however he dies, it is an ordinary working mill.
-* A shop can have a mill of its own (`flour_mill`). Hollin's Cross buys from
-  the Old Mill while it works, and from the nearest working mill (Mara's, in
-  Millbrook) while it is held.
+* Mara's windmill, by Millbrook, is the only windmill in the Vale.
+* A mill can be **held** (`mill_held_by`, a name): while anyone of that name
+  lives it is idle (nobody delivers to it or buys from it, and its sails
+  stand still); within 2 seconds of their death, however they die, it is an
+  ordinary working mill. No mill is held at present.
+* A shop can have a mill of its own (`flour_mill`): it buys there while that
+  mill works, and from the nearest working mill otherwise. No shop has one
+  at present.
 * **Trouble at the Old Mill** ends with Hal Corbin's band: Hal (level 2,
   80 health, 11 damage) and three men with real names, one an archer posted
   on the far side from the Millbrook road. None of them comes back. Hal
