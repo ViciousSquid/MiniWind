@@ -221,10 +221,13 @@ increases**, or **XP ≥ 100 × level** (spent on levelling). XP comes from kill
 bandit archer 16, bandit chief 45, cultist 18, skeleton 16, skeleton archer
 18, wraith 40, monster 30; townsfolk and farm animals 0) and from quests.
 
-A level-up raises your two favoured attributes and the one you trained most
-this level by +1 to +5 each; you choose one more for +5 (Strength, Endurance,
-Charisma, or — for magic users — Magicka, which raises Intelligence); health
-rises by END × 0.1 for good; all pools refill.
+The **level-up page** is the only way to level. A level-up raises your two
+favoured attributes and the one you trained most this level by +1 to +5 each
+(1 + half the skill rises it governed, rounded down; at most 5); you choose
+one more for +5 (Strength, Endurance, Charisma, or — for magic users —
+Magicka, which raises Intelligence); health rises by END × 0.1 for good; all
+pools refill. No level grows a pool directly (a save from before the page
+keeps any magicka or stamina its older level-ups gave).
 
 **Spell levels** are bought with the same XP: `xp_per_level × current level`
 (common 30, uncommon 45, rare 60, epic 80, legendary 120), up to level 5.
@@ -235,7 +238,7 @@ Each level adds +25% magnitude, +12.5% duration and +10% cost.
 ## 5. Health, magicka, stamina and burden
 
 * **Max health** = END × 2 + level gains + birthsign.
-* **Max magicka** = INT × 1.5 + gains + birthsign (0 for a class with no magic).
+* **Max magicka** = INT × 1.5 + birthsign (0 for a class with no magic).
 * **Max stamina** = (STR + 3 × END) × 0.5 + gains + birthsign.
 * **Regeneration per second:** magicka `max × 0.02 × (0.5 + END/100)` (none
   under the Golem); stamina `max × 0.15` (not while sprinting). Health does
@@ -787,4 +790,3 @@ Places where the code does not yet do what something in the game describes:
 * Sneak-attack damage applies whenever sneaking is on, even if the target has
   already seen you.
 * **Charisma** counts twice in prices.
-* The older pool-based level-up option is unused.

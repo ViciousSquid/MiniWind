@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import random
 
-from ..rpg.character import Character, LEVEL_POOL_GAIN
+import pytest
+
+from ..rpg import character as character_module
+from ..rpg.character import Character
 from ..rpg import magic
 from .. import npc_archery as arch
 
@@ -17,22 +20,29 @@ def _mage():
     return Character.create("M", "wyrfolk", "mage")
 
 
-def test_choosing_magicka_grows_magicka_by_ten():
+def test_the_level_up_page_is_the_only_way_to_level():
+    """The older pool-based level-up is gone: no pool to choose, nothing
+    about pools in the result. Only the level-up page's choice remains."""
     c = _mage()
-    before = c.max_magicka
     c.xp = c.xp_needed
-    res = c.level_up(pool="magicka")
-    assert res["pool"] == "magicka"
-    assert c.max_magicka >= before + LEVEL_POOL_GAIN   # attributes may add more
+    with pytest.raises(TypeError):
+        c.level_up(pool="magicka")
+    assert not hasattr(character_module, "LEVEL_POOLS")
+    assert not hasattr(character_module, "LEVEL_POOL_GAIN")
+    res = c.level_up(choice="magicka")
+    assert "pool" not in res and "pool_gain" not in res
+    assert res["choice"] == "magicka"
     assert c.magicka == c.max_magicka       # a level-up restores you
 
 
-def test_a_pool_choice_survives_a_save():
+def test_an_old_saves_pool_gains_survive_loading():
     c = _mage()
-    c.xp = c.xp_needed
-    c.level_up(pool="stamina")
-    again = Character.from_dict(c.to_dict())
-    assert again.max_stamina == c.max_stamina
+    data = c.to_dict()
+    data["accum_magicka"], data["accum_stamina"] = 10.0, 10.0
+    again = Character.from_dict(data)
+    assert again.max_magicka == c.max_magicka + 10.0
+    assert again.max_stamina == c.max_stamina + 10.0
+    assert Character.from_dict(again.to_dict()).max_stamina == again.max_stamina
 
 
 def test_casting_a_spell_more_makes_it_fizzle_less():
