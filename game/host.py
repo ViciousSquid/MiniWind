@@ -940,6 +940,10 @@ class MiniwindGame:
         if party_lobby is not None:
             session.coop.install_world()
         if session.needs_char_creation:
+            if party_lobby is None:
+                # The world's faces now, under the loading bar, rather than
+                # all at once when the character is made.
+                session.preassign_npc_heads()
             session.open_screen = "charcreate"
             # Freeze the world from frame zero so no combat/sound runs behind the
             # character-creation screen before the first plugin tick.

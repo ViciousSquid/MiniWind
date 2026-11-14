@@ -211,3 +211,28 @@ def test_offscreen_journeys_do_not_block_character_creation_when_exhausted(monke
     assert len(set(s.head_registry.assignments.values())) == 1
 
 
+
+
+def test_heads_given_at_play_start_survive_character_creation_but_the_players():
+    """Faces are handed out as play starts, under the loading bar
+    (preassign_npc_heads); making the character then moves only the NPC
+    holding the face the player chose -- the same faces creation alone gives."""
+    people = [_actor(f"Villager {i}", "") for i in range(6)]
+    s = _session(people)
+    s.preassign_npc_heads()
+    before = [t.properties["head"] for t in people]
+    assert all(heads.is_any_head(face) for face in before)
+    assert len(set(map(image_key, before))) == len(before)
+    chosen = before[2]                       # the player picks a villager's face
+    s.begin_new_character("Player", "valian", "warrior", head=chosen)
+    after = [t.properties["head"] for t in people]
+    assert image_key(chosen) not in map(image_key, after)
+    assert [a == b for a, b in zip(before, after)] == [True, True, False, True, True, True]
+    assert len(set(map(image_key, after))) == len(after)
+
+    # Exactly what character creation alone hands out to everyone else.
+    fresh = [_actor(f"Villager {i}", "") for i in range(6)]
+    alone = _session(fresh)
+    alone.begin_new_character("Player", "valian", "warrior", head=chosen)
+    unmoved = [i for i in range(6) if i != 2]
+    assert [after[i] for i in unmoved] == [fresh[i].properties["head"] for i in unmoved]

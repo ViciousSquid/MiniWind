@@ -2414,8 +2414,15 @@ class MiniwindSession(SettlementLaw):
             c.active_spell = c.known_spells[0]
         # A Warrior's fists are a weapon of their own, in quick slot 1.
         warrior_fist.ensure_fist(self)
-        # New character, new world identity ledger; an old save cannot own faces.
-        self.head_registry.reset()
+        if getattr(self, "_npc_heads_preassigned", False):
+            # This world's faces were handed out as play started
+            # (preassign_npc_heads): reserving the player's chosen head moves
+            # only the NPC that held it, if any.
+            self._npc_heads_preassigned = False
+        else:
+            # New character, new world identity ledger; an old save cannot
+            # own faces.
+            self.head_registry.reset()
         # The player is the chosen head; record it so NPCs never reuse it.
         self._ensure_player_head()
         # Give every NPC/creature a head that is never the player's.
@@ -2457,6 +2464,21 @@ class MiniwindSession(SettlementLaw):
         import time as _time
         self.title_card = {"kicker": f"Chapter {_number_word(q.chapter)} complete",
                            "title": q.chapter_title or q.name, "t0": _time.monotonic()}
+
+    def preassign_npc_heads(self) -> None:
+        """Give every NPC its face as play starts, under the loading bar,
+        while the player is still to choose theirs.
+
+        Faces belong to identities, not to the order they are handed out
+        (``WorldHeadRegistry.assign``), so the character made afterwards
+        (:meth:`begin_new_character`) only re-heads the NPC whose face the
+        player chose, if one has it. Their pictures are loaded with the first
+        frames drawn under the loading bar, not all at once in the first frame
+        after character creation (170 heads, ~0.75 s on the shipped world).
+        """
+        self.head_registry.reset()
+        self._assign_npc_heads()
+        self._npc_heads_preassigned = True
 
     def _ensure_player_head(self) -> str:
         """Make sure the player is a head, and show it; returns the head id.
