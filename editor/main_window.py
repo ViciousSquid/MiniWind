@@ -213,15 +213,20 @@ class _SavedLevelFile:
 
 def _read_level_json(path):
     """A map's JSON: from a mounted ``.fiopak`` data package when one holds
-    it (``maps/cave01.json``), else the loose file."""
+    it (``maps/cave01.json``), else the loose file; with its terrain paint
+    put back from its stamp file (engine.terrain_stamp.merge_level_paint)."""
+    from engine import terrain_stamp
+    data = None
     try:
         from engine import asset_archives
         if asset_archives.in_archive(path):
-            return json.loads(asset_archives.read(path).decode('utf-8'))
+            data = json.loads(asset_archives.read(path).decode('utf-8'))
     except ImportError:
         pass
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    if data is None:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    return terrain_stamp.merge_level_paint(data, path)
 
 class MainWindow(QMainWindow):
     #: A LevelChanger asks for a map: ``(map path, destination spawn)``, the
@@ -704,7 +709,8 @@ class MainWindow(QMainWindow):
                 
             save_path = os.path.join(autosave_dir, save_name)
             
-            write_json_atomic(save_path, self.state.get_level_data(), indent=4)
+            from engine import terrain_stamp
+            terrain_stamp.write_level(save_path, self.state.get_level_data(), indent=4)
 
             print(f"[Autosave] Saved to {save_path}")
             return save_path
@@ -4896,7 +4902,9 @@ class MainWindow(QMainWindow):
         self.stop_mover_preview()
 
         try:
-            write_json_atomic(self.file_path, self.state.get_level_data(), indent=4)
+            # The terrain's paint goes to <map>.stamp beside it.
+            from engine import terrain_stamp
+            terrain_stamp.write_level(self.file_path, self.state.get_level_data(), indent=4)
             print(f"Level saved to {self.file_path}")
             self.unsaved_changes = False
             self.update_title()

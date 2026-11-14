@@ -194,14 +194,27 @@ class PackageExporter:
         data = self._read_map(map_file)
         if data is None:
             return None
+        # Paint from the map's stamp file is in *data*, not the file: the
+        # file cannot be copied as it is.
+        split = self._has_paint_file(map_file)
         try:
             version = int(data.get('version') or 0)
         except (TypeError, ValueError):
-            return None
+            return data if split else None
         from engine.brush_placement import MAP_VERSION, export_world_level
         if version < MAP_VERSION:
-            return None
+            return data if split else None
         return export_world_level(data)
+
+    @staticmethod
+    def _has_paint_file(map_file) -> bool:
+        """Whether the map on disk keeps its paint in a stamp file."""
+        try:
+            with open(map_file, 'r', encoding='utf-8') as f:
+                td = json.load(f).get('terrain_data') or {}
+            return bool(td.get('paint_file'))
+        except Exception:
+            return False
 
     def _read_map(self, map_file) -> Optional[dict]:
         try:
@@ -213,6 +226,10 @@ class PackageExporter:
         if not isinstance(data, dict):
             self.errors.append(f"Not a map document: {map_file}")
             return None
+        # A map's terrain paint kept in its stamp file goes into the package
+        # inline: a package is one map document, as players read it.
+        from engine import terrain_stamp
+        terrain_stamp.merge_level_paint(data, map_file)
         return data
 
     def _asset_references(self, data: dict) -> Set[str]:

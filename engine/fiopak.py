@@ -228,7 +228,12 @@ class FioPackage:
             data = json.loads(_decode(raw))
             if not isinstance(data, dict):
                 raise PackageError(f"Map must be a JSON object: {archive_path}")
-            return data
+            # Paint kept in the map's stamp file, beside it in the package
+            # (the exporter puts it inline, but a hand-made package may not).
+            from . import terrain_stamp
+            name = _normalize(archive_path)
+            return terrain_stamp.merge_level_paint(
+                data, name, read=lambda p: self._read_raw(_normalize(p).replace('\\', '/')))
         except json.JSONDecodeError as exc:
             raise PackageError(f"Corrupt map '{archive_path}': {exc}") from exc
 

@@ -401,7 +401,18 @@ class Terrain:
     #: 256 a chunk is one texel a world unit at the default chunk size (it
     #: was 128: a texel every two units, which is what made paint muddy).
     #: Maps saved at another resolution are converted when loaded.
+    #:
+    #: That is the least a chunk has: a terrain with bigger chunks gets
+    #: more (:meth:`paint_resolution_for`), so a texel never covers more
+    #: than :data:`PAINT_UNITS_PER_TEXEL` world units -- a big world's
+    #: 2048-unit chunks get 512, where 256 (eight units a texel) left its
+    #: roads smeared. A terrain's own is the instance attribute of the same
+    #: name, set with its chunk size (:meth:`_sync_paint_resolution`).
     TERRAIN_PAINT_RESOLUTION = 256
+    #: Most world units a paint texel covers, chunk size allowing.
+    PAINT_UNITS_PER_TEXEL = 4.0
+    #: The most texels a paint chunk has a side.
+    MAX_PAINT_RESOLUTION = 1024
     #: World units one pixel of a tiled paint texture covers: a 512-pixel
     #: image repeats every 256 units, whatever the size of the stamp.
     STAMP_TILE_UNITS_PER_PIXEL = 0.5
@@ -411,6 +422,10 @@ class Terrain:
     #: a map gets as many pages as its painted chunks need. (It was one
     #: layer a chunk slot, painted or not: 32 MB a page at 128.)
     PAINT_PAGE_LAYERS = 32
+    #: Most bytes a paint page's first level holds: at 512 a chunk a page is
+    #: 16 layers (21 MB with mips) -- more than a streamed world keeps
+    #: resident -- rather than 32 (43 MB), half of which would sit empty.
+    PAINT_PAGE_BYTES = 16 * 1024 * 1024
     #: Texture layers per height-grid page; clamped to the driver's limit.
     HEIGHT_PAGE_LAYERS = 512
     #: Every uniform the terrain programs are driven through.
@@ -437,6 +452,7 @@ class Terrain:
         self.features = TerrainFeatures(self.noise, seed)
         self.biome: BiomeConfig = BIOMES[DEFAULT_BIOME]
         self.chunk_size: float = self.DEFAULT_CHUNK_SIZE
+        self._sync_paint_resolution()
         self.mesh_scale: float = 1.0
         self.base_resolution: int = 48
         self.offset_x: float = 0.0
@@ -681,11 +697,47 @@ class Terrain:
         max_z = (self.max_chunk_z + 1) * self.chunk_size + self.offset_z
         return ((min_x, max_x), (min_z, max_z))
     
+    @classmethod
+    def paint_resolution_for(cls, chunk_size) -> int:
+        """Paint texels a side for chunks of *chunk_size* world units: the
+        class's :data:`TERRAIN_PAINT_RESOLUTION`, doubled until a texel is
+        no more than :data:`PAINT_UNITS_PER_TEXEL` units (at most
+        :data:`MAX_PAINT_RESOLUTION`)."""
+        res = int(cls.TERRAIN_PAINT_RESOLUTION)
+        try:
+            size = float(chunk_size)
+        except (TypeError, ValueError):
+            return res
+        while res < cls.MAX_PAINT_RESOLUTION and res * cls.PAINT_UNITS_PER_TEXEL < size:
+            res *= 2
+        return res
+
+    def _sync_paint_resolution(self):
+        """Set this terrain's paint resolution for its chunk size; paint it
+        already holds is resampled to it."""
+        res = type(self).paint_resolution_for(self.chunk_size)
+        old = self.__dict__.get('TERRAIN_PAINT_RESOLUTION')
+        self.TERRAIN_PAINT_RESOLUTION = res
+        if old is None or old == res:
+            return
+        for name in ('texture_paint_maps', 'texture_paint_base'):
+            maps = getattr(self, name, None)
+            if maps:
+                setattr(self, name, {key: self._resample_paint(paint, res)
+                                     for key, paint in maps.items()})
+
+    def paint_page_layers(self) -> int:
+        """Layers a paint page has at this terrain's paint resolution."""
+        side = int(self.TERRAIN_PAINT_RESOLUTION)
+        return max(1, min(int(self.PAINT_PAGE_LAYERS),
+                          int(self.PAINT_PAGE_BYTES) // max(1, side * side * 4)))
+
     def set_mesh_scale(self, factor: float):
         """Set uniform physical terrain scale without changing morphology."""
         factor = max(0.01, float(factor))
         self.mesh_scale = factor
         self.chunk_size = self.DEFAULT_CHUNK_SIZE * factor
+        self._sync_paint_resolution()
         self.cleanup()
         self.mark_all_dirty()
 
@@ -1810,7 +1862,7 @@ class Terrain:
             paint_versions=read_only(self._paint_map_versions),
             paint_epoch=self._paint_epoch,
             paint_resolution=self.TERRAIN_PAINT_RESOLUTION,
-            paint_page_layers=self.PAINT_PAGE_LAYERS,
+            paint_page_layers=self.paint_page_layers(),
             height_page_layers=self.HEIGHT_PAGE_LAYERS,
             max_gradient_stops=self.MAX_GRADIENT_STOPS,
             triangle_count=self.table.triangle_count(),
@@ -3828,6 +3880,7 @@ class Terrain:
         biome_name = data.get('biome', 'grassy_hills')
         if biome_name in BIOMES: self.biome = BIOMES[biome_name]
         self.chunk_size = data.get('chunk_size', self.DEFAULT_CHUNK_SIZE)
+        self._sync_paint_resolution()
         self.mesh_scale = float(data.get('mesh_scale', self.chunk_size / self.DEFAULT_CHUNK_SIZE))
         self.base_resolution = data.get('base_resolution', 48)
         self.offset_x = data.get('offset_x', 0.0)
