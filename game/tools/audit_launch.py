@@ -790,6 +790,20 @@ def end_play(window):
     if player is not None:
         report['player_end_pos'] = [round(float(c), 1) for c in player.pos]
     report['rss_end_mb'] = round(rss_mb(), 1)
+    # Every sprite-layer array alive: its layer size, layers allocated and in
+    # use, and what that costs in texture memory (RGBA8, with mips if any).
+    from engine.sprite_layers import SpriteLayers
+    report['sprite_layers'] = [
+        {'owner': type(o).__qualname__, 'size': o.size, 'capacity': o.capacity, 'count': o.count,
+         'mb': round(o.size * o.size * 4 * o.capacity * (1.0 if o._levels() <= 1 or 'Overhead' in type(o).__qualname__
+                                                          else 4 / 3) / 2**20, 1)}
+        for o in [getattr(view.renderer, '_sprite_layers', None)] + gc.get_objects()
+        if isinstance(o, SpriteLayers) and o.texture]
+    for row, o in zip(report['sprite_layers'],
+                      [o for o in [getattr(view.renderer, '_sprite_layers', None)] + gc.get_objects()
+                       if isinstance(o, SpriteLayers) and o.texture]):
+        row['readbacks'] = getattr(o, 'readbacks', None)
+    report['sprite_layer_imports'] = counters.get('sprite layer imports', 0)
     try:
         report['textures_resident'] = len(view.renderer.texture_manager)
     except Exception:
