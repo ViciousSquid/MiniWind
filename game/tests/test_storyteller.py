@@ -1132,3 +1132,16 @@ def test_receipt_causes_follow_only_the_matching_leg_including_a_resting_arrival
     story.record_journey(trip, 10)
     story.record_journey(trip, 11, arrived=True)
     assert not story.world_view()["receipts"][0]["events"]
+
+
+def test_no_two_travellers_share_a_name():
+    """Names were checked for uniqueness before their title was added ("Ned",
+    then "Ned the Brigand"), while a loaded board remembers them whole: a
+    bandit gang met on Barrow Hill had two "Ned the Brigand"s."""
+    b = board(Storyteller(), seed=5)
+    b._names_used = {f"{first} the Brigand" for first in journeys.FIRST[:30]}   # as loaded
+    taken = set(b._names_used)
+    for _ in range(10):
+        _key, display = b._new_name("bandit")
+        assert display not in taken
+        taken.add(display)

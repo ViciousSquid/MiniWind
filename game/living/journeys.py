@@ -436,23 +436,26 @@ class JourneyBoard:
     # -- names ---------------------------------------------------------------
     def _new_name(self, role: str) -> Tuple[str, str]:
         rng = self.rng
-        for _ in range(40):
-            first = rng.choice(FIRST)
-            ep = EPITHET.get(role)
-            display = f"{first} {rng.choice(ep)}" if ep and rng.random() < 0.8 else first
-            if display not in self._names_used:
-                break
-        self._names_used.add(display)
         title = {"merchant": "the Trader", "mercenary": "the Sellsword",
                  "pilgrim": "the Pilgrim", "courier": "the Courier",
                  "guard": "of the Watch", "bandit": "the Brigand",
                  "bandit_archer": "the Brigand", "greenskin": "", "wolf": ""}.get(role)
-        if role in ("wolf",):
-            display = "Wolf"
-        elif role == "greenskin":
-            display = "Greenskin Raider"
-        elif title and " " not in display:
-            display = f"{display} {title}"
+        for _ in range(40):
+            first = rng.choice(FIRST)
+            ep = EPITHET.get(role)
+            display = f"{first} {rng.choice(ep)}" if ep and rng.random() < 0.8 else first
+            if role in ("wolf",):
+                display = "Wolf"
+            elif role == "greenskin":
+                display = "Greenskin Raider"
+            elif title and " " not in display:
+                display = f"{display} {title}"
+            # The whole name, as a loaded board remembers it: checking the
+            # first name alone let a second "Ned the Brigand" ride with the
+            # first after any reload.
+            if display not in self._names_used or role in ("wolf", "greenskin"):
+                break
+        self._names_used.add(display)
         slug = "".join(c.lower() if c.isalnum() else "_" for c in display).strip("_")
         return f"road_{slug}_{self.next_id}", display
 
