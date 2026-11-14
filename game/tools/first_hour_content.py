@@ -338,6 +338,15 @@ def old_mill_band(world, log):
         things.remove(t)
     if gone:
         log.append(f"Old Mill: removed its spawner and {len(gone) - 1} anonymous archers")
+    # The trigger that set the spawner going when the player walked in: its
+    # only connection was to the spawner, so it goes too.
+    spawn_trigger = [b for b in world.get("brushes", ())
+                     if b.get("is_trigger") and b.get("io_connections")
+                     and all(c.get("target") == "BanditSpawner" for c in b["io_connections"])]
+    for b in spawn_trigger:
+        world["brushes"].remove(b)
+    if spawn_trigger:
+        log.append("Old Mill: removed the trigger that woke its spawner")
     for spec in OLD_MILL_BAND:
         if _by_name(things, spec["name"]):
             continue

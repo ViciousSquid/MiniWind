@@ -3918,41 +3918,6 @@
         },
         {
             "pos": [
-                7544.0,
-                176,
-                -5728.0
-            ],
-            "size": [
-                1744.0,
-                128,
-                1728.0
-            ],
-            "textures": {
-                "north": "trigger.jpg",
-                "south": "trigger.jpg",
-                "east": "trigger.jpg",
-                "west": "trigger.jpg",
-                "top": "trigger.jpg",
-                "down": "default.png",
-                "bottom": "trigger.jpg"
-            },
-            "is_trigger": true,
-            "trigger_type": "Once",
-            "id": "242e9b59-3358-4d8d-be71-37975c634484",
-            "io_connections": [
-                {
-                    "output": "OnTrigger",
-                    "target": "BanditSpawner",
-                    "input": "spawn",
-                    "parameter": "",
-                    "delay": 0.0,
-                    "fire_once": false,
-                    "target_id": "3758927f-46b3-4cf8-b3c5-777152aefbc6"
-                }
-            ]
-        },
-        {
-            "pos": [
                 1720.0,
                 193.75,
                 1075.0
