@@ -2,8 +2,9 @@
 Encounters: the fights worth remembering, with where everyone came from.
 
 An **encounter** opens with the first blow between the player and anyone,
-and closes once :data:`QUIET_SECONDS` pass with no blow, roll or kill in it
-(or the player falls). While it runs it scores how *interesting* it is:
+and closes once :data:`QUIET_SECONDS` of the world's time pass with no blow,
+roll or kill in it, when the player falls, or when the player leaves the map.
+While it runs it scores how *interesting* it is:
 
 =====================================  ======
 Each foe in it                           +1
@@ -42,7 +43,7 @@ pause menu's OPTIONS ▸ Advanced). Recorded, an interesting encounter is
 written to ``saves/encounters/<when>-<place>/``: ``encounter.json`` (the
 record, provenance included) and screenshots taken as it became interesting,
 at the player's lowest health, and at the end. The screenshots are taken by
-the host on the UI thread (:meth:`game.host.MiniwindHost._serve_capture`),
+the host on the UI thread (:meth:`game.host.MiniwindGame._serve_capture`),
 as the autosave is; nothing here touches Qt.
 
 It only watches. It creates no events, rolls no dice and changes nothing in
@@ -287,6 +288,11 @@ class EncounterRecorder:
         self._check()
         if self._clock() - enc.last > QUIET_SECONDS:
             self._close()
+
+    def close(self) -> None:
+        """End the encounter under way, if any (the player leaves the map):
+        an interesting one joins the chronicle as it stands."""
+        self._close()
 
     # -- interesting --------------------------------------------------------
     def _check(self) -> None:

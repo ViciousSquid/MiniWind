@@ -974,6 +974,9 @@ class MiniwindGame:
             if getattr(session, "coop", None) is not None:
                 session.coop.leave()
             session.leave_map()            # raised followers go with the player
+            # A fight still open when the player walks out of a cave is over:
+            # recorded now, it rides the store into the next map's session.
+            session.encounters.close()
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None

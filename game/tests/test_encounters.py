@@ -269,3 +269,32 @@ def test_a_queen_is_a_boss_whatever_her_kind():
     for actor in archers + [spider]:      # tough but nameless; named but ordinary
         rec.engage(actor)
     assert rec.current.reasons["boss"] == 8
+
+
+def test_an_encounter_keeps_the_worlds_time_and_ends_with_the_map(monkeypatch):
+    """The recorder timed quiet spells and fight lengths on the wall clock: a
+    pause mid-fight ended it, and a fight still open when the player walked
+    out of a cave was lost with that map's session -- every cave fight of a
+    playtest (scores 12 to 30) reached no chronicle."""
+    from types import SimpleNamespace as NS
+    from ..host import MiniwindGame
+    session = _session([])
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
+    rec = session.encounters
+    rec.recording = lambda: False
+
+    def wights(tag):
+        for i in range(3):
+            rec.engage(entities.Creature(pos=[0, 0, 0], properties={
+                "npc_role": "wraith", "display_name": f"Barrow Wight {tag}{i}"}))
+    wights("a")
+    session._archery_clock = 20.0          # 20 s of the world's time, quiet
+    rec.tick()
+    assert len(rec.chronicle) == 1 and rec.current is None
+    wights("b")
+    assert rec.current is not None
+    logic = NS(_miniwind=session, game_session=session)
+    for name in ("leave_map", "persist", "uninstall"):
+        monkeypatch.setattr(session, name, lambda *a, **k: None)
+    MiniwindGame.on_play_stop(NS(_host=None), logic)
+    assert rec.current is None and len(rec.chronicle) == 2

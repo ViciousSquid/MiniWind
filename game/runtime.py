@@ -856,7 +856,10 @@ class MiniwindSession(SettlementLaw):
         #: The fights worth remembering, and where everyone in them came from
         #: (game/encounters.py, game/provenance.py).
         from .encounters import EncounterRecorder
-        self.encounters = EncounterRecorder(self)
+        # On the world's own clock (the tick deltas the archers and spells
+        # time by): a pause, a screen or the inventory is not a quiet spell.
+        self.encounters = EncounterRecorder(
+            self, clock=lambda: float(self.__dict__.get("_archery_clock", 0.0)))
         #: Routes round walls for every walker (game/navigation.py).
         from .navigation import Navigator, PlanningBudget
         budget = getattr(logic, '_miniwind_navigation_budget', None)
