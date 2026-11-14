@@ -162,6 +162,14 @@ def test_new_caves_have_their_monsters_and_treasure(definition):
     cave = json.loads((MAPS / f'{slug}.json').read_text())
     creatures = [t for t in cave['things'] if t['type'] == 'creature']
     assert len(creatures) == count
-    assert {t['properties']['display_name'] for t in creatures} == set(monsters)
+    # What kind each is: its name, or, for one with a name of its own (the
+    # crew at Thornback Cellar are still bandits), the kind its role makes it.
+    from ..rpg import bestiary
+
+    def kind(props):
+        if props['display_name'] in monsters:
+            return props['display_name']
+        return bestiary.get(props['npc_role']).name
+    assert {kind(t['properties']) for t in creatures} == set(monsters)
     chest = next(t for t in cave['things'] if t['type'] == 'container')
     assert [(s['id'], s['qty']) for s in chest['properties']['inventory']] == list(loot)
