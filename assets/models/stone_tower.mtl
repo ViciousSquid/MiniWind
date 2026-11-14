@@ -1,0 +1,29 @@
+newmtl CoreStone
+Kd 0.27 0.26 0.24
+
+newmtl StoneA
+Kd 0.43 0.43 0.41
+
+newmtl StoneB
+Kd 0.53 0.52 0.49
+
+newmtl StoneC
+Kd 0.36 0.37 0.36
+
+newmtl StoneD
+Kd 0.60 0.58 0.54
+
+newmtl StoneE
+Kd 0.47 0.48 0.47
+
+newmtl DoorDark
+Kd 0.16 0.085 0.04
+
+newmtl DoorWood
+Kd 0.34 0.18 0.075
+
+newmtl DoorLight
+Kd 0.48 0.27 0.12
+
+newmtl Iron
+Kd 0.075 0.085 0.09
