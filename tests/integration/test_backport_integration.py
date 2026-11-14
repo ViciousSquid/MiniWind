@@ -507,9 +507,23 @@ def test_special_brush_passes_do_not_materialise_dense_slots():
 
     core = _read("engine/renderer/forward/passes.py")
     assert "table.water_params[brushes]" in core
-    renderer = "".join(
-        p.read_text(encoding="utf-8") for p in sorted((ROOT / "engine" / "renderer").rglob("*.py")))
-    assert "water_reflections" not in renderer
+    legacy_references = set()
+    for path in sorted((ROOT / "engine" / "renderer").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                value = node.id
+            elif isinstance(node, ast.Attribute):
+                value = node.attr
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                value = node.name
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                value = node.value
+            else:
+                continue
+            if value == "water_reflections":
+                legacy_references.add(path.relative_to(ROOT).as_posix())
+    assert not legacy_references, legacy_references
     assert "table.glass_params[brushes]" in core
     assert "table.fog_params[brushes]" in core
     assert "brush.get('water_opacity'" not in core
