@@ -1332,7 +1332,8 @@ class Terrain:
         blades around its centre, so a field reads as clumps rather than an
         even carpet. Every blade root is sampled on the (possibly terraced)
         surface. Tufts are dropped on steep ground, outside the grass height
-        layer (high rock and snow, low sand) and in broad noise clearings.
+        layer (high rock and snow, low sand), in broad noise clearings and
+        wherever the biome map paints a wheat field, desert or snowfield.
         """
         table = self.table
         size = float(table.size[slot])
@@ -1381,6 +1382,9 @@ class Terrain:
         clearing = self.noise.noise2d_batch(
             (tx - self.offset_x) * 0.0035 + 91.7, (tz - self.offset_z) * 0.0035 - 13.3)
         weight = weight * np.clip((clearing + 0.3) / 0.45, 0.0, 1.0)
+        # Only wheat grows in a wheat field (and nothing on sand or snow;
+        # the heath thins it): the biome map's own rule for ordinary grass.
+        weight = weight * terrain_biomes.grass_keep(self.biome_weights_batch(tx, tz))
         keep &= edge_roll < weight
         tx = tx[keep]
         tz = tz[keep]

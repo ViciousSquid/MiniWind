@@ -433,6 +433,11 @@ says *Metal armour prevents this*.
 * **Resurrection** (100 magicka, all of it) raises a fallen body as a
   follower, once a day; each body only once; never one blown apart.
 
+### Ground cover
+
+* Meadow grass grows on ordinary ground only: never in a wheat field (only
+  wheat grows there), on sand or on snow, and it thins out under tundra heath.
+
 ### Fire
 
 All fire is the engine's FIRE Effect in one look (`[GAME] fire_style` in
