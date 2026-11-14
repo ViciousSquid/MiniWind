@@ -2834,7 +2834,9 @@ class MainWindow(QMainWindow):
                 }
             """)
 
-        with _loading_overlay(self).busy("Starting the game", "Building the world", 40):
+        # The stages' percentages are of starting play (an operation that
+        # opens a map first gives this its share of the bar: share()).
+        with _loading_overlay(self).busy("Starting the game", "Building the world", 5):
             self._capture_pre_play_world()
             # Play runs on the complete authored world, not the editor's cells.
             self.state.materialize_editor_world()
@@ -2845,8 +2847,14 @@ class MainWindow(QMainWindow):
                 # A played package's cutscenes are read from the package.
                 logic.package = self._package
             physics_enabled = self.config.getboolean('Settings', 'physics', fallback=True)
+            _loading_step(self, "Bringing the world to life", 25)
             self.view_3d.toggle_play_mode(player_start, physics_enabled)
             self.apply_gore_setting()
+            # The first frames of play -- the ground and grass around the
+            # player, every sprite and model in view, first-use shaders and
+            # the game's HUD -- painted here, not in front of the player.
+            _loading_step(self, "Drawing the world", 70)
+            self.view_3d.warm_up_play()
             # The play world is built: settle the collector while the
             # loading bar is still up (engine/gc_policy.py).
             gc_policy.settle()
@@ -5214,8 +5222,9 @@ class MainWindow(QMainWindow):
             play_stopped = was_playing and spawn is None
             if was_playing and not play_stopped:
                 print("[MainWindow] Restarting Play Mode with new level...")
-                _loading_step(self, "Restarting play", 85)
-                self._start_play(spawn)
+                _loading_step(self, "Restarting play", 70)
+                with _loading_overlay(self).share(70, 100):
+                    self._start_play(spawn)
                 if (loadout is not None
                         and self.view_3d.play_mode):
                     logic.session_runtime.restore_loadout(loadout)

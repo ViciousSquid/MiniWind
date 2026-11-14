@@ -433,22 +433,37 @@ if __name__ == "__main__":
     def _open_default_map_unguarded():
         title = (f"Loading {os.path.splitext(os.path.basename(default_map))[0]}"
                  if default_map else "Starting the game")
-        with window.loading_overlay.busy(title, "Reading the map"):
+        overlay = window.loading_overlay
+        # A game may ask to carry on from a save chosen at launch (MiniWind's
+        # CONTINUE): loaded once play has started, the way its own menus load
+        # one.
+        resume = getattr(game_module, 'launched_resume', None)
+        resume_name = (resume() if callable(resume) and party_lobby is None
+                       and launch_choice == "play" else None)
+        # Opening the map, starting play on it and (CONTINUE) loading the
+        # save: each fills its own share of the bar, in proportion to how
+        # long each takes.
+        if launch_choice != "play":
+            shares = ((0, 100),)
+        elif resume_name:
+            shares = ((0, 25), (25, 50), (50, 100))
+        else:
+            shares = ((0, 45), (45, 100))
+        with overlay.busy(title, "Reading the map"):
             if default_map_path and os.path.isfile(default_map_path):
-                window.load_level_file(default_map_path)
+                with overlay.share(*shares[0]):
+                    window.load_level_file(default_map_path)
             if launch_choice == "play":
-                window.loading_overlay.step("Starting the game", 90)
-                window.enter_kiosk_mode()
-                # A game may ask to carry on from a save chosen at launch
-                # (MiniWind's CONTINUE): loaded the way its own menus load one.
-                resume = getattr(game_module, 'launched_resume', None)
-                resume_name = resume() if callable(resume) and party_lobby is None else None
+                overlay.step("Starting the game", shares[1][0])
+                with overlay.share(*shares[1]):
+                    window.enter_kiosk_mode()
                 if resume_name:
-                    window.loading_overlay.step("Loading your last save", 95)
+                    overlay.step("Loading your last save", shares[2][0])
                     menu = getattr(window.view_3d, 'play_menu', None)
                     loader = getattr(getattr(menu, 'actions', None), 'load_named', None)
                     if loader is not None:
-                        loader(resume_name, "your last save")
+                        with overlay.share(*shares[2]):
+                            loader(resume_name, "your last save")
                 if party_lobby is not None and party_lobby.resume_path:
                     from engine import savegame
                     data=savegame.read(party_lobby.resume_path)

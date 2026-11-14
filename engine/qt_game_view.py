@@ -760,6 +760,53 @@ class QtGameView(QOpenGLWidget):
         for tex_name in texture_set:
             self.renderer.load_texture(tex_name, 'textures')
 
+    #: warm_up_play: the most frames it paints, and how long it may take.
+    WARM_UP_FRAMES = 12
+    WARM_UP_SECONDS = 4.0
+
+    def warm_up_play(self, max_frames=None, timeout_s=None):
+        """Paint the first frames of Play now, under the loading bar.
+
+        The first frames of a world are where everything it shows is loaded
+        or built for the first time: the terrain around the player and its
+        grass (a few chunks a frame), every sprite the entity table names,
+        the textures of the models and effects in view, the shaders drawn
+        with for the first time, the game's own HUD caches. Painted here,
+        while the loading bar is up, the first frame the player sees finds
+        them ready instead of stopping for them.
+
+        Waits for the logic thread to publish its first Play frame, then
+        paints until a frame leaves no terrain work for the next one and
+        loads no texture (at most *max_frames*, *timeout_s*). Returns the
+        number of frames painted.
+        """
+        if not self.play_mode or not self.renderer or not self.renderer.ready:
+            return 0
+        max_frames = self.WARM_UP_FRAMES if max_frames is None else max_frames
+        deadline = time.perf_counter() + (
+            self.WARM_UP_SECONDS if timeout_s is None else timeout_s)
+        state = self.game_state
+        while not state.published('is_play_mode', False):
+            if time.perf_counter() > deadline:
+                return 0
+            time.sleep(0.002)
+        textures = getattr(self.renderer, 'texture_manager', None)
+        painted = 0
+        while painted < max_frames and time.perf_counter() < deadline:
+            loaded = len(textures) if textures is not None else 0
+            state.try_swap()
+            self.repaint()
+            painted += 1
+            terrain = self._frame_terrain
+            due = int(getattr(terrain, 'work_due', 0) or 0) if terrain is not None else 0
+            if textures is not None and len(textures) != loaded:
+                continue
+            if not due:
+                break
+            # Height grids come from the builder thread: give it a moment.
+            time.sleep(0.01)
+        return painted
+
     def update_grid(self):
         self.grid_dirty = True
 

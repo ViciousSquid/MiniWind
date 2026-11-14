@@ -379,6 +379,8 @@ class Terrain:
     LOD_RESOLUTIONS = [48, 32, 16, 8]
     LOD_HYSTERESIS_FRAMES = 10
     MAX_UPDATES_PER_FRAME = 2
+    #: Chunk builds and grass the last advance() left for later frames.
+    work_due = 0
     #: Build height grids on a background thread (``TerrainBuilder``) instead
     #: of inside :meth:`advance`. ``main.py`` turns it on for the editor and
     #: the game; off, a terrain is built where it is advanced, a bounded
@@ -1941,6 +1943,10 @@ class Terrain:
             slots, dist_sq, visible, self._near_detail_radius(),
             self.LOD_RESOLUTIONS, self.LOD_DISTANCES_SQ,
             self.LOD_HYSTERESIS_FRAMES)
+        #: Work this frame left for later frames: chunks still to build at
+        #: their wanted detail (or in flight on the builder) and grass still
+        #: to grow in view. 0 once the view is complete (warm_up_play).
+        self.work_due = int(len(queue_slots))
         if self.BACKGROUND_BUILDS:
             self._request_builds(queue_slots, queue_res)
         else:
@@ -1966,6 +1972,7 @@ class Terrain:
             nearest = wanted[np.argsort(dist_sq[wanted], kind='stable')]
             for i in nearest[:self.MAX_UPDATES_PER_FRAME]:
                 self._build_grass(int(slots[i]))
+            self.work_due += max(0, len(nearest) - self.MAX_UPDATES_PER_FRAME)
             grown = self.products.grass
             if grown:
                 far = [int(slot) for slot in slots[dist_sq > reach_sq * 2.56].tolist()
