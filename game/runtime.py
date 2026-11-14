@@ -10918,7 +10918,7 @@ class MiniwindSession(SettlementLaw):
             self.lockpick_thing.properties["lockpick_state"] = self.lockpick_attempt.snapshot()
 
     def tick_lockpicking(self, delta):
-        from .rpg.lockpicking import shear_chance
+        from .rpg.lockpicking import shear_chance, keep_chance
         a, thing = self.lockpick_attempt, self.lockpick_thing
         if self.open_screen != "lockpicking" or a is None or thing is None:
             return
@@ -10953,14 +10953,25 @@ class MiniwindSession(SettlementLaw):
             inv.remove_item(self.game.character.inventory, "lockpick", 1)
             if not inv.has_item(self.game.character.inventory, "lockpick"):
                 self._forget_in_slots("lockpick")
-            chance = shear_chance(a.security)
-            if chance and self.game.rng.random() < chance:
+            sheared = False
+            if shear_chance(a.security) and self.game.dice is not None:
+                # An inexperienced hand's d20 save, in the player's roll box:
+                # fail it and the tip shears off in the lock (RULES.md §12).
+                from .diceroll import roll_check
+                keep = keep_chance(a.security)
+                save = roll_check(self.game.dice, keep, "Roll to save the snapped pick",
+                                  source="lockpick.shear",
+                                  why=f"Security {int(a.security)} — {keep * 100:.0f}%")
+                sheared = not save["success"]
+            if sheared:
                 p["lock_jammed"] = True
                 p["locked"] = True
                 self.close_lockpicking()
-                self.notify("The pick sheared off. Only the Knock spell can open this container now.", 7.0)
+                said = ("The pick sheared off. Only the Knock spell can open this container now.", 7.0)
             else:
-                self.notify("Lockpick snapped. Your set pins are still latched.", 3.0)
+                said = ("Lockpick snapped. Your set pins are still latched.", 3.0)
+            self._after_dice(self._reveal_delay(self.player_actor),
+                             lambda: self.notify(*said))
         elif event == "unlocked":
             p["locked"] = False
             p.pop("lockpick_state", None)

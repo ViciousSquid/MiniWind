@@ -2,7 +2,8 @@
 
 Aim, find the binding point, then follow it as the plug turns. Pins latch
 individually. Only sustained forcing can break a pick; neither missed clicks
-nor random rolls decide a successful set. Snap consequences belong to the host.
+nor random rolls decide a successful set. Snap consequences belong to the host
+(a d20 save, :func:`keep_chance`, while Security is low).
 """
 
 from __future__ import annotations
@@ -48,6 +49,23 @@ def shear_chance(security):
     """Only an inexperienced character can leave a snapped tip in the lock."""
     return 0.25 * _clamp((SHEAR_SKILL_LIMIT - _number(security)) /
                          SHEAR_SKILL_LIMIT, 0.0, 1.0)
+
+
+def keep_chance(security):
+    """The chance a snapped pick comes out whole: the d20 save the host rolls
+    (in the player's roll box) when a pick snaps, if :func:`shear_chance` is
+    not 0."""
+    return 1.0 - shear_chance(security)
+
+
+def shear_risk(security):
+    """The shear risk as the d20 really rolls it: 0, or the failing faces of
+    the :func:`keep_chance` save (5% steps, at least 5%) -- what the lock
+    window shows, so the odds shown are the odds rolled."""
+    if not shear_chance(security):
+        return 0.0
+    from ..diceroll import CHECK_DIE, check_threshold
+    return 1.0 - check_threshold(keep_chance(security)) / CHECK_DIE
 
 
 class LockpickAttempt:

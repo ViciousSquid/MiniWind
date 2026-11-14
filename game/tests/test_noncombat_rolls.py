@@ -177,3 +177,83 @@ def test_the_box_names_what_charm_tries(qt_app):
     assert hud._box_action("Charm & Luck: haggle with Mabel", "Mabel") == "HAGGLE WITH"
     assert hud._box_action("Charm & Luck: charm a pardon from Bors", "Bors") == "CHARM A PARDON FROM"
     assert hud._box_action("Persuade Ann", "Ann") == "PERSUADE"
+
+
+# ------------------------------------------------------------- a snapped pick
+class _Die:
+    """Dice that always land on *face*."""
+    def __init__(self, face):
+        self.face = face
+
+    def randint(self, low, high):
+        return max(low, min(high, self.face))
+
+    def random(self):
+        return 0.5
+
+
+def _snapping(skill, face):
+    from ..diceroll import DiceRoller
+    from ..rpg import items, skills
+    from .test_corpse_loot import _Thing as Box, _Logic as BoxLogic
+    from .test_sim import _FakeGlobals
+    from ..runtime import MiniwindSession
+    chest = Box("Old lockbox", (40, 0, 0), type="container", locked=True,
+                lock_difficulty="novice", owner="", inventory=[])
+    s = MiniwindSession(BoxLogic([chest]), cfg={}, globals_store=_FakeGlobals())
+    s.needs_char_creation = False
+    s.game.character.skills[skills.SECURITY] = skill
+    s.game.character.inventory = [items.make("lockpick", 3)]
+    s.game.dice = DiceRoller(rng=_Die(face))
+    s.game.add_roll_listener(s._on_dice_roll)
+    s.open_container(chest)
+    a = s.lockpick_attempt
+    a.angle = 80 if a.target < 0 else -80
+    a.strain, a.binding_time = .999, 1
+    a.set_tension(True)
+    s.tick_lockpicking(.1)
+    return s, chest
+
+
+@pytest.mark.parametrize("face, jammed", [(1, True), (20, False)])
+def test_a_snapped_pick_is_a_save_in_your_roll_box(qt_app, dice_shown, face, jammed):
+    from ..rpg.lockpicking import keep_chance
+    from ..diceroll import check_target
+    s, chest = _snapping(0, face)
+    box = s.dice_animation
+    roll = box["result"]
+    assert roll["label"] == "Roll to save the snapped pick"
+    assert roll["target"] == check_target(keep_chance(0))
+    assert box["actor"] is s.player_actor and box["side"] == "you"
+    assert bool(chest.properties.get("lock_jammed")) is jammed
+    # Told once the die lands, not before.
+    assert not any("pick" in n["text"].lower() for n in s.notifications)
+    _land(s)
+    assert any(("sheared" if jammed else "snapped") in n["text"] for n in s.notifications)
+
+
+def test_a_practised_hand_rolls_nothing_when_a_pick_snaps(qt_app, dice_shown):
+    s, chest = _snapping(15, 1)
+    assert s.dice_animation is None and not chest.properties.get("lock_jammed")
+
+
+def test_the_lock_window_shows_the_odds_the_die_rolls():
+    from ..diceroll import CHECK_DIE, check_threshold
+    from ..rpg.lockpicking import keep_chance, shear_chance, shear_risk
+    assert shear_risk(15) == 0.0
+    for security in range(15):
+        faces_lost = CHECK_DIE - check_threshold(keep_chance(security))
+        assert shear_risk(security) == pytest.approx(faces_lost / CHECK_DIE)
+        assert abs(shear_risk(security) - shear_chance(security)) <= 0.05 + 1e-9
+
+
+def test_beside_a_window_that_fills_the_middle_the_box_goes_narrow():
+    """The lock window leaves only strips at the edges: the player's box
+    takes its narrow, two-line form there instead of hiding under it."""
+    from ..ui import hud
+    lock = (230, 57, 820, 585)
+    lay = {"w": 262, "h": 110, "visuals": [{}]}
+    (group,) = hud._stack_roll_boxes([((640.0, 330.0), _own(), lay)], 1280, 720, avoid=[lock])
+    (x, y, _sp, _box, placed, _pointer), = group
+    assert placed["docked"] and placed["w"] == hud.ROLL_DOCK_W
+    assert x + placed["w"] <= 230 or x >= 230 + 820

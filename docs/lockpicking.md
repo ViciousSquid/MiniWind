@@ -51,9 +51,13 @@ Releasing tension lets strain recover. A stalled frame counts for at most
 pick. Security practice is awarded once, on opening the lock.
 
 At **Security below 15**, each snap can shear a tip off in the lock. The chance
-is `25% × (15 − Security) / 15` (about 17% at Security 5), displayed before
-tension is applied. A sheared tip jams the container: keys, further picks,
-leaving the map, saving and reloading cannot bypass it.
+is `25% × (15 − Security) / 15` (about 17% at Security 5). It is rolled as a
+d20 save -- "Roll to save the snapped pick", at `1 −` that chance -- in the
+player's roll box over them, which shows over the lockpicking window (RULES.md
+§1); the result is told when the die lands. The window shows the risk as the
+die rolls it (5% steps, at least 5%: 15% at Security 5) before tension is
+applied. A sheared tip jams the container: keys, further picks, leaving the
+map, saving and reloading cannot bypass it.
 
 **Knock** is the sole jam exception. This Defensive touch spell costs 45 base
 magicka and uses normal spell knowledge, skill, magicka, fizzle and practice

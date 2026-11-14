@@ -799,6 +799,19 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
                 chosen = (centre, top)
                 break
         if chosen is None:
+            chosen = _clear_spot(above, widest, total, width, height, heavy, strict=True)
+        narrow = None
+        if chosen is None and avoid and len(members) == 1:
+            # A window fills the middle (the lock): the box goes narrow -- the
+            # roller on one line, what they roll for on the next -- in the
+            # strip beside it, joined to its roller by a line.
+            narrow = _narrow_spot(anchored[members[0]], width, height, heavy)
+        if narrow is not None:
+            x, y, sp, box, lay = narrow
+            groups.append([(x, y, sp, box, lay, False)])
+            placed.append((x, y, lay["w"], lay["h"]))
+            continue
+        if chosen is None:
             chosen = _clear_spot(above, widest, total, width, height, heavy)
         centre, y = chosen
         group = []
@@ -864,10 +877,30 @@ def _draw_leader(painter, box, lay, bx, by, anchor):
     painter.drawEllipse(end, ROLL_LEADER_W + 2, ROLL_LEADER_W + 2)
 
 
-def _clear_spot(above, w, h, width, height, heavy):
+def _narrow_spot(entry, width, height, heavy):
+    """``(x, y, anchor, box, layout)``: *entry* (anchor, box, layout) in its
+    narrow, two-line form in the nearest clear place beside its roller --
+    level with it, down the left or right edge -- or None if neither fits."""
+    sp, box, lay = entry
+    lay = _docked(lay)
+    w, h = lay["w"], lay["h"]
+    y = int(max(4, min(height - h - 4, sp[1] - h / 2)))
+    best = None
+    for x in (4, width - w - 4):
+        if x < 4 or heavy(x, y, w, h):
+            continue
+        cost = abs((x + w / 2) - sp[0])
+        if best is None or cost < best[0]:
+            best = (cost, x)
+    if best is None:
+        return None
+    return int(best[1]), y, sp, box, lay
+
+
+def _clear_spot(above, w, h, width, height, heavy, strict=False):
     """The nearest place to *above* (a centre and top) where a *w* x *h*
     stack fits on screen without covering one already placed; *above* itself
-    (kept on screen) when the screen has no such place."""
+    (kept on screen) when the screen has no such place -- or None, *strict*."""
     best = None
     for k in range(-6, 7):
         for j in range(-4, 5):
@@ -883,6 +916,8 @@ def _clear_spot(above, w, h, width, height, heavy):
                 best = (cost, centre, top)
     if best is not None:
         return best[1], best[2]
+    if strict:
+        return None
     return above[0], max(4, min(height - h - 4, above[1]))
 
 

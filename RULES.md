@@ -48,7 +48,9 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
   conversation, trade, a container and the lockpicking window (never over
   any other menu); a box the window, or a toast, would cover moves just
   beside, above or below it, its line still pointing to the roller (a box
-  below its roller points up). What a roll decides there -- an answer, a
+  below its roller points up); where the window fills the middle (the
+  lock), the box goes narrow, as in the right-hand column, at the edge of
+  the screen beside it. What a roll decides there -- an answer, a
   toast -- is told when its die lands, as in a fight.
 * **Who rolls where it can be seen.** Only actors in the NEAR simulation tier
   roll dice on screen; anyone further out (ACTIVE, DISTANT, DORMANT), and
@@ -612,6 +614,11 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 | Fabled | ×6.0 | ×1.7 |
 
 * Luck 60 or more finds 10% more gold.
+* **Locks** are picked by hand, not by dice (docs/lockpicking.md). Below
+  Security 15 a snapped pick is a d20 save, `1 − 25% × (15 − Security) ÷
+  15`, in your roll box ("YOU: ROLL TO SAVE THE SNAPPED PICK"): fail it and
+  the tip shears off, jamming the lock (only Knock opens it). The lock
+  window shows the risk the die rolls (`game/rpg/lockpicking.py`).
 
 ---
 
