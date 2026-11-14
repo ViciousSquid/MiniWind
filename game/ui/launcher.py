@@ -147,10 +147,10 @@ def text_unit(widget) -> float:
 
 
 def read_version(root_dir: str = ".") -> str:
-    """The build string from ``editor/version.txt``, or ``""`` if unreadable.
+    """The complete contents of ``editor/version.txt``, or ``""`` if unreadable.
 
-    The file is the single source of truth the splash's version print already
-    uses, so the launcher never carries a version of its own to fall behind."""
+    The file is the single source of truth for the version text shown by the
+    splash, launcher and About dialog."""
     try:
         with open(os.path.join(root_dir, "editor", "version.txt")) as f:
             return f.read().strip()
@@ -627,8 +627,8 @@ class Launcher(QDialog):
         footer = QHBoxLayout()
         footer.setSpacing(int(unit * 0.7))
 
-        # Plain text, no panel behind it, and wide enough for the whole build
-        # string — a version that reads "version 2.2.0.24…" is worse than none.
+        # Plain text, no panel behind it; the version file's explicit
+        # newlines are shown as separate lines in the launcher footer.
         self.version_label = QLabel(version_line(root_dir))
         self.version_label.setTextFormat(Qt.PlainText)
         self.version_label.setStyleSheet(
