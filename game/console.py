@@ -448,6 +448,20 @@ def _toggle_overlay(ctx, key, what):
     return None
 
 
+def cmd_worldmap(ctx, args):
+    """worldmap -- (editor) the world map in a window of its own, with the
+    editor camera on it, refreshed ten times a second."""
+    if ctx.play_mode:
+        debug_log("Error", "worldmap: editor only (in Play, the map is in the pause menu).")
+        return None
+    if ctx.main_window is None:
+        debug_log("Error", "worldmap: needs the editor window.")
+        return None
+    from .ui import worldmap_window
+    worldmap_window.toggle(ctx.main_window)
+    return None
+
+
 def cmd_viewcone(ctx, args):
     """viewcone -- show or hide every head's view cone (yellow) and so its
     blind spot; settings.ini ``[developer] view_cones = true`` starts with
@@ -740,6 +754,8 @@ COMMANDS = (
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("weather",), cmd_weather,
      "[sunny|overcast|rain|storm] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
+    (("worldmap",), cmd_worldmap,
+     "— (Editor) The world map in a window, with the editor camera on it (10 Hz)"),
     (("viewcone", "viewcones"), cmd_viewcone,
      "— Show/hide every head's view cone and blind spot (debug; settings.ini: [developer] view_cones)"),
     (("showsound",), cmd_showsound,
