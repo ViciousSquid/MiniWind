@@ -1181,7 +1181,8 @@ class MiniwindSession(SettlementLaw):
         weather_on = self.weather_enabled()
         storm = self.weather.storm if weather_on else 0.0
         self.wind.update(hours, delta, storm)
-        self.lens_water.update(delta, self.weather.rain if weather_on else 0.0)
+        self.lens_water.update(delta, self.weather.rain if weather_on else 0.0,
+                               self._lens_motion(delta))
         self._update_lightning(delta, storm)
         self._update_storm_howl(delta, storm)
         # The clouds the water reflects ride the wind (game/sky.py).
@@ -1231,6 +1232,26 @@ class MiniwindSession(SettlementLaw):
         from .lightning import THUNDER_SOUND
         for _strike, volume in lightning.thunder_due():
             self.play_ui_sound(THUNDER_SOUND, volume)
+
+    #: The camera's speed (world units a second) that counts as fast for the
+    #: rain on its glass, and above which a move is a jump (a teleport or
+    #: fast travel), not movement.
+    LENS_FAST_SPEED = 400.0
+    LENS_JUMP_SPEED = 1500.0
+
+    def _lens_motion(self, delta):
+        """The camera's movement across the screen for the drops on its
+        glass: ``(x, y)``, length 1 at LENS_FAST_SPEED (world x is screen x,
+        world z screen y, as the rain's wind lean is)."""
+        pos = self._player_pos()
+        last = self.__dict__.get("_lens_last_pos")
+        self._lens_last_pos = pos
+        if pos is None or last is None or delta <= 1e-6:
+            return (0.0, 0.0)
+        vx, vz = (pos[0] - last[0]) / delta, (pos[2] - last[2]) / delta
+        if math.hypot(vx, vz) > self.LENS_JUMP_SPEED:
+            return (0.0, 0.0)
+        return (vx / self.LENS_FAST_SPEED, vz / self.LENS_FAST_SPEED)
 
     def _update_storm_howl(self, delta, storm) -> None:
         """The storm's wind howls while it lasts: the wind ambience loop,

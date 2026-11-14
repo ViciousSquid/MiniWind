@@ -524,10 +524,20 @@ the sky, fading in as weather does):
   are big soft smears out toward the edges of the view, streaking in toward
   the middle as they fall, small and sharp, to splash on the ground; the
   wind leans them; the world is washed darker under cloud; a storm's
-  lightning flashes. The camera gets wet: drops gather on the glass (more in
-  a storm), each a little lens showing the world through it upside-down,
-  run together, slide down when heavy, and dry off when the rain stops.
-  None of it ever covers the HUD.
+  lightning flashes. The camera gets wet: drops land on the glass (more in a
+  storm) and run down it, the bigger the faster — a tiny bead clings and
+  barely creeps (0.006 screen heights a second), a drop of radius 0.045
+  (screen heights) runs at 0.55, bigger faster still up to 0.9. A drop runs
+  in fits and starts (snagging at 0.3 of its pace, then surging), wanders a
+  little side to side, is drawn long as it runs, leaves a trail of small
+  beads behind (losing water to them) and sweeps up the beads in its way,
+  growing heavier and faster. Beads are egg-shaped, wider at the bottom.
+  Small beads and trails fade after a few seconds even in the rain (at most
+  64 drops on the glass); everything dries off when the rain stops, the
+  smallest first. Moving the camera fast pushes the drops back across the
+  glass, big ones most. Each drop has no colour of its own: it shows the
+  world behind it upside-down, mirrored and much smaller, with a thin dark
+  edge. None of it ever covers the HUD.
 
 **The sky** is only ever seen in water (the camera looks down). Open water
 reflects a real one: a layer of clouds high above the world, drifting with

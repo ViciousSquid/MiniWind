@@ -196,12 +196,16 @@ void main() {
 }"""
 
 #: Rain on the lens (game/lens_water.py): each drop on the glass is a little
-#: lens -- the picture behind it seen through it upside-down and smaller,
-#: a darker edge, a bright rim and a highlight -- over the finished frame.
+#: lens with no colour of its own -- the picture behind it seen through it
+#: upside-down, mirrored and much smaller (nearly the whole view in each
+#: drop), with a dark edge and a faint highlight -- over the finished frame.
+#: Beads are egg-shaped, wider at the bottom; a running drop is drawn long,
+#: rounded at the bottom and narrowing above.
 _WET_FRAG = """#version 330 core
 in vec2 uv;
 uniform sampler2D scene;
-uniform vec4 drops[48];      // xy centre (uv, y up), z radius (uv height), w wetness
+uniform vec4 drops[64];      // xy centre (uv, y up), z radius (uv height), w wetness
+uniform float stretch[64];   // 1 round .. longer as it runs
 uniform int count;
 uniform float aspect;
 out vec4 frag;
@@ -209,28 +213,36 @@ void main() {
     vec2 at = uv;
     float shade = 1.0;
     float shine = 0.0;
-    for (int i = 0; i < 48; i++) {
+    for (int i = 0; i < 64; i++) {
         if (i >= count) break;
         vec2 c = drops[i].xy;
         float R = max(drops[i].z, 1e-4);
+        float s = stretch[i];
         vec2 d = uv - c;
         d.x *= aspect;
-        d.y *= 0.92;                       // a bead sits a touch wider than tall
+        // Long while it runs: the body trails up behind its rounded front.
+        d.y = (d.y - R * (s - 1.0) * 0.5) / s;
+        // Egg-shaped: narrower above, wider at the bottom (more so running).
+        float k = clamp(d.y / R, -1.0, 1.0);
+        d.x *= 1.0 + (0.16 + 0.5 * (s - 1.0)) * k;
         float r = length(d) / R;
         if (r >= 1.0) continue;
         float w = drops[i].w;
-        float h = sqrt(1.0 - r * r);       // the bead's dome
-        // Through the bead the world is seen turned over and smaller.
-        vec2 look = -d * (2.6 + 2.0 * h);
+        float h = sqrt(1.0 - r * r);       // the drop's dome
+        // Through the drop the world is seen turned over and mirrored, and
+        // much smaller: across a drop, most of the view.
+        vec2 look = -(d / R) * (0.30 - 0.12 * h);
         look.x /= aspect;
-        at = mix(at, c + look * R * 0.0 + look, w);
-        shade *= mix(1.0, 0.55 + 0.45 * h, w);           // darker toward the edge
-        float rim = smoothstep(0.78, 0.95, r) * (1.0 - smoothstep(0.95, 1.0, r));
-        vec2 hl = d / R - vec2(-0.32, 0.38);
-        shine += w * (0.35 * rim + 0.9 * exp(-dot(hl, hl) * 40.0));
+        at = mix(at, c + look, w);
+        // No colour of its own: only a thin dark edge where the glass
+        // bends the light away, and a faint glint of the sky.
+        float edge = smoothstep(0.80, 1.0, r);
+        shade *= mix(1.0, 1.0 - 0.45 * edge, w);
+        vec2 hl = d / R - vec2(-0.30, 0.42);
+        shine += w * 0.35 * exp(-dot(hl, hl) * 60.0);
     }
     vec3 col = texture(scene, clamp(at, vec2(0.001), vec2(0.999))).rgb * shade;
-    frag = vec4(col + vec3(shine * 0.55), 1.0);
+    frag = vec4(col + vec3(shine), 1.0);
 }"""
 
 #: Effects are hidden by walls in front of them.
@@ -296,7 +308,7 @@ def _init(gl) -> bool:
         _S.lens_vao = gl.glGenVertexArrays(1)
         _S.wet_prog = _compile(gl, _LENS_VERT, _WET_FRAG)
         _S.wet_loc = {n: gl.glGetUniformLocation(_S.wet_prog, n)
-                      for n in ("scene", "drops", "count", "aspect")}
+                      for n in ("scene", "drops", "stretch", "count", "aspect")}
         _S.ok = True
     except Exception as exc:
         print(f"[MiniWind] magic effects unavailable: {exc}")
@@ -477,7 +489,7 @@ def draw_lenses(projection, view, lenses) -> int:
 
 
 def draw_wet_lens(drops) -> int:
-    """Rain on the lens: *drops* ``[(x, y, radius, wetness)]`` in screen
+    """Rain on the lens: *drops* ``[(x, y, radius, wetness[, stretch])]`` in screen
     fractions (y down) from :meth:`game.lens_water.LensWater.frame`, drawn
     over the finished frame in one pass. Returns how many."""
     if not drops:
@@ -498,11 +510,16 @@ def draw_wet_lens(drops) -> int:
         gl.glBindTexture(gl.GL_TEXTURE_2D, _S.tex)
         loc = _S.wet_loc
         gl.glUniform1i(loc["scene"], 0)
-        data = np.zeros((48, 4), dtype=np.float32)
-        n = min(48, len(drops))
-        for i, (x, y, r, wet) in enumerate(drops[:n]):
+        data = np.zeros((64, 4), dtype=np.float32)
+        shape = np.ones(64, dtype=np.float32)
+        n = min(64, len(drops))
+        for i, drop in enumerate(drops[:n]):
+            x, y, r, wet = drop[:4]
             data[i] = (x, 1.0 - y, r, wet)          # uv has y up
-        gl.glUniform4fv(loc["drops"], 48, data)
+            if len(drop) > 4:
+                shape[i] = drop[4]
+        gl.glUniform4fv(loc["drops"], 64, data)
+        gl.glUniform1fv(loc["stretch"], 64, shape)
         gl.glUniform1i(loc["count"], n)
         gl.glUniform1f(loc["aspect"], w / float(h))
         gl.glBindVertexArray(_S.lens_vao)
