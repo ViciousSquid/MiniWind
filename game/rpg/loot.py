@@ -3,7 +3,7 @@ Loot tables & leveled lists.
 
 When a creature dies or a container is opened, a loot table is rolled to produce
 item stacks. Tables are *leveled*: entries can gate on the player level so that
-higher-level foes drop better gear, in the Elder-Scrolls tradition. Gold ranges
+higher-level foes drop better gear. Gold ranges
 and drop chances are per entry.
 """
 

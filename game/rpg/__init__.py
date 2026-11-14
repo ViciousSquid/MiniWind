@@ -2,7 +2,7 @@
 Miniwind RPG — the first-party fantasy role-playing core.
 
 This package is the *game*: a self-contained, engine-agnostic simulation of an
-Elder-Scrolls-style RPG — attributes, skills that improve with use, races,
+classic open-world RPG — attributes, skills that improve with use, races,
 classes, birthsigns, levelling, an item/equipment model, melee & archery & magic
 combat rules, spells, quests, guild factions with reputation, loot tables and a
 saveable game world. None of it imports PyQt or OpenGL, so the whole game can be

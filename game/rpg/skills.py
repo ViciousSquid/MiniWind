@@ -1,5 +1,5 @@
 """
-Skills — the heart of the "get better by doing" progression (Elder-Scrolls style).
+Skills — the heart of the "get better by doing" progression.
 
 Every skill:
 
