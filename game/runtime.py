@@ -291,6 +291,14 @@ DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
 #: How long an explained roll stays in the HUD's roll log, and how many it keeps.
 ROLL_LOG_SECONDS = 8.0
 ROLL_LOG_MAX = 6
+#: A search's dice (game/rpg/loot.py): every "Roll to find ..." of one search
+#: in one box; the special and how-many rolls that come with them.
+LOOT_FIND_SOURCE = "loot.drop"
+LOOT_SOURCES = (LOOT_FIND_SOURCE, "loot.rarity", "loot.quantity")
+#: A roll that waits for the player's box (a search made with the killing
+#: blow) takes it once the roll before has been thrown this long: every die
+#: has landed (no roll lasts past 1.2 s) and its verdict has been read.
+QUEUED_ROLL_AFTER = 2.2
 
 #: Probability an NPC/creature with no authored handedness is left-handed. Left
 #: handedness is deliberately rare, so most actors wield on the right.
@@ -1360,7 +1368,19 @@ class MiniwindSession(SettlementLaw):
         owner = getattr(coop, "players", {}).get(getattr(self, "player_id", None))
         companion = owner is not None and owner.bot
         npc = bool(context.get("npc"))
-        if result.get("label") or companion or npc:
+        loot = _source in LOOT_SOURCES
+        # A search lists in the log only what it finds: a find, or a special,
+        # that fails is shown in the search's roll box alone (RULES.md §12).
+        unlogged = loot and result.get("success") is False
+        shown = not (companion or npc or context.get("quiet")) \
+            and self._visualise_dice_rolls_enabled()
+        if loot and shown:
+            # Gathered into one box for the whole search (_show_search), and
+            # logged when its dice land.
+            self.__dict__.setdefault("_loot_search", []).append(
+                (_source, result, context, not unlogged))
+            return
+        if (result.get("label") or companion or npc) and not unlogged:
             line = describe_roll(result)
             if companion and not npc and not line.startswith(owner.profile["name"] + ":"):
                 line = owner.profile["name"] + ": " + line
@@ -1373,14 +1393,11 @@ class MiniwindSession(SettlementLaw):
                     if member.connected and not member.bot:
                         sinks[id(member.session)] = member.session
             for session in sinks.values():
-                session.game.message(line)
-                session.roll_log.append({"text": line, "why": str(result.get("why", "")),
-                                         "success": good, "t": ROLL_LOG_SECONDS})
-                del session.roll_log[:-ROLL_LOG_MAX]
+                session._log_roll(line, result, good)
         if companion:
             self.dice_animation = None
             return
-        if npc or context.get("quiet") or not self._visualise_dice_rolls_enabled():
+        if not shown:
             return
         current = self.dice_animation
         if current is not None and current.get("elapsed", 0.0) == 0.0:
@@ -1401,6 +1418,80 @@ class MiniwindSession(SettlementLaw):
             against = (str(context["against_name"]), str(context.get("against_side") or "foe"))
         self.dice_animation = self._own_roll_box(result, against)
         return
+
+    def _log_roll(self, line, result, good) -> None:
+        """Put an explained roll in the message log and the HUD's roll log."""
+        self.game.message(line)
+        self.roll_log.append({"text": line, "why": str(result.get("why", "")),
+                              "success": good, "t": ROLL_LOG_SECONDS})
+        del self.roll_log[:-ROLL_LOG_MAX]
+
+    def _show_own_box(self, box) -> None:
+        """*box* takes the player's roll box now; a search's log lines are
+        told when its dice land."""
+        self.dice_animation = box
+        lines = box.pop("_log", None)
+        if lines:
+            def tell():
+                for line, result in lines:
+                    self._log_roll(line, result, result.get("success"))
+            self._after_dice(self._reveal_delay(self.player_actor, every_die=True), tell)
+
+    def _show_search(self) -> None:
+        """Put the search just made (its "Roll to find ..." dice, gathered by
+        _on_dice_roll) in one roll box over the player: a d20 for every find,
+        the misses dimmed once landed, "FOUND 2 OF 15" and what was found.
+        If the player's box is busy (the killing blow's dice) it waits its
+        turn (QUEUED_ROLL_AFTER)."""
+        search = self.__dict__.get("_loot_search")
+        if not search:
+            return
+        self._loot_search = []
+        log = [(describe_roll(r), r) for _src, r, _ctx, logged in search if logged]
+        finds = [(r, ctx) for src, r, ctx, _logged in search if src == LOOT_FIND_SOURCE]
+        if not finds:
+            for line, r in log:
+                self._log_roll(line, r, r.get("success"))
+            return
+        amounts = {ctx.get("item_id"): int(ctx.get("low", 1)) + int(r.get("roll_result", 1)) - 1
+                   for src, r, ctx, _logged in search if src == "loot.quantity"}
+        special = {ctx.get("item_id") for src, r, ctx, _logged in search
+                   if src == "loot.rarity" and r.get("success")}
+        found, names = [], []
+        for r, ctx in finds:
+            found.append(bool(r.get("success")))
+            if not r.get("success"):
+                continue
+            name = str(r.get("label", "")).replace("Roll to find ", "", 1)
+            item = ctx.get("item_id")
+            if item in special:
+                name = "special " + name
+            if item in amounts:
+                name += f" ×{amounts[item]}"
+            names.append(name)
+        n, k = len(found), sum(found)
+        result = {
+            "label": "Roll to find loot",
+            "dice_notation": f"{n}d20",
+            "components": [{"notation": "1d20", "roll_details": [int(r["roll_result"])],
+                            "roll_result": int(r["roll_result"])} for r, _ctx in finds],
+            "roll_details": [int(r["roll_result"]) for r, _ctx in finds],
+            "roll_result": k,
+            "success": k > 0,
+            "finds": found,
+            "verdict": f"FOUND {k} OF {n}" if k else "NOTHING FOUND",
+            "found_items": names,
+        }
+        box = self._own_roll_box(result)
+        box["_log"] = log
+        current = self.dice_animation
+        if current is None or current.get("actor") is None:
+            self._show_own_box(box)
+            return
+        older = self.__dict__.get("_queued_roll")
+        for line, r in (older or {}).get("_log", ()):
+            self._log_roll(line, r, r.get("success"))     # replaced unseen: told now
+        self._queued_roll = box
 
     def _own_roll_box(self, result, against=None) -> Dict:
         """The player's own roll box for *result*: shown over the player
@@ -1690,6 +1781,8 @@ class MiniwindSession(SettlementLaw):
         self.notifications = []
         self.floaters = []
         self.dice_animation = None
+        self._queued_roll = None
+        self._loot_search = []
         self.roll_log = []
         self.gore.clear()
         self._deaths_seen = set()
@@ -4277,11 +4370,16 @@ class MiniwindSession(SettlementLaw):
             box["elapsed"] += max(0.0, float(delta))
             if box["elapsed"] >= box["duration"]:
                 del boxes[key]
-        if self.dice_animation is None:
-            return
-        self.dice_animation["elapsed"] += max(0.0, float(delta))
-        if self.dice_animation["elapsed"] >= self.dice_animation["duration"]:
-            self.dice_animation = None
+        self._show_search()
+        if self.dice_animation is not None:
+            self.dice_animation["elapsed"] += max(0.0, float(delta))
+            if self.dice_animation["elapsed"] >= self.dice_animation["duration"]:
+                self.dice_animation = None
+        queued = self.__dict__.get("_queued_roll")
+        if queued is not None and (self.dice_animation is None
+                                   or self.dice_animation["elapsed"] >= QUEUED_ROLL_AFTER):
+            self._queued_roll = None
+            self._show_own_box(queued)
 
     def escape_closes_modal(self) -> bool:
         """Would Escape close whatever the game currently has on screen?

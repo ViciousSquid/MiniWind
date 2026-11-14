@@ -62,7 +62,8 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
     numbers, or red with gold numbers.
   * *Everyone else's:* always greyscale, each die a random finish — black with
     white numbers, charcoal, slate, light grey, or white with black numbers.
-  * The dice of one roll are never the same colour.
+  * The dice of one roll are never the same colour (a search, with more
+    dice than finishes, uses every finish before it repeats one).
 * **Co-op.** "You" is whoever plays on your machine (the local client). Your
   rolls are in colour under YOU; every other client's player is a party
   member, and their rolls show on your screen too — under their name in
@@ -614,6 +615,18 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 ## 12. Loot and rarity
 
 * Each loot entry drops on a d20 at `chance + (LUCK − 40) × 0.2%`.
+* **One box per search.** Every "Roll to find …" of one search (a kill of
+  yours, or the first look at a body) shows in one roll box over you: a
+  small d20 for every find, nine to a row, each that missed dimmed once it
+  lands; then "FOUND 2 OF 15" (or "NOTHING FOUND", once every die is down)
+  and what was found. A search made with the killing blow waits until that
+  blow's box has been up 2.2 s (`QUEUED_ROLL_AFTER`, `game/runtime.py`).
+* **The log lists only what a search finds**: each find that comes up, a
+  special that comes up, and how many -- told when the box's dice land. A
+  miss is shown in the box alone. (Every combat roll is logged, hit or
+  miss, since each is the outcome of something someone did; a missed find
+  is nothing happening, and the fifteen of a bandit buried the fight's
+  lines.) With dice not shown, the same lines are logged at once.
 * A weapon or armour may be special: `6% + level × 1% + (LUCK − 40) × 0.1%`;
   if special, it is Fabled 15%, Rare 35%, Fine 50%.
 

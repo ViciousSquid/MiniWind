@@ -349,3 +349,122 @@ def test_being_caught_is_told_when_their_die_lands():
     assert s._notice_wait() > 0.3                      # their die is still in the air
     s._tick_dice_animation(1.5)
     assert s._notice_wait() == 0.0
+
+
+# ------------------------------------------------------------------ loot finds
+class _Faces:
+    """Dice that land on each of *faces* in turn (then the last again)."""
+    def __init__(self, *faces):
+        self.faces = list(faces)
+
+    def randint(self, low, high):
+        face = self.faces.pop(0) if len(self.faces) > 1 else self.faces[0]
+        return max(low, min(high, face))
+
+    def random(self):
+        return 0.5
+
+
+def _searching(*faces):
+    from ..diceroll import DiceRoller
+    from ..rpg import loot
+    s = _session()
+    s.game.dice = DiceRoller(rng=_Faces(*faces))
+    s.game.add_roll_listener(s._on_dice_roll)
+    table = loot.register(loot.LootTable("test_search", [
+        loot.LootEntry("lockpick", 0.5, (1, 4)),        # need 11+, then a d4
+        loot.LootEntry("potion_heal_minor", 0.5),       # need 11+
+        loot.LootEntry("ingr_wolf_pelt", 0.5),          # need 11+
+    ]))
+    return s, table
+
+
+def test_a_search_is_one_box_of_find_dice_over_you(qt_app, dice_shown):
+    s, table = _searching(15, 3, 4, 20)           # lockpick found (d4: 3), potion missed, pelt found
+    stacks, _gold = table.roll(1, dice=s.game.dice)
+    assert s.dice_animation is None and s.roll_log == []      # gathered, not yet shown
+    s._tick_dice_animation(0.0)
+    box = s.dice_animation
+    roll = box["result"]
+    assert box["actor"] is s.player_actor and box["side"] == "you"
+    assert roll["roll_details"] == [15, 4, 20]                # every find's d20
+    assert roll["finds"] == [True, False, True]
+    assert roll["verdict"] == "FOUND 2 OF 3"
+    assert roll["found_items"] == ["Lockpick ×3", "Wolf Pelt"]
+    assert [s_["id"] for s_ in stacks] == ["lockpick", "ingr_wolf_pelt"]
+
+
+def test_a_search_logs_only_what_it_finds_when_its_dice_land(qt_app, dice_shown):
+    s, table = _searching(15, 3, 4, 20)
+    table.roll(1, dice=s.game.dice)
+    s._tick_dice_animation(0.0)
+    assert s.roll_log == []                                   # the dice are in the air
+    _land(s)
+    texts = [e["text"] for e in s.roll_log]
+    assert texts == ["Roll to find Lockpick: 15 (need 11+) — SUCCESS",
+                     "Roll for how much Lockpick: 3",
+                     "Roll to find Wolf Pelt: 20 (need 11+) — SUCCESS"]
+    assert not any("FAILED" in line for line in s.game.log)
+
+
+def test_a_search_with_nothing_found_says_so_and_logs_nothing(qt_app, dice_shown):
+    s, table = _searching(2)
+    table.roll(1, dice=s.game.dice)
+    s._tick_dice_animation(0.0)
+    assert s.dice_animation["result"]["verdict"] == "NOTHING FOUND"
+    _land(s)
+    assert s.roll_log == []
+
+
+def test_a_search_made_with_the_killing_blow_waits_its_turn(qt_app, dice_shown):
+    from ..diceroll import roll_check
+    from .. import runtime as rt
+    s, table = _searching(18, 15, 3, 4, 20)       # the blow's d20, then the search
+    hit = roll_check(s.game.dice, 0.9, "Roll to hit Bandit", source="combat.hit")
+    table.roll(1, dice=s.game.dice)
+    s._tick_dice_animation(0.0)
+    assert s.dice_animation["result"] is hit                  # the blow first
+    s._tick_dice_animation(rt.QUEUED_ROLL_AFTER - 0.1)
+    assert s.dice_animation["result"] is hit
+    s._tick_dice_animation(0.2)
+    assert s.dice_animation["result"]["verdict"] == "FOUND 2 OF 3"
+
+
+def test_without_dice_shown_a_search_still_logs_only_its_finds(qt_app):
+    s, table = _searching(15, 3, 4, 20)
+    table.roll(1, dice=s.game.dice)
+    assert [e["text"].split(":")[0] for e in s.roll_log] == [
+        "Roll to find Lockpick", "Roll for how much Lockpick", "Roll to find Wolf Pelt"]
+
+
+def test_a_search_box_lays_its_many_dice_out_in_rows(qt_app):
+    from ..ui import hud
+    result = {"label": "Roll to find loot", "verdict": "FOUND 1 OF 14", "success": True,
+              "finds": [False] * 13 + [True], "found_items": ["Lockpick"],
+              "components": [{"notation": "1d20", "roll_details": [v]} for v in range(1, 15)]}
+    box = {"result": result, "seed": 7, "side": "you", "actor": None, "elapsed": 0.0}
+    lay = hud._roll_box_layout(box, 1280)
+    assert lay["die"] == hud.ROLL_SMALL_DIE and lay["cols"] == hud.ROLL_ROW_MAX
+    assert lay["dice_h"] == 2 * hud.ROLL_SMALL_DIE + hud.ROLL_ROW_GAP
+    assert [v["found"] for v in lay["visuals"]] == result["finds"]
+    assert hud._box_verdict(result) == ("FOUND 1 OF 14", True)
+    narrow = hud._docked(lay)
+    assert narrow["w"] == hud.ROLL_DOCK_W and narrow["cols"] < lay["cols"]
+
+
+def test_a_search_travels_to_co_op_clients_whole(qt_app, dice_shown):
+    """Inside the world frame like every roll: the dice, which found
+    something, the count and the finds -- never the host's log lines."""
+    from ..multiplayer import replication
+    s, table = _searching(15, 3, 4, 20)
+    table.roll(1, dice=s.game.dice)
+    s._tick_dice_animation(0.0)
+    sent = replication.rolls_out(s)["dice_animation"]
+    assert sent["result"]["finds"] == [True, False, True]
+    assert sent["result"]["verdict"] == "FOUND 2 OF 3"
+    assert sent["result"]["found_items"] == ["Lockpick ×3", "Wolf Pelt"]
+    assert "_log" not in sent and "seed" in sent
+    client = _session()
+    replication.rolls_in(client, {"dice_animation": sent, "roll_boxes": []}, {},
+                         client.player_actor, "p2")
+    assert client.dice_animation["result"] == sent["result"]

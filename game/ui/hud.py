@@ -478,6 +478,14 @@ def _draw_bang(painter, x, baseline, height, colour):
 #: stands: room for "*fizzled*", HIT or MISS to rise between them.
 ROLL_BOX_DIE = 40
 ROLL_BOX_TITLE_H = 30
+#: A box with more dice than ROLL_ROW_DICE (a search: a d20 for every find)
+#: draws them this small, ROLL_ROW_MAX to a row, ROLL_ROW_GAP apart; a die
+#: that missed is dimmed to ROLL_MISS_ALPHA once it has landed.
+ROLL_ROW_DICE = 4
+ROLL_SMALL_DIE = 24
+ROLL_ROW_MAX = 9
+ROLL_ROW_GAP = 6
+ROLL_MISS_ALPHA = 0.4
 #: Under the dice: room for a die's role label, or the small gap without one.
 ROLL_ROLE_LINE_H = 20
 ROLL_DICE_GAP = 6
@@ -511,7 +519,10 @@ def _box_action(label, against_name):
 
 
 def _box_verdict(result):
-    """The settled line: "14 (need 7+) — HIT", "4 (need 9+) — MISS"."""
+    """The settled line: "14 (need 7+) — HIT", "4 (need 9+) — MISS" -- or a
+    search's own ("FOUND 2 OF 15")."""
+    if result.get("verdict"):
+        return str(result["verdict"]), bool(result.get("success"))
     total = result.get("roll_result", 0)
     target = result.get("target")
     if target is None:
@@ -854,10 +865,24 @@ def _docked_column(anchored, natural, width, height, top, placed):
 
 def _docked(lay):
     """*lay* (a roll box's layout) for the docked column: narrow, the title
-    on two lines -- the roller, then what they roll for and against whom."""
-    dice_w = len(lay.get("visuals") or ()) * (ROLL_BOX_DIE + 14) + 26
-    return dict(lay, docked=True, w=int(max(ROLL_DOCK_W, dice_w)),
-                h=int(lay["h"] + ROLL_DOCK_LINE_H))
+    on two lines -- the roller, then what they roll for and against whom; a
+    search's many small dice in more, shorter rows."""
+    lay = dict(lay)
+    count = len(lay.get("visuals") or ())
+    if lay.get("cols") and count > ROLL_ROW_DICE:
+        pitch = lay["pitch"]
+        cols = max(1, min(lay["cols"], (ROLL_DOCK_W - 26) // pitch))
+        rows = (count + cols - 1) // cols
+        dice_h = rows * lay["die"] + (rows - 1) * ROLL_ROW_GAP
+        lay.update(h=lay["h"] - lay["dice_h"] + dice_h, cols=cols, dice_h=dice_h,
+                   dice_w=cols * pitch + 26)
+    dice_w = lay.get("dice_w") or count * (ROLL_BOX_DIE + 14) + 26
+    w = int(max(ROLL_DOCK_W, dice_w))
+    if lay.get("found_line"):
+        dm = QFontMetrics(T.font(11, family="small"))
+        lay["details"] = lay["details"][:-1] + [dm.elidedText(lay["found_line"],
+                                                              Qt.ElideRight, w - 16)]
+    return dict(lay, docked=True, w=w, h=int(lay["h"] + ROLL_DOCK_LINE_H))
 
 
 def _draw_leader(painter, box, lay, bx, by, anchor):
@@ -957,7 +982,15 @@ def _roll_box_layout(box, width):
     if companion and companion.get("line"):
         details.append(str(companion["line"]))       # what luck did
     # (A critical needs no line here: "Crit!" floats just under the box.)
-    die = ROLL_BOX_DIE
+    count = len(visuals)
+    if count > ROLL_ROW_DICE:           # many dice: small, in rows
+        die, pitch = ROLL_SMALL_DIE, ROLL_SMALL_DIE + ROLL_ROW_GAP
+        cols = min(count, ROLL_ROW_MAX)
+    else:
+        die, pitch, cols = ROLL_BOX_DIE, ROLL_BOX_DIE + 14, max(1, count)
+    rows = (count + cols - 1) // cols
+    dice_h = rows * die + (rows - 1) * ROLL_ROW_GAP
+    dice_w = cols * pitch + 26
     # Small text in the small-text face (Texturina Light), never under 11px.
     title_font = T.font(12, bold=True, family="small")
     fm = QFontMetrics(title_font)
@@ -965,14 +998,20 @@ def _roll_box_layout(box, width):
     detail_font = T.font(11, family="small")
     dm = QFontMetrics(detail_font)
     detail_w = max((dm.horizontalAdvance(t) for t in details), default=0)
-    w = int(max(150, title_w + 20, detail_w + 20, len(visuals) * (die + 14) + 26))
+    w = int(max(150, title_w + 20, detail_w + 20, dice_w))
+    found_line = ", ".join(str(n) for n in result.get("found_items") or ())
+    if found_line:
+        # What a search found, on one line as wide as the box allows.
+        details.append(dm.elidedText(found_line, Qt.ElideRight, int(w - 16)))
     # Under the dice only a die's role label ("to hit", "damage") needs a
     # line; without one the verdict sits right below them.
     under = ROLL_ROLE_LINE_H if any(d.get("role") for d in visuals) else ROLL_DICE_GAP
-    h = int(ROLL_BOX_TITLE_H + die + under + 22 + 18 * len(details) + 10)
+    h = int(ROLL_BOX_TITLE_H + dice_h + under + 22 + 18 * len(details) + 10)
     return {"visuals": visuals, "elapsed": elapsed, "alpha": alpha, "side": side,
             "parts": parts, "details": details, "title_font": title_font, "fm": fm,
-            "title_w": title_w, "w": w, "h": h, "result": result, "under": under}
+            "title_w": title_w, "w": w, "h": h, "result": result, "under": under,
+            "die": die, "pitch": pitch, "cols": cols, "dice_h": dice_h, "dice_w": dice_w,
+            "found_line": found_line}
 
 
 def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
@@ -982,7 +1021,9 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
     visuals, elapsed, alpha = layout["visuals"], layout["elapsed"], layout["alpha"]
     side, parts, details = layout["side"], layout["parts"], layout["details"]
     w, h, fm, result = layout["w"], layout["h"], layout["fm"], layout["result"]
-    die = ROLL_BOX_DIE
+    die = layout.get("die", ROLL_BOX_DIE)
+    pitch = layout.get("pitch", die + 14)
+    cols = layout.get("cols", len(visuals)) or 1
     count = len(visuals)
     kind = "you" if side == "you" else "other"
     bg = QColor(*ROLL_BOX_BG[kind])
@@ -1043,8 +1084,10 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
     # The player's dice in colour, anyone else's greyscale; never two alike.
     finish = dice3d.finishes(count, side == "you", visuals[0].get("shade", 0) if visuals else 0)
     for index, d in enumerate(visuals):
-        cx = bx + w / 2.0 + (index - (count - 1) / 2.0) * (die + 14)
-        cy = by + ROLL_BOX_TITLE_H + die / 2.0
+        row, col = divmod(index, cols)
+        in_row = min(cols, count - row * cols)
+        cx = bx + w / 2.0 + (col - (in_row - 1) / 2.0) * pitch
+        cy = by + ROLL_BOX_TITLE_H + die / 2.0 + row * (die + ROLL_ROW_GAP)
         m = d["motion"]
         if elapsed < m["delay"]:
             settled = False
@@ -1054,9 +1097,11 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
         settled = settled and done
         if index == 0:
             first_done = done
-        body, ink = finish[index]
+        body, ink = finish[index % len(finish)]
+        shade = alpha if not (done and d.get("found") is False) \
+            else int(alpha * ROLL_MISS_ALPHA)          # a find that missed
         dice3d.draw_die(painter, d["sides"], d["value"], cx + dx * die * 0.5,
-                        cy + dy * die * 0.45, die, rotation, alpha=alpha,
+                        cy + dy * die * 0.45, die, rotation, alpha=shade,
                         body=body, ink=ink,
                         tumbling=not done, flicker=int(local * 18.0) + index * 5)
         if d.get("role"):
@@ -1064,10 +1109,11 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
                       DIE_ROLE_LABELS.get(d["role"], ""), size=11,
                       color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
                       bold=True, family="small")
-    line_y = by + ROLL_BOX_TITLE_H + die + layout.get("under", ROLL_ROLE_LINE_H)
+    line_y = by + ROLL_BOX_TITLE_H + layout.get("dice_h", die) + layout.get("under", ROLL_ROLE_LINE_H)
     # Each line as its die lands: the verdict with the roll's own die, the
     # damage once the damage die has landed too -- never ahead of its dice.
-    if first_done:
+    # A search's count waits for every one of its dice.
+    if (settled if result.get("finds") else first_done):
         verdict, passed = _box_verdict(result)
         ink = (_verdict_color(passed, alpha) if passed is not None
                else QColor(255, 214, 130, alpha))
@@ -1885,6 +1931,10 @@ def _prepare_dice_animation(animation, result):
     visuals = []
     entries = [dict(e, role=result.get("die_role") or ("hit" if companion else ""))
                for e in _dice_entries(result)]
+    finds = result.get("finds")
+    if finds and len(finds) == len(entries):
+        # A search: which of its dice found something (the rest dim).
+        entries = [dict(e, found=bool(f)) for e, f in zip(entries, finds)]
     if companion:
         entries += [dict(e, role=companion.get("die_role") or "damage", second=True)
                     for e in _dice_entries(companion)]
