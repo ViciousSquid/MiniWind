@@ -42,7 +42,8 @@ ATTRIBUTE_INFO: Dict[str, Dict[str, str]] = {
     ENDURANCE:    {"label": "Endurance",    "desc": "Maximum health and stamina, health gained "
                    "per level, hit chance and dodging, magicka regeneration and "
                    "resisting magic."},
-    SPEED:        {"label": "Speed",        "desc": "How fast you move."},
+    SPEED:        {"label": "Speed",        "desc": "How fast you move: 10% slower at 0, "
+                   "15% faster at 100."},
     INTELLIGENCE: {"label": "Intelligence", "desc": "Maximum magicka."},
     PERSONALITY:  {"label": "Charisma",  "desc": "How others see you: their disposition, "
                    "merchants' prices, and whether they can bear to deal with you."},

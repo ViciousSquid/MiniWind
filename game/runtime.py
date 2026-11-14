@@ -4376,9 +4376,10 @@ class MiniwindSession(SettlementLaw):
             self._edge_told = False
 
     def _update_encumbrance(self) -> None:
-        """Carrying more than you can bear slows you to a third of your pace,
-        and the game says so -- once when it happens, again every few seconds
-        while you stay overloaded, and once more when you are free of it."""
+        """Your pace: Speed sets it (Character.move_speed_factor), and
+        carrying more than you can bear slows you to a third of that. The
+        game says so -- once when it happens, again every few seconds while
+        you stay overloaded, and once more when you are free of it."""
         c = getattr(getattr(self, "game", None), "character", None)
         player = fio.player(self.logic)
         if c is None or player is None:
@@ -4387,7 +4388,11 @@ class MiniwindSession(SettlementLaw):
             heavy = bool(c.is_overencumbered)
         except Exception:
             heavy = False
-        player.move_speed_scale = ENCUMBERED_SPEED if heavy else 1.0
+        try:
+            pace = float(c.move_speed_factor)
+        except Exception:
+            pace = 1.0
+        player.move_speed_scale = pace * (ENCUMBERED_SPEED if heavy else 1.0)
         was = getattr(self, "_encumbered", False)
         now = self.clock.day * 24.0 + self.clock.hour
         if heavy and (not was or now - getattr(self, "_encumbered_told", -99.0) > 0.08):

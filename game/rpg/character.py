@@ -34,6 +34,9 @@ from . import birthsigns
 
 #: Major-skill increases needed to earn one character level.
 SKILL_UPS_PER_LEVEL = 10
+#: Movement pace per point of Speed above (or below) 40: Speed 0 walks at
+#: x0.90, 40 at x1.00, 100 at x1.15 (:meth:`Character.move_speed_factor`).
+SPEED_PACE_PER_POINT = 0.0025
 #: Max stamina each point of Athletics gained adds, for good.
 ATHLETICS_STAMINA = 1.0
 #: Stamina a second of sprinting costs (a fresh 100 lasts about eight seconds).
@@ -287,6 +290,14 @@ class Character:
     #: stamina from Athletics rises (:data:`ATHLETICS_STAMINA` a point), plus
     #: any an old save's pool-based level-ups gave
     _accum_stamina: float = 0.0
+
+    @property
+    def move_speed_factor(self) -> float:
+        """How fast Speed makes you move, as a multiple of the usual pace:
+        ``1 + (Speed - 40) x`` :data:`SPEED_PACE_PER_POINT` (0.90 at Speed 0,
+        1.15 at 100). Encumbrance multiplies on top (runtime)."""
+        speed = attr.clamp(self.attrs.get(attr.SPEED, attr.BASE_ATTRIBUTE))
+        return 1.0 + (speed - attr.BASE_ATTRIBUTE) * SPEED_PACE_PER_POINT
 
     @property
     def carry_capacity(self) -> float:

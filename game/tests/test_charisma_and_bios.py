@@ -164,3 +164,40 @@ def test_charisma_counts_once_in_prices():
     assert cha.tier(80) == cha.STRIKING
     assert buy == int(1000 * (2.0 - factor) * 0.9)
     assert sell == int(1000 * factor * 0.8 / 0.9)
+
+
+def test_speed_sets_the_players_pace():
+    """Speed moves you at 1 + (Speed - 40) x 0.0025 of the usual pace (0.90
+    at 0, 1.15 at 100), and encumbrance's third multiplies on top."""
+    import pytest
+    from ..runtime import MiniwindSession, ENCUMBERED_SPEED
+    from ..rpg import attributes as attr, items
+    from ..rpg.character import Character
+    from ..rpg.gametime import GameClock
+
+    class _Player:
+        move_speed_scale = 1.0
+        pos = [0.0, 0.0, 0.0]
+
+    player = _Player()
+
+    class _Logic:
+        class player_runtime:
+            pass
+    _Logic.player_runtime.player = player
+
+    c = Character.create("Hare", "valian", "warrior")
+    assert c.move_speed_factor == pytest.approx(1.0)       # Speed 40
+    s = MiniwindSession.__new__(MiniwindSession)
+    s.logic = _Logic()
+    s.clock = GameClock()
+    s.notifications = []
+    s.game = type("G", (), {"character": c})()
+    for speed, pace in ((0, 0.90), (40, 1.0), (70, 1.075), (100, 1.15)):
+        c.attrs[attr.SPEED] = speed
+        s._update_encumbrance()
+        assert player.move_speed_scale == pytest.approx(pace)
+    for _ in range(40):
+        c.inventory.append(items.make("plate_armour", 1))
+    s._update_encumbrance()
+    assert player.move_speed_scale == pytest.approx(1.15 * ENCUMBERED_SPEED)

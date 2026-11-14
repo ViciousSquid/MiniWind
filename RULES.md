@@ -93,7 +93,7 @@ Six attributes, base **40**, range 0–100 (`game/rpg/attributes.py`):
 | **Strength** | melee damage (×(0.7 + STR/100)); melee attack bonus; carry weight (STR × 5); a creature's blows (×(0.7 + STR × 0.006)) |
 | **Endurance** | health (END × 2); stamina; Armour Class (lightly armoured); magicka regeneration; casting; magic resistance |
 | **Intelligence** | magicka (INT × 1.5) |
-| **Speed** | governs Light Armor, Athletics and Acrobatics |
+| **Speed** | your pace (§5); governs Light Armor, Athletics and Acrobatics |
 | **Personality** (shown as *Charisma*) | prices, disposition, how strangers react to your face |
 | **Luck** | critical hits; attack bonus (both ways); saving throws at the extremes (the fate die); loot; skill learning; casting |
 
@@ -251,7 +251,10 @@ Each level adds +25% magnitude, +12.5% duration and +10% cost.
 * **Sprinting** costs 12 stamina a second; at 0 you are **winded** and cannot
   sprint again until back to 30%. Winded fighters take −2 to hit.
 * **Stamina costs:** a swing or an arrow 6; a shield bash its own cost.
-* **Carry weight** = STR × 5. Over it you are encumbered: movement × 0.33.
+* **Pace:** you move at `1 + (SPD − 40) × 0.0025` of the usual speed —
+  ×0.90 at Speed 0, ×1.00 at 40, ×1.15 at 100, walking or sprinting.
+* **Carry weight** = STR × 5. Over it you are encumbered: movement × 0.33
+  (on top of your pace).
 
 ---
 
@@ -783,8 +786,6 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 Places where the code does not yet do what something in the game describes:
 
-* **Speed** is described as how fast you move, but nothing reads it for
-  movement.
 * The **Apprentice** birthsign's "weaker to magic" is not implemented, and
   some birthsign descriptions leave out bonuses they give.
 * **Sneak** is trained but read by no rule; **Acrobatics**, **Light Fingers**
