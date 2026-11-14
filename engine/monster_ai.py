@@ -202,6 +202,27 @@ class MonsterAI:
     #: that monster's target for this step -- a corner on the way round a
     #: wall -- and None leaves it heading straight for the target.
     _steer_hook = None
+    #: ``hook(monster)``: a monster has just heard something -- woken to a
+    #: noise, or turned to go and look where one came from. A game shows it
+    #: (MiniWind: an "!" over its head); the AI does not wait on it.
+    _hear_hook = None
+
+    @classmethod
+    def set_hear_hook(cls, hook):
+        cls._hear_hook = hook
+
+    @classmethod
+    def clear_hear_hook(cls, hook=None):
+        if hook is None or cls._hear_hook == hook:
+            cls._hear_hook = None
+
+    def _heard(self, monster):
+        hook = MonsterAI._hear_hook
+        if hook is not None:
+            try:
+                hook(monster)
+            except Exception as exc:  # a game's display must not stop the AI
+                debug_log("MonsterAI", f"hear hook failed: {exc}")
 
     @classmethod
     def install_steer_hook(cls, hook):
@@ -1022,6 +1043,7 @@ all accumulated time when it runs, so simulation time is not lost.
                 # by _investigate_sounds on the out-of-sight path.
                 if woke_reason is None and self._hears_noise(thing) is not None:
                     woke_reason = 'sound'
+                    self._heard(thing)
                     if self.monster_debug_active:
                         name = thing.properties.get('name', '?')
                         debug_log("MonsterAI", f"{name} woke to a noise")
@@ -1914,6 +1936,8 @@ the scalar fallback for callers that do not have the dense table.
                 elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                     monster.pos = [slide_z.x, slide_z.y, slide_z.z]
 
+        if state.get('investigating_sound') is None:
+            self._heard(monster)            # it turns to go and look
         state['investigating_sound'] = (sound_pos, current_time + 3.0)
 
         if self.monster_debug_active:

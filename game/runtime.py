@@ -1311,6 +1311,15 @@ class MiniwindSession(SettlementLaw):
             except Exception:
                 pass
 
+    #: How long a hearer's "!" stays up (seconds).
+    HEARD_MARK_SECONDS = 2.0
+
+    def _heard_noise(self, monster) -> None:
+        """Fio's monster AI: *monster* has just heard something (woken to a
+        noise, or turned to look where it came from): an "!" over its head,
+        as a guard shows on seeing something."""
+        self.flash_head_mark(monster, "!", self.HEARD_MARK_SECONDS)
+
     def _update_player_noise(self, delta) -> None:
         """Footsteps: louder running, muffled sneaking, none standing still,
         softer on grass and earth than on a built floor (game/noise.py). Each
@@ -2019,6 +2028,7 @@ class MiniwindSession(SettlementLaw):
         MonsterAI.install_shot_hook(self.archery.shot_hook)
         # NPC shields save against physical blows; wards soak what remains.
         MonsterAI.install_damage_filter(self.npc_magic.damage_filter, damage_kinds=True)
+        MonsterAI.set_hear_hook(self._heard_noise)
         fio.set_projectile_deflector(logic, self._deflect_missile)
         # Chasers route round walls rather than pressing into them
         # (game/navigation.py); schedule walking uses the same routes.
@@ -2102,6 +2112,7 @@ class MiniwindSession(SettlementLaw):
         from engine.monster_ai import MonsterAI
         MonsterAI.clear_shot_hook(self.archery.shot_hook)
         MonsterAI.clear_damage_filter(self.npc_magic.damage_filter)
+        MonsterAI.clear_hear_hook(self._heard_noise)
         self.archery.clear()
 
     def _deflect_missile(self, projectiles, row, target):

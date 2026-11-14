@@ -382,6 +382,7 @@ _ENGINE_HOOKS = (
     ("engine.monster_ai", "MonsterAI", "_attack_style_hook"),
     ("engine.monster_ai", "MonsterAI", "_damage_filter"),
     ("engine.monster_ai", "MonsterAI", "_damage_filter_kinds"),
+    ("engine.monster_ai", "MonsterAI", "_hear_hook"),
 )
 
 

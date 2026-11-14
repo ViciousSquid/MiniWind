@@ -671,7 +671,8 @@ It does nothing for anything else you do, and hearing is unchanged.
   ("Get them!", "Help me!": 950), and every deed the world hears at its
   loudness (a theft 90, an attack 700). Enemies hear it within their own
   hearing × radius / 1,024: it wakes a sleeper and sends an awake one to
-  look. Your noise jumps to the loudest at once and dies away at 320
+  look, and shows an "!" over its head for 2 seconds as it does, as a
+  guard does on seeing something. Your noise jumps to the loudest at once and dies away at 320
   units a second.
 * **Debug overlays** (never in the game's settings): `viewcone` in the
   console, or settings.ini `[developer] view_cones = true`, draws every
