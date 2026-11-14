@@ -48,15 +48,15 @@ SAND = np.array((0.84, 0.70, 0.46), np.float32)
 SANDSTONE = np.array((0.62, 0.38, 0.24), np.float32)
 SNOWFIELD = np.array((0.92, 0.94, 0.98), np.float32)
 MOSS = np.array((0.24, 0.29, 0.14), np.float32)
-WHEAT_GOLD = np.array((0.82, 0.67, 0.30), np.float32)
+WHEAT_GOLD = np.array((0.93, 0.80, 0.24), np.float32)
 
 #: Grass per biome. Desert and snow carry none; swamp grows reeds; wheat
 #: grows a dense field of tall stalks with its own tuft budget per chunk.
 REED_SIZE = (2.2, 3.4)
 REED_COLOUR = np.array((0.36, 0.42, 0.20), np.float32)
 WHEAT_SIZE = (11.0, 17.0)
-WHEAT_COLOUR = np.array((0.86, 0.70, 0.32), np.float32)
-WHEAT_TIP = np.array((0.95, 0.84, 0.52), np.float32)
+WHEAT_COLOUR = np.array((0.96, 0.83, 0.22), np.float32)
+WHEAT_TIP = np.array((1.00, 0.93, 0.42), np.float32)
 #: Wheat tufts per chunk at full coverage, stalks per tuft, tuft radius.
 WHEAT_MAX_PER_CHUNK = 13500
 WHEAT_STALKS_PER_TUFT = 8
