@@ -739024,7 +739024,7 @@
                 "usable": true,
                 "destination_spawn": "entrance",
                 "generate_level": false,
-                "prompt": "[E] Enter Moonfang Refuge",
+                "prompt": "[E] Enter Thornback Cellar",
                 "confirm": false,
                 "_cave": "cave20",
                 "io_enabled": true
@@ -739094,7 +739094,7 @@
                 "name": "loc_cave20",
                 "id": "9c0becaa-98a1-4bd0-adf9-9da42a7c8525",
                 "marker_kind": "location",
-                "place_name": "Moonfang Refuge",
+                "place_name": "Thornback Cellar",
                 "discover_radius": 700.0,
                 "_cave": "cave20",
                 "io_enabled": true,

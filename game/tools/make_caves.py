@@ -82,7 +82,9 @@ CAVES = (
      (("gold", 190), ("potion_magicka", 3), ("book_blade", 1))),
     ("cave19", "Blackwater Hideout", ("Smuggler", "Bandit Archer"), 6,
      (("gold", 180), ("crossbow", 1), ("steel_bolt", 25))),
-    ("cave20", "Moonfang Refuge", ("Wolf", "Bear"), 6,
+    # Hal Corbin's crew kept the rest of the Old Mill's flour here
+    # (game/tools/first_hour_content.py authors the crew and the sacks).
+    ("cave20", "Thornback Cellar", ("Bandit", "Bandit Archer"), 4,
      (("gold", 60), ("potion_heal", 3), ("potion_stamina", 2))),
 )
 

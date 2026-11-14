@@ -459,11 +459,88 @@ def hals_brother_rook(world, log):
             log.append("Hal Corbin: brother to Rook")
 
 
+#: Chapter one's one cave (docs/main_quest.md, Phase 5): cave20, east of
+#: the Old Mill, is where Hal Corbin's crew kept the rest of the stolen flour.
+THORNBACK = dict(cave="cave20", old="Moonfang Refuge", new="Thornback Cellar")
+#: The crew left minding the sacks, in the places the den's animals stood.
+THORNBACK_CREW = (
+    ("Cutter Lowe", "bandit", "assets/sprites/heads/head110.png"),
+    ("Orrin Vane", "bandit", "assets/sprites/heads/head183.png"),
+    ("Mags Fennick", "bandit", "assets/sprites/heads/head224.png"),
+    ("Sim Harrow", "bandit_archer", "assets/sprites/heads/head117.png"),
+)
+#: Flour in the stash: this many sacks, three measures each -- finite stock
+#: the player can carry back and sell onto an empty shelf.
+THORNBACK_FLOUR_SACKS = 5
+THORNBACK_FLOUR_EACH = 3
+
+
+def thornback_cellar(world, log):
+    """The overworld's cave20 mouth is Thornback Cellar, not Moonfang Refuge."""
+    old, new = THORNBACK["old"], THORNBACK["new"]
+    for t in world["things"]:
+        p = t["properties"]
+        if p.get("place_name") == old:
+            p["place_name"] = new
+            log.append(f"{old} is {new}")
+        if p.get("prompt") == f"[E] Enter {old}":
+            p["prompt"] = f"[E] Enter {new}"
+
+
+def thornback_cellar_inside(cave, log):
+    """Inside cave20: Hal Corbin's crew and the stolen flour, not a den of
+    wolves and bears."""
+    from game.rpg import items as rpg_items
+    old, new = THORNBACK["old"], THORNBACK["new"]
+    things = cave["things"]
+    changed = False
+    for t in things:
+        p = t["properties"]
+        if p.get("region_name") == old:
+            p["region_name"] = new
+            changed = True
+        if p.get("prompt") == f"[E] Leave {old}":
+            p["prompt"] = f"[E] Leave {new}"
+            changed = True
+    meta = cave.get("_miniwind_cave")
+    if isinstance(meta, dict) and meta.get("name") == old:
+        meta["name"] = new
+        changed = True
+    animals = [t for t in things if t.get("type") == "creature"
+               and t["properties"].get("npc_role") in ("wolf", "bear")]
+    for t, (name, role, head) in zip(animals, THORNBACK_CREW):
+        t["properties"] = {
+            "type": "creature", "name": name, "display_name": name,
+            "id": t["properties"].get("id"), "npc_role": role, "faction": "bandits",
+            "aggression": "hostile", "health": 50, "max_health": 50, "damage": 9,
+            "creature_level": 2, "custom_idle": head, "custom_shoot": head,
+            "portrait": "assets/portraits/miniwind/bandit.png", "monster_type": "human",
+            "sprite_width": 128, "sprite_height": 128, "monster_id": 0,
+            "respawn_lair": False}
+        changed = True
+    for t in animals[len(THORNBACK_CREW):]:
+        things.remove(t)
+        changed = True
+    sacks = [t for t in things if t.get("type") == "container"
+             and t["properties"].get("container_kind") == "sack"
+             and t["properties"].get("display_name") == "Sack"]
+    if any(t["properties"].get("display_name") == "Flour Sack" for t in things):
+        sacks = []                                  # stocked already
+    for t in sacks[:THORNBACK_FLOUR_SACKS]:
+        p = t["properties"]
+        p["display_name"] = "Flour Sack"
+        p["inventory"] = [rpg_items.make("flour", THORNBACK_FLOUR_EACH)]
+        changed = True
+    if changed:
+        log.append(f"{new}: Hal Corbin's crew and {THORNBACK_FLOUR_SACKS * THORNBACK_FLOUR_EACH} "
+                   "measures of the stolen flour")
+
+
 STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
          send_stray_skeletons_home, rename_their_chests, place_first_locks,
          lock_the_chests, aldric_is_the_turn_in, old_mill_band, old_mill_windmill,
          the_cross_buys_from_its_mill, the_tolls_in_the_strongbox, put_up_notice_boards,
-         hals_brother_rook)
+         hals_brother_rook, thornback_cellar)
 
 
 def apply(world):
@@ -484,11 +561,22 @@ def main(argv=None):
     changes = apply(world)
     for line in changes:
         print(" *", line)
-    if not changes:
+    if changes:
+        with open(args.out or args.map, "w", encoding="utf-8") as fh:
+            json.dump(world, fh, indent=4)     # the map's own layout, byte for byte
+    cave_path = os.path.join(os.path.dirname(args.map), THORNBACK["cave"] + ".json")
+    cave_log = []
+    if args.out is None and os.path.exists(cave_path):
+        with open(cave_path, "r", encoding="utf-8") as fh:
+            cave = json.load(fh)
+        thornback_cellar_inside(cave, cave_log)
+        if cave_log:
+            with open(cave_path, "w", encoding="utf-8") as fh:
+                json.dump(cave, fh, indent=1)     # the cave maps' own layout
+    for line in cave_log:
+        print(" *", line)
+    if not changes and not cave_log:
         print("nothing to change")
-        return
-    with open(args.out or args.map, "w", encoding="utf-8") as fh:
-        json.dump(world, fh, indent=4)     # the map's own layout, byte for byte
 
 
 if __name__ == "__main__":

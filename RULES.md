@@ -867,6 +867,11 @@ It does nothing for anything else you do, and hearing is unchanged.
   right. Taking them is theft from him. Handing them back when the quest
   completes adds 40 gold and 5 reputation; keeping them is the player's
   choice.
+* **Thornback Cellar** (the cave ~7 km east of the Old Mill) is where Hal
+  Corbin's crew kept the rest of the stolen flour, as the last page of his
+  ledger says: four bandits (one an archer) and five sacks of 3 flour
+  each, unowned -- the player may carry it back and sell it onto an empty
+  shelf.
 * **Talk of the town.** What the mill's trouble does is said aloud:
   * a hungry resident within 600 units of the player says why they cannot
     get bread (the shop has run out, it is shut, it costs too much) -- the
