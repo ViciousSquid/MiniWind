@@ -159,6 +159,12 @@ def gore_level_from(config) -> int:
         return 1
 
 
+#: How maps are written: compact JSON, no whitespace. Indented, the shipped
+#: overworld was 86.8 MB (GitHub refuses files over 100 MB); compact it is
+#: 22 MB and parses a fifth faster. The data is the same either way.
+MAP_JSON = {"separators": (",", ":")}
+
+
 def _loading_overlay(window):
     """*window*'s loading bar (a no-op stand-in where it has none)."""
     from editor.loading_overlay import overlay_for
@@ -710,7 +716,7 @@ class MainWindow(QMainWindow):
             save_path = os.path.join(autosave_dir, save_name)
             
             from engine import terrain_stamp
-            terrain_stamp.write_level(save_path, self.state.get_level_data(), indent=4)
+            terrain_stamp.write_level(save_path, self.state.get_level_data(), **MAP_JSON)
 
             print(f"[Autosave] Saved to {save_path}")
             return save_path
@@ -3432,7 +3438,7 @@ class MainWindow(QMainWindow):
 
                 # Write current level data to temp file
                 with open(temp_path, 'w', encoding='utf-8') as f:
-                    json.dump(self.state.get_level_data(), f, indent=4)
+                    json.dump(self.state.get_level_data(), f, **MAP_JSON)
 
                 current_map = temp_path
                 self.show_toast("Using temporary saved copy for export...")
@@ -4912,7 +4918,7 @@ class MainWindow(QMainWindow):
         try:
             # The terrain's paint goes to <map>.stamp beside it.
             from engine import terrain_stamp
-            terrain_stamp.write_level(self.file_path, self.state.get_level_data(), indent=4)
+            terrain_stamp.write_level(self.file_path, self.state.get_level_data(), **MAP_JSON)
             print(f"Level saved to {self.file_path}")
             self.unsaved_changes = False
             self.update_title()
