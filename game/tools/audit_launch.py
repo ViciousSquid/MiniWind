@@ -810,6 +810,19 @@ def end_play(window):
         pass
     terrain = getattr(getattr(logic, 'world_runtime', None), 'terrain', None)
     if terrain is not None:
+        # Paint held in memory: unpacked arrays (every distinct one) and
+        # packed streams, over both paint dicts (they share).
+        arrays, packed = {}, {}
+        for paints in (getattr(terrain, 'texture_paint_maps', {}), getattr(terrain, 'texture_paint_base', {})):
+            for value in dict.values(paints):
+                array = getattr(value, 'array', value) if hasattr(value, 'data') else value
+                if hasattr(value, 'data'):
+                    packed[id(value)] = len(value.data)
+                if array is not None and hasattr(array, 'nbytes'):
+                    arrays[id(array)] = array.nbytes
+        report['paint_memory'] = {'chunks': len(dict.keys(getattr(terrain, 'texture_paint_maps', {}))),
+                                  'unpacked': len(arrays), 'unpacked_mb': round(sum(arrays.values()) / 2**20, 1),
+                                  'packed_mb': round(sum(packed.values()) / 2**20, 1)}
         report['terrain'] = {k: getattr(terrain, k) for k in ('chunk_size',) if hasattr(terrain, k)}
     finish()
 
