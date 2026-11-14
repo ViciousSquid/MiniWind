@@ -909,18 +909,24 @@ def _narrow_spot(entry, width, height, heavy):
     level with it, down the left or right edge -- or None if neither fits."""
     sp, box, lay = entry
     lay = _docked(lay)
-    w, h = lay["w"], lay["h"]
+    h = lay["h"]
     y = int(max(4, min(height - h - 4, sp[1] - h / 2)))
-    best = None
-    for x in (4, width - w - 4):
-        if x < 4 or heavy(x, y, w, h):
-            continue
-        cost = abs((x + w / 2) - sp[0])
-        if best is None or cost < best[0]:
-            best = (cost, x)
-    if best is None:
-        return None
-    return int(best[1]), y, sp, box, lay
+    # As wide as its second line needs, where the strip has room; else the
+    # column's width, the line cut short.
+    fm, parts = lay.get("fm"), lay.get("parts") or []
+    rest = (sum(fm.horizontalAdvance(t.lstrip(": ").strip() if k == 0 else t)
+                for k, (t, _c) in enumerate(parts[1:])) if fm is not None else 0)
+    for w in sorted({int(max(lay["w"], rest + 20)), lay["w"]}, reverse=True):
+        best = None
+        for x in (4, width - w - 4):
+            if x < 4 or heavy(x, y, w, h):
+                continue
+            cost = abs((x + w / 2) - sp[0])
+            if best is None or cost < best[0]:
+                best = (cost, x)
+        if best is not None:
+            return int(best[1]), y, sp, box, dict(lay, w=w)
+    return None
 
 
 def _clear_spot(above, w, h, width, height, heavy, strict=False):
