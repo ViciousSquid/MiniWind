@@ -159,12 +159,16 @@ def read_version(root_dir: str = ".") -> str:
 
 
 def version_line(root_dir: str = ".") -> str:
-    """``MiniWind 1.0.0 · Fio 3.5.0.1211``: the game's version and the engine
-    build it runs on, kept apart (the engine's file is not the game's)."""
+    """The complete, multiline version text from ``editor/version.txt``.
+
+    The file owns both the game's and Fio's displayed version strings; keep
+    its lines and labels intact instead of rebuilding them into one caption.
+    """
+    version = read_version(root_dir)
+    if version:
+        return version
     from ..rpg import GAME_NAME, GAME_VERSION
-    engine = read_version(root_dir).replace("version", "", 1).strip()
-    game = f"{GAME_NAME} {GAME_VERSION}"
-    return f"{game} · Fio {engine}" if engine else game
+    return f"{GAME_NAME} {GAME_VERSION}"
 
 
 # ---------------------------------------------------------------------------
@@ -626,14 +630,14 @@ class Launcher(QDialog):
         # Plain text, no panel behind it, and wide enough for the whole build
         # string — a version that reads "version 2.2.0.24…" is worse than none.
         self.version_label = QLabel(version_line(root_dir))
+        self.version_label.setTextFormat(Qt.PlainText)
         self.version_label.setStyleSheet(
             "color:#5f6169; background:transparent; border:none;")
         self.version_label.setFrameStyle(QFrame.NoFrame)
         self.version_label.setAutoFillBackground(False)
         self.version_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.version_label.setToolTip(
-            "MiniWind's own version, then the Fio engine build it runs on "
-            "(editor/version.txt)")
+            "Version information from editor/version.txt")
         self.version_label.setSizePolicy(QSizePolicy.Preferred,
                                          QSizePolicy.Preferred)
         footer.addWidget(self.version_label)
@@ -668,11 +672,13 @@ class Launcher(QDialog):
         small = self._small_font()
         for label in (self.mode_help, self.high_dpi_note, self.version_label):
             label.setFont(small)
-        # Give the version line the width its own text needs, so it is never
-        # squeezed by the layout into an ellipsis.
-        self.version_label.setMinimumWidth(int(
-            QFontMetricsF(small).horizontalAdvance(self.version_label.text())
-            + unit))
+        # Size for the longest line, not the combined multiline string,
+        # so every version remains readable without squeezing the footer.
+        version_lines = self.version_label.text().splitlines() or [""]
+        version_width = max(
+            QFontMetricsF(small).horizontalAdvance(line)
+            for line in version_lines)
+        self.version_label.setMinimumWidth(int(version_width + unit))
         size = self._button_size()
         self.play_button.setMinimumSize(size)
         self.edit_button.setMinimumSize(size)
