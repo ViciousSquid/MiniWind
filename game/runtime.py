@@ -6221,12 +6221,26 @@ class MiniwindSession(SettlementLaw):
         say it aloud, and the reply after it, when the player is near."""
         if self.__dict__.get("barks", {}).get(id(speaker)):
             return                          # already mid-sentence
+        if not (self._chats(speaker) and self._chats(listener)):
+            # The simulation passes knowledge to and from everyone near (the
+            # player, a wolf, a dragon in its cave); only townsfolk say it
+            # aloud. The player used to tell rumours in their own voice, and
+            # a dragon to answer "In broad daylight? I'll keep my distance."
+            return
         names = [str(t.properties.get("display_name") or t.properties.get("name") or "")
                  for t in (speaker, listener)]
         opener, reply = chatter.gossip_lines(fact, *names)
         self.bark(speaker, opener, GOSSIP_SECONDS)
         if id(speaker) in self.__dict__.get("barks", {}):
             self.bark_later(listener, reply, GOSSIP_SECONDS - BARK_FADE)
+
+    def _chats(self, actor) -> bool:
+        """Whether *actor* talks with its neighbours aloud: a townsperson
+        (an NPC, not hostile), never the player -- as small talk chooses."""
+        p = getattr(actor, "properties", None) or {}
+        return (not p.get("is_player")
+                and str(p.get("type", "")).replace("_", "").lower() == "npc"
+                and str(p.get("aggression")) != "hostile" and not p.get("dead"))
 
     def _update_small_talk(self) -> None:
         """Now and then two townsfolk near the player who pass each other,

@@ -334,6 +334,23 @@ def test_gossip_is_said_aloud_with_a_reply(config):
     assert id(tom) in said
 
 
+def test_only_townsfolk_say_rumours_aloud(config):
+    """The simulation passes knowledge to and from everyone near, and every
+    exchange was voiced: the player's own character said "I saw it with my
+    own eyes: Dagny the Brigand was killed by someone.", and Vharzul the
+    Ember Wyrm answered a rumour in his cave with "In broad daylight? I'll
+    keep my distance." """
+    ann = _npc({"name": "Ann"})
+    wyrm = _FakeThing([100.0, 0.0, 0.0], {"type": "creature", "npc_role": "dragon",
+                                          "name": "Vharzul the Ember Wyrm"})
+    bandit = _npc({"name": "Wil the Brigand", "aggression": "hostile"})
+    s = _session([ann, wyrm, bandit], _FakePlayer([0, 0, 0]))
+    for speaker, listener in ((s.player_actor, ann), (ann, s.player_actor),
+                              (wyrm, ann), (ann, wyrm), (bandit, ann)):
+        s._on_gossip(speaker, listener, _fact())
+    assert not s.live_barks() and not s.__dict__.get("_bark_queue")
+
+
 def test_small_talk_suits_the_hour():
     from .. import chatter
     opener, reply = chatter.small_talk("Ann", "Tom", 7.0)
