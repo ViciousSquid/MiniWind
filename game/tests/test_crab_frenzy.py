@@ -243,3 +243,22 @@ def test_each_crab_nips_once_a_second_at_a_random_moment(monkeypatch):
     # The swarm's bites are spread through the second, not in step.
     phases = {round((t % cf.NIP_PERIOD), 1) for t, _c in times}
     assert len(phases) >= 4
+
+
+def test_more_bodies_by_a_feast_grow_one_frenzy_up_to_thirty_two(monkeypatch):
+    session, clock = _session(monkeypatch)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    total = 0
+    for k in range(8):                                   # a battle by the water
+        at = (40.0 * k, 0.0, -150.0)
+        _land_pieces(session.gore, clock, pos=at, count=2)
+        total += frenzy.gibbed(session, at, mass=1.0)
+    assert len(frenzy.feasts) == 1                       # one frenzy, grown
+    assert total == cf.MAX_LIVE == 32
+    assert len(frenzy.feasts[0]["crabs"]) == 32
+
+
+def test_something_huge_brings_twenty(monkeypatch):
+    session, clock = _session(monkeypatch)
+    _land_pieces(session.gore, clock, pos=(0.0, 0.0, -150.0))
+    assert cf.CrabFrenzy(random.Random(1)).gibbed(session, (0.0, 0.0, -150.0), mass=3.5) == 20

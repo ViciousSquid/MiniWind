@@ -2,7 +2,10 @@
 Crabs come for the dead.
 
 A body blown apart near water brings crabs out of it: more the bigger the
-body (a hen draws a couple, a man six, a bear a swarm). They scuttle up
+body (a hen draws a couple, a man six, a bear twelve). Bodies falling by a
+feast already going join it, up to :data:`MAX_LIVE` crabs: crabs are a
+nuisance, and a real danger only when something huge, or many things, die
+by the water together. They scuttle up
 from the water's edge, crowd the pieces and eat them -- bite by bite, chunks
 gone out of each piece until nothing is left (:meth:`GoreFX.bite`) -- then
 scuttle off out of sight and are gone. A brief feeding frenzy: only with
@@ -36,11 +39,17 @@ from .facing import face_heading
 
 #: How far from the remains water may be and still bring crabs.
 REACH = 650.0
-#: Crabs per unit of body mass (a person is 1.0), and the bounds.
+#: Crabs per unit of body mass (a person is 1.0), and the bounds for one
+#: body: a hen draws a couple, a person six, a bear twelve, anything huge
+#: twenty.
 CRABS_PER_MASS = 6.0
-MIN_CRABS, MAX_CRABS = 2, 12
-#: Frenzy crabs alive at once, at most, across every feast.
-MAX_LIVE = 24
+MIN_CRABS, MAX_CRABS = 2, 20
+#: Frenzy crabs alive at once, at most: the ceiling when many die near water
+#: together (or something enormous does) -- a real danger.
+MAX_LIVE = 32
+#: Bodies blown apart within this of a feast still going join it: its crabs
+#: are joined by more, and the frenzy grows instead of starting over.
+MERGE = 450.0
 #: The pieces within this of the remains are what the crabs come for, and
 #: they are held (not left to fade) this long while they do.
 FEAST_RADIUS = 320.0
@@ -138,6 +147,9 @@ class CrabFrenzy:
         pieces = session.gore.hold(pos, FEAST_RADIUS, HOLD_SECONDS)
         if not pieces:
             return 0
+        # Another body by a feast still going: the frenzy grows.
+        joined = next((f for f in self.feasts if f["pieces"]
+                       and math.hypot(f["pos"][0] - pos[0], f["pos"][2] - pos[2]) <= MERGE), None)
         count = int(round(float(mass) * CRABS_PER_MASS))
         count = max(MIN_CRABS, min(MAX_CRABS, count, room))
         crabs = []
@@ -157,8 +169,14 @@ class CrabFrenzy:
         things = fio.things(session.logic)
         things.extend(c["thing"] for c in crabs)
         _rebuild(session)
-        self.feasts.append({"pos": tuple(pos), "pieces": pieces, "crabs": crabs, "age": 0.0,
-                            "prey": [], "look": 0.0})
+        if joined is not None:
+            known = {id(p) for p in joined["pieces"]}
+            joined["pieces"].extend(p for p in pieces if id(p) not in known)
+            joined["crabs"].extend(crabs)
+            joined["age"] = min(joined["age"], FEAST_SECONDS * 0.5)   # more to eat
+        else:
+            self.feasts.append({"pos": tuple(pos), "pieces": pieces, "crabs": crabs, "age": 0.0,
+                                "prey": [], "look": 0.0})
         return len(crabs)
 
     # -- every tick -------------------------------------------------------------------
