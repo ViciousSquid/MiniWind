@@ -199,3 +199,33 @@ def test_stock_changes_drive_both_transitions_and_override_the_old_flag(logic):
     angle = rotor.properties['rotation'][2]
     mills.update(1.0)
     assert rotor.properties['rotation'][2] == angle
+
+
+def test_a_held_mill_is_idle_until_its_holder_dies(logic):
+    """The Old Mill: idle while Hal Corbin lives -- no one delivers to it or
+    buys from it, the sails stand still -- a working mill once he is dead,
+    however he died."""
+    from engine.prop_entity import Prop as _Prop
+    from ..windmills import HELD_BY, HOLD_CHECK_SECONDS
+    body, rotor = _pair(logic)
+    body.properties[HELD_BY] = "Hal Corbin"
+    hal = _Prop(properties={"name": "Hal Corbin", "health": 80})
+    logic.editor_state.things.append(hal)
+    mills = Windmills(logic)
+    mills.install()
+    assert mills.find(body.properties["id"]) is None
+    assert mills.nearest(body.pos) is None
+    assert not is_producing(body)                      # wheat in it, but held
+    mills.update(SPIN_UP_SECONDS)
+    assert rotor.properties["rotation"][2] == 0
+    hal.properties["dead"] = True
+    mills.update(HOLD_CHECK_SECONDS)                   # it notices within seconds
+    assert mills.find(body.properties["id"]) is body
+    assert is_producing(body)
+    mills.update(SPIN_UP_SECONDS)
+    assert rotor.properties["rotation"][2] > 0
+    # A holder who is gone from the world altogether (a body cleared away)
+    # holds nothing either.
+    logic.editor_state.things.remove(hal)
+    mills.check_holders()
+    assert mills.find(body.properties["id"]) is body

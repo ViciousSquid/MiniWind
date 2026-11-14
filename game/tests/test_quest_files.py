@@ -256,15 +256,11 @@ def test_a_return_to_the_giver_stage_points_at_the_giver():
 
 
 def test_a_bandit_archer_counts_toward_killing_bandits():
-    """'Kill 4 bandits at the mill': the camp's archers are bandits too. Only
+    """A 'kill bandits' objective counts archers too: they are bandits. Only
     the plain 'bandit' role used to count, so an archer read SLAIN on screen
-    and the objective stayed at 0/4."""
+    and the objective stayed at 0."""
     session = _session([])
     session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
-    session.game.quests.start("mill_bandits")
-    session.game.quests.set_stage("mill_bandits", 30)
-    stage = quests.get("mill_bandits").stage(30)
-    assert stage.condition_target() == "bandits"
     archer = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "bandit_archer"})
     assert archer.properties["faction"] == "bandits"
     session.record_kill(archer)

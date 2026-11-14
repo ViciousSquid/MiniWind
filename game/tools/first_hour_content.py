@@ -15,6 +15,12 @@ or anything it does not name.
   wolves at play start.
 * **The Old Mill's bandits do not come back.** Its spawner respawned, so
   "clearing" the mill never cleared it.
+* **Hal Corbin's band.** The spawner's four anonymous bandits and the two
+  "Bandit Archer"s are now Hal Corbin and three named men, tuned for a
+  level-1 or 2 character, one archer on the far side. Hal carries the ledger.
+* **The Old Mill grinds again.** It had no mill: now a windmill beside the
+  old mill house, held (idle) while Hal Corbin lives, which Hollin's Cross
+  buys from when it works. Its strongbox holds the Cross's stolen tolls.
 * **Locked chests.** Only 14 of 330 containers were locked. Chests and
   hoards are now locked nine times in ten and crates half the time, with a
   lock as hard as what they guard; sacks, barrels and urns have none.
@@ -284,9 +290,139 @@ def aldric_is_the_turn_in(world, log):
             log.append("Aldric: no longer offers or hands in the Old Mill by hand")
 
 
+#: Hal Corbin's band at the Old Mill, tuned for a level-1 or 2 character:
+#: four men who stay dead, each with a real name, one archer posted on the
+#: far side from the Millbrook road. Hal is tougher than his men but not the
+#: stock level-5 bandit chief; he carries the ledger chapter one turns on.
+OLD_MILL_BAND = (
+    dict(name="Hal Corbin", role="bandit_chief", pos=(8840.0, 292.0, -5540.0),
+         health=80, damage=11, level=2, xp=45, head="assets/sprites/heads/head18.png",
+         carries=(("corbin_ledger", 1), ("gold", 25))),
+    dict(name="Wat Fenner", role="bandit", pos=(8760.0, 292.0, -5700.0),
+         health=50, damage=9, level=1, xp=14, head="assets/sprites/heads/head04.png",
+         carries=(("gold", 6),)),
+    dict(name="Ned Crake", role="bandit", pos=(8800.0, 292.0, -5480.0),
+         health=50, damage=9, level=1, xp=14, head="assets/sprites/heads/head11.png",
+         carries=(("gold", 4),)),
+    dict(name="Jory Spratt", role="bandit_archer", pos=(9380.0, 292.0, -5960.0),
+         health=40, damage=8, level=1, xp=16, head="assets/sprites/heads/head22.png",
+         carries=(("iron_arrow", 6),)),
+)
+
+#: The Old Mill's own windmill, idle while Hal Corbin holds it
+#: (game/windmills.py ``mill_held_by``): a copy of Mara's mill, sunk into the
+#: ground as hers is.
+OLD_MILL_WINDMILL = dict(name="old_mill_windmill", sails="old_mill_sails",
+                         pos=(9100.0, 226.0, -5800.0), rotation=(0.0, 30.0, 0.0),
+                         held_by="Hal Corbin")
+
+
+def old_mill_band(world, log):
+    """The Old Mill was held by four anonymous spawned bandits ("Creature_21"
+    to "_24" in the roll boxes) and two "Bandit Archer"s, both on the
+    Millbrook side: a level-1 player lost half their health in four seconds
+    at the edge of the camp. Now it is Hal Corbin and three named men."""
+    import uuid
+    from game.rpg import items as rpg_items
+    things = world["things"]
+    gone = [t for t in things if t.get("properties", {}).get("name") in ("BanditSpawner",)
+            or (t.get("type") == "creature"
+                and t.get("properties", {}).get("display_name") == "Bandit Archer"
+                and t.get("properties", {}).get("npc_role") == "bandit_archer"
+                and 8000 < t["pos"][0] < 9800 and -6400 < t["pos"][2] < -5000)]
+    for t in gone:
+        things.remove(t)
+    if gone:
+        log.append(f"Old Mill: removed its spawner and {len(gone) - 1} anonymous archers")
+    for spec in OLD_MILL_BAND:
+        if _by_name(things, spec["name"]):
+            continue
+        props = {
+            "type": "creature", "name": spec["name"], "display_name": spec["name"],
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, "miniwind:old-mill:" + spec["name"])),
+            "npc_role": spec["role"], "faction": "bandits", "aggression": "hostile",
+            "health": spec["health"], "max_health": spec["health"], "damage": spec["damage"],
+            "creature_level": spec["level"], "xp_value": spec["xp"],
+            "custom_idle": spec["head"], "custom_shoot": spec["head"],
+            "portrait": "assets/portraits/miniwind/bandit.png", "monster_type": "human",
+            "sprite_width": 128, "sprite_height": 128, "monster_id": 0,
+            "respawn_lair": False,
+            "inventory": [rpg_items.make(i, q) for i, q in spec["carries"]],
+        }
+        things.append({"type": "creature", "pos": list(spec["pos"]),
+                       "properties": props, "io_connections": []})
+        log.append(f"Old Mill: placed {spec['name']} ({spec['role']})")
+
+
+def old_mill_windmill(world, log):
+    """The Old Mill had no mill at all: the Cross's mill is a copy of Mara's,
+    held -- idle -- while Hal Corbin lives, a working mill once he is dead."""
+    import copy
+    import uuid
+    things = world["things"]
+    spec = OLD_MILL_WINDMILL
+    if _by_name(things, spec["name"]):
+        return
+    body0 = next((t for t in _by_name(things, "windmill") if t["properties"].get("windmill")), None)
+    sails0 = next((t for t in things if body0 is not None and t["properties"].get(
+        "mill_rotor_for") == body0["properties"].get("id")), None)
+    if body0 is None or sails0 is None:
+        raise SystemExit("no windmill to copy for the Old Mill")
+    body, sails = copy.deepcopy(body0), copy.deepcopy(sails0)
+    bid = str(uuid.uuid5(uuid.NAMESPACE_URL, "miniwind:old-mill:windmill"))
+    body["pos"] = list(spec["pos"])
+    bp = body["properties"]
+    bp.update(name=spec["name"], id=bid, display_name="The Old Mill",
+              rotation=list(spec["rotation"]), mill_held_by=spec["held_by"])
+    bp["inventory"] = []
+    for key in ("mill_progress", "mill_updated_at", "flour_queue", "_bw_parked_disabled"):
+        bp.pop(key, None)
+    sails["pos"] = [spec["pos"][0], spec["pos"][1] + 550.0, spec["pos"][2]]
+    sp = sails["properties"]
+    sp.update(name=spec["sails"], id=str(uuid.uuid5(uuid.NAMESPACE_URL, "miniwind:old-mill:sails")),
+              mill_rotor_for=bid, rotation=list(spec["rotation"]))
+    things.extend([body, sails])
+    log.append("Old Mill: placed its windmill, held while Hal Corbin lives")
+
+
+def the_cross_buys_from_its_mill(world, log):
+    """Hollin's Cross has always bought its flour from the Old Mill; while
+    the mill is held, its brewer goes to the nearest working mill instead
+    (game/flour_supply.py ``flour_mill``)."""
+    mills = _by_name(world["things"], OLD_MILL_WINDMILL["name"])
+    if not mills:
+        return
+    mid = mills[0]["properties"]["id"]
+    for t in world["things"]:
+        p = t["properties"]
+        if p.get("display_name") == "Hollin Brewer" and p.get("flour_target"):
+            if p.get("flour_mill") != mid:
+                p["flour_mill"] = mid
+                log.append("Hollin Brewer: buys from the Old Mill when it works")
+
+
+def the_tolls_in_the_strongbox(world, log):
+    """The strongbox at the Old Mill holds the Cross's stolen mill tolls, the
+    Reeve's by right: taking them is theft from Aldric unless the player
+    hands them back (quests/mill_bandits.quest ``returns``). The bandits' own
+    potions and picks lie in the crate beside it."""
+    from game.rpg import items as rpg_items
+    for t in _by_name(world["things"], "old_mill_strongbox"):
+        p = t["properties"]
+        if p.get("owner") == "Aldric":
+            continue
+        loose = [s for s in p.get("inventory") or [] if s.get("id") != "gold"]
+        p.update(owner="Aldric", owner_name="Aldric the Reeve", display_name="Toll Strongbox",
+                 inventory=[rpg_items.make("toll_purse", 1)])
+        for crate in _by_name(world["things"], "loc_old_mill_crate_f1"):
+            crate["properties"].setdefault("inventory", []).extend(loose)
+        log.append("Old Mill strongbox: holds the Cross's tolls, Aldric's by right")
+
+
 STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
          send_stray_skeletons_home, rename_their_chests, place_first_locks,
-         lock_the_chests, aldric_is_the_turn_in)
+         lock_the_chests, aldric_is_the_turn_in, old_mill_band, old_mill_windmill,
+         the_cross_buys_from_its_mill, the_tolls_in_the_strongbox)
 
 
 def apply(world):

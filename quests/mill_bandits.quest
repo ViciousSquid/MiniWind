@@ -19,6 +19,13 @@
     "rep": [
       "town",
       15
+    ],
+    "returns": [
+      {
+        "item": "toll_purse",
+        "gold": 40,
+        "rep": 5
+      }
     ]
   },
   "stages": [
@@ -60,32 +67,43 @@
     },
     {
       "index": 30,
-      "journal": "I found the Old Mill. Bandits everywhere.",
-      "objective": "Kill 4 bandits at the mill",
+      "journal": "I found the Old Mill. The bandits there answer to a man called Hal Corbin; the mill will not turn while he holds it.",
+      "objective": "Kill Hal Corbin at the Old Mill",
       "finishes": false,
       "condition": {
         "kind": "kill",
-        "target": "bandits",
-        "count": 4
+        "target": "Hal Corbin",
+        "count": 1
       },
-      "waypoint": "bandits"
+      "waypoint": "Hal Corbin"
     },
     {
       "index": 40,
-      "journal": "The bandits at the Old Mill are dead. Aldric the Reeve keeps the tolls at Hollin's Cross. He should hear the mill is clear.",
-      "objective": "Tell Aldric at Hollin's Cross",
+      "journal": "Hal Corbin is dead. A man who robs a mill for a living keeps accounts; his ledger should be on him.",
+      "objective": "Take Hal Corbin's ledger",
+      "finishes": false,
+      "condition": {
+        "kind": "fetch",
+        "target": "corbin_ledger",
+        "count": 1
+      }
+    },
+    {
+      "index": 50,
+      "journal": "Corbin's ledger: flour sold \"to the boat\", silver paid at the south shore, \"the Ash-men's price, settled\". Aldric the Reeve keeps the mill tolls at Hollin's Cross. He should read this.",
+      "objective": "Take the ledger to Aldric at Hollin's Cross",
       "finishes": false,
       "condition": {
         "kind": "talk",
         "target": "Aldric",
         "count": 1
       },
-      "say": "The Old Mill? Clear? Then the carts can roll again, and the Cross can buy its own flour instead of taking Millbrook's. The Cross thanks you, and so does my purse, reluctantly. One more thing: there's talk the flour went south, to the shore. South shore means Mirrormere, and Old Maud at Reedhollow sees every boat on that water."
+      "say": "Corbin's book? Give it here. \"Flour out, eleven sacks, to the boat.\" \"Silver, for mill-work, paid at the south shore.\" The south shore means Mirrormere, and a boat on Mirrormere means someone on the water saw it. Old Maud at Reedhollow sees every boat that crosses. The mill's yours to thank for, and so is the Cross's bread, when its sails start again."
     },
     {
-      "index": 50,
-      "journal": "Aldric paid me for clearing the Old Mill. Hollin's Cross will grind its own grain again, and Millbrook's shelves should fill. He says the stolen flour went south, to Mirrormere; Old Maud at Reedhollow sees every boat on that water.",
-      "objective": "Aldric paid me for clearing the Old Mill.",
+      "index": 60,
+      "journal": "Aldric paid me for Hal Corbin and his ledger. With the Old Mill working again, Hollin's Cross can grind its own grain and Millbrook's shelves should fill. The flour went south, to Mirrormere; Old Maud at Reedhollow sees every boat on that water.",
+      "objective": "Aldric paid me for Hal Corbin and his ledger.",
       "finishes": true
     }
   ]

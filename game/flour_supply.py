@@ -262,7 +262,13 @@ class FlourSupply:
         if any((a.properties.get("flour_job") or {}).get("shop") == _id(shop)
                for a in self.actors.values() if _alive(a)):
             return False  # the earlier runner may still be bringing it home
-        mill = self.session.windmills.nearest(self.work(shop))
+        # A shop that has always bought from one mill (``flour_mill``: the
+        # Cross from its own Old Mill) goes there while it works, and to the
+        # nearest working mill when it does not.
+        mills = self.session.windmills
+        mill = mills.find(p.get("flour_mill")) if p.get("flour_mill") else None
+        if mill is None:
+            mill = mills.nearest(self.work(shop))
         if mill is not None:
             door = delivery_point(mill)
             trip = self._travel(shop, shop.pos, door) + self._travel(shop, door, self.work(shop))

@@ -733,6 +733,29 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 ---
 
+## 18. Mills and flour
+
+* A windmill grinds ten wheat into one flour every quarter hour of game time
+  while it has wheat; its sails turn only then. Farmers carry their wheat to
+  the nearest working mill; shops send for flour, or walk for it, before
+  they open, and a shelf holds only what really reached it.
+* A mill can be **held**. The Old Mill's windmill is held by Hal Corbin:
+  while anyone of that name lives it is idle (nobody delivers to it or buys
+  from it, and its sails stand still). Within 2 seconds of his death,
+  however he dies, it is an ordinary working mill.
+* A shop can have a mill of its own (`flour_mill`). Hollin's Cross buys from
+  the Old Mill while it works, and from the nearest working mill (Mara's, in
+  Millbrook) while it is held.
+* **Trouble at the Old Mill** ends with Hal Corbin's band: Hal (level 2,
+  80 health, 11 damage) and three men with real names, one an archer posted
+  on the far side from the Millbrook road. None of them comes back. Hal
+  carries *Corbin's Ledger*; Aldric reads it and pays 150 gold, a steel
+  longsword and 15 reputation with the town.
+* The Old Mill's toll strongbox holds the Cross's stolen tolls, Aldric's by
+  right. Taking them is theft from him. Handing them back when the quest
+  completes adds 40 gold and 5 reputation; keeping them is the player's
+  choice.
+
 ## Known gaps
 
 Places where the code does not yet do what something in the game describes:

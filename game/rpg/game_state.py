@@ -44,6 +44,15 @@ except Exception:  # pragma: no cover
 from . import gib as _gib
 
 
+def r_faction(q, rewards) -> str:
+    """The faction a quest's reputation goes to: its rewards' rep faction,
+    else the quest's own."""
+    rep = rewards.get("rep")
+    if isinstance(rep, (list, tuple)) and rep:
+        return str(rep[0])
+    return str(getattr(q, "faction", "") or "")
+
+
 def _mark_gibbed(props, damage, new_health, magical: bool = False) -> bool:
     """Flag *props* as gibbed on an overkill death, delegating to engine.gore.
 
@@ -551,6 +560,7 @@ class GameState:
         if r.get("rep"):
             fac, amt = r["rep"]
             guilds.add_reputation(self.character, fac, amt)
+        self._grant_returns(q, r)
         self.award_xp(getattr(q, "xp", 0))
         self.message(f"Quest complete: {q.name}")
         # Helping someone in need is a good deed (game.rpg.alignment).
@@ -558,6 +568,29 @@ class GameState:
         delta = alignment.player_deed(self.character, "quest")
         if delta:
             self.message(f"Alignment {delta:+.1f}: you helped someone in need.")
+
+    def _grant_returns(self, q, rewards) -> None:
+        """What the quest's giver is glad to have back (``rewards.returns``):
+        each item the character still carries is handed over, for the gold
+        and reputation it is worth to them. Keeping it is the character's
+        choice; it is still stolen (game.sim.ownership)."""
+        for ret in rewards.get("returns") or ():
+            if not isinstance(ret, dict) or not ret.get("item"):
+                continue
+            iid = str(ret["item"])
+            if not inv.has_item(self.character.inventory, iid, 1):
+                continue
+            inv.remove_item(self.character.inventory, iid, 1)
+            gold = int(ret.get("gold", 0) or 0)
+            if gold:
+                self.add_gold(gold)
+            rep = int(ret.get("rep", 0) or 0)
+            if rep and r_faction(q, rewards):
+                guilds.add_reputation(self.character, r_faction(q, rewards), rep)
+            d = items.get(iid)
+            name = d.name if d is not None else iid
+            who = q.giver or "They"
+            self.message(f"{who} takes back {name}" + (f": +{gold} gold." if gold else "."))
 
     def award_xp(self, amount) -> int:
         """Give the character *amount* experience; tells the XP listeners."""

@@ -672305,73 +672305,6 @@
             "io_connections": []
         },
         {
-            "type": "creature",
-            "pos": [
-                8208.0,
-                292.0,
-                -6016.0
-            ],
-            "properties": {
-                "type": "creature",
-                "name": "Bandit Archer",
-                "id": "8c26648c-fd07-4069-8c9d-08c31c31b9cf",
-                "display_name": "Bandit Archer",
-                "npc_role": "bandit_archer",
-                "aggression": "hostile",
-                "sight_range": 520,
-                "custom_idle": "assets/sprites/heads/head18.png",
-                "custom_shoot": "assets/sprites/heads/head18.png",
-                "portrait": "assets/portraits/miniwind/bandit.png",
-                "monster_type": "human",
-                "sprite_width": 128,
-                "sprite_height": 128,
-                "monster_id": 0,
-                "health": 100,
-                "damage": 9,
-                "triggered": false,
-                "wake_on_sight": true,
-                "awake": false,
-                "patrol": false,
-                "patrol_target": "",
-                "patrol_mode": "loop",
-                "variant": "<None>",
-                "entity_type": "creature",
-                "faction": "bandits",
-                "team": "bandits",
-                "attack_style": "bow",
-                "loot": "bandit",
-                "creature_level": 1,
-                "xp_value": 16,
-                "move_speed": 90.0,
-                "combatant": true,
-                "inventory": [],
-                "persistent": true,
-                "respawn": false,
-                "roam": false,
-                "roam_radius": 300.0,
-                "home": [
-                    1180.0,
-                    272,
-                    -560.0
-                ],
-                "sight": 512,
-                "can_hear": false,
-                "non_hostile": false,
-                "max_health": -42,
-                "courage": 0.3,
-                "spells": [],
-                "head": "head18",
-                "equipped_weapon": "hunting_bow",
-                "hidden": false,
-                "_was_shooting": false,
-                "_facing": -0.2881289764758657,
-                "_attack_anim": 0.0,
-                "handed": "left",
-                "io_enabled": true
-            },
-            "io_connections": []
-        },
-        {
             "type": "light",
             "pos": [
                 1152,
@@ -672398,73 +672331,6 @@
                     0.0,
                     0.0
                 ],
-                "io_enabled": true
-            },
-            "io_connections": []
-        },
-        {
-            "type": "creature",
-            "pos": [
-                8208.0,
-                292.0,
-                -5616.0
-            ],
-            "properties": {
-                "type": "creature",
-                "name": "Bandit Archer",
-                "id": "6336df64-2e0f-4b2e-9faf-4da99d49631a",
-                "display_name": "Bandit Archer",
-                "npc_role": "bandit_archer",
-                "aggression": "hostile",
-                "sight_range": 520,
-                "custom_idle": "assets/sprites/heads/head04.png",
-                "custom_shoot": "assets/sprites/heads/head04.png",
-                "portrait": "assets/portraits/miniwind/bandit.png",
-                "monster_type": "human",
-                "sprite_width": 128,
-                "sprite_height": 128,
-                "monster_id": 0,
-                "health": 100,
-                "damage": 9,
-                "triggered": false,
-                "wake_on_sight": true,
-                "awake": false,
-                "patrol": false,
-                "patrol_target": "",
-                "patrol_mode": "loop",
-                "variant": "<None>",
-                "entity_type": "creature",
-                "faction": "bandits",
-                "team": "bandits",
-                "attack_style": "bow",
-                "loot": "bandit",
-                "creature_level": 1,
-                "xp_value": 16,
-                "move_speed": 90.0,
-                "combatant": true,
-                "inventory": [],
-                "persistent": true,
-                "respawn": false,
-                "roam": false,
-                "roam_radius": 300.0,
-                "home": [
-                    1180.0,
-                    272,
-                    -560.0
-                ],
-                "sight": 512,
-                "can_hear": false,
-                "non_hostile": false,
-                "max_health": -42,
-                "courage": 0.3,
-                "spells": [],
-                "head": "head04",
-                "equipped_weapon": "hunting_bow",
-                "hidden": false,
-                "_was_shooting": false,
-                "_facing": -0.6186918499916017,
-                "_attack_anim": 0.0,
-                "handed": "left",
                 "io_enabled": true
             },
             "io_connections": []
@@ -673794,49 +673660,6 @@
                 "_produce_progress": 0.98,
                 "dead": false,
                 "spells": [],
-                "io_enabled": true
-            },
-            "io_connections": []
-        },
-        {
-            "type": "creaturespawn",
-            "pos": [
-                7568.0,
-                272,
-                -5760.0
-            ],
-            "properties": {
-                "type": "creaturespawn",
-                "name": "BanditSpawner",
-                "id": "3758927f-46b3-4cf8-b3c5-777152aefbc6",
-                "spawn_kind": "creature",
-                "creature_role": "bandit",
-                "faction": "bandits",
-                "count": 4,
-                "spawn_radius": 148.0,
-                "inventory": [
-                    {
-                        "description": "A iron iron dagger.",
-                        "id": "iron_dagger",
-                        "name": "Iron Dagger",
-                        "qty": 1,
-                        "type": "weapon",
-                        "value": 10,
-                        "weight": 4.0
-                    },
-                    {
-                        "description": "The coin of the realm.",
-                        "id": "gold",
-                        "name": "Gold",
-                        "qty": 1,
-                        "type": "gold",
-                        "value": 1,
-                        "weight": 0.0
-                    }
-                ],
-                "respawn": false,
-                "hidden_in_game": true,
-                "custom_idle": "assets/sprites/logic_spawner.png",
                 "io_enabled": true
             },
             "io_connections": []
@@ -676356,7 +676179,8 @@
                 "sched_state": "IDLE",
                 "io_enabled": true,
                 "flour_target": 8,
-                "gold": 30
+                "gold": 30,
+                "flour_mill": "3dd67831-98b2-5f04-b403-ec485610ade8"
             },
             "io_connections": []
         },
@@ -749710,6 +749534,24 @@
                         "value": 1,
                         "weight": 0.2,
                         "description": "A heel of bread. Restores a little health."
+                    },
+                    {
+                        "id": "potion_heal_minor",
+                        "name": "Minor Healing Potion",
+                        "qty": 2,
+                        "type": "potion",
+                        "value": 15,
+                        "weight": 0.5,
+                        "description": "Restores 30 health."
+                    },
+                    {
+                        "id": "lockpick",
+                        "name": "Lockpick",
+                        "qty": 2,
+                        "type": "misc",
+                        "value": 5,
+                        "weight": 0.0,
+                        "description": "For coaxing open stubborn locks."
                     }
                 ],
                 "use_radius": 120.0,
@@ -764700,40 +764542,24 @@
                 "name": "old_mill_strongbox",
                 "id": "61e7f624-4636-558f-b42d-89b9ca514252",
                 "container_kind": "chest",
-                "display_name": "Bandits' Strongbox",
+                "display_name": "Toll Strongbox",
                 "inventory": [
                     {
-                        "id": "gold",
-                        "name": "Gold",
-                        "qty": 60,
-                        "type": "gold",
-                        "value": 1,
-                        "weight": 0.0,
-                        "description": "The coin of the realm."
-                    },
-                    {
-                        "id": "potion_heal_minor",
-                        "name": "Minor Healing Potion",
-                        "qty": 2,
-                        "type": "potion",
-                        "value": 15,
-                        "weight": 0.5,
-                        "description": "Restores 30 health."
-                    },
-                    {
-                        "id": "lockpick",
-                        "name": "Lockpick",
-                        "qty": 2,
+                        "id": "toll_purse",
+                        "name": "Hollin's Cross Tolls",
+                        "qty": 1,
                         "type": "misc",
-                        "value": 5,
-                        "weight": 0.0,
-                        "description": "For coaxing open stubborn locks."
+                        "value": 80,
+                        "weight": 0.5,
+                        "description": "A purse of the Cross's mill tolls, sealed with the Reeve's wax. The seal is broken."
                     }
                 ],
                 "use_radius": 120.0,
                 "locked": true,
                 "lock_difficulty": "apprentice",
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "owner": "Aldric",
+                "owner_name": "Aldric the Reeve"
             },
             "io_connections": []
         },
@@ -764824,6 +764650,292 @@
                 "lock_difficulty": "adept",
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Aldric"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "creature",
+            "pos": [
+                8840.0,
+                292.0,
+                -5540.0
+            ],
+            "properties": {
+                "type": "creature",
+                "name": "Hal Corbin",
+                "display_name": "Hal Corbin",
+                "id": "1f7b2d77-7122-5ad6-a1ca-a91d54944fa8",
+                "npc_role": "bandit_chief",
+                "faction": "bandits",
+                "aggression": "hostile",
+                "health": 80,
+                "max_health": 80,
+                "damage": 11,
+                "creature_level": 2,
+                "xp_value": 45,
+                "custom_idle": "assets/sprites/heads/head18.png",
+                "custom_shoot": "assets/sprites/heads/head18.png",
+                "portrait": "assets/portraits/miniwind/bandit.png",
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "monster_id": 0,
+                "respawn_lair": false,
+                "inventory": [
+                    {
+                        "id": "corbin_ledger",
+                        "name": "Corbin's Ledger",
+                        "qty": 1,
+                        "type": "book",
+                        "value": 5,
+                        "weight": 0.3,
+                        "description": "Hal Corbin's accounts, in a careful hand that does not match the man."
+                    },
+                    {
+                        "id": "gold",
+                        "name": "Gold",
+                        "qty": 25,
+                        "type": "gold",
+                        "value": 1,
+                        "weight": 0.0,
+                        "description": "The coin of the realm."
+                    }
+                ]
+            },
+            "io_connections": []
+        },
+        {
+            "type": "creature",
+            "pos": [
+                8760.0,
+                292.0,
+                -5700.0
+            ],
+            "properties": {
+                "type": "creature",
+                "name": "Wat Fenner",
+                "display_name": "Wat Fenner",
+                "id": "ed881bd7-a824-57d4-ba7d-ac85072a4d8f",
+                "npc_role": "bandit",
+                "faction": "bandits",
+                "aggression": "hostile",
+                "health": 50,
+                "max_health": 50,
+                "damage": 9,
+                "creature_level": 1,
+                "xp_value": 14,
+                "custom_idle": "assets/sprites/heads/head04.png",
+                "custom_shoot": "assets/sprites/heads/head04.png",
+                "portrait": "assets/portraits/miniwind/bandit.png",
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "monster_id": 0,
+                "respawn_lair": false,
+                "inventory": [
+                    {
+                        "id": "gold",
+                        "name": "Gold",
+                        "qty": 6,
+                        "type": "gold",
+                        "value": 1,
+                        "weight": 0.0,
+                        "description": "The coin of the realm."
+                    }
+                ]
+            },
+            "io_connections": []
+        },
+        {
+            "type": "creature",
+            "pos": [
+                8800.0,
+                292.0,
+                -5480.0
+            ],
+            "properties": {
+                "type": "creature",
+                "name": "Ned Crake",
+                "display_name": "Ned Crake",
+                "id": "2f9bae1f-d6a1-5bfd-adcb-7ea82ace713b",
+                "npc_role": "bandit",
+                "faction": "bandits",
+                "aggression": "hostile",
+                "health": 50,
+                "max_health": 50,
+                "damage": 9,
+                "creature_level": 1,
+                "xp_value": 14,
+                "custom_idle": "assets/sprites/heads/head11.png",
+                "custom_shoot": "assets/sprites/heads/head11.png",
+                "portrait": "assets/portraits/miniwind/bandit.png",
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "monster_id": 0,
+                "respawn_lair": false,
+                "inventory": [
+                    {
+                        "id": "gold",
+                        "name": "Gold",
+                        "qty": 4,
+                        "type": "gold",
+                        "value": 1,
+                        "weight": 0.0,
+                        "description": "The coin of the realm."
+                    }
+                ]
+            },
+            "io_connections": []
+        },
+        {
+            "type": "creature",
+            "pos": [
+                9380.0,
+                292.0,
+                -5960.0
+            ],
+            "properties": {
+                "type": "creature",
+                "name": "Jory Spratt",
+                "display_name": "Jory Spratt",
+                "id": "e77aa20f-db48-5575-9456-3c6ac1d7fb08",
+                "npc_role": "bandit_archer",
+                "faction": "bandits",
+                "aggression": "hostile",
+                "health": 40,
+                "max_health": 40,
+                "damage": 8,
+                "creature_level": 1,
+                "xp_value": 16,
+                "custom_idle": "assets/sprites/heads/head22.png",
+                "custom_shoot": "assets/sprites/heads/head22.png",
+                "portrait": "assets/portraits/miniwind/bandit.png",
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "monster_id": 0,
+                "respawn_lair": false,
+                "inventory": [
+                    {
+                        "id": "iron_arrow",
+                        "name": "Iron Arrow",
+                        "qty": 6,
+                        "type": "ammo",
+                        "value": 1,
+                        "weight": 0.1,
+                        "description": "A plain iron-tipped arrow."
+                    }
+                ]
+            },
+            "io_connections": []
+        },
+        {
+            "type": "prop",
+            "pos": [
+                9100.0,
+                226.0,
+                -5800.0
+            ],
+            "properties": {
+                "render_mode": "model",
+                "rotation": [
+                    0.0,
+                    30.0,
+                    0.0
+                ],
+                "model_path": "assets/models/windmill_body.glb",
+                "type": "prop",
+                "io_enabled": true,
+                "name": "old_mill_windmill",
+                "id": "3dd67831-98b2-5f04-b403-ec485610ade8",
+                "sprite_path": "assets/sprites/pickup.png",
+                "sprite_size": [
+                    32.0,
+                    32.0
+                ],
+                "carry_enabled": false,
+                "carry_reach": 110.0,
+                "carry_distance": 55.0,
+                "carry_offset": [
+                    0.0,
+                    -6.0,
+                    0.0
+                ],
+                "drop_velocity": 0.0,
+                "drop_angular_velocity": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "collect_enabled": false,
+                "collect_type": "item",
+                "collect_value": 25,
+                "collect_activation": "walk_over",
+                "collect_collected": false,
+                "collect_respawns": false,
+                "collect_respawn_time": 20.0,
+                "collect_key_name": "blue_key",
+                "collect_item": "gun1",
+                "collect_custom_sprite": "",
+                "mass": 1.0,
+                "collision_size": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "physics_enabled": false,
+                "no_collision": true,
+                "collision_shape": "auto",
+                "gravity": true,
+                "friction": 0.55,
+                "linear_damping": 0.08,
+                "angular_damping": 0.12,
+                "disabled": false,
+                "scale": [
+                    1,
+                    1,
+                    1
+                ],
+                "windmill": true,
+                "display_name": "The Old Mill",
+                "inventory": [],
+                "use_radius": 280.0,
+                "owner": "8e3851c7_edf9_4d1f_b9ea_37a0b6161d38",
+                "owner_name": "Bram the Farmer",
+                "owner_faction": "villagers",
+                "mill_held_by": "Hal Corbin"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "prop",
+            "pos": [
+                9100.0,
+                776.0,
+                -5800.0
+            ],
+            "properties": {
+                "type": "prop",
+                "name": "old_mill_sails",
+                "id": "c566110e-76c0-58d5-a587-148e8b45ea30",
+                "render_mode": "model",
+                "model_path": "assets/models/windmill_rotor.glb",
+                "mill_rotor_for": "3dd67831-98b2-5f04-b403-ec485610ade8",
+                "rotation": [
+                    0.0,
+                    30.0,
+                    0.0
+                ],
+                "scale": [
+                    1,
+                    1,
+                    1
+                ],
+                "carry_enabled": false,
+                "collect_enabled": false,
+                "physics_enabled": false,
+                "no_collision": true
             },
             "io_connections": []
         }

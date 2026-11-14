@@ -39,7 +39,7 @@ One quest per file, named `<id>.quest`. Example (`a_word_with_wick.quest`):
 | `faction`  | Optional guild/faction the quest belongs to.                        |
 | `desc`     | Opening text the giver speaks when offering the quest.              |
 | `xp`       | XP awarded on completion.                                            |
-| `rewards`  | `gold`, `items` (`[["item_id", qty], ...]`), `rep` (`["faction", n]`). |
+| `rewards`  | `gold`, `items` (`[["item_id", qty], ...]`), `rep` (`["faction", n]`), and optional `returns` (`[{"item": "toll_purse", "gold": 40, "rep": 5}]`): things the giver is glad to have back. If the player still carries one when the quest completes, the giver takes it and adds that gold and reputation; keeping it is the player's choice. |
 | `stages`   | Ordered stages; each has an `index`, `journal`, `objective`, and an optional completion `condition`. A stage with `"finishes": true` completes the quest. |
 | `chapter`, `chapter_title` | Optional. A chapter of the main story (1, 2, …) and its title: finishing the quest shows the card "Chapter One complete · The Old Mill". |
 | `starts_on_new_game` | Optional. `true` starts the quest for every new character, so the journal and the quest arrow have somewhere to begin. *Trouble at the Old Mill* is the only one. |
