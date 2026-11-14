@@ -805,6 +805,11 @@ class QtGameView(QOpenGLWidget):
                 break
             # Height grids come from the builder thread: give it a moment.
             time.sleep(0.01)
+        # The sprite arrays now hold what the first frames drew: room for as
+        # many again, so play's next sprites never make one grow mid-frame.
+        from engine import sprite_layers
+        with self.gl_context():
+            sprite_layers.reserve_all()
         return painted
 
     def update_grid(self):

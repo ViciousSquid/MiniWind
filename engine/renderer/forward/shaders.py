@@ -821,5 +821,6 @@ layout (location = 10) in float iInstanceAlpha;
             # decision: 512 holds every stock sprite at full resolution;
             # low-power mode halves the edge and quarters the footprint.
             self._sprite_layers = SpriteLayers(
-                max_size=256 if getattr(self, 'lowpower_mode', False) else 512)
+                max_size=256 if getattr(self, 'lowpower_mode', False) else 512,
+                source=self.texture_pixels)
         return self._sprite_layers

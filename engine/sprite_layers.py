@@ -21,8 +21,14 @@ is no second loader and no second naming scheme.
 
 Filling a layer
 ---------------
-Pixels are read back from the source texture once, resampled on the CPU and
-uploaded with ``glTexSubImage3D`` -- every mip level included.  The array is
+Pixels come from the file the source texture was loaded from (the owner's
+``source``), resampled on the CPU and uploaded with ``glTexSubImage3D`` --
+every mip level included. Only a texture with no file behind it (made in
+code) is read back from the GPU, which stalls a real driver's pipeline.
+Each layer's mip chain is kept as uploaded, so growing the array re-uploads
+what it holds without decoding or resampling anything again; the first
+frames of play give every array room for what is to come
+(:func:`reserve_all`).  The array is
 never a render target: no framebuffer blit, no ``glGenerateMipmap``.  That is a
 measured choice, not a stylistic one.  Filled by blit, the array was a texture
 the driver had rendered into, and Mesa's llvmpipe then made the draw that
@@ -45,6 +51,8 @@ the context, the way the renderer's other GL objects are.
 
 from __future__ import annotations
 
+import weakref
+
 import numpy as np
 import OpenGL.GL as gl
 from PIL import Image
@@ -55,10 +63,25 @@ def _next_pow2(value: int) -> int:
     return 1 << (value - 1).bit_length()
 
 
+#: Every array alive, so the first frames of play can size them all
+#: (reserve_all) whoever made them.
+_ALIVE = weakref.WeakSet()
+
+
+def reserve_all(factor=2):
+    """Give every live array room for *factor* times the layers it holds,
+    rounded up to a power of two, so the sprites still to come in play fit
+    without the array growing -- and refilling every layer it holds -- mid-
+    frame. Called once the first frames of play are drawn (warm_up_play)."""
+    for layers in list(_ALIVE):
+        if layers.count and not layers.disabled:
+            layers.reserve(layers.count * factor)
+
+
 class SpriteLayers:
     """GL texture id -> layer of one ``GL_TEXTURE_2D_ARRAY``."""
 
-    def __init__(self, max_size=512, min_size=16, initial_capacity=8):
+    def __init__(self, max_size=512, min_size=16, initial_capacity=8, source=None):
         self.max_size = int(max_size)
         self.min_size = int(min_size)
         self.initial_capacity = int(initial_capacity)
@@ -72,6 +95,10 @@ class SpriteLayers:
         #: layer -> the GL 2D texture it was filled from, so a resize can
         #: resample the original rather than an already-resampled layer.
         self._sources: list = []
+        #: layer -> its mip chain as uploaded (bytes per level), at the
+        #: current layer size: growing the array re-uploads these, with no
+        #: decode and no resampling.
+        self._mips: list = []
         #: Dense ``GL id -> layer`` lookup (-1 = not imported). GL texture
         #: names are small integers, so a gather is the whole per-frame cost.
         self._layer_by_gl = np.full(64, -1, dtype=np.int32)
@@ -81,6 +108,14 @@ class SpriteLayers:
         #: on :meth:`layers_for` answers ``None`` and the caller keeps its
         #: per-texture path: a half-filled array would draw blank sprites.
         self.disabled = False
+        #: ``source(gl_id)``: the pixels a texture was uploaded with, as an
+        #: RGBA ``PIL.Image`` (rows in upload order), or None when it has no
+        #: file behind it -- only then are they read back from the GPU.
+        self.source = source
+        #: Images read back from the GPU (diagnostics; 0 when every sprite
+        #: came from a file).
+        self.readbacks = 0
+        _ALIVE.add(self)
 
     # -- per-frame ---------------------------------------------------------
 
@@ -118,7 +153,7 @@ class SpriteLayers:
         images = {}
         needed = self.size
         for tid in new_ids:
-            image = self._read_texture(int(tid))
+            image = self._pixels(int(tid))
             if image is None:
                 return False
             images[int(tid)] = image
@@ -130,7 +165,8 @@ class SpriteLayers:
             return False
 
         refill = []
-        if needed != self.size or total > self.capacity:
+        resized = needed != self.size
+        if resized or total > self.capacity:
             capacity = max(self.capacity, self.initial_capacity)
             while capacity < total:
                 capacity *= 2
@@ -147,7 +183,10 @@ class SpriteLayers:
         gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
         try:
             for layer, tid in refill:
-                image = self._read_texture(tid)
+                if not resized:
+                    self._reupload(layer)
+                    continue
+                image = self._pixels(tid)
                 if image is None:
                     return False
                 self._upload(layer, image)
@@ -161,6 +200,23 @@ class SpriteLayers:
             gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 4)
         return True
 
+    def reserve(self, layers):
+        """Make room for *layers* layers (a power of two, within the driver's
+        limit) now, refilling what the array holds once, rather than growing
+        when a new sprite is first drawn."""
+        wanted = min(_next_pow2(layers), self._layer_limit())
+        if wanted <= self.capacity or not self.size:
+            return
+        self._allocate(self.size, wanted)
+        gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.texture)
+        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+        try:
+            for layer in range(self.count):
+                self._reupload(layer)
+        finally:
+            gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, 0)
+            gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 4)
+
     def _layer_limit(self):
         if self._max_layers is None:
             try:
@@ -169,6 +225,18 @@ class SpriteLayers:
             except Exception:
                 self._max_layers = 256      # the GL 3.3 minimum
         return self._max_layers
+
+    def _pixels(self, tex_id):
+        """The image of texture *tex_id*: from its file, else read back."""
+        if self.source is not None:
+            try:
+                image = self.source(tex_id)
+            except Exception:
+                image = None
+            if image is not None:
+                return image
+        self.readbacks += 1
+        return self._read_texture(tex_id)
 
     @staticmethod
     def _read_texture(tex_id):
@@ -230,13 +298,24 @@ class SpriteLayers:
             image = image.resize(
                 (edge, edge),
                 Image.BILINEAR if enlarging else Image.LANCZOS)
+        chain = []
         for level in range(self._levels()):
             if level:
                 edge = max(1, edge // 2)
                 image = image.resize((edge, edge), Image.BOX)
+            chain.append(image.tobytes())
+        while len(self._mips) <= layer:
+            self._mips.append(None)
+        self._mips[layer] = chain
+        self._reupload(layer)
+
+    def _reupload(self, layer):
+        """Upload *layer*'s stored mip chain into the array."""
+        edge = self.size
+        for level, data in enumerate(self._mips[layer]):
             gl.glTexSubImage3D(gl.GL_TEXTURE_2D_ARRAY, level, 0, 0, layer,
-                               edge, edge, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
-                               image.tobytes())
+                               edge, edge, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data)
+            edge = max(1, edge // 2)
 
     # -- lifetime ------------------------------------------------------------
 
@@ -253,4 +332,5 @@ class SpriteLayers:
         self.texture = 0
         self.size = self.capacity = self.count = 0
         self._sources = []
+        self._mips = []
         self._layer_by_gl.fill(-1)

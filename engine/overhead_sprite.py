@@ -249,10 +249,13 @@ class _OverheadLayers:
     """:class:`engine.sprite_layers.SpriteLayers` filtered as the overhead
     sprites' own 2D textures are: linear, no mipmaps, clamped at the edge."""
 
-    def __new__(cls):
+    def __new__(cls, source=None):
         from engine.sprite_layers import SpriteLayers
 
         class Layers(SpriteLayers):
+            def _levels(self):
+                return 1                # sampled without mips: level 0 only
+
             def _allocate(self, size, capacity):
                 super()._allocate(size, capacity)
                 import OpenGL.GL as gl
@@ -265,7 +268,7 @@ class _OverheadLayers:
                     gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, name, value)
                 gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, 0)
 
-        return Layers(max_size=256, min_size=16)
+        return Layers(max_size=256, min_size=16, source=source)
 
 
 def _assets_root() -> str:
@@ -326,6 +329,19 @@ class OverheadSpriteRenderer:
         self._batch_vp = None
         self._batch_prog = None
         self._layers = None
+        #: GL texture -> the file _load_texture uploaded it from.
+        self._texture_files = {}
+
+    def texture_pixels(self, tex_id):
+        """The image a texture from :meth:`_load_texture` was uploaded with,
+        decoded from its file again, or None for any other texture: what the
+        layer array fills from instead of reading the texture back."""
+        path = self._texture_files.get(int(tex_id))
+        if path is None:
+            return None
+        from PIL import Image
+        from engine.asset_archives import asset_source
+        return Image.open(asset_source(path) or path).convert("RGBA")
 
     def facing_theta(self, facing: float) -> float:
         return float(facing) + math.radians(self.facing_offset_deg)
@@ -523,6 +539,7 @@ class OverheadSpriteRenderer:
                 gl.glBindBuffer(gl.GL_PIXEL_UNPACK_BUFFER, int(saved_pbo))
 
             gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+            self._texture_files[int(texture)] = path
             return int(texture)
 
         except Exception:
@@ -575,7 +592,7 @@ class OverheadSpriteRenderer:
         n = len(batch)
         data = np.array([row[:12] for row in batch], dtype=np.float32)
         if self._layers is None:
-            self._layers = _OverheadLayers()
+            self._layers = _OverheadLayers(source=self.texture_pixels)
         layers = self._layers.layers_for([row[12] for row in batch])
         if layers is None:
             # An image the array cannot hold (more than the driver's layer

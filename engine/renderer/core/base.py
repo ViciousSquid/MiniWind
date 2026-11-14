@@ -241,6 +241,7 @@ class RendererCore(ResourcesMixin, GeometryMixin, TablesMixin, VisibilityMixin,
         if textures:
             gl.glDeleteTextures(textures)
         self.texture_manager.clear()
+        self.__dict__.pop('_texture_files', None)
         self._model_draw_group_cache.clear()
         self._manual_model_textures.clear()
         self._animated_texture_table = {}
