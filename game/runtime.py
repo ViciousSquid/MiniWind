@@ -935,6 +935,9 @@ class MiniwindSession(SettlementLaw):
         self.lens_water = LensWater(random.Random())
         self.grass_fire = GrassFire(self._grass_fuel, height=self._fire_ground,
                                     wind=self.wind.vector, rng=random.Random())
+        #: A storm's lightning strikes and their thunder (game/lightning.py).
+        from .lightning import Lightning
+        self.lightning = Lightning(random.Random(), ground=self._fire_ground)
         self._fire_clock = 0.0
         self._scorch_clock = 0.0
         self._aftermath_clock = 0.0
@@ -1096,6 +1099,10 @@ class MiniwindSession(SettlementLaw):
         default. Off, the sky stays clear and nothing is ever wet."""
         return self._game_flag("weather")
 
+    def storming(self) -> bool:
+        """Whether it storms (with the weather on): no one travels."""
+        return self.weather_enabled() and self.weather.storming()
+
     def _fire_weather(self):
         """``(douse, dryness)`` for grass fire: rain fighting it and how dry
         the ground is (game/weather.py); none of it with the weather off."""
@@ -1168,9 +1175,14 @@ class MiniwindSession(SettlementLaw):
         """Advance the wind and any grass fire; set alight whoever stands in
         it; blacken the ground behind it."""
         hours = float(delta) * float(getattr(self.clock, "hours_per_second", 1 / 60.0))
-        self.wind.update(hours)
         self.weather.update(hours)
-        self.lens_water.update(delta, self.weather.rain if self.weather_enabled() else 0.0)
+        # A storm blows a gale in gusts and throws lightning; with the
+        # weather off there is none.
+        weather_on = self.weather_enabled()
+        storm = self.weather.storm if weather_on else 0.0
+        self.wind.update(hours, delta, storm)
+        self.lens_water.update(delta, self.weather.rain if weather_on else 0.0)
+        self._update_lightning(delta, storm)
         # The clouds the water reflects ride the wind (game/sky.py).
         import game.sky as sky
         wx, wz = self.wind.vector()
@@ -1201,6 +1213,23 @@ class MiniwindSession(SettlementLaw):
         if self._scorch_clock >= self.SCORCH_EVERY and fire.scorch_due:
             self._scorch_clock = 0.0
             self._scorch(fire.take_scorch(self.SCORCH_BATCH))
+
+    def _update_lightning(self, delta, storm) -> None:
+        """Lightning strikes by chance while it storms; a near one in dry
+        grass sets it alight; each one's thunder is heard when it arrives
+        (game/lightning.py)."""
+        lightning = self.lightning
+        if storm <= 0.0 and not lightning.strikes:
+            lightning.clock += max(0.0, float(delta))
+            return
+        ppos = self._player_pos()
+        origin = (ppos[0], ppos[2]) if ppos is not None else None
+        for strike in lightning.update(delta, storm, origin, self.weather.dryness()):
+            if strike.ignites:
+                self.ignite_grass((strike.x, strike.y, strike.z))
+        from .lightning import THUNDER_SOUND
+        for _strike, volume in lightning.thunder_due():
+            self.play_ui_sound(THUNDER_SOUND, volume)
 
     def _catch_in_grass_fire(self) -> None:
         from .burning import PLAYER
@@ -4396,6 +4425,9 @@ class MiniwindSession(SettlementLaw):
             return False, "You cannot travel now."
         if math.hypot(marker.pos[0] - ppos[0], marker.pos[2] - ppos[2]) < FAST_TRAVEL_NEAR:
             return False, f"You are already at {name}."
+        if self.storming():
+            from .weather import NO_TRAVEL_TEXT
+            return False, NO_TRAVEL_TEXT
         if self._arrest_state or int(c.bounty or 0) and self._arrest_pursuers:
             return False, "You cannot fast travel while the watch is after you."
         if c.is_overencumbered:

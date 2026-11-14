@@ -274,6 +274,17 @@ def _world_to_screen(glm, proj, view, x, y, z, width, height):
     return ((nx * 0.5 + 0.5) * width, (1.0 - (ny * 0.5 + 0.5)) * height)
 
 
+def world_projector(viewport, width, height):
+    """``(x, y, z) -> (px, py) or None`` with this frame's render matrices,
+    or None without a viewport to take them from."""
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return None
+    return lambda x, y, z: _world_to_screen(glm, proj, view, x, y, z, width, height)
+
+
 def _has_roll_box(session, thing) -> bool:
     """Whether *thing* has a roll box -- or a "Crit!" -- over its head: its
     speech bubble, bark and thought give way to it."""

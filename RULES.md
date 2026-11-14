@@ -450,7 +450,7 @@ Graphics; on by default):
   burnt never burns again.
 * It runs before the wind — about 40 units a second downwind in a fresh wind,
   barely creeping upwind. The wind's direction and strength wander slowly over
-  the day.
+  the day (a storm's gale blows far harder, but its rain holds fire back).
 * Each cell flares up, burns 3–8 s (longer the more fuel) and dies down.
   Anyone standing in fire that is burning fiercely catches fire (4 damage a
   second for 4 s, through the ordinary burning rules).
@@ -493,6 +493,26 @@ the sky, fading in as weather does):
   storm and spreads slower in any rain — heavy rain stops it spreading at
   all. Wet ground barely catches (a soaked field one tenth as readily).
   Someone burning, and a Flare's fire on the ground, go out sooner.
+* *Storms.* A storm (it eases in and out as weather does) brings:
+  * *a gale* — the wind blows with a whole strongest-ordinary-wind more on
+    top of its own, and gusts of up to 0.7 more again (up to 2.7 times the
+    strongest ordinary wind), coming every second or two and veering it a
+    little;
+    the rain leans hard in it and the clouds race;
+  * *the grass thrashes* — meadow, wheat and tundra heath sway violently in
+    the gusts and lie over before the wind (in ordinary weather they sway
+    gently, harder the stronger the wind);
+  * *lightning* — about one strike every ten seconds in a full storm (fewer
+    while it builds and dies away): three in ten within 1,400 units, seen as
+    a jagged bolt to the ground, the rest out to 9,000 units. Each lights the
+    sky, the farther the dimmer. Its thunder is
+    heard after 1 s per 1,500 units of distance, louder the nearer. A strike
+    within 900 units sets the grass alight with chance 35% × how dry the
+    ground is — so in a storm's first minutes, before the rain soaks it;
+  * *no travel* — fast travel is refused ("No one travels in this storm.")
+    and no one sets out on the roads: no new parties or market trips, and
+    parties resting at a place wait it out (those already on the road walk
+    on). Walking is never stopped.
 * *How it looks.* Rain falls past the overhead camera: drops near the lens
   are big soft smears out toward the edges of the view, streaking in toward
   the middle as they fall, small and sharp, to splash on the ground; the
@@ -595,7 +615,8 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
   The world catches up as it does after a night in the gaol; followers come
   along.
 * Not with a hostile within 1,500 units, while the watch is after you, while
-  over-encumbered, in a party, or within 900 units of the place already.
+  over-encumbered, in a party, within 900 units of the place already, or
+  while it storms ("No one travels in this storm."; with the weather on).
 
 ## 15. Trade, talk and charm
 

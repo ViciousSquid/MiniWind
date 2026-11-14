@@ -1105,6 +1105,9 @@ class PassesMixin:
             # settings.ini [Renderer] grass = False switches grass off
             # globally (the host also tells the terrain, so none is grown).
             draw_grass=bool(getattr(self, 'grass_enabled', True)),
+            # The wind the grass sways in: a game sets ``grass_wind`` (dir x,
+            # dir z, strength) as it sets ``sky_state``; otherwise a breeze.
+            grass_wind=getattr(self, 'grass_wind', None),
             shadow_cubemaps=(self._shadow_cubemaps if self.shadows_enabled else None),
             shadow_unit_base=self.SHADOW_TEXTURE_UNIT_BASE,
             env_uniforms=self.env_uniform_values(),

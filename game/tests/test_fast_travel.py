@@ -104,3 +104,63 @@ def test_the_map_asks_before_travelling_and_says_when_a_place_is_unknown(qt_app)
     page.handle_mouse_release()
     assert page.prompt["text"] == "You haven't discovered that location yet."
     assert not page.prompt["ok"] and waypoints, "the waypoint still goes on the marker"
+
+
+def test_no_one_travels_in_a_storm_but_after_it_they_may(monkeypatch):
+    s, logic = _world()
+    monkeypatch.setattr(s, "weather_enabled", lambda: True)
+    s.weather.set("storm")                    # it fades in, but it storms already
+    ok, text = s.fast_travel_check("Hollin's Cross")
+    assert not ok and text == "No one travels in this storm."
+    assert not s.fast_travel("Hollin's Cross")
+    assert (logic.player.pos.x, logic.player.pos.z) == (0.0, 0.0)
+    assert s.notifications[-1]["text"] == "No one travels in this storm."
+    s.weather.set("rain")
+    ok, _text = s.fast_travel_check("Hollin's Cross")
+    assert ok, "rain does not stop a journey"
+    # With the weather turned off there is no storm to stop anyone.
+    s.weather.set("storm")
+    monkeypatch.setattr(s, "weather_enabled", lambda: False)
+    assert s.fast_travel_check("Hollin's Cross")[0]
+
+
+@pytest.mark.qt
+def test_a_storm_turns_the_map_s_travel_question_away():
+    """The map asks MiniwindSession.fast_travel_check, so its prompt says no."""
+    from ..ui.map_page import MapPage
+    s, _logic = _world()
+    s.weather_enabled = lambda: True
+    s.weather.set("storm")
+    page = MapPage.__new__(MapPage)
+    page._check_travel = s.fast_travel_check
+    page._on_travel = lambda name: pytest.fail("travelled in a storm")
+    page.prompt = None
+    page._update = lambda: None
+    page.ask_travel("Hollin's Cross")
+    assert page.prompt["ok"] is False and page.prompt["text"] == "No one travels in this storm."
+    page.travel()
+
+
+def test_a_storm_throws_lightning_and_its_thunder_is_heard(monkeypatch):
+    """The session's tick: a full storm strikes now and then round the
+    player, and each strike's thunder is queued once it arrives."""
+    import random
+    from .. import runtime
+    s, logic = _world()
+    monkeypatch.setattr(s, "weather_enabled", lambda: True)
+    monkeypatch.setattr(runtime, "sound_available", lambda name: True)
+    queued = []
+    logic.game_state = SimpleNamespace(queue_sound=queued.append)
+    s.lightning.rng = random.Random(1)
+    s.weather.set("storm", hours=12.0, at_once=True)
+    for _ in range(int(120 / 0.05)):
+        s._update_grass_fire(0.05)
+    assert s.lightning.strikes or queued
+    thunder = [q for q in queued if q.get("file") == "explode.mp3"]
+    assert 4 <= len(thunder) <= 30 and all(q["global"] for q in thunder)
+    assert s.wind.force() > 1.0, "a gale"
+    s.weather.set("clear", hours=12.0, at_once=True)
+    queued.clear()
+    for _ in range(int(120 / 0.05)):
+        s._update_grass_fire(0.05)
+    assert not s.lightning.strikes and len(queued) <= 3   # the last rumbles only

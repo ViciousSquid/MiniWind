@@ -28,6 +28,8 @@ What happens to journeys, in game time:
   creatures there, or the party never comes back); raiders take livestock;
   traders sell and move on; hunters ask after the player and follow the
   trail.
+* **Storms.** While it storms no one sets out: no new departures, no market
+  trips, and parties resting at a place wait until it passes.
 * **News** is made by all of the above (and by the player: a bounty, a
   notable kill), starts at a place, and spreads only as fast as travellers
   carry it. Anyone met on the road can tell what they have heard.
@@ -206,6 +208,10 @@ class WorldHooks:
     def journey_levers(self) -> Dict:
         """Optional session pacing values; defaults preserve the authored board."""
         return {}
+
+    def storming(self) -> bool:
+        """Whether it storms: no one sets out on the roads until it passes."""
+        return False
 
     def destination_weight(self, place_key: str) -> float:
         return 1.0
@@ -559,6 +565,9 @@ class JourneyBoard:
         if t < last:
             return made                     # time went backwards (a load): skip
         self._watch_bounty(t, made)
+        # In a storm no one sets out: parties resting where they are wait it
+        # out, and none leaves home. Those already on the road walk on.
+        storm = self.hooks.storming()
         for j in list(self.journeys.values()):
             if not j.alive() and not j.live:
                 j.state = "done"
@@ -569,11 +578,12 @@ class JourneyBoard:
                 continue                    # actors are walking it; they report back
             if j.state == "travel" and t >= j.arrives_at():
                 self.arrive(j, t, made)
-            elif j.state == "rest" and t >= j.rest_until:
+            elif j.state == "rest" and t >= j.rest_until and not storm:
                 self.next_leg(j, t)
         self._encounters(t, made)
-        self._departures(t)
-        self._resident_trips(t)
+        if not storm:
+            self._departures(t)
+            self._resident_trips(t)
         self._faction_departures(t)
         self._forget(t)
         return made
