@@ -31,7 +31,7 @@ def test_the_extremes_have_names_of_their_own():
 def test_a_roll_moves_its_attribute_both_ways():
     assert cha.delta_for(18) > 0 > cha.delta_for(3)
     assert cha.delta_for(10) in (-2, 0, 2)
-    c = Character.create("A", "imperial", "warrior")
+    c = Character.create("A", "valian", "warrior")
     before = dict(c.attrs)
     cha.apply_rolls(c, {"strength": [6, 6, 6], "endurance": [1, 1, 1],
                         "personality": [3, 3, 4]})
@@ -131,7 +131,7 @@ def test_carrying_too_much_slows_the_player_to_a_third():
     s.logic = _Logic()
     s.clock = GameClock()
     s.notifications = []
-    s.game = GameState.new_game(_Store(), "Mule", "imperial", "warrior")
+    s.game = GameState.new_game(_Store(), "Mule", "valian", "warrior")
     s._update_encumbrance()
     assert player.move_speed_scale == 1.0
     for _ in range(40):

@@ -69,7 +69,7 @@ def test_stronger_higher_level_foes_hit_harder_to_miss():
 
 # ----------------------------------------------------------- the player's rolls
 def _game():
-    game = GameState.new_game(DictStore(), "T", "imperial", "warrior", rng=random.Random(0))
+    game = GameState.new_game(DictStore(), "T", "valian", "warrior", rng=random.Random(0))
     return game
 
 

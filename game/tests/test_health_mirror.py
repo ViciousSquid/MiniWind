@@ -25,7 +25,7 @@ def test_whole_health_rounds_but_never_shows_a_living_character_as_zero():
 
 def test_a_sliver_of_health_keeps_the_engine_player_alive():
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     c = session.game.character
     runtime = session.logic.player_runtime
     c.health = 0.4
@@ -71,7 +71,7 @@ def test_a_jump_covers_the_view_until_the_ground_is_built(monkeypatch):
     streamed in; the camera saw the clear colour (a blue void) until it did."""
     import game.fio as fio
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     where = {"pos": [0.0, 0.0, 0.0]}
     ready = {"now": False}
     monkeypatch.setattr(session, "_player_pos", lambda: list(where["pos"]))
@@ -101,7 +101,7 @@ def test_a_jump_covers_the_view_until_the_ground_is_built(monkeypatch):
 def test_the_quick_heal_key_eats_bread_when_the_potions_are_gone():
     from ..rpg import inventory as inv, items as rpg_items
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     c = session.game.character
     c.inventory[:] = [s for s in c.inventory if "heal" not in str(s.get("id"))]
     c.health = 20.0

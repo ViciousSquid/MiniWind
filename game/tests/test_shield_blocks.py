@@ -27,7 +27,7 @@ class Faces(random.Random):
 
 
 def fighter():
-    return GameState.new_game(DictStore(), "Fighter", "imperial", "warrior", rng=random.Random(0))
+    return GameState.new_game(DictStore(), "Fighter", "valian", "warrior", rng=random.Random(0))
 
 
 def guard(**extra):

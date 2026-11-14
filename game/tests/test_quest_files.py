@@ -226,7 +226,7 @@ def test_a_new_character_keeps_the_quest_files_not_the_built_ins():
     session = _session([])
     on_disk = {d["id"]: d for d in quest_files.load_quest_defs()}
     assert "mill_bandits" in on_disk
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     for qid, data in on_disk.items():
         running = quests.get(qid)
         assert running is not None, qid
@@ -246,7 +246,7 @@ def test_a_return_to_the_giver_stage_points_at_the_giver():
                     {"index": 20, "journal": "Paid", "finishes": True}]}))
     aldric = entities.NPC(pos=[9000, 0, 6000], properties={"name": "Aldric"})
     session = _session([aldric])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     session.game.quests.start("arrow_home")
     session.game.quests.set_stage("arrow_home", 10)
     q = quests.get("arrow_home")
@@ -260,7 +260,7 @@ def test_a_bandit_archer_counts_toward_killing_bandits():
     the plain 'bandit' role used to count, so an archer read SLAIN on screen
     and the objective stayed at 0/4."""
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     session.game.quests.start("mill_bandits")
     session.game.quests.set_stage("mill_bandits", 30)
     stage = quests.get("mill_bandits").stage(30)
@@ -288,7 +288,7 @@ def test_a_new_character_begins_with_elowen_and_the_flour():
                                                       "inventory": [{"id": "flour", "qty": 2}]})
     mara = entities.NPC(pos=[10, 0, 0], properties={"name": "Mara"})
     session = _session([elowen, mara])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     log = session.game.quests
     assert log.is_active("mill_bandits") and log.stage_of("mill_bandits") == 0
     assert log.current_objective("mill_bandits") == "Talk to Elowen"
@@ -313,7 +313,7 @@ def test_a_new_character_begins_with_elowen_and_the_flour():
 def test_an_empty_shelf_is_said_plainly():
     elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen"})
     session = _session([elowen])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     assert "Today I've no flour on the shelf" in _speak(session, elowen)
 
 
@@ -322,7 +322,7 @@ def test_elowen_calls_out_and_the_chapter_has_a_card():
     elowen = entities.NPC(pos=[0, 0, 0], properties={"name": "Elowen"})
     session = _session([elowen])
     session._player_pos = lambda: [0.0, 0.0, 50.0]
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     queued = [text for _at, thing, text in session.__dict__.get("_bark_queue", [])
               if thing is elowen]
     assert queued == ["You! New face! Have you got a minute?"]

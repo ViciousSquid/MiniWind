@@ -81,7 +81,7 @@ def test_strength_scales_the_damage_a_creature_deals():
 
 # ---------------------------------------------------------------- level up
 def _ready(class_id):
-    c = Character.create("T", "nord", class_id, "none")
+    c = Character.create("T", "highlander", class_id, "none")
     c.xp = c.xp_needed
     return c
 

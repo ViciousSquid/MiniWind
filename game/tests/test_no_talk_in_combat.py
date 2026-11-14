@@ -26,7 +26,7 @@ def _talker(name="Mara"):
 def _world(*extra):
     npc = _talker()
     s = _session([npc, *extra])
-    s.begin_new_character("Tester", "imperial", "warrior", "none", "male", head="head13")
+    s.begin_new_character("Tester", "valian", "warrior", "none", "male", head="head13")
     return s, npc
 
 

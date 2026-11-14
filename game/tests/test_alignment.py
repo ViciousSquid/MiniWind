@@ -81,7 +81,7 @@ def test_consequences():
 
 
 def test_a_good_player_heals_harder_and_an_evil_one_strikes_harder():
-    c = Character.create("T", "breton", "mage", "none")
+    c = Character.create("T", "wyrfolk", "mage", "none")
     base_heal = magic.for_caster(c, "heal_minor").effects[0]["magnitude"]
     base_bolt = magic.for_caster(c, "flare").damage
     c.alignment = 90

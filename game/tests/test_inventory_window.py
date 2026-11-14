@@ -36,7 +36,7 @@ class _Store:
 
 def _session(*ids):
     s = MiniwindSession.__new__(MiniwindSession)
-    s.game = GameState.new_game(_Store(), "Tester", "imperial", "warrior")
+    s.game = GameState.new_game(_Store(), "Tester", "valian", "warrior")
     c = s.game.character
     c.inventory.clear()
     c.equipment.clear()

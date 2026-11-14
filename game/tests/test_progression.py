@@ -14,7 +14,7 @@ from .. import npc_archery as arch
 
 
 def _mage():
-    return Character.create("M", "breton", "mage")
+    return Character.create("M", "wyrfolk", "mage")
 
 
 def test_choosing_magicka_grows_magicka_by_ten():

@@ -44,7 +44,7 @@ CLASSES = ("warrior", "mage", "thief", "warrior", "mage")
 
 def _profile(i):
     import game.rpg.heads as heads
-    return {"name": f"Player {i + 1}", "head": heads.HEAD_IDS[i % len(heads.HEAD_IDS)], "race": "imperial",
+    return {"name": f"Player {i + 1}", "head": heads.HEAD_IDS[i % len(heads.HEAD_IDS)], "race": "valian",
             "class": CLASSES[i], "birthsign": "none", "device": "keyboard",
             "handed": "right", "gender": "male"}
 

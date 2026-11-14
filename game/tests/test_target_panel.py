@@ -182,7 +182,7 @@ def test_a_critical_kill_blows_the_body_apart():
         def randint(self, a, b):
             return next(self.f)
 
-    game = GameState.new_game(DictStore(), "T", "imperial", "warrior", rng=random.Random(0))
+    game = GameState.new_game(DictStore(), "T", "valian", "warrior", rng=random.Random(0))
     target = {"name": "hen", "creature_role": "hen", "health": 3, "max_health": 30}
     game.dice = DiceRoller(rng=Faces(20, 1, 20))        # hits, rolls a 1 on damage, crits
     res = game.attack_creature(target)

@@ -34,7 +34,7 @@ def test_a_shield_never_stops_a_spell():
 
 
 def _caster(class_id="mage", wearing=()):
-    gs = GameState.new_game(_Store(), "T", "nord", class_id, "none", rng=random.Random(3))
+    gs = GameState.new_game(_Store(), "T", "highlander", class_id, "none", rng=random.Random(3))
     c = gs.character
     for iid in wearing:
         inv.add_item(c.inventory, items.make(iid))

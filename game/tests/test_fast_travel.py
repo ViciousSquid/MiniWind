@@ -32,7 +32,7 @@ def _world(discovered=True):
     store = StateStore(_G(), "miniwind")
     s.store = store
     s.game.store = store
-    s.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    s.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     return s, logic
 
 

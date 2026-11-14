@@ -286,7 +286,7 @@ class LobbyController:
             profile = dict(
                 name=char.get("name", "Adventurer"),
                 head=char.get("head") or heads.HEAD_IDS[0],
-                race=char.get("race", char.get("race_id", "imperial")),
+                race=char.get("race", char.get("race_id", "valian")),
                 **{"class": char.get("class", char.get("class_id", "warrior"))},
                 birthsign=char.get("birthsign", char.get("birthsign_id", "none")),
                 gender=char.get("gender", "male"),

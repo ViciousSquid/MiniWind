@@ -159,7 +159,7 @@ def test_mage_companion_heals_itself_and_changes_weapon_when_magicka_runs_out(
 
     coop = coop_game.logic.game_session.coop
     human, bot, *_ = companions(coop)
-    mage = GameState.new_game(DictStore(), "Companion mage", "breton", "mage").character
+    mage = GameState.new_game(DictStore(), "Companion mage", "wyrfolk", "mage").character
     bot.session.game.character = mage
     mage.health = mage.max_health * 0.2
     mage.magicka = mage.max_magicka

@@ -675,7 +675,7 @@ def test_copy_solo_save_preserves_build_progress_and_original_file(coop_game, tm
     from game.multiplayer.quests import PlayerStore
 
     coop = coop_game.logic.game_session.coop
-    character = Character.create("Original mage", "breton", "mage", "apprentice")
+    character = Character.create("Original mage", "wyrfolk", "mage", "apprentice")
     data = savegame.build_snapshot(coop.logic, map_name=Path(coop.map_name).name)
     data.pop("coop")
     data["save_version"] = 3
@@ -696,7 +696,7 @@ def test_copy_solo_save_preserves_build_progress_and_original_file(coop_game, tm
     controller.host(local_only=True)
     controller.resume_campaign(path)
     member = controller.lobby.members[0]
-    assert member.profile["race"] == "breton" and member.profile["class"] == "mage"
+    assert member.profile["race"] == "wyrfolk" and member.profile["class"] == "mage"
     assert member.profile["birthsign"] == "apprentice"
     assert controller.lobby.campaign_id != coop.lobby.lobby.campaign_id
     scoped = PlayerStore(None, member.player_id)

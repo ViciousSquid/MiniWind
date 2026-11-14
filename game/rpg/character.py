@@ -75,7 +75,7 @@ class Character:
     def __init__(self):
         # identity
         self.name = "Adventurer"
-        self.race_id = "imperial"
+        self.race_id = "valian"
         self.class_id = "warrior"
         self.birthsign_id = "none"
         self.gender = "male"

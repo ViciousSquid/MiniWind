@@ -63,7 +63,7 @@ def _session(things):
 
 def test_begin_new_character_records_the_chosen_hand():
     s = _session([])
-    s.begin_new_character("Lefty", "imperial", "warrior", "none", "male",
+    s.begin_new_character("Lefty", "valian", "warrior", "none", "male",
                           handed="left")
     assert s.game.character.handed == "left"
 

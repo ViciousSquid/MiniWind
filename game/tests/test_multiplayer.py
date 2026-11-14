@@ -19,7 +19,7 @@ def profile(index=0, device=None):
     return dict(
         name=f"Player {index + 1}",
         head=heads.HEAD_IDS[index],
-        race="imperial",
+        race="valian",
         **{"class": "warrior"},
         birthsign="none",
         gender="male",

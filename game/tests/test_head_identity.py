@@ -28,7 +28,7 @@ def test_two_authored_npcs_cannot_keep_the_same_head():
     b = _actor("Grain Carrier", "head06")
     c = _actor("Another Grain Carrier", "head06")
     s = _session([a, b, c])
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     images = [image_key(t.properties["head"]) for t in (a, b, c)]
     assert len(images) == len(set(images)) == 3
     assert image_key("head13") not in images
@@ -38,7 +38,7 @@ def test_two_authored_npcs_cannot_keep_the_same_head():
 def test_every_guard_has_a_distinct_guard_image():
     guards = [_actor(f"Watch {i}", "guard01", role="guard") for i in range(12)]
     s = _session(guards)
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     faces = [t.properties["head"] for t in guards]
     assert all(heads.is_guard_head(face) for face in faces)
     assert len(set(map(image_key, faces))) == len(faces)
@@ -48,7 +48,7 @@ def test_legacy_save_collisions_are_repaired_and_persisted():
     stored = _Globals()
     a, b = _actor("A", "head03"), _actor("B", "head03")
     s = _session([a, b], globals_store=stored)
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     faces = (a.properties["head"], b.properties["head"])
     assert len(set(faces)) == 2
     s.game.save_to_store()
@@ -72,7 +72,7 @@ def test_offscreen_members_are_reserved_against_authored_scene():
     s = _session([resident])
     trip = SimpleNamespace(id="journey1", members=[member1, member2, member3])
     s.living = SimpleNamespace(board=SimpleNamespace(journeys={"journey1": trip}))
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     assert member1["head"] != resident.properties["head"]
     assert member2["head"] != member3["head"]
     assert all(heads.is_guard_head(m["head"]) for m in (member2, member3))
@@ -168,7 +168,7 @@ def test_authored_human_creatures_have_individual_faces():
     cultists = [_actor(f"Cultist {i}", "head08", kind="creature",
                        role="cultist") for i in range(3)]
     s = _session(bandits + cultists)
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     faces = [image_key(t.properties["head"]) for t in bandits + cultists]
     assert len(faces) == len(set(faces))
     assert image_key("head13") not in faces
@@ -179,7 +179,7 @@ def test_character_creation_finishes_with_more_people_than_unique_heads(monkeypa
     actors = [_actor(f"Villager {i}") for i in range(5)]
     s = _session(actors)
     s.open_screen = "charcreate"
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     assert not s.needs_char_creation
     assert s.open_screen is None
     assigned = [a.properties["head"] for a in actors]
@@ -193,7 +193,7 @@ def test_guards_reuse_guard_portraits_when_their_pool_runs_out(monkeypatch):
     monkeypatch.setattr(heads, "GUARD_HEAD_IDS", ["guard01"])
     actors = [_actor(f"Guard {i}", role="guard") for i in range(3)]
     s = _session(actors)
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     assert [a.properties["head"] for a in actors] == ["guard01"] * 3
     assert all(a.properties["custom_idle"] == heads.guard_head_path("guard01") for a in actors)
 
@@ -205,7 +205,7 @@ def test_offscreen_journeys_do_not_block_character_creation_when_exhausted(monke
     s = _session([_actor("Resident")])
     trip = SimpleNamespace(id="j1", members=[m])
     s.living = SimpleNamespace(board=SimpleNamespace(journeys={"j1": trip}))
-    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    s.begin_new_character("Player", "valian", "warrior", head="head13")
     assert not s.needs_char_creation
     assert m["head"] == "head01"
     assert len(set(s.head_registry.assignments.values())) == 1

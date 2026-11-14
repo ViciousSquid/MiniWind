@@ -29,7 +29,7 @@ def _recorder(session, recording=False, root=None):
 
 def test_a_dull_scrap_is_forgotten_and_a_hard_fight_is_remembered():
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     rec, clock = _recorder(session)
     wolf = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "wolf"})
     rec.engage(wolf)
@@ -71,7 +71,7 @@ def test_provenance_says_where_a_spawned_actor_came_from():
 
 def test_recording_writes_the_record_and_asks_for_screenshots(tmp_path):
     session = _session([])
-    session.begin_new_character("Tamsin", "imperial", "warrior", "warrior")
+    session.begin_new_character("Tamsin", "valian", "warrior", "warrior")
     rec, clock = _recorder(session, recording=True, root=str(tmp_path))
     for i in range(4):
         rec.engage(entities.Creature(pos=[0, 0, 0], properties={

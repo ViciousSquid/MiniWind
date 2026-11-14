@@ -67,7 +67,7 @@ def _actor(name, head="", kind="npc", role="farmer"):
 
 def test_the_chosen_head_is_the_players_sprite():
     s = _session([])
-    s.begin_new_character("Tester", "imperial", "warrior", "none", "male",
+    s.begin_new_character("Tester", "valian", "warrior", "none", "male",
                           head="head13")
     assert s.game.character.head == "head13"
     assert s.logic.player_head_sprite == heads.head_path("head13")
@@ -82,7 +82,7 @@ def test_no_npc_keeps_the_players_head_even_when_it_was_authored():
     rolled = _actor("Anon")
     s = _session(farmers + [guard, other, browsed, sheep, rolled])
 
-    s.begin_new_character("Tester", "imperial", "warrior", "none", "male",
+    s.begin_new_character("Tester", "valian", "warrior", "none", "male",
                           head="head13")
 
     actors = farmers + [guard, other, browsed, sheep, rolled]
@@ -99,7 +99,7 @@ def test_no_npc_keeps_the_players_head_even_when_it_was_authored():
 def test_a_character_without_a_head_is_given_one():
     npc = _actor("Farmer")
     s = _session([npc])
-    s.begin_new_character("Tester", "imperial", "warrior", "none", "male")
+    s.begin_new_character("Tester", "valian", "warrior", "none", "male")
     head = s.game.character.head
     assert heads.is_head(head)
     assert s.logic.player_head_sprite == heads.head_path(head)
@@ -110,7 +110,7 @@ def test_guard_heads_are_never_player_choices_or_assignments():
     assert set(heads.HEAD_IDS).isdisjoint(heads.GUARD_HEAD_IDS)
     s = _session([])
     for guard_head in heads.GUARD_HEAD_IDS:
-        s.begin_new_character("Tester", "imperial", "warrior", head=guard_head)
+        s.begin_new_character("Tester", "valian", "warrior", head=guard_head)
         assert heads.is_head(s.game.character.head)
         # Neither a corrupted character nor the saved fallback can assign one.
         s.game.character.head = guard_head
@@ -124,7 +124,7 @@ def test_only_guard_roles_can_keep_or_receive_guard_heads():
     guard = _actor("Alice", head="guard10", role="guard")
     unassigned_guard = _actor("Bob", role="guard")
     s = _session([civilian, animal, guard, unassigned_guard])
-    s.begin_new_character("Tester", "imperial", "warrior", head="head13")
+    s.begin_new_character("Tester", "valian", "warrior", head="head13")
     assert heads.is_head(civilian.properties["head"])
     assert animal.properties["head"] in heads.animal_heads("wolf")
     assert guard.properties["head"] == "guard10"
@@ -137,7 +137,7 @@ def test_guards_and_town_archers_always_wear_guard_heads():
     bare_archer = _actor("Town Archer", role="guard_archer")
     kept = _actor("Carol", head="guard03", role="guard_archer")
     s = _session([guard, archer, bare_archer, kept])
-    s.begin_new_character("Tester", "imperial", "warrior", head="head13")
+    s.begin_new_character("Tester", "valian", "warrior", head="head13")
     for npc in (guard, archer, bare_archer):
         assert npc.properties["head"].startswith("guard")
         assert heads.is_guard_head(npc.properties["head"])
@@ -147,7 +147,7 @@ def test_guards_and_town_archers_always_wear_guard_heads():
 def test_a_loaded_character_keeps_its_head_and_npcs_avoid_it():
     saved = _Globals()
     s = _session([], globals_store=saved)
-    s.begin_new_character("Tester", "imperial", "warrior", "none", "male",
+    s.begin_new_character("Tester", "valian", "warrior", "none", "male",
                           head="head07")
     s.game.save_to_store()
 
@@ -171,7 +171,7 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     sheep = _actor("Sheep", head="sheep02", kind="creature", role="sheep")
     s = _session([hen, wolf, bear, boar, crab, cow, sheep])
 
-    s.begin_new_character("Tester", "imperial", "warrior", "none", "male",
+    s.begin_new_character("Tester", "valian", "warrior", "none", "male",
                           head="head13")
 
     # Hens wear the chickens and wolves the wolves -- never a person's.

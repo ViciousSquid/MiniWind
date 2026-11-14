@@ -19,7 +19,7 @@ class _Character:
     magicka, max_magicka = 10, 40
     stamina, max_stamina = 80, 100
     level, gold, can_level_up = 3, 120, False
-    race_id = "nord"
+    race_id = "highlander"
     class_id = "warrior"
 
     def can_use_magic(self):

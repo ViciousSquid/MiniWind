@@ -196,7 +196,7 @@ _CC_STEPS = ["identity", "fortune", "class", "birthsign", "confirm"]
 #: How long one die tumbles before it settles, and the stagger between dice.
 _ROLL_TUMBLE = 0.85
 _ROLL_STAGGER = 0.14
-_DEFAULT_RACE = "imperial"          # simplified creator asks no race / gender
+_DEFAULT_RACE = "valian"          # simplified creator asks no race / gender
 _MAX_NAME = 18
 _HEAD_PIXMAP_CACHE = {}
 
