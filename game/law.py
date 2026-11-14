@@ -95,7 +95,8 @@ class SettlementLaw:
                           source="sneak.notice",
                           why=f"You sneak, {distance:.0f} of their {reach:.0f} away — "
                               f"{chance * 100:.0f}%",
-                          context={"npc": True, "quiet": True, "against_player": True})
+                          # In this player's log alone, like a blow at them.
+                          context={"quiet": True, "against_player": True})
         roll["notice"] = True            # what they saw is told when it lands
         self.show_roll_box(observer, roll, against=("YOU", "you"))
         for key in [k for k, (_seen, until) in memo.items() if until <= now]:
