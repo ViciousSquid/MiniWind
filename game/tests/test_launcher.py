@@ -201,8 +201,8 @@ def test_it_shows_each_version_file_line_in_the_launcher(ui):
 def test_version_line_preserves_newlines_from_the_file(tmp_path):
     directory = tmp_path / "editor"
     directory.mkdir()
-    expected = "version 0.5.0.0\\nFio version 3.5.0.1211"
-    (directory / "version.txt").write_text(expected + "\\n")
+    expected = "version 0.5.0.0\nFio version 3.5.0.1211"
+    (directory / "version.txt").write_text(expected + "\n")
     assert lx.version_line(str(tmp_path)) == expected
 
 
