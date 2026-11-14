@@ -1493,6 +1493,7 @@ class MiniwindGame:
         "quest": "Current Quest",
         "lockpicking": "Lockpicking",
         "training": "Training", "tutor": "Spell Tutor", "tutorial": "Tutorial",
+        "tutorial_tip": "Tutorial",
     }
 
     def _close_overlay_screen(self, session, screen):

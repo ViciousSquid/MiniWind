@@ -121,3 +121,53 @@ def test_escape_or_the_pads_b_skips_it(dev, keyboard):
     assert sess.open_screen == "tutorial"
     screens.handle_key(sess, "escape")
     assert sess.open_screen is None
+
+
+# -- tips ---------------------------------------------------------------------
+_SEEN = [{"x": 0.0, "z": 0.0, "name": "Bram", "identified": True, "reporting": True}]
+
+
+def _played(dev_sess, ticked=True):
+    sess = dev_sess
+    cc = _creating(sess)
+    if not ticked:
+        screens.handle_key(sess, "t")
+    screens.handle_key(sess, "return")
+    screens._close_tutorial(sess)                     # done with the pages
+    assert cc is not None and sess.open_screen is None
+    return sess
+
+
+def test_the_first_crime_seen_shows_a_tip_once(dev, keyboard, monkeypatch):
+    sess = _played(_session([_actor("Villager")]))
+    seen = []
+    monkeypatch.setattr(sess, "witness_markers", lambda: list(seen), raising=False)
+    sess._check_tutorial_tips(1.0)
+    assert sess.open_screen is None                   # nobody saw anything yet
+    seen[:] = _SEEN
+    sess._check_tutorial_tips(1.0)
+    assert sess.open_screen == "tutorial_tip"
+    title, text = tutorial.tip(screens._sel(sess)["tutorial_tip"])
+    assert text == ("Someone saw the crime you just committed! ({eye} on the minimap) "
+                    "- They are running to report to a guard...")
+    screens.handle_key(sess, "return")
+    assert sess.open_screen is None
+    sess._check_tutorial_tips(1.0)
+    assert sess.open_screen is None                   # first time only
+
+
+def test_no_tip_if_the_tutorial_was_unticked(dev, keyboard, monkeypatch):
+    sess = _played(_session([_actor("Villager")]), ticked=False)
+    monkeypatch.setattr(sess, "witness_markers", lambda: list(_SEEN), raising=False)
+    sess._check_tutorial_tips(1.0)
+    assert sess.open_screen is None
+
+
+def test_the_eye_is_drawn_inside_the_line(qt_app):
+    """The tip names the minimap's eye by drawing it, not by the word."""
+    from PyQt5.QtGui import QFontMetrics
+    from ..ui import theme as T
+    metrics = QFontMetrics(T.font(13, False, False, "Georgia"))
+    lines = screens._rich_lines(metrics, tutorial.tip("witness")[1], 520)
+    words = [w for line in lines for w in line]
+    assert "({eye}" in words and not any("eye" in w.replace("{eye}", "") for w in words)

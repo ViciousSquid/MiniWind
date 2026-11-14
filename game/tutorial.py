@@ -106,3 +106,29 @@ def hint(page: int, count: int) -> str:
     if controls.gamepad():
         return f"A {nxt}    D-pad ← back    B skip"
     return f"Enter {nxt}    ← back    Esc skip"
+
+
+# ---------------------------------------------------------------------------
+# Tips: shown once each, the first time what they explain happens, and only
+# for a player who left "Show tutorial" ticked when their character was made.
+# ---------------------------------------------------------------------------
+#: ``{eye}`` is drawn as the minimap's own witness eye.
+TIPS = {
+    "witness": ("Seen!",
+                "Someone saw the crime you just committed! ({eye} on the minimap) "
+                "- They are running to report to a guard..."),
+}
+#: Store keys: the tutorial was ticked; a tip already shown.
+ON_KEY = "tutorial.on"
+SHOWN_KEY = "tutorial.tip.{}"
+
+
+def tip(name: str):
+    """``(title, text)`` for tip *name*, or None."""
+    return TIPS.get(name)
+
+
+def tip_hint() -> str:
+    if controls.gamepad():
+        return "A  OK"
+    return "Enter  OK"

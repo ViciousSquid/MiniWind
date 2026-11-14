@@ -1202,6 +1202,7 @@ class MiniwindSession(SettlementLaw):
                                self._lens_motion(delta))
         self._update_lightning(delta, storm)
         self._update_storm_howl(delta, storm)
+        self._check_tutorial_tips(delta)
         # The clouds the water reflects ride the wind (game/sky.py).
         import game.sky as sky
         wx, wz = self.wind.vector()
@@ -1269,6 +1270,35 @@ class MiniwindSession(SettlementLaw):
         if math.hypot(vx, vz) > self.LENS_JUMP_SPEED:
             return (0.0, 0.0)
         return (vx / self.LENS_FAST_SPEED, vz / self.LENS_FAST_SPEED)
+
+    TIP_CHECK_SECONDS = 0.5
+
+    def _check_tutorial_tips(self, delta) -> None:
+        """Tips, once each, for a player who left "Show tutorial" ticked
+        (game/tutorial.py): the first time a witness to their crime sets out
+        to tell the watch, a box says so and shows the eye that marks them on
+        the minimap."""
+        clock = self.__dict__.get("_tip_clock", 0.0) + max(0.0, float(delta))
+        if clock < self.TIP_CHECK_SECONDS:
+            self._tip_clock = clock
+            return
+        self._tip_clock = 0.0
+        import game.tutorial as tutorial
+        store = self.store
+        if (str(store.get(tutorial.ON_KEY, "")) != "1" or self.needs_char_creation
+                or self.open_screen is not None or self.dialogue is not None):
+            return
+        key = tutorial.SHOWN_KEY.format("witness")
+        if str(store.get(key, "")) == "1" or not self.tutorial_enabled():
+            return
+        try:
+            seen = self.witness_markers()
+        except Exception:
+            return
+        if seen:
+            store.set(key, "1")
+            import game.ui.screens as screens
+            screens.open_tutorial_tip(self, "witness")
 
     def _update_storm_howl(self, delta, storm) -> None:
         """The storm's wind howls while it lasts: the wind ambience loop,

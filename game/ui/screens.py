@@ -11,7 +11,7 @@ they need nothing beyond a QPainter and the session. Selection lives in
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QRect, QRectF, Qt
+from PyQt5.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
 from . import drag, fonts, hits, spell_lock, trade_anim
@@ -91,6 +91,7 @@ _SCREEN_BODY_SIZE = {
     "training": (760, 600),
     "tutor": (820, 600),
     "tutorial": (720, 360),
+    "tutorial_tip": (620, 240),
 }
 
 
@@ -581,6 +582,10 @@ def _finish_charcreate(session):
     session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head,
                                 handed=s.get("handed", "right"), rolls=s.get("rolls"))
     if _tutorial_offered(session) and s.get("tutorial", True):
+        import game.tutorial as tutorial
+        store = getattr(session, "store", None)
+        if store is not None:
+            store.set(tutorial.ON_KEY, "1")       # tips follow, once each
         open_tutorial(session)
 
 
@@ -692,6 +697,91 @@ def _handle_tutorial(session, key):
     if key in ("escape", "esc"):
         _close_tutorial(session)
         return True
+    return True
+
+
+def open_tutorial_tip(session, name):
+    _sel(session)["tutorial_tip"] = name
+    session.open_screen = "tutorial_tip"
+
+
+def _close_tutorial_tip(session):
+    _sel(session).pop("tutorial_tip", None)
+    if session.open_screen == "tutorial_tip":
+        session.open_screen = None
+
+
+#: How much room the minimap's eye takes inside a line of text.
+TIP_EYE_W = 24
+
+
+def _rich_lines(metrics, text, width):
+    """*text* wrapped into lines of words, ``{eye}`` kept as one word the
+    width of the eye: ``[[word, ...], ...]``."""
+    space = metrics.horizontalAdvance(" ")
+    lines, line, used = [], [], 0
+    for word in text.split():
+        parts = word.replace("{eye}", "\0{eye}\0").split("\0")
+        ww = sum(TIP_EYE_W if p == "{eye}" else metrics.horizontalAdvance(p) for p in parts if p)
+        if line and used + space + ww > width:
+            lines.append(line)
+            line, used = [], 0
+        line.append(word)
+        used += (space if used else 0) + ww
+    if line:
+        lines.append(line)
+    return lines
+
+
+def _draw_rich_text(painter, x, y, width, text, size=13, line_h=24):
+    """Draw *text* wrapped, the token ``{eye}`` as the minimap's witness eye
+    itself (game/ui/law_marks.py). Returns the y below the last line."""
+    from . import law_marks
+    font = T.font(size, False, False, "Georgia")
+    metrics = QFontMetrics(font)
+    space = metrics.horizontalAdvance(" ")
+    for line in _rich_lines(metrics, text, width):
+        cx = x
+        for i, word in enumerate(line):
+            if i:
+                cx += space
+            for part in word.replace("{eye}", "\0{eye}\0").split("\0"):
+                if not part:
+                    continue
+                if part == "{eye}":
+                    law_marks.draw_witness(painter, QPointF(cx + TIP_EYE_W / 2, y + line_h / 2 - 2),
+                                           {"identified": True, "reporting": True}, radius=7.0)
+                    cx += TIP_EYE_W
+                else:
+                    T.text(painter, cx, y + line_h - 7, part, size=size, color=T.INK,
+                           family="Georgia")
+                    cx += metrics.horizontalAdvance(part)
+        y += line_h
+    return y
+
+
+def _draw_tutorial_tip(painter, session, w, h):
+    import game.tutorial as tutorial
+    name = _sel(session).get("tutorial_tip")
+    found = tutorial.tip(name)
+    if not found:
+        _close_tutorial_tip(session)
+        return
+    title, text = found
+    x, y, bw, bh = _panel_rect(w, h, 0.5, 0.3)
+    inner = T.panel(painter, x, y, bw, bh)
+    ty = T.heading(painter, inner, title, "Tutorial")
+    _draw_rich_text(painter, inner.x() + 8, ty + 10, inner.width() - 16, text)
+    bw_, bh_ = 120, 30
+    button(painter, QRect(inner.x() + inner.width() // 2 - bw_ // 2, inner.bottom() - 22 - bh_,
+                          bw_, bh_), "OK", _close_tutorial_tip, primary=True)
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+              tutorial.tip_hint(), size=10, color=T.DIM, align=T.ALIGN_CENTER, family="Georgia")
+
+
+def _handle_tutorial_tip(session, key):
+    if key in ("return", "enter", "space", "escape", "esc", "a"):
+        _close_tutorial_tip(session)
     return True
 
 
@@ -2199,6 +2289,7 @@ _DRAW = {
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
     "container": _draw_container, "quest": _draw_quest,
     "lockpicking": _draw_lockpicking, "tutorial": _draw_tutorial,
+    "tutorial_tip": _draw_tutorial_tip,
     "training": lambda p, s, w, h: _teaching().draw_training(p, s, w, h),
     "tutor": lambda p, s, w, h: _teaching().draw_tutor(p, s, w, h),
 }
@@ -2208,6 +2299,7 @@ _HANDLE = {
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
     "container": _handle_container, "quest": _handle_quest,
     "lockpicking": _handle_lockpicking, "tutorial": _handle_tutorial,
+    "tutorial_tip": _handle_tutorial_tip,
     "book": lambda session, key: _handle_book(session, key),
     "map": _handle_map,
     "training": lambda session, key: _teaching().handle_training(session, key),
