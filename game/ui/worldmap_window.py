@@ -17,7 +17,7 @@ import math
 
 from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QSizeGrip, QWidget
 
 from . import worldmap
 
@@ -44,6 +44,10 @@ class WorldMapWindow(QWidget):
         self.setMaximumSize(*MAX_SIZE)
         self.setMinimumSize(*MIN_SIZE)
         self.resize(*MAX_SIZE)
+        # A handle in the bottom-right corner to drag it bigger or smaller
+        # (the window's edges resize it too).
+        self._grip = QSizeGrip(self)
+        self._grip.resize(16, 16)
         self._camera = None              # (x, z, yaw degrees)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
@@ -71,6 +75,10 @@ class WorldMapWindow(QWidget):
             except AttributeError:
                 self._camera = (float(cam.pos[0]), float(cam.pos[2]), float(cam.yaw))
         self.update()
+
+    def resizeEvent(self, event):
+        self._grip.move(self.width() - self._grip.width(), self.height() - self._grip.height())
+        super().resizeEvent(event)
 
     def closeEvent(self, event):
         self._timer.stop()
@@ -125,7 +133,7 @@ class WorldMapWindow(QWidget):
                                                     CAMERA.blue(), 120))
             p.drawPolygon(QPolygonF([tip, left, right]))
             p.setPen(INK)
-            p.drawText(QRectF(6, self.height() - 20, self.width() - 12, 18),
+            p.drawText(QRectF(6, self.height() - 20, self.width() - 28, 18),
                        int(Qt.AlignLeft | Qt.AlignVCenter),
                        f"Editor camera  x {x:,.0f}   z {z:,.0f}"
                        + ("" if inside else "   (off the map)"))
