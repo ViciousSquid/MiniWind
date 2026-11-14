@@ -688701,9 +688701,9 @@
         {
             "type": "npc",
             "pos": [
-                -6466.8,
+                -6496.4,
                 237.9,
-                -18220.5
+                -18208.3
             ],
             "properties": {
                 "name": "Jory_ashby",
@@ -688733,9 +688733,9 @@
                 "custom_shoot": "assets/sprites/heads/head13.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    -6466.8,
+                    -6496.4,
                     237.4,
-                    -18220.5
+                    -18208.3
                 ],
                 "work_location": "ashby_green",
                 "merchant": false,
@@ -688921,9 +688921,9 @@
         {
             "type": "npc",
             "pos": [
-                -7164.7,
+                -7189.2,
                 229.9,
-                -18018.2
+                -18077.3
             ],
             "properties": {
                 "name": "Ivo_ashby",
@@ -688953,9 +688953,9 @@
                 "custom_shoot": "assets/sprites/heads/head13.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    -7164.7,
+                    -7189.2,
                     229.9,
-                    -18018.2
+                    -18077.3
                 ],
                 "work_location": "ashby_green",
                 "merchant": false,
@@ -689854,9 +689854,9 @@
         {
             "type": "creature",
             "pos": [
-                -15052.7,
+                -15092.6,
                 192.5,
-                -14962.9
+                -14936.2
             ],
             "properties": {
                 "name": "Hen_362",
@@ -689888,9 +689888,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    -15052.7,
+                    -15092.6,
                     192.5,
-                    -14962.9
+                    -14936.2
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -690334,7 +690334,7 @@
                 "home": [
                     -5327.1,
                     236.7,
-                    13311.7
+                    13519.7
                 ],
                 "work_location": "the_wanderer_s_rest_bar",
                 "schedule": [
@@ -691052,9 +691052,9 @@
         {
             "type": "npc",
             "pos": [
-                -12003.4,
+                -12062.5,
                 217.0,
-                -4555.4
+                -4530.9
             ],
             "properties": {
                 "name": "Elsie_thornfield",
@@ -691084,9 +691084,9 @@
                 "custom_shoot": "assets/sprites/heads/head10.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    -12003.4,
+                    -12062.5,
                     217.4,
-                    -4555.4
+                    -4530.9
                 ],
                 "work_location": "thornfield_green",
                 "merchant": false,
@@ -691262,7 +691262,7 @@
         {
             "type": "npc",
             "pos": [
-                -12776.6,
+                -12712.6,
                 215.1,
                 -4574.5
             ],
@@ -691294,7 +691294,7 @@
                 "custom_shoot": "assets/sprites/heads/head09.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    -12776.6,
+                    -12712.6,
                     215.1,
                     -4574.5
                 ],
@@ -692051,9 +692051,9 @@
         {
             "type": "creature",
             "pos": [
-                -2654.6,
+                -2642.4,
                 230.0,
-                5092.8
+                5122.4
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -692102,9 +692102,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    -2654.6,
+                    -2642.4,
                     230.0,
-                    5092.8
+                    5122.4
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -693134,9 +693134,9 @@
         {
             "type": "npc",
             "pos": [
-                7503.1,
+                7473.5,
                 222.2,
-                19208.1
+                19220.3
             ],
             "properties": {
                 "name": "Godric_kettlewick",
@@ -693166,9 +693166,9 @@
                 "custom_shoot": "assets/sprites/heads/head09.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    7503.1,
+                    7473.5,
                     222.5,
-                    19208.1
+                    19220.3
                 ],
                 "work_location": "kettlewick_green",
                 "merchant": false,
@@ -693344,7 +693344,7 @@
         {
             "type": "npc",
             "pos": [
-                6779.1,
+                6843.1,
                 212.1,
                 19385.3
             ],
@@ -693376,7 +693376,7 @@
                 "custom_shoot": "assets/sprites/heads/head16.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    6779.1,
+                    6843.1,
                     212.1,
                     19385.3
                 ],
@@ -695377,9 +695377,9 @@
         {
             "type": "creature",
             "pos": [
-                20376.8,
+                20364.3,
                 218.0,
-                -11450.5
+                -11513.3
             ],
             "properties": {
                 "type": "creature",
@@ -695420,9 +695420,9 @@
                 "roam": false,
                 "roam_radius": 300.0,
                 "home": [
-                    20376.8,
+                    20364.3,
                     218.0,
-                    -11450.5
+                    -11513.3
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -695775,9 +695775,9 @@
         {
             "type": "npc",
             "pos": [
-                -1536.9,
+                -1566.5,
                 216.5,
-                -12806.4
+                -12794.2
             ],
             "properties": {
                 "name": "Edwin_brackenford",
@@ -695807,9 +695807,9 @@
                 "custom_shoot": "assets/sprites/heads/head01.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    -1536.9,
+                    -1566.5,
                     218.4,
-                    -12806.4
+                    -12794.2
                 ],
                 "work_location": "brackenford_green",
                 "merchant": false,
@@ -695985,9 +695985,9 @@
         {
             "type": "npc",
             "pos": [
-                -2176.5,
+                -2194.9,
                 218.4,
-                -12472.6
+                -12516.9
             ],
             "properties": {
                 "name": "Bertram_brackenford",
@@ -696017,9 +696017,9 @@
                 "custom_shoot": "assets/sprites/heads/head07.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    -2176.5,
+                    -2194.9,
                     218.4,
-                    -12472.6
+                    -12516.9
                 ],
                 "work_location": "brackenford_green",
                 "merchant": false,
@@ -697172,9 +697172,9 @@
         {
             "type": "creature",
             "pos": [
-                -21541.4,
+                -21529.2,
                 192.1,
-                7963.5
+                7993.1
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -697223,9 +697223,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    -21541.4,
+                    -21529.2,
                     192.1,
-                    7963.5
+                    7993.1
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -698421,7 +698421,7 @@
         {
             "type": "npc",
             "pos": [
-                1767.3,
+                1799.3,
                 224.1,
                 25581.9
             ],
@@ -698453,7 +698453,7 @@
                 "custom_shoot": "assets/sprites/heads/head21.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    1767.3,
+                    1799.3,
                     224.1,
                     25581.9
                 ],
@@ -698589,9 +698589,9 @@
         {
             "type": "creature",
             "pos": [
-                2033.0,
+                2006.3,
                 237.2,
-                26147.1
+                26107.2
             ],
             "properties": {
                 "name": "Hen_511",
@@ -698623,9 +698623,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    2033.0,
+                    2006.3,
                     237.2,
-                    26147.1
+                    26107.2
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -699505,9 +699505,9 @@
         {
             "type": "creature",
             "pos": [
-                -6196.6,
+                -6169.9,
                 233.4,
-                -30085.7
+                -30045.8
             ],
             "properties": {
                 "display_name": "Skeleton",
@@ -699554,9 +699554,9 @@
                 "roam": false,
                 "roam_radius": 300.0,
                 "home": [
-                    -6196.6,
+                    -6169.9,
                     233.4,
-                    -30085.7
+                    -30045.8
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -699582,9 +699582,9 @@
         {
             "type": "creature",
             "pos": [
-                -6201.6,
+                -6146.5,
                 233.4,
-                -30179.1
+                -30046.1
             ],
             "properties": {
                 "display_name": "Skeleton",
@@ -699631,9 +699631,9 @@
                 "roam": false,
                 "roam_radius": 300.0,
                 "home": [
-                    -6201.6,
+                    -6146.5,
                     233.4,
-                    -30179.1
+                    -30046.1
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -699736,9 +699736,9 @@
         {
             "type": "creature",
             "pos": [
-                -6179.5,
+                -6155.0,
                 233.4,
-                -30107.0
+                -30047.9
             ],
             "properties": {
                 "display_name": "Skeleton",
@@ -699785,9 +699785,9 @@
                 "roam": false,
                 "roam_radius": 300.0,
                 "home": [
-                    -6179.5,
+                    -6155.0,
                     233.4,
-                    -30107.0
+                    -30047.9
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -700850,9 +700850,9 @@
         {
             "type": "creature",
             "pos": [
-                -11434.3,
+                -11465.7,
                 241.4,
-                -20648.6
+                -20642.4
             ],
             "properties": {
                 "type": "creature",
@@ -700893,9 +700893,9 @@
                 "roam": false,
                 "roam_radius": 300.0,
                 "home": [
-                    -11434.3,
+                    -11465.7,
                     241.4,
-                    -20648.6
+                    -20642.4
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -700986,9 +700986,9 @@
         {
             "type": "npc",
             "pos": [
-                18660.6,
+                18631.0,
                 230.6,
-                15291.4
+                15303.6
             ],
             "properties": {
                 "name": "Lettice_wyndham_cross",
@@ -701018,9 +701018,9 @@
                 "custom_shoot": "assets/sprites/heads/head05.png",
                 "equipped_weapon": "iron_shortsword",
                 "home": [
-                    18660.6,
+                    18631.0,
                     236.5,
-                    15291.4
+                    15303.6
                 ],
                 "work_location": "wyndham_cross_green",
                 "merchant": false,
@@ -701500,7 +701500,7 @@
         {
             "type": "creature",
             "pos": [
-                18946.9,
+                19042.9,
                 236.5,
                 15209.2
             ],
@@ -701551,7 +701551,7 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    18946.9,
+                    19042.9,
                     236.5,
                     15209.2
                 ],
@@ -702217,7 +702217,7 @@
                 "home": [
                     13436.6,
                     219.7,
-                    -3993.1
+                    -3785.1
                 ],
                 "work_location": "the_pilgrim_s_lantern_bar",
                 "schedule": [
@@ -704996,9 +704996,9 @@
         {
             "type": "creature",
             "pos": [
-                17008.5,
+                16978.9,
                 223.3,
-                26417.7
+                26429.9
             ],
             "properties": {
                 "name": "Cow_621",
@@ -705031,9 +705031,9 @@
                 "roam": true,
                 "roam_radius": 120.0,
                 "home": [
-                    17008.5,
+                    16978.9,
                     223.3,
-                    26417.7
+                    26429.9
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -705252,7 +705252,7 @@
         {
             "type": "creature",
             "pos": [
-                12108.1,
+                12156.1,
                 193.2,
                 -3004.3
             ],
@@ -705303,7 +705303,7 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    12108.1,
+                    12156.1,
                     193.2,
                     -3004.3
                 ],
@@ -706453,9 +706453,9 @@
         {
             "type": "creature",
             "pos": [
-                -3918.0,
+                -3905.8,
                 462.3,
-                -15388.0
+                -15358.4
             ],
             "properties": {
                 "display_name": "Skeleton",
@@ -711036,9 +711036,9 @@
         {
             "type": "creature",
             "pos": [
-                746.8,
+                717.2,
                 226.8,
-                2273.7
+                2285.9
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -711087,9 +711087,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    746.8,
+                    717.2,
                     226.8,
-                    2273.7
+                    2285.9
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -714029,9 +714029,9 @@
         {
             "type": "creature",
             "pos": [
-                -6516.6,
+                -6489.9,
                 220.6,
-                156.9
+                196.8
             ],
             "properties": {
                 "name": "Hen_764",
@@ -714063,9 +714063,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    -6516.6,
+                    -6489.9,
                     220.6,
-                    156.9
+                    196.8
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -717061,9 +717061,9 @@
         {
             "type": "creature",
             "pos": [
-                26560.7,
+                26597.4,
                 216.4,
-                1188.7
+                1277.4
             ],
             "properties": {
                 "name": "Hen_812",
@@ -717095,9 +717095,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    26560.7,
+                    26597.4,
                     216.4,
-                    1188.7
+                    1277.4
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -722920,9 +722920,9 @@
         {
             "type": "creature",
             "pos": [
-                5798.6,
+                5825.3,
                 224.8,
-                -6044.7
+                -6004.8
             ],
             "properties": {
                 "name": "Hen_905",
@@ -722954,9 +722954,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    5798.6,
+                    5825.3,
                     224.8,
-                    -6044.7
+                    -6004.8
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -726232,9 +726232,9 @@
         {
             "type": "creature",
             "pos": [
-                -6188.2,
+                -6194.4,
                 220.9,
-                -2954.5
+                -2985.9
             ],
             "properties": {
                 "name": "Hen_957",
@@ -726266,9 +726266,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    -6188.2,
+                    -6194.4,
                     220.9,
-                    -2954.5
+                    -2985.9
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -726608,9 +726608,9 @@
         {
             "type": "creature",
             "pos": [
-                1781.2,
+                1787.4,
                 240.7,
-                -4876.7
+                -4845.3
             ],
             "properties": {
                 "name": "Cow_963",
@@ -726643,9 +726643,9 @@
                 "roam": true,
                 "roam_radius": 120.0,
                 "home": [
-                    1781.2,
+                    1787.4,
                     240.7,
-                    -4876.7
+                    -4845.3
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -731408,9 +731408,9 @@
         {
             "type": "creature",
             "pos": [
-                2141.8,
+                2175.7,
                 209.5,
-                -10459.5
+                -10425.6
             ],
             "properties": {
                 "name": "Hen_1041",
@@ -731442,9 +731442,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    2141.8,
+                    2175.7,
                     209.5,
-                    -10459.5
+                    -10425.6
                 ],
                 "inventory": [],
                 "triggered": true,
@@ -733456,9 +733456,9 @@
         {
             "type": "creature",
             "pos": [
-                4375.8,
+                4402.5,
                 215.5,
-                -10448.2
+                -10408.3
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -733507,9 +733507,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    4375.8,
+                    4402.5,
                     215.5,
-                    -10448.2
+                    -10408.3
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -735614,9 +735614,9 @@
         {
             "type": "creature",
             "pos": [
-                463.2,
+                451.9,
                 198.9,
-                -17397.3
+                -17408.6
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -735665,9 +735665,9 @@
                 "roam": true,
                 "roam_radius": 300.0,
                 "home": [
-                    463.2,
+                    451.9,
                     198.9,
-                    -17397.3
+                    -17408.6
                 ],
                 "sight": 512,
                 "can_hear": false,
@@ -763832,7 +763832,7 @@
                 "home": [
                     -5327.1,
                     236.7,
-                    13311.7
+                    13519.7
                 ],
                 "work_location": "the_wanderer_s_rest_bar",
                 "merchant": false,
@@ -763923,7 +763923,7 @@
                 "home": [
                     13436.6,
                     219.7,
-                    -3993.1
+                    -3785.1
                 ],
                 "work_location": "the_pilgrim_s_lantern_bar",
                 "merchant": false,

@@ -123,3 +123,47 @@ def test_a_greeting_that_names_a_neighbour_is_said_near_them(world):
     assert not far
     assert populate_world.title_line("Wayfarer", "Tom the Wayfarer") in \
         populate_world.TITLE_LINES["Wayfarer"]
+
+
+def _solid_boxes(world):
+    import copy
+    from engine.brush_placement import world_bounds
+    from engine.constants import is_solid_world_brush
+    return [world_bounds(b) for b in copy.deepcopy(world["brushes"]) if is_solid_world_brush(b)]
+
+
+def test_no_one_starts_or_lives_inside_a_wall(world):
+    """populate_world put each hamlet home a fixed 170 units from its house's
+    centre, inside the larger houses (which are solid), and the folk standing
+    on it with it: ten farmers, from Ashby to Wyndham Cross, could never take
+    a step, nor could hens, sheep, skeletons and bandits caught the same way;
+    and the two innkeepers' homes were the middle of their inns."""
+    from ..tools import populate_world
+    boxes = _solid_boxes(world)
+
+    def inside(x, y, z):
+        return any(x + 1 > b[0] and x - 1 < b[3] and y + 128 > b[1] and y < b[4]
+                   and z + 1 > b[2] and z - 1 < b[5] for b in boxes
+                   if b[0] - 1 < x < b[3] + 1 and b[2] - 1 < z < b[5] + 1)
+    walled = []
+    for t in world["things"]:
+        p = t["properties"]
+        if p.get("type") not in ("npc", "creature"):
+            continue
+        x, y, z = t["pos"]
+        if inside(x, y, z):
+            walled.append((p.get("display_name"), "stands"))
+        home = p.get("home")
+        if isinstance(home, list) and len(home) == 3:
+            # Millbrook's homes are stored under its floor: test them standing.
+            hy = y if home[1] < y - 100 else home[1]
+            if inside(home[0], hy, home[2]):
+                walled.append((p.get("display_name"), "home"))
+    assert not walled
+    # The tool's homes clear the wall on the door side, whatever the house.
+    for _tex, w, d in populate_world.HOUSES:
+        for k in range(16):
+            a = 2 * math.pi * k / 16
+            out = populate_world.door_reach(w, d, math.cos(a), math.sin(a))
+            x, z = -math.cos(a) * out, -math.sin(a) * out
+            assert abs(x) > w / 2 + 25 or abs(z) > d / 2 + 25

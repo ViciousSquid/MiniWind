@@ -98,6 +98,18 @@ def title_line(title, display_name):
     return lines[sum(map(ord, str(display_name))) % len(lines)]
 
 
+#: Clear of a house's wall: a body's half width and a margin to spare.
+DOOR_CLEARANCE = 60.0
+
+
+def door_reach(width, depth, dx, dz):
+    """How far from a *width* x *depth* house's centre, along the unit
+    direction (dx, dz), its wall is, plus :data:`DOOR_CLEARANCE`."""
+    tx = width * 0.5 / abs(dx) if abs(dx) > 1e-6 else math.inf
+    tz = depth * 0.5 / abs(dz) if abs(dz) > 1e-6 else math.inf
+    return min(tx, tz) + DOOR_CLEARANCE
+
+
 HOUSES = (("house01.png", 390, 260), ("house04.png", 340, 292), ("house05.png", 400, 200),
           ("house06.png", 300, 225), ("house01.png", 330, 220), ("house06.png", 340, 255))
 STALLS = (("market01.png", 200, 200), ("market03.png", 200, 200), ("shop01.png", 180, 180),
@@ -449,9 +461,13 @@ class Populator(Expander):
         for k in range(n):
             a = 2.0 * math.pi * k / n + float(self.rng.uniform(-0.25, 0.25))
             hx, hz = x + math.cos(a) * r, z + math.sin(a) * r
-            g = self._house(hx, hz)
-            # The door side faces the well.
-            homes.append((hx - math.cos(a) * 170.0, g + 48.0, hz - math.sin(a) * 170.0))
+            art = HOUSES[int(self.rng.integers(len(HOUSES)))]     # the draw _house made
+            g = self._house(hx, hz, art)
+            # The door side faces the well: the home is just outside the wall
+            # on that side. A fixed 170 units put it (and the folk standing on
+            # it) inside the larger houses, which are solid.
+            out = door_reach(art[1], art[2], math.cos(a), math.sin(a))
+            homes.append((hx - math.cos(a) * out, g + 48.0, hz - math.sin(a) * out))
         self._well(x, z)
         self._stall(x + 220.0, z - 160.0)
         work = f"{_slug(name)}_green"
