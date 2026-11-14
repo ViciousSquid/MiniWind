@@ -337,6 +337,9 @@ def test_companion_uses_healing_effects_and_does_not_chug_every_think(coop_game,
     )
     monkeypatch.setitem(items.ITEMS, potion.id, potion)
     c = bot.session.game.character
+    # Alchemy 0, so a potion restores exactly its 75 (RULES.md §5: a potion
+    # restores x (1 + 0.003 x Alchemy)).
+    c.skills["alchemy"] = 0
     c.inventory[:] = [potion.make_stack(2)]
     c.health = 1
     human_items = list(human.session.game.character.inventory)
