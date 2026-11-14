@@ -468,3 +468,32 @@ def test_a_search_travels_to_co_op_clients_whole(qt_app, dice_shown):
     replication.rolls_in(client, {"dice_animation": sent, "roll_boxes": []}, {},
                          client.player_actor, "p2")
     assert client.dice_animation["result"] == sent["result"]
+
+
+# ------------------------------------------------------ no corner panel left
+def test_there_is_no_corner_dice_panel():
+    from ..ui import hud, hud_layout
+    assert not hasattr(hud, "_draw_dice_roll")
+    assert "dice" not in hud_layout.PANELS
+
+
+def test_an_editor_roll_is_shown_in_a_roll_box(qt_app, monkeypatch):
+    """The console's dice outside Play draw the same box as any roll."""
+    from PyQt5.QtGui import QImage, QPainter
+    from ..ui import hud
+    drawn = []
+    real = hud._draw_roll_box
+    monkeypatch.setattr(hud, "_draw_roll_box", lambda *a, **k: drawn.append(a) or real(*a, **k))
+    image = QImage(800, 600, QImage.Format_ARGB32_Premultiplied)
+    image.fill(0)
+    painter = QPainter(image)
+    try:
+        hud.draw_dice_preview(painter, {"result": {"dice_notation": "1d20", "roll_result": 14,
+                                                   "components": [{"notation": "1d20",
+                                                                   "roll_details": [14]}]},
+                                        "elapsed": 2.0, "started_at": 12.5}, 800, 600)
+    finally:
+        painter.end()
+    (args,) = drawn
+    box, lay = args[1], args[2]
+    assert lay["parts"][0][0] == "YOU" and hud._box_verdict(box["result"])[0] == "ROLLED 14"

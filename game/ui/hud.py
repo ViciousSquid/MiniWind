@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import math
 import os
-from types import SimpleNamespace
 
 from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPolygonF, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import controls, fio
-from ..diceroll import check_target, describe_roll
+from ..diceroll import check_target
 from . import hud_layout as layout
 from . import spell_lock
 from . import theme as T
@@ -1858,12 +1857,24 @@ def _target_odds(c, target_props):
             f"({odds['crit_chance'] * 100:.0f}%)")
 
 def draw_dice_preview(painter, animation, width, height):
-    """Draw the dice panel for an editor-side preview animation."""
-    _draw_dice_roll(painter, SimpleNamespace(dice_animation=animation), width, height)
+    """An editor-side roll (the console's ``dice --animate`` outside Play) in
+    a roll box like any other, over the middle of the view: there is no
+    corner panel."""
+    box = dict(animation, side="you", actor=None)
+    box.setdefault("seed", int(float(animation.get("started_at", 0.0)) * 1000.0) & 0x7FFF)
+    lay = _roll_box_layout(box, width)
+    if lay is None:
+        return
+    x = int(max(4, (width - lay["w"]) / 2))
+    y = int(max(4, height * 0.4 - lay["h"]))
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    _draw_roll_box(painter, box, lay, x, y, (x + lay["w"] / 2, y + lay["h"]), 0.0,
+                   pointer=False)
+    painter.restore()
 
 
 _DICE_IMAGE_CACHE = {}
-_DICE_MAX_COLUMNS = 6
 
 
 def _dice_image(filename):
@@ -1989,147 +2000,6 @@ def _draw_dice_image(painter, image, center_x, center_y, size, angle, alpha):
     painter.restore()
 
 
-def _draw_dice_roll(painter, session, width, height):
-    """Draw asset-backed dice with staggered timing and independent motion."""
-    animation = getattr(session, "dice_animation", None)
-    if not animation:
-        return
-    result = animation.get("result") or {}
-    visuals = _prepare_dice_animation(animation, result)
-    if not visuals:
-        return
-
-    elapsed = float(animation.get("elapsed", 0.0))
-    duration = max(0.1, float(animation.get(
-        "duration", DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL +
-        DICE_ANIMATION_FADE + DICE_RESULT_HOLD_DURATION)))
-    settle_time = max((d["motion"]["delay"] + d["motion"]["duration"] for d in visuals),
-                      default=0.0)
-    fade_start = max(DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL, settle_time) + DICE_RESULT_HOLD_DURATION
-    alpha = 255
-    if elapsed > fade_start:
-        alpha = max(0, int((fade_start + DICE_ANIMATION_FADE - elapsed) /
-                           DICE_ANIMATION_FADE * 255))
-    if alpha <= 0:
-        return
-
-    notation = str(result.get("dice_notation", "1d20"))
-    label = str(result.get("label") or "")
-    target = result.get("target")
-    followups = [r for r in animation.get("followups", ()) if r.get("label")]
-    if animation.get("companion"):
-        # The damage die's roll reads first under the hit's verdict.
-        followups = [animation["companion"]] + followups
-    shown_followups = followups[:DICE_FOLLOWUP_LINES]
-    count = len(visuals)
-    columns = min(_DICE_MAX_COLUMNS, max(1, count))
-    rows = (count + columns - 1) // columns
-    die_size = 86 if count <= 4 else 72
-    gap = 22 if animation.get("companion") else 12
-    panel_w = max(380 if label else 340, columns * die_size + (columns - 1) * gap + 40)
-    extra_h = len(shown_followups) * 18 + (18 if len(followups) > len(shown_followups) else 0)
-    panel_h = 76 + rows * (die_size + gap) + 34 + extra_h
-    # Far right, just above the weapon/spell chips (_draw_active).
-    panel_x = width - panel_w - DICE_PANEL_MARGIN
-    panel_y = max(58, height - panel_h - DICE_PANEL_BOTTOM)
-
-    painter.save()
-    painter.setRenderHint(painter.Antialiasing, True)
-    panel_col = QColor(16, 15, 24, min(244, alpha))
-    painter.setPen(QPen(QColor(150, 122, 64, alpha), 2))
-    painter.setBrush(panel_col)
-    painter.drawRoundedRect(QRect(panel_x, panel_y, panel_w, panel_h), 10, 10)
-    # What the roll is for, what it needs, and why the odds are what they are:
-    #   ROLL TO HIT BANDIT
-    #   d20 — need 14 or higher
-    #   Blade 35 vs their Agility 30 — 35%
-    title = label.upper() if label else f"DICE  {notation}"
-    T.text_in(painter, QRect(panel_x + 12, panel_y + 8, panel_w - 24, 20),
-              title, size=10,
-              color=QColor(226, 224, 236, alpha), align=T.ALIGN_CENTER,
-              bold=True, family="Segoe UI")
-    if target is not None:
-        need = (f"{notation} — need {target} or higher" if target <= _notation_max(notation)
-                else f"{notation} — cannot succeed")
-        T.text_in(painter, QRect(panel_x + 12, panel_y + 28, panel_w - 24, 16),
-                  need, size=9, color=QColor(255, 214, 130, alpha),
-                  align=T.ALIGN_CENTER, family="Segoe UI")
-    why = str(result.get("why") or "")
-    if why:
-        T.text_in(painter, QRect(panel_x + 12, panel_y + 45, panel_w - 24, 16),
-                  why, size=8, color=QColor(170, 166, 184, alpha),
-                  align=T.ALIGN_CENTER, italic=True, family="Segoe UI")
-
-    settled = True
-    start_y = panel_y + 68
-    row_left = panel_x + (panel_w - (columns * die_size + (columns - 1) * gap)) // 2
-    from . import dice3d
-    for index, die in enumerate(visuals):
-        row, column = divmod(index, columns)
-        center_x = row_left + die_size // 2 + column * (die_size + gap)
-        center_y = start_y + die_size // 2 + row * (die_size + gap)
-        m = die["motion"]
-        if elapsed < m["delay"]:
-            settled = False
-            continue                    # not thrown yet: it comes in a moment later
-        local = elapsed - m["delay"]
-        rotation, dx, dy, done = dice3d.pose(die["sides"], die["value"], m, local)
-        if not done:
-            settled = False
-        # It tumbles in from the side and bounces to rest, out of step with
-        # its neighbour.
-        x = center_x + dx * die_size * 0.6
-        y = center_y + dy * die_size * 0.5
-        dice3d.draw_die(painter, die["sides"], die["value"], x, y, die_size * 0.92,
-                        rotation, alpha=alpha, tumbling=not done,
-                        flicker=int(local * 18.0) + index * 5)
-        if die.get("role"):
-            T.text_in(painter, QRect(center_x - die_size // 2, center_y + die_size // 2 - 2,
-                                     die_size, 14),
-                      "TO HIT" if die["role"] == "hit" else f"DAMAGE  d{die['sides']}",
-                      size=7, color=QColor(170, 166, 184, alpha), align=T.ALIGN_CENTER,
-                      bold=True, family="Segoe UI")
-
-    if settled:
-        total_y = panel_y + panel_h - 30 - extra_h
-        total = result.get("roll_result", 0)
-        if target is not None:
-            # The verdict, in the colour of the outcome: "Rolled 7 — FAILED".
-            passed = bool(result.get("success"))
-            T.text_in(painter, QRect(panel_x + 12, total_y, panel_w - 24, 22),
-                      f"ROLLED {total}  —  {'SUCCESS' if passed else 'FAILED'}",
-                      size=12, color=_verdict_color(passed, alpha),
-                      align=T.ALIGN_CENTER, bold=True, family="Segoe UI")
-        else:
-            T.text_in(painter, QRect(panel_x + 12, total_y, panel_w - 24, 22),
-                      f"TOTAL  {total}", size=12,
-                      color=QColor(255, 214, 130, alpha), align=T.ALIGN_CENTER,
-                      bold=True, family="Segoe UI")
-        # The rolls that came with it (a hit's critical, a kill's loot).
-        line_y = total_y + 24
-        for extra in shown_followups:
-            color = (_verdict_color(bool(extra.get("success")), alpha)
-                     if extra.get("target") is not None
-                     else QColor(226, 224, 236, alpha))
-            T.text_in(painter, QRect(panel_x + 12, line_y, panel_w - 24, 18),
-                      describe_roll(extra), size=9, color=color,
-                      align=T.ALIGN_CENTER, family="Segoe UI")
-            line_y += 18
-        if len(followups) > len(shown_followups):
-            T.text_in(painter, QRect(panel_x + 12, line_y, panel_w - 24, 18),
-                      f"+ {len(followups) - len(shown_followups)} more (see roll log)",
-                      size=8, color=QColor(170, 166, 184, alpha),
-                      align=T.ALIGN_CENTER, family="Segoe UI")
-    painter.restore()
-    return QRect(panel_x, panel_y, panel_w, panel_h)
-
-
-#: The dice panel's gap from the right edge, and from the bottom (clear of
-#: the inventory strip along the bottom edge).
-DICE_PANEL_MARGIN = 18
-DICE_PANEL_BOTTOM = 100
-#: How many same-instant follow-up rolls the dice panel lists under the main one.
-DICE_FOLLOWUP_LINES = 3
 _VERDICT_PASS = (130, 220, 130)
 _VERDICT_FAIL = (235, 110, 100)
 
@@ -2137,16 +2007,6 @@ _VERDICT_FAIL = (235, 110, 100)
 def _verdict_color(passed, alpha=255):
     r, g, b = _VERDICT_PASS if passed else _VERDICT_FAIL
     return QColor(r, g, b, alpha)
-
-
-def _notation_max(notation):
-    """The highest total *notation* can roll (20 for ``1d20``)."""
-    try:
-        from ..diceroll import parse_dice_notation
-        terms, _src = parse_dice_notation(notation)
-    except ValueError:
-        return 0
-    return sum(t.sign * (t.count * t.sides if t.sides else t.modifier) for t in terms)
 
 
 #: The roll log: bottom-left, above the inventory strip.

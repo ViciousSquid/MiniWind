@@ -1307,6 +1307,7 @@ class MiniwindGame:
                     "result": preview.get("result"),
                     "elapsed": elapsed,
                     "duration": DICE_DISPLAY_DURATION,
+                    "started_at": started_at,      # the throw's seed: the same every frame
                 }
                 try:
                     import game.ui.hud as hud

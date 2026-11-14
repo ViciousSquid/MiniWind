@@ -1406,7 +1406,7 @@ class MiniwindSession(SettlementLaw):
                 current["companion"] = result
                 return
             # Rolled in the same instant as the one about to be shown (a hit
-            # and its critical, a kill's loot): listed under it, not over it.
+            # and its critical): kept with it, not shown over it.
             current.setdefault("followups", []).append(result)
             return
         if current is not None:
