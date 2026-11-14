@@ -1,6 +1,7 @@
 from engine.asset_qt import load_icon, load_pixmap
 from engine import gc_policy
 import sys
+import html
 import io
 import functools
 import json
@@ -3372,8 +3373,9 @@ class MainWindow(QMainWindow):
         """)
         layout.addWidget(subtitle_label)
 
+        version_html = html.escape(version).replace("\n", "<br>")
         version_label = QLabel(
-            f"{version}<br>"
+            f"{version_html}<br>"
             f"<a href='https://github.com/ViciousSquid/Fio' style='color: #F08000; text-decoration: none;'>"
             f"https://github.com/ViciousSquid/Fio"
             f"</a><br>"
