@@ -91,6 +91,10 @@ def _patch_editor_menu():
             _add_tools_menu_entries(MainWindow)
         except Exception as exc:
             _log(f"MiniWind Tools-menu entries failed: {exc}")
+        try:
+            _add_debug_menu_entries(MainWindow)
+        except Exception as exc:
+            _log(f"MiniWind Debug-menu entries failed: {exc}")
         # MiniWind's world comes from its settlement tools, not Fio's
         # procedural map generator: it is not offered (Tools and Terrain menus
         # share the one action).
@@ -233,6 +237,34 @@ def _hide_camera_dropdown(MainWindow):
         if spacer is not None and spacer.spacerItem() is not None:
             layout.removeItem(spacer)
     combo.hide()
+
+
+def _add_debug_menu_entries(MainWindow):
+    """Debug > World Map: the world map in a window with the editor camera on
+    it (the ``worldmap`` console command), after Position, the other camera
+    tool."""
+    debug = getattr(MainWindow, "debug_menu", None)
+    if debug is None or getattr(debug, "_miniwind_world_map_added", False):
+        return
+    from PyQt5.QtWidgets import QAction
+
+    def open_map(_checked=False):
+        from .ui import worldmap_window
+        worldmap_window.toggle(MainWindow)
+
+    action = QAction("World Map", MainWindow)
+    action.setToolTip("The world map in a window, with the editor camera on it; "
+                      "click the map to move the camera there (console: worldmap)")
+    action.triggered.connect(open_map)
+    actions = debug.actions()
+    position = getattr(MainWindow, "position_action", None)
+    after = actions.index(position) + 1 if position in actions else len(actions)
+    if after < len(actions):
+        debug.insertAction(actions[after], action)
+    else:
+        debug.addAction(action)
+    MainWindow.world_map_action = action
+    debug._miniwind_world_map_added = True
 
 
 def _add_tools_menu_entries(MainWindow):
