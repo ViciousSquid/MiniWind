@@ -72,6 +72,8 @@ ap.add_argument('--travel', action='append', default=[], metavar='MAP',
 ap.add_argument('--json')
 ap.add_argument('--sample-ms', type=float, default=2.0)
 ap.add_argument('--no-sampler', action='store_true')
+ap.add_argument('--capture-play', metavar='PNG',
+                help='save a picture of the window 3 s into the measured play')
 ap.add_argument('--capture-loading', metavar='DIR',
                 help='save a picture of the window at every loading-bar stage (perturbs timing)')
 ap.add_argument('--gc-census', action='store_true',
@@ -771,6 +773,8 @@ def start_play(window):
                                     key=lambda kv: -kv[1])[:12])})
         for i in range(1, int(args.seconds // 10) + 1):
             after(i * 10000 - 50, take)
+    if args.capture_play:
+        after(3000, lambda: window.grab().save(args.capture_play))
     after(args.seconds * 1000, lambda: end_play(window))
 
 
