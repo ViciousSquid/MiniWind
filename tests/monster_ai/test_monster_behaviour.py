@@ -96,6 +96,29 @@ def test_a_sleeping_monster_wakes_when_the_player_comes_into_sight(
         % (monster.name, MONSTER_SIGHT_RANGE - 200))
 
 
+@pytest.mark.parametrize("dense", [True, False])
+def test_a_hidden_player_must_come_nearer_to_wake_a_sleeper(
+        monster_factory, ai_world, flat_ground, dense):
+    """The player's ``visibility_scale`` shrinks the range a sleeper sees
+    them at (a game sets it for a sneaking player), on both update paths."""
+    monster = monster_factory("light_sleeper", (MONSTER_SIGHT_RANGE * 0.6, 96, 0),
+                              awake=False)
+    ai, logic = ai_world(brushes=flat_ground, things=[monster])
+    ai.DENSE_UPDATE = dense
+    logic.player_runtime.player.visibility_scale = 0.5
+
+    ai.update(TICK)
+    assert monster.properties["awake"] is False, (
+        "'%s' at 0.6 x sight range must not see a player hidden to 0.5"
+        % monster.name)
+
+    monster.pos = [MONSTER_SIGHT_RANGE * 0.4, 96, 0]
+    ai.update(TICK)
+    assert monster.properties["awake"] is True, (
+        "'%s' at 0.4 x sight range should see a player hidden to 0.5"
+        % monster.name)
+
+
 def test_a_monster_with_wake_on_sight_off_wakes_immediately(
         monster_factory, ai_world, flat_ground):
     monster = monster_factory("always_awake", (5000, 96, 0),

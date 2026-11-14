@@ -111,6 +111,23 @@ def sight_range(observer_props: Dict, hour: float = 12.0) -> float:
     return max(0.0, base)
 
 
+#: ``stealth`` a sneaking player gains per point of Sneak: 0.5 at Sneak 100.
+#: With :func:`stealth_factor` that is sight x 0.5 x (1 - 0.003 x Sneak).
+SNEAK_STEALTH_PER_POINT = 0.005
+
+
+def sneak_stealth(sneak_skill, sneaking: bool = True) -> float:
+    """The ``stealth`` (0-0.5) the Sneak skill gives an actor who is
+    sneaking; nothing when they are not."""
+    if not sneaking:
+        return 0.0
+    try:
+        skill = max(0.0, min(100.0, float(sneak_skill)))
+    except (TypeError, ValueError):
+        skill = 0.0
+    return skill * SNEAK_STEALTH_PER_POINT
+
+
 def stealth_factor(actor_props: Optional[Dict]) -> float:
     """Multiplier applied to an observer's sight range against this actor.
 

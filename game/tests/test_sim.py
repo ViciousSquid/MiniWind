@@ -139,6 +139,57 @@ def test_sneaking_shrinks_everyones_sight():
     assert hidden is None
 
 
+def test_the_sneak_skill_shrinks_sight_further_while_sneaking():
+    """Sneaking: sight x 0.5 x (1 - 0.003 x Sneak) -- 0.5 at Sneak 0, 0.425
+    at 50, 0.35 at 100. Standing up, the skill hides nobody."""
+    for sneak, factor in ((0, 0.5), (50, 0.425), (100, 0.35)):
+        props = {"sneaking": True, "stealth": perception.sneak_stealth(sneak)}
+        assert perception.stealth_factor(props) == pytest.approx(factor)
+        props = {"sneaking": False, "stealth": perception.sneak_stealth(sneak, False)}
+        assert perception.stealth_factor(props) == 1.0
+    watcher = _Thing("Watch", (380, 0, 0), sight_range=1000)   # 0.38 of its sight
+    ev = WorldEvent("theft", pos=(0, 0, 0))
+    novice = {"sneaking": True, "stealth": perception.sneak_stealth(5)}
+    master = {"sneaking": True, "stealth": perception.sneak_stealth(100)}
+    assert perception.can_perceive(watcher, ev.pos, ev.loudness, actor_props=novice)
+    assert perception.can_perceive(watcher, ev.pos, ev.loudness, actor_props=master) is None
+
+
+def test_the_player_actor_carries_its_sneak_skill_and_hides_from_sleepers():
+    """The player's actor gives perception their Sneak while sneaking, and the
+    engine player's visibility_scale (how far a sleeping monster sees them
+    to wake) follows the same stealth factor."""
+    from ..runtime import MiniwindSession, _PlayerActor
+    from ..rpg.character import Character
+
+    class _Player:
+        visibility_scale = 1.0
+        pos = [0.0, 0.0, 0.0]
+
+    player = _Player()
+
+    class _Logic:
+        player_dead = False
+
+        class player_runtime:
+            pass
+    _Logic.player_runtime.player = player
+    s = MiniwindSession.__new__(MiniwindSession)
+    s.logic = _Logic()
+    s._player_pos = lambda: (0.0, 0.0, 0.0)
+    c = Character.create("Shade", "tehani", "thief")
+    c.skills["sneak"] = 60
+    s.game = type("G", (), {"character": c, "sneaking": False})()
+    s._player_actor = _PlayerActor(s)
+    s._update_visibility()
+    assert s.player_actor.properties["stealth"] == 0.0
+    assert player.visibility_scale == 1.0
+    s.game.sneaking = True
+    s._update_visibility()
+    assert s.player_actor.properties["stealth"] == pytest.approx(0.3)
+    assert player.visibility_scale == pytest.approx(0.5 * (1 - 0.003 * 60))
+
+
 def test_night_dims_sight_unless_you_carry_a_torch():
     dark = _Thing("Dark", (700, 0, 0), sight_range=1000)
     lit = _Thing("Lit", (700, 0, 0), sight_range=1000, torch=True)

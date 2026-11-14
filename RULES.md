@@ -600,8 +600,14 @@ view nothing is.
 
 ## 11. Sneaking
 
-Sneaking halves how far others can see you; an observer without a torch at
-night sees 45% as far. Sneak attacks multiply damage (see §7).
+Sneaking shrinks how far others see you, and your **Sneak** skill shrinks it
+further: against a sneaking player every sight range is
+`× 0.5 × (1 − 0.003 × Sneak)` — ×0.5 at Sneak 0, ×0.425 at 50, ×0.35 at 100
+(`game/sim/perception.py`). Standing, Sneak hides no one. The same factor
+serves the witnesses of a crime, a guard looking for a wanted player, a
+lock's onlookers and a sleeping hostile creature, which wakes when you come
+within 1,024 units × the factor. An observer without a torch at night sees
+45% as far. Sneak attacks multiply damage (see §7).
 
 ---
 
@@ -793,7 +799,7 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 Places where the code does not yet do what something in the game describes:
 
-* **Sneak** is trained but read by no rule; **Acrobatics**, **Light Fingers**
-  and **Alchemy** are neither trained nor read.
+* **Acrobatics**, **Light Fingers** and **Alchemy** are neither trained nor
+  read.
 * Sneak-attack damage applies whenever sneaking is on, even if the target has
   already seen you.

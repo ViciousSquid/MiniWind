@@ -267,6 +267,18 @@ class MonsterAI:
             return bool(team_a) and bool(team_b) and team_a != team_b
         return model.is_hostile(team_a, team_b)
 
+    def _player_wake_range(self) -> float:
+        """How near the player must come for a sleeping monster to see them
+        and wake: :data:`MONSTER_SIGHT_RANGE` times the player's
+        ``visibility_scale`` (1.0 unless a game sets it: a sneaking player is
+        harder to see), as ``move_speed_scale`` scales the pace."""
+        player = getattr(self.lt.player_runtime, 'player', None)
+        try:
+            scale = float(getattr(player, 'visibility_scale', 1.0))
+        except (TypeError, ValueError):
+            scale = 1.0
+        return MONSTER_SIGHT_RANGE * max(0.0, scale)
+
     def _hunts_player(self, thing) -> bool:
         model = self.hostility
         return True if model is None else model.hunts(thing.properties)
@@ -488,7 +500,8 @@ all accumulated time when it runs, so simulation time is not lost.
         pos32 = t.pos[:n].astype(np.float32)
         px, py, pz = float(player_pos[0]), float(player_pos[1]), float(player_pos[2])
         player32 = np.array((px, py, pz), dtype=np.float32)
-        sight_sq = MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
+        wake_range = self._player_wake_range()
+        sight_sq = wake_range * wake_range
         nearest = None
         scalar = np.zeros(n, dtype=bool)
 
@@ -975,7 +988,8 @@ all accumulated time when it runs, so simulation time is not lost.
                 # Sight of the player (squared distance — threshold-only compare)
                 diff_to_player = player_pos - glm.vec3(thing.pos)
                 dist_to_player_sq = glm.dot(diff_to_player, diff_to_player)
-                if (dist_to_player_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
+                wake_range = self._player_wake_range()
+                if (dist_to_player_sq <= wake_range * wake_range
                         and self._hunts_player(thing)):
                     woke_reason = 'sight'
                 else:

@@ -327,6 +327,9 @@ class Player:
         #: Multiplier on how fast the player can move, for a game to slow
         #: them (a heavy load, a snare). 1.0 is the stock speed.
         self.move_speed_scale = 1.0
+        #: Multiplier on how far a sleeping monster sees the player to wake
+        #: (MonsterAI._player_wake_range), for a game to hide them (sneaking).
+        self.visibility_scale = 1.0
         self.mouse_sensitivity = 0.0015
         self.width, self.height, self.depth = PLAYER_HULL_SIZE
         self.camera_height = 40.0  # Offset from pos.y

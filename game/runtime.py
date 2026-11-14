@@ -75,6 +75,7 @@ from .sim import appraisal as sim_appraisal
 from .sim import crime as sim_crime
 from .sim import knowledge as sim_knowledge
 from .sim import ownership as sim_own
+from .sim import perception as sim_perception
 from .sim import production as sim_prod
 from .sim.director import Director, PLAYER_KEY, actor_key
 from .rpg.dialogue import DialogueRunner
@@ -554,6 +555,12 @@ class _PlayerActor:
         except Exception:
             pass
         p["sneaking"] = bool(getattr(s.game, "sneaking", False))
+        # Sneak skill: a sneaking player is harder to see still.
+        try:
+            p["stealth"] = sim_perception.sneak_stealth(
+                s.game.character.skill("sneak"), p["sneaking"])
+        except Exception:
+            p["stealth"] = 0.0
         p["dead"] = bool(getattr(s.logic, "player_dead", False))
         return self
 
@@ -2451,6 +2458,7 @@ class MiniwindSession(SettlementLaw):
         self.game.tick(delta, self._sprint(delta))
         self._announce_skill_raises()
         self._update_encumbrance()
+        self._update_visibility()
         if self._attack_cooldown > 0:
             self._attack_cooldown -= delta
         if self._offhand_cooldown > 0:
@@ -4401,6 +4409,19 @@ class MiniwindSession(SettlementLaw):
         elif was and not heavy:
             self.notify("You can move freely again.", 2.0)
         self._encumbered = heavy
+
+    def _update_visibility(self) -> None:
+        """How near a sleeping monster must be to see the player and wake:
+        the engine's sight range times the same stealth factor witnesses and
+        guards use (sneaking, and the Sneak skill)."""
+        player = fio.player(self.logic)
+        if player is None:
+            return
+        try:
+            player.visibility_scale = sim_perception.stealth_factor(
+                self.player_actor.properties)
+        except Exception:
+            player.visibility_scale = 1.0
 
     def _announce_skill_raises(self) -> None:
         """Toast each skill that rose through use ("Offensive increased to

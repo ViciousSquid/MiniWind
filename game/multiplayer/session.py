@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from .. import fio
 from ..rpg import equipment, heads
 from ..rpg.character import Character
+from ..sim import perception
 from .companion_behavior import CompanionMind
 from .model import InputFrame, LobbyError
 from .quests import CoopGameState, PartyQuests
@@ -438,6 +439,7 @@ class CoopSession:
             offhand_weapon=equipment.equipped_id(c, "shield"),
             handed=c.handed,
             sneaking=context.session.game.sneaking,
+            stealth=perception.sneak_stealth(c.skill("sneak"), context.session.game.sneaking),
             alignment=float(getattr(c, "alignment", 0)),
             _attack_anim=context.session._attack_anim_time,
             _offhand_anim=context.session._offhand_anim_time,
@@ -1099,6 +1101,7 @@ class CoopSession:
             session.game.tick(delta, session._sprint(delta))
             session._update_bow_draw(delta)
             session._update_encumbrance()
+            session._update_visibility()
             session._announce_skill_raises()
             for name in (
                 "_attack_cooldown",
