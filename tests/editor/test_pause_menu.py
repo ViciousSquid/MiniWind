@@ -414,7 +414,18 @@ def test_animated_textures_run_on_unpaused_play_time(main_window, monkeypatch):
             clocks.append(round(clock, 3))
 
     now = [100.0]
-    monkeypatch.setattr(gv.time, "perf_counter", lambda: now[0])
+    real_time = gv.time
+
+    class Clock:
+        def perf_counter(self):
+            return now[0]
+
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+    # Replace only this module's clock; the live LogicThread uses the
+    # process-wide time module and must keep its real clock.
+    monkeypatch.setattr(gv, "time", Clock())
     monkeypatch.setattr(view, "renderer", Renderer())
 
     def frame(dt):
