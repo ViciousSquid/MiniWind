@@ -10,10 +10,11 @@ import glm
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.miniwind, pytest.mark.qt]
+pytest.importorskip("OpenGL.GL")
+
 from engine.renderer.core import terrain_gl as tg
 from engine.terrain_frame import frustum_planes
-
-pytestmark = pytest.mark.miniwind
 
 SIZE = 1024.0
 CELLS = tg.grass_cells_for(SIZE)

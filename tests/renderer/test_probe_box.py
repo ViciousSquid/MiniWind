@@ -11,8 +11,9 @@ import glm
 import numpy as np
 import pytest
 
-# The headless CI tier provides the GL bindings but no context; this matrix
-# test needs renderer imports only. The OpenGL tier verifies actual rendering.
+# The Qt/offscreen tier provides the GL bindings; this matrix test needs no
+# live context.
+pytestmark = pytest.mark.qt
 pytest.importorskip("OpenGL.GL")
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))

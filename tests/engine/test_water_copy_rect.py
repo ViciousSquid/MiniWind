@@ -3,6 +3,10 @@
 
 import glm
 import numpy as np
+import pytest
+
+pytestmark = pytest.mark.qt
+pytest.importorskip("OpenGL.GL")
 
 from engine.renderer.forward.passes import WATER_COPY_PAD, water_screen_rect
 

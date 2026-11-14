@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.qt
+
 
 def _passes():
     from engine.renderer.forward.passes import PassesMixin
