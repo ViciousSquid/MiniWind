@@ -404,6 +404,7 @@ SPANS = (
     ('game.ui.magic_gl', '_init', 'shader compile (magic)'),
     ('engine.sprite_layers', 'SpriteLayers._import', 'sprite layer import'),
     ('engine.view_audio', 'ViewAudio._get_sound_instance', 'sound first play (get instance)'),
+    ('engine.view_audio', 'ViewAudio.preload_combat_sounds', 'combat sounds preloaded'),
     ('game.music', 'MusicPlayer._load_track', 'music track load'),
     ('game.navigation', 'Navigator.find_path', 'nav find_path'),
     ('game.ui.hud_frame', '_layers', 'HUD frame layers'),
