@@ -602,7 +602,8 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 * **Being noticed.** While you sneak, someone with you in plain sight (within
   their halved sight, nothing in the way) must roll to notice you before
   they count as having seen you: a d20 at `1 − 0.7 × distance ÷ their
-  sight` (at least 20%; `notice_chance`, `game/sim/perception.py`), in a
+  sight` (95% up close, 30% at its edge; `notice_chance`,
+  `game/sim/perception.py`), in a
   roll box over them ("CRESS OF THE WATCH: ROLL TO NOTICE YOU"). Their roll
   stands for 6 s (`NOTICE_MEMORY`, `game/law.py`); still in sight after
   that, they roll again. It is rolled when being seen matters: a witness
