@@ -42,6 +42,14 @@ Every chance in MiniWind is rolled on dice, and every roll is shown honestly.
   box ever hides another's words.) A character
   with a roll box over its head says nothing (speech bubbles, barks and
   thoughts wait).
+* **Rolls outside a fight** use the same boxes, with every rule above:
+  talking someone round (§15), a snapped pick (§12), being noticed while
+  sneaking (§11) and searching for loot (§12). The boxes still show over a
+  conversation, trade, a container and the lockpicking window (never over
+  any other menu); a box the window, or a toast, would cover moves just
+  beside, above or below it, its line still pointing to the roller (a box
+  below its roller points up). What a roll decides there -- an answer, a
+  toast -- is told when its die lands, as in a fight.
 * **Who rolls where it can be seen.** Only actors in the NEAR simulation tier
   roll dice on screen; anyone further out (ACTIVE, DISTANT, DORMANT), and
   anyone Big World has parked, never does.
@@ -654,11 +662,14 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
   (under 55) 1.0, fair (under 72) 0.96, striking 0.9 (inverted when selling).
 * **Disposition** = base + (PER − 40) × 0.5 + 15 for faction-mates − the
   bounty's weight.
-* **Persuade:** `(Speechcraft + LUCK × 0.2)%`, 5–95%; success +8
-  disposition, failure −4.
-* **Charm & Luck options** open at fortune 45: `0.45 + (fortune − 45) ×
-  0.012 − difficulty` (haggle 0.10, pardon 0.30, rumours 0, favour 0.20),
-  each once a day per person.
+* **Persuade:** a d20 check at `(Speechcraft + LUCK × 0.2)%`, 5–95%, in
+  your roll box ("YOU: PERSUADE ANN", their name in their side's colour);
+  success +8 disposition, failure −4, told when the die lands.
+* **Charm & Luck options** open at fortune 45: a d20 check at `0.45 +
+  (fortune − 45) × 0.012 − difficulty` (haggle 0.10, pardon 0.30, rumours
+  0, favour 0.20), each once a day per person, in your roll box ("YOU:
+  HAGGLE WITH MABEL"). They hesitate ("...") until the die lands, then
+  answer.
 * A repulsive face: merchants refuse unless disposition is 60+, and hostile
   people may decline to fight (up to 70% at Charisma 0).
 

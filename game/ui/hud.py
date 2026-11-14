@@ -577,6 +577,44 @@ def _screen_roll_boxes(session):
     return boxes
 
 
+#: The screens a roll can be made in -- talking someone round, a search, a
+#: lock -- over which the roll boxes still show (game/host.py), kept clear of
+#: the screen's window.
+ROLL_BOX_SCREENS = ("trade", "container", "lockpicking")
+
+
+def shows_roll_boxes(session) -> bool:
+    """Whether the roll boxes are drawn now: in free play, and over a
+    conversation or one of :data:`ROLL_BOX_SCREENS` -- never over any
+    other menu, nor once the player is dead."""
+    if session.game.character.is_dead:
+        return False
+    if session.dialogue is not None:
+        return True
+    return session.open_screen is None or session.open_screen in ROLL_BOX_SCREENS
+
+
+def _keep_clear_rects(session, width, height):
+    """``[(x, y, w, h)]`` a roll box over its roller moves clear of: the
+    open conversation's or screen's window (drawn over the boxes) and the
+    toasts on screen (a result told there is never hidden)."""
+    out = []
+    win = getattr(session, "_overlay_win", None)
+    if win is not None and getattr(win, "active", False):
+        try:
+            r = win._full_rect()
+            out.append((int(r.x()), int(r.y()), int(r.width()), int(r.height())))
+        except Exception:
+            pass
+    try:
+        if layout.visible("toasts"):
+            r = layout.screen_rect("toasts", width, height)
+            out.append((int(r.x()), int(r.y()), int(r.width()), int(r.height())))
+    except Exception:
+        pass
+    return out
+
+
 def draw_roll_boxes(painter, session, viewport, width, height):
     """Every roll on screen in a small box over the one rolling: the
     player's own (gold name), an ally's (green) or a foe's (red); a fight
@@ -627,7 +665,8 @@ def draw_roll_boxes(painter, session, viewport, width, height):
     except Exception:
         dock_top = 8
     groups = _stack_roll_boxes(anchored, width, height, stack=stack, floor=floor,
-                               dock=ROLL_STACK_DOCK, dock_top=dock_top)
+                               dock=ROLL_STACK_DOCK, dock_top=dock_top,
+                               avoid=_keep_clear_rects(session, width, height))
     for group in groups:               # the lines first, under every box
         for bx, by, sp, box, lay, _pointer in group:
             if lay.get("docked"):
@@ -664,7 +703,7 @@ def _is_attack(box) -> bool:
 
 
 def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
-                      dock=None, dock_top=8):
+                      dock=None, dock_top=8, avoid=()):
     """Lay the boxes out: each right over its roller, a slight overlap
     allowed; boxes closer than that join one stack over their rollers, the
     attacker's roll always at the top (with *stack* off -- Settings > Game >
@@ -673,7 +712,9 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
     last in a stack. Everything stays above *floor* (the shortcut bar's
     top; the screen's bottom by default): a stack too tall for the screen
     shows the boxes that fit -- the player's own first, then attacks -- and
-    drops the rest, so a brawl never runs under the bar."""
+    drops the rest, so a brawl never runs under the bar. *avoid* lists
+    ``(x, y, w, h)`` rectangles (an open conversation's window) that a box
+    over its roller moves clear of, as it does of another stack."""
     height = min(height, floor) if floor else height
     natural = []
     for sp, box, lay in anchored:
@@ -709,7 +750,7 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
     order = sorted(clusters.values(), key=lambda m: (
         all(_box_side(anchored[i][1]) != "you" for i in m),
         -max(anchored[i][0][1] for i in m)))
-    placed = []
+    placed = [tuple(int(v) for v in r) for r in avoid]
 
     def heavy(x, y, w, h):
         for (px, py, pw, ph) in placed:
@@ -743,8 +784,13 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
         bottom = min(natural[i][1] + natural[i][3] for i in members)
         above = (sum(xs) / len(xs), bottom - total)
         beside = [(min(xs) - 40 - widest / 2, None), (max(xs) + 40 + widest / 2, None)]
+        # Covered by a window: just above it or just below it, the nearer first.
+        around = []
+        for (_ox, oy, _ow, oh) in avoid:
+            around += [(above[0], oy - total - 12), (above[0], oy + oh + 12)]
+        around.sort(key=lambda c: abs(c[1] - above[1]))
         chosen = None
-        for centre, top in [above] + beside:
+        for centre, top in [above] + beside + around:
             top = max(4, bottom - total) if top is None else top
             left = centre - widest / 2
             if top < 4 or left < 4 or left + widest > width - 4 or top + total > height - 4:
@@ -911,17 +957,24 @@ def _draw_roll_box(painter, box, layout, bx, by, anchor, gap, pointer=True):
     edge.setAlpha(int(edge.alpha() * alpha / 255))
     ax, ay = anchor[0], anchor[1] - gap
     tip = max(bx + 10, min(bx + w - 10, ax))
-    if pointer and (by + h + 9 < ay - 2 or abs(tip - ax) > 2):
+    # A box moved below its roller (clear of a conversation's window) points
+    # up to it from its top edge; any other from its bottom edge.
+    below = by > anchor[1]
+    if below:
+        base, point, ay = by + 1, by - 9, anchor[1]
+    else:
+        base, point = by + h - 1, by + h + 9
+    if pointer and (below or by + h + 9 < ay - 2 or abs(tip - ax) > 2):
         # The bottom of a stack, lifted above or set beside its roller: a
         # thin line to it.
         painter.setPen(QPen(edge, 1.2))
-        painter.drawLine(QPointF(tip, by + h + 9), QPointF(ax, ay))
+        painter.drawLine(QPointF(tip, point), QPointF(ax, ay))
     painter.setPen(QPen(edge, 2.5 if party else 1.5))
     painter.setBrush(bg)
     painter.drawRoundedRect(QRectF(bx, by, w, h), 7, 7)
     if pointer:
-        painter.drawPolygon(QPolygonF([QPointF(tip - 7, by + h - 1), QPointF(tip + 7, by + h - 1),
-                                       QPointF(tip, by + h + 9)]))
+        painter.drawPolygon(QPolygonF([QPointF(tip - 7, base), QPointF(tip + 7, base),
+                                       QPointF(tip, point)]))
     painter.setFont(layout["title_font"])
     if layout.get("docked"):
         # Two lines: who rolls, then what for and against whom.

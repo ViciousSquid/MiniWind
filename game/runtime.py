@@ -1395,22 +1395,28 @@ class MiniwindSession(SettlementLaw):
             # Attacking again before the last roll has landed: it is told at
             # once, and the new roll takes its place. Nobody waits on dice.
             self._hurry_dice()
-        self.dice_animation = {
+        against = None
+        if context.get("against_name"):
+            against = (str(context["against_name"]), str(context.get("against_side") or "foe"))
+        self.dice_animation = self._own_roll_box(result, against)
+        return
+
+    def _own_roll_box(self, result, against=None) -> Dict:
+        """The player's own roll box for *result*: shown over the player
+        (draw_roll_boxes); *against* is ``(name, side)`` of whom it is
+        rolled against, named in their side's colour."""
+        return {
             "result": result,
             "elapsed": 0.0,
             "duration": DICE_DISPLAY_DURATION,
-            # Shown in a box over the player (draw_roll_boxes); a roll
-            # against someone names them in their side's colour.
             "actor": self.player_actor, "side": "you", "kind": "party",
-            "against": ((str(context["against_name"]), "foe")
-                        if context.get("against_name") else None),
+            "against": against,
             # Whose roll it is in co-op: "you" only on that player's own machine.
             "player_id": getattr(self, "player_id", None),
             # The dice's tumble and finishes come from this, so every co-op
             # client sees the same throw (never from a memory address).
             "seed": self.rng.randint(1, 1 << 15),
         }
-        return
 
     # ------------------------------------------------------------ roll boxes
     def side_of(self, thing) -> str:
@@ -4240,14 +4246,10 @@ class MiniwindSession(SettlementLaw):
                                          event=event, context=context)
 
     def roll_dice(self, dice_notation: Optional[str] = None) -> Dict:
-        """Roll dice and start the native HUD shake/roll/fade presentation."""
+        """Roll dice and show them in the player's roll box."""
         notation = dice_notation or f"1{self.selected_dice_type}"
         result = self.game.roll_dice(notation)
-        self.dice_animation = {
-            "result": result,
-            "elapsed": 0.0,
-            "duration": DICE_DISPLAY_DURATION,
-        }
+        self.dice_animation = self._own_roll_box(result)
         return result
 
     def _tick_dice_animation(self, delta: float) -> None:
@@ -4293,8 +4295,11 @@ class MiniwindSession(SettlementLaw):
 
     def tick_ui(self, delta: float) -> None:
         """Age only the transient HUD (toasts/floaters) while the world is paused
-        (a menu or character creation is open). No clock, NPC or combat sim."""
+        (a menu or character creation is open). No clock, NPC or combat sim.
+        A roll made there (talking someone round) is still told once its die
+        lands."""
         self._announce_skill_raises()
+        self._run_reveals()
         self._age_lists(delta)
         self._check_pack()          # a satchel sold over the counter
 
@@ -10436,22 +10441,27 @@ class MiniwindSession(SettlementLaw):
         p = npc.properties
         text, _difficulty, win, lose = rpg_fortune.OPTIONS[option]
         name = p.get("display_name") or p.get("name") or "them"
+        # A d20 the player watches in their roll box, over them, the NPC
+        # named in their side's colour (RULES.md §1).
         roll = roll_check(self.game.dice, rpg_fortune.chance(c, option),
-                          f"Charm & Luck: {name}", source="dialogue.fortune",
-                          why=rpg_fortune.why(c), context={"option": option})
+                          rpg_fortune.roll_label(option, name), source="dialogue.fortune",
+                          why=rpg_fortune.why(c),
+                          context={"option": option, "against_name": name,
+                                   "against_side": self.side_of(npc)})
         self.store.set(self._fortune_key(npc, option), str(self.clock.day))
         line = win if roll["success"] else lose
+        told = []                       # toasts, once the die has landed
         if roll["success"]:
             if option == "haggle":
                 disp.remember(self.store, p, "charmed")
             elif option == "pardon":
                 region = self._law_region(npc.pos, npc)
                 forgiven = self.law.forgive(region, 0.5)
-                self.notify(f"Bounty reduced by {forgiven} gold.", 4.0)
+                told.append((f"Bounty reduced by {forgiven} gold.", 4.0))
             elif option == "favour":
                 gold = self.rng.randint(5, 25)
                 c.gold += gold
-                self.notify(f"{name} gave you {gold} gold.", 3.5)
+                told.append((f"{name} gave you {gold} gold.", 3.5))
             elif option == "rumours":
                 heard = []
                 for fact in self._facts_about_player(npc)[:3]:
@@ -10464,8 +10474,17 @@ class MiniwindSession(SettlementLaw):
                         else lose)
         node = (self.dialogue.tree.get("nodes") or {}).get("_fortune") \
             if self.dialogue is not None else None
+        # What they answer, and what it won, are told when the die lands --
+        # never ahead of it (RULES.md §1): until then they only hesitate.
         if node is not None:
-            node["text"] = line
+            node["text"] = "..."
+
+        def tell():
+            if node is not None:
+                node["text"] = line
+            for text, seconds in told:
+                self.notify(text, seconds)
+        self._after_dice(self._reveal_delay(self.player_actor), tell)
 
     def _with_first_impression(self, tree, npc):
         """*tree* with the NPC's reaction to the player's face put in front of
@@ -10620,8 +10639,12 @@ class MiniwindSession(SettlementLaw):
             self.end_dialogue()
             self.open_screen = "trade"
         elif op == "persuade":
-            r = guilds.persuade(self.game.character, npc.properties, self.rng)
-            self.notify("They warm to you." if r["success"] else "That didn't help.")
+            r = guilds.persuade(self.game.character, npc.properties, self.rng,
+                                dice=self.game.dice, side=self.side_of(npc))
+            said = "They warm to you." if r["success"] else "That didn't help."
+            # Told once the die has landed, never before (RULES.md §1).
+            self._after_dice(self._reveal_delay(self.player_actor),
+                             lambda: self.notify(said))
         elif op == "start_quest":
             self.game.start_quest(action.get("quest", action.get("value", "")))
             disp.remember(self.store, npc.properties, "quest_accepted")
