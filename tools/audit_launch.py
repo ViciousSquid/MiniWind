@@ -72,6 +72,8 @@ ap.add_argument('--travel', action='append', default=[], metavar='MAP',
 ap.add_argument('--json')
 ap.add_argument('--sample-ms', type=float, default=2.0)
 ap.add_argument('--no-sampler', action='store_true')
+ap.add_argument('--capture-loading', metavar='DIR',
+                help='save a picture of the window at every loading-bar stage (perturbs timing)')
 ap.add_argument('--gc-census', action='store_true',
                 help='every 5 s of play: unfrozen objects tracked, and which types grew (perturbs timing)')
 ap.add_argument('--tree', default=os.path.join(HERE, '..'))
@@ -518,7 +520,17 @@ def _patch_overlay(module):
 
     def step(self, stage, percent=None):
         stages.append((round(now_ms(), 1), stage, percent))
-        return real_step(self, stage, percent)
+        result = real_step(self, stage, percent)
+        if args.capture_loading and self.active:
+            try:
+                os.makedirs(args.capture_loading, exist_ok=True)
+                safe = ''.join(c if c.isalnum() else '_' for c in str(stage))[:40]
+                path = os.path.join(args.capture_loading,
+                                    f'{len(stages):02d}_{self.value:02d}pct_{safe}.png')
+                self.window().grab().save(path)
+            except Exception as exc:                          # pragma: no cover
+                print(f'[audit] capture failed: {exc}')
+        return result
 
     def begin(self, title, stage='', percent=None):
         stages.append((round(now_ms(), 1), f'[{title}] {stage}', percent))
@@ -746,9 +758,15 @@ def start_play(window):
         def take(base=base):
             counts = census()
             grew = {k: counts[k] - base.get(k, 0) for k in counts}
+            # What the long-lived young tuples are: their length and the
+            # types they hold (the full collections walk these).
+            shapes = collections.Counter(
+                (len(o), tuple(type(x).__name__ for x in o[:4]))
+                for o in gc.get_objects(generation=2) if type(o) is tuple)
             report['gc_census'].append({
                 's': round((now_ms() - report['play_from_ms']) / 1e3, 1),
                 'tracked': sum(counts.values()), 'frozen': gc.get_freeze_count(),
+                'gen2_tuple_shapes': [[n, list(k)] for k, n in shapes.most_common(8)],
                 'grew': dict(sorted(((k, v) for k, v in grew.items() if v > 0),
                                     key=lambda kv: -kv[1])[:12])})
         for i in range(1, int(args.seconds // 10) + 1):
