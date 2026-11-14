@@ -757,7 +757,7 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         if self._sprite_layers is not None:
             self._sprite_layers.cleanup()
             self._sprite_layers = None
-        for attr in ('_glass_scene_texture', '_water_depth_texture'):
+        for attr in ('_glass_scene_texture', '_water_depth_texture', '_sky_clouds_tex'):
             tex = getattr(self, attr, 0)
             if tex:
                 gl.glDeleteTextures([tex])
