@@ -5,7 +5,8 @@ console command.
 The whole map's picture (:class:`game.ui.worldmap.WorldMap`: terrain, biome
 regions, water, woods and buildings, painted once in the background and
 cached) with the editor camera on it -- where it is and which way it looks --
-refreshed ten times a second as the camera moves. A plain Qt tool window:
+refreshed ten times a second as the camera moves. Click anywhere on the
+map and the camera jumps there. A plain Qt tool window:
 it floats over the editor, opens at 800 x 600 and can be shrunk to 320 x
 240 (the map scales to fit), and closing it stops its timer. Only one is
 open at a time; the command raises it again.
@@ -39,6 +40,8 @@ class WorldMapWindow(QWidget):
         super().__init__(main_window, Qt.Tool)
         self.main_window = main_window
         self.setWindowTitle("World Map")
+        self.setToolTip("Click to move the editor camera there")
+        self.setCursor(Qt.CrossCursor)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         # 800 x 600 at most, and it shrinks (the map scales) to 320 x 240.
         self.setMaximumSize(*MAX_SIZE)
@@ -75,6 +78,27 @@ class WorldMapWindow(QWidget):
             except AttributeError:
                 self._camera = (float(cam.pos[0]), float(cam.pos[2]), float(cam.yaw))
         self.update()
+
+    def mousePressEvent(self, event):
+        """Click anywhere on the map: the editor camera jumps there, at its
+        own height and facing the way it was."""
+        if event.button() != Qt.LeftButton:
+            return super().mousePressEvent(event)
+        world = worldmap.WORLD
+        image = world.image()
+        view = self._view()
+        cam = getattr(view, "camera", None)
+        if image is None or cam is None or world.bounds is None:
+            return
+        rect, scale = self._picture_rect(image)
+        pos = event.pos()
+        if not rect.contains(QPointF(pos)):
+            return
+        (min_x, _), (min_z, _) = world.bounds
+        x = min_x + (pos.x() - rect.x()) / scale * world.cell
+        z = min_z + (pos.y() - rect.y()) / scale * world.cell
+        jump_camera(view, x, z)
+        self._refresh()
 
     def resizeEvent(self, event):
         self._grip.move(self.width() - self._grip.width(), self.height() - self._grip.height())
@@ -138,6 +162,34 @@ class WorldMapWindow(QWidget):
                        f"Editor camera  x {x:,.0f}   z {z:,.0f}"
                        + ("" if inside else "   (off the map)"))
         p.end()
+
+
+def jump_camera(view, x, z) -> None:
+    """Move the editor camera over world ``(x, z)``, keeping its height above
+    the ground there as it was where it stood, and its facing. Through the
+    view's ``set_editor_camera``: the logic thread owns the editor camera and
+    copies it back every frame, so a move made on the view alone is undone."""
+    cam = view.camera
+    old = cam.pos
+    y = float(old.y)
+    terrain = getattr(getattr(view, "logic_thread", None), "world_runtime", None)
+    terrain = getattr(terrain, "terrain", None)
+    if terrain is not None:
+        try:
+            here = terrain.get_height_at_safe(float(old.x), float(old.z))
+            there = terrain.get_height_at_safe(float(x), float(z))
+            if here is not None and there is not None:
+                y = float(there) + max(60.0, float(old.y) - float(here))
+        except Exception:
+            pass
+    target = (float(x), y, float(z))
+    setter = getattr(view, "set_editor_camera", None)
+    if setter is not None:
+        setter(target)
+    else:
+        import glm
+        cam.pos = glm.vec3(*target)
+    view.update()
 
 
 def toggle(main_window):
