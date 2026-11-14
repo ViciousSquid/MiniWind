@@ -1183,6 +1183,7 @@ class MiniwindSession(SettlementLaw):
         self.wind.update(hours, delta, storm)
         self.lens_water.update(delta, self.weather.rain if weather_on else 0.0)
         self._update_lightning(delta, storm)
+        self._update_storm_howl(delta, storm)
         # The clouds the water reflects ride the wind (game/sky.py).
         import game.sky as sky
         wx, wz = self.wind.vector()
@@ -1230,6 +1231,21 @@ class MiniwindSession(SettlementLaw):
         from .lightning import THUNDER_SOUND
         for _strike, volume in lightning.thunder_due():
             self.play_ui_sound(THUNDER_SOUND, volume)
+
+    def _update_storm_howl(self, delta, storm) -> None:
+        """The storm's wind howls while it lasts: the wind ambience loop,
+        rising and falling with the gale and its gusts (game/wind.py)."""
+        from .wind import HOWL_SOUND, StormHowl
+        howl = self.__dict__.get("storm_howl")
+        if howl is None:
+            howl = self.storm_howl = StormHowl()
+        requests = howl.update(delta, storm, self.wind.gust)
+        if not requests or not sound_available(HOWL_SOUND):
+            return
+        queue = getattr(getattr(self.logic, "game_state", None), "queue_sound", None)
+        if queue is not None:
+            for request in requests:
+                queue(request)
 
     def _catch_in_grass_fire(self) -> None:
         from .burning import PLAYER

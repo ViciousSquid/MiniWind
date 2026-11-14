@@ -418,6 +418,17 @@ class ViewAudio:
 
             loops = -1 if request.get('looping') else 0
 
+            # A loop already playing this file keeps playing: the request
+            # only sets its volume (a howl that rises and falls with the
+            # wind without restarting). If the mixer dropped it, it starts.
+            if (request.get('keep_playing') and loops and entity_id is not None
+                    and entity_id in speaker_channels
+                    and speaker_mix.get(entity_id, {}).get('file') == sound_file):
+                meta = speaker_mix[entity_id]
+                meta['volume'] = volume
+                apply_mix(speaker_channels[entity_id], meta)
+                continue
+
             # If this speaker is already looping, stop the old channel first so
             # a re-trigger does not stack a second copy on top of itself.
             if entity_id is not None:
@@ -436,6 +447,7 @@ class ViewAudio:
                     'radius': request.get('radius', 512.0),
                     'global': bool(request.get('global', False)),
                     'volume': volume,
+                    'file': sound_file,
                     # Music and sound have their own volumes.
                     'music': is_music(sound_file),
                 }

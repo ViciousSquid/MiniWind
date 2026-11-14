@@ -220,6 +220,24 @@ def test_retriggering_a_looping_speaker_does_not_stack(main_window, monkeypatch)
     assert view.audio._speaker_channels[4] is not first
 
 
+def test_keep_playing_changes_a_loops_volume_without_restarting_it(main_window, monkeypatch):
+    snd = _FakeSound()
+    loop = {"action": "play", "file": "wind.wav", "looping": True,
+            "keep_playing": True, "global": True, "entity_id": "wind", "volume": 0.2}
+    view = _real_speaker(main_window, monkeypatch, [dict(loop)], snd)
+    view.audio._process_sound_queue()
+    first = view.audio._speaker_channels["wind"]
+    view.game_state.queue_sound(dict(loop, volume=0.7))
+    view.audio._process_sound_queue()
+    assert len(snd.plays) == 1 and not first.stopped      # the same loop, never restarted
+    assert view.audio._speaker_channels["wind"] is first
+    assert view.audio._speaker_mix["wind"]["volume"] == 0.7
+    # A different file under the same id is a new sound, as before.
+    view.game_state.queue_sound(dict(loop, file="rain.wav"))
+    view.audio._process_sound_queue()
+    assert first.stopped and len(snd.plays) == 2
+
+
 def test_stop_for_an_unknown_entity_is_harmless(main_window, monkeypatch):
     snd = _FakeSound()
     view = _real_speaker(

@@ -125,3 +125,57 @@ def grass_sway(wind):
         return None
     dx, dz = wind.direction()
     return dx, dz, SWAY_CALM + SWAY_PER_FORCE * wind.force()
+
+
+#: The storm's howl: the sound pack's wind ambience, a seamless loop, heard
+#: everywhere while it storms, louder with the gale and each gust.
+HOWL_SOUND = "Ambient_Wind01.wav"
+HOWL_ID = "weather:storm_wind"
+HOWL_START = 0.05           # storm level the howl starts at...
+HOWL_STOP = 0.03            # ...and dies away below (no flicker between)
+HOWL_QUIET, HOWL_LOUD = 0.25, 0.9
+HOWL_EVERY = 0.5            # seconds between volume updates while it howls
+
+
+class StormHowl:
+    """When to start, follow and stop the storm's wind loop.
+
+    :meth:`update` returns the sound requests to queue (often none): one
+    looping ``play`` as the storm rises, a ``keep_playing`` refresh with the
+    new volume every :data:`HOWL_EVERY` seconds (it never restarts the loop,
+    and brings it back if the mixer dropped it), and a ``stop`` as it ends.
+    """
+
+    def __init__(self):
+        self.playing = False
+        self._clock = 0.0
+
+    def volume(self, storm, gust) -> float:
+        s = max(0.0, min(1.0, float(storm)))
+        g = max(0.0, min(1.0, float(gust)))
+        return round(s * (HOWL_QUIET + (HOWL_LOUD - HOWL_QUIET) * (0.4 + 0.6 * g)), 3)
+
+    def _play(self, storm, gust):
+        return {"action": "play", "file": HOWL_SOUND, "entity_id": HOWL_ID,
+                "looping": True, "keep_playing": True, "global": True,
+                "volume": self.volume(storm, gust)}
+
+    def update(self, seconds, storm, gust):
+        if not self.playing:
+            if storm < HOWL_START:
+                return []
+            self.playing, self._clock = True, 0.0
+            return [self._play(storm, gust)]
+        if storm < HOWL_STOP:
+            return self.stop()
+        self._clock += max(0.0, float(seconds))
+        if self._clock < HOWL_EVERY:
+            return []
+        self._clock = 0.0
+        return [self._play(storm, gust)]
+
+    def stop(self):
+        if not self.playing:
+            return []
+        self.playing = False
+        return [{"action": "stop", "file": HOWL_SOUND, "entity_id": HOWL_ID}]

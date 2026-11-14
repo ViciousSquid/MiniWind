@@ -307,3 +307,27 @@ def test_a_bolt_is_drawn_where_the_strike_lands_under_the_flash():
               to_screen=lambda x, y, z: (160.0, 170.0))
     painter.end()
     assert QColor(image.pixel(int(mid[0]), int(mid[1]))).lightness() < 60
+
+
+# -- the howl ------------------------------------------------------------------
+def test_the_wind_loop_howls_through_a_storm_and_follows_its_gusts():
+    howl = wind_mod.StormHowl()
+    assert howl.update(0.1, 0.0, 0.0) == []                     # calm: silence
+    start = howl.update(0.1, 0.2, 0.0)
+    assert len(start) == 1 and start[0]["looping"] and start[0]["keep_playing"]
+    assert start[0]["file"] == wind_mod.HOWL_SOUND == "Ambient_Wind01.wav"
+    assert start[0]["global"] and start[0]["entity_id"] == wind_mod.HOWL_ID
+    assert howl.update(0.1, 1.0, 1.0) == []                     # not every tick
+    refresh = howl.update(wind_mod.HOWL_EVERY, 1.0, 1.0)
+    assert refresh[0]["action"] == "play" and refresh[0]["volume"] > start[0]["volume"]
+    assert howl.volume(1.0, 0.0) < howl.volume(1.0, 1.0) <= wind_mod.HOWL_LOUD
+    assert howl.update(0.1, 0.04, 0.0) == []                    # between stop and start
+    stop = howl.update(0.1, 0.01, 0.0)
+    assert stop == [{"action": "stop", "file": wind_mod.HOWL_SOUND,
+                     "entity_id": wind_mod.HOWL_ID}]
+    assert howl.update(0.1, 0.0, 0.0) == []
+
+
+def test_the_howl_ships_with_the_game():
+    from ..runtime import sound_available
+    assert sound_available(wind_mod.HOWL_SOUND)

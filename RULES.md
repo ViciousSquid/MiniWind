@@ -503,7 +503,9 @@ the sky, fading in as weather does):
     top of its own, and gusts of up to 0.7 more again (up to 2.7 times the
     strongest ordinary wind), coming every second or two and veering it a
     little;
-    the rain leans hard in it and the clouds race;
+    the rain leans hard in it and the clouds race; the wind howls (the
+    wind ambience loop, heard everywhere from storm level 0.05 until it
+    falls below 0.03, louder with the gale and each gust, never restarted);
   * *the grass thrashes* — meadow, wheat and tundra heath sway violently in
     the gusts and lie over before the wind (in ordinary weather they sway
     gently, harder the stronger the wind);
