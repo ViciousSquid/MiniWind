@@ -262,3 +262,27 @@ def test_something_huge_brings_twenty(monkeypatch):
     session, clock = _session(monkeypatch)
     _land_pieces(session.gore, clock, pos=(0.0, 0.0, -150.0))
     assert cf.CrabFrenzy(random.Random(1)).gibbed(session, (0.0, 0.0, -150.0), mass=3.5) == 20
+
+
+def test_crabs_never_chase_more_than_150_from_where_the_chase_began(monkeypatch):
+    spot = [30.0, 0.0, -150.0]
+    session, clock, hurt = _armed(monkeypatch, player_at=spot)
+    session._player_pos = lambda: list(spot)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    frenzy.gibbed(session, (0.0, 0.0, -150.0), mass=1.0)
+    _run(session, clock, frenzy, 4.0)
+    assert hurt.player                                     # it bit while the player stood there
+    assert [c for f in frenzy.feasts for c in f["crabs"] if c.get("chase_from")]
+    # The player runs off; nothing follows past 150 from where its chase began.
+    for _ in range(60):
+        spot[0] += 12.0
+        _run(session, clock, frenzy, 0.1)
+        for f in frenzy.feasts:
+            for c in f["crabs"]:
+                start = c.get("chase_from")
+                if start is not None:
+                    pos = c["thing"].pos
+                    assert ((pos[0] - start[0]) ** 2 + (pos[2] - start[1]) ** 2) ** 0.5 <= 150.0 + 12.0
+    before = len(hurt.player)
+    _run(session, clock, frenzy, 2.0)
+    assert len(hurt.player) == before                      # out of reach: no more bites

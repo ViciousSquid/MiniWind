@@ -17,8 +17,9 @@ the whole land does not count). Crabs walk sideways, as crabs do: each faces
 across the way it is going.
 
 While they feed, crabs **attack anything near the feast** -- the player,
-people, any animal but another crab: the nearest within :data:`AGGRO` (and
-not beyond :data:`LEASH` of the remains) is swarmed and nipped. One nip is
+people, any animal but another crab: the nearest within :data:`AGGRO` of a
+crab is swarmed and nipped, and never chased further than :data:`LEASH`
+from where the chase began. One nip is
 nothing (:data:`NIP_DAMAGE`); six crabs nipping together are a real threat.
 Leaving crabs no longer bite. Nips go through the engine's own damage paths
 (the player's armour and the game's mitigation apply; a bitten villager or
@@ -69,13 +70,14 @@ GONE_DISTANCE = 1500.0
 LEAVE_SECONDS = 12.0
 #: A feast that has gone on this long ends anyway.
 FEAST_SECONDS = 50.0
-#: In the frenzy: anything this near a crab is attacked, but not chased
-#: further than LEASH from the remains; a nip reaches NIP_RANGE and does
+#: In the frenzy: anything within AGGRO of a crab is attacked, and never
+#: chased further than LEASH from where the chase began; a nip reaches
+#: NIP_RANGE and does
 #: NIP_DAMAGE (tiny alone). Each crab nips once in every NIP_PERIOD, at a
 #: random moment in it -- a swarm's bites fall all through the second, not
 #: together -- and not at all if what it is after is out of reach then.
-AGGRO = 260.0
-LEASH = 480.0
+AGGRO = 150.0
+LEASH = 150.0
 NIP_RANGE = 52.0
 NIP_DAMAGE = 2
 NIP_PERIOD = 1.0
@@ -239,8 +241,13 @@ class CrabFrenzy:
             crab["nip_clock"] -= NIP_PERIOD
             crab["nip_at"] = self.rng.random() * NIP_PERIOD
             crab["nipped"] = False
-        target = self._target(thing, feast["prey"])
-        if target is not None:
+        anchor = crab.get("chase_from")
+        target = self._target(thing, feast["prey"], anchor)
+        if target is None:
+            crab["chase_from"] = None             # back to the feast
+        else:
+            if anchor is None:
+                crab["chase_from"] = (thing.pos[0], thing.pos[2])
             tpos, victim = target
             dx, dz = tpos[0] - thing.pos[0], tpos[2] - thing.pos[2]
             dist = math.hypot(dx, dz)
@@ -277,8 +284,9 @@ class CrabFrenzy:
         None) and every living actor but a crab within :data:`LEASH`."""
         fx, fz = feast["pos"][0], feast["pos"][2]
         prey = []
+        reach = FEAST_RADIUS + AGGRO
         if player is not None and not _player_dead(session) \
-                and math.hypot(player[0] - fx, player[2] - fz) <= LEASH:
+                and math.hypot(player[0] - fx, player[2] - fz) <= reach:
             prey.append((player, None))
         for t in fio.monster_things(session.logic):
             p = getattr(t, "properties", None) or {}
@@ -287,17 +295,20 @@ class CrabFrenzy:
                     or p.get("multiplayer_player")):
                 continue
             pos = getattr(t, "pos", None)
-            if pos is not None and math.hypot(pos[0] - fx, pos[2] - fz) <= LEASH:
+            if pos is not None and math.hypot(pos[0] - fx, pos[2] - fz) <= reach:
                 prey.append((pos, t))
         return prey
 
     @staticmethod
-    def _target(thing, prey):
-        """The nearest prey within :data:`AGGRO` of this crab, or None."""
+    def _target(thing, prey, anchor=None):
+        """The nearest prey within :data:`AGGRO` of this crab -- and, once it
+        is chasing, within :data:`LEASH` of where the chase began -- or None."""
         best, best_d = None, AGGRO
         for pos, victim in prey:
             if victim is not None and victim.properties.get("dead"):
                 continue
+            if anchor is not None and math.hypot(pos[0] - anchor[0], pos[2] - anchor[1]) > LEASH:
+                continue                          # too far: never chased past the leash
             d = math.hypot(pos[0] - thing.pos[0], pos[2] - thing.pos[2])
             if d <= best_d:
                 best, best_d = (pos, victim), d
