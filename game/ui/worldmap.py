@@ -228,8 +228,15 @@ class WorldMap:
                 h.update(repr(value).encode("utf-8"))
         return h.hexdigest()[:20]
 
-    def ensure(self, terrain, brushes, map_path=None, terrain_data=None):
-        """Start painting this world if it is not painted (or being painted)."""
+    def ensure(self, terrain, brushes, map_path=None, terrain_data=None,
+               brush_source=None):
+        """Start painting this world if it is not painted (or being painted).
+
+        *brush_source*, a map file, is where the painting reads its brushes
+        from instead of *brushes*: read on the painting thread, and only when
+        no cached picture matches, so a cached world never parses its map
+        file again (the shipped overworld's is 87 MB: 0.7 s of the UI thread).
+        """
         # If no map path is available, full content hashing is expensive:
         # these can be very large baked terrain blobs. Reuse the key while
         # the same live terrain and source objects/revisions remain loaded.
@@ -260,12 +267,15 @@ class WorldMap:
             return
         brushes = [dict(b) for b in (brushes or ()) if isinstance(b, dict)]
         self._thread = threading.Thread(
-            target=self._build, args=(key, terrain, brushes), daemon=True,
+            target=self._build, args=(key, terrain, brushes, brush_source), daemon=True,
             name="MiniWind-worldmap")
         self._thread.start()
 
-    def _build(self, key, terrain, brushes):
+    def _build(self, key, terrain, brushes, brush_source=None):
         try:
+            if brush_source:
+                # The map file holds every brush, streamed in or not.
+                brushes = _map_brushes(brush_source) or brushes
             (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
             span = max(max_x - min_x, max_z - min_z)
             cell = span / float(RESOLUTION)
@@ -361,8 +371,10 @@ def ensure_for(logic, view=None):
         # already matches the source file.
         if WORLD._key == WORLD.cache_key(map_path, terrain_data) and (WORLD.ready or WORLD.building):
             return
-        # The map file holds every brush, streamed in or not.
-        brushes = _map_brushes(map_path) or brushes
+        # The painting reads every brush from the map file, if it has to
+        # paint at all: not when the picture is cached.
+        WORLD.ensure(terrain, brushes, map_path, terrain_data, brush_source=map_path)
+        return
     WORLD.ensure(terrain, brushes, map_path, terrain_data)
 
 
