@@ -101,7 +101,7 @@ jobs:
   qt_no_gpu:
     name: Complete no-GPU suite (Qt offscreen)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -124,7 +124,7 @@ jobs:
       - name: Run every non-GL test with the full dependency set
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -m "not gl and not benchmark and not miniwind" -n 2 --dist=loadscope -q
+        run: python -m pytest -m "not gl and not benchmark and not miniwind" -n 4 --dist=worksteal -q
 
   # MiniWind's own tier (game/tests, tests/miniwind): apart from Fio's, so a
   # game failure and an engine one are told apart.
