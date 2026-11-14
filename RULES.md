@@ -318,7 +318,12 @@ floats in large white over whoever lands one.
    (×0.5 at no draw to ×1 at full) plus the arrow's damage. Staff ×
    `(0.7 + Offensive/100)`.
 4. × class: Warrior and Barbarian ×1.10.
-5. Sneak attack: melee ×3, ranged ×2, any dagger ×6 (while sneaking).
+5. Sneak attack: melee ×3, ranged ×2, any dagger ×6 — while sneaking, and
+   only on a target that has **not noticed you**. A target has noticed you
+   if it is fleeing, fighting you (its combat mark is on you), or hostile,
+   awake and hunting you (marked on no one else); one asleep, going about
+   its day, or fighting someone else has not (`combat.has_noticed`). A
+   target your blow sends after you, or running, has noticed you.
 6. Critical ×1.5.
 7. The target's raised shield may save (below), then any ward soaks.
 
@@ -801,5 +806,3 @@ Places where the code does not yet do what something in the game describes:
 
 * **Acrobatics**, **Light Fingers** and **Alchemy** are neither trained nor
   read.
-* Sneak-attack damage applies whenever sneaking is on, even if the target has
-  already seen you.

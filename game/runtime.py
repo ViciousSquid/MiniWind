@@ -1578,6 +1578,14 @@ class MiniwindSession(SettlementLaw):
                 return True
         return False
 
+    def has_noticed_you(self, actor) -> bool:
+        """Whether *actor* has noticed the player, so a sneak attack on it
+        is no sneak attack (combat.has_noticed): it is fleeing, fighting
+        you, or a hostile that is awake and hunting you."""
+        props = getattr(actor, "properties", None) or {}
+        you = (id(self.player_actor), id(fio.player(self.logic)))
+        return rpg_combat.has_noticed(props, you)
+
     @staticmethod
     def actor_in_combat(actor) -> bool:
         """Whether *actor* is in a fight: swinging at someone (a live mark the
@@ -8094,7 +8102,8 @@ class MiniwindSession(SettlementLaw):
         # Target acquisition confirmed "near + facing"; the swing then rolls
         # d20 + attack bonus against the target's Armour Class, like every
         # attack. Two weapons are two attacks, each rolling for itself.
-        res = self.game.attack_creature(target.properties, hand=hand)
+        res = self.game.attack_creature(target.properties, hand=hand,
+                                        noticed=self.has_noticed_you(target))
         self._land_player_hit(target, res)
         return True
 
@@ -8231,7 +8240,8 @@ class MiniwindSession(SettlementLaw):
         game = self.game
 
         def _on_hit(hit_monster):
-            res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
+            res = game.resolve_arrow_hit(hit_monster.properties, hand=hand,
+                                         noticed=self.has_noticed_you(hit_monster))
             _journal(hit_monster)
             self._present_player_blow(hit_monster, res)
 

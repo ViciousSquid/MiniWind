@@ -168,11 +168,36 @@ def base_ranged_damage(character, *, hand="main", ammo=None, draw=1.0, base=None
     return damage
 
 
+def has_noticed(target_props: Dict, you=()) -> bool:
+    """Whether the target has noticed the player, so a sneak attack on it is
+    no sneak attack. It has if it is:
+
+    * fleeing (``sched_state`` FLEE);
+    * live (not parked) with its combat mark on you (*you*: the ids the
+      player goes by -- their actor, their engine player);
+    * live, hostile, awake and marked on no one else: the combat AI hunts
+      the player with such an actor (a sleeping one has not seen you yet).
+
+    Anyone else -- asleep, going about their day, fighting someone else --
+    has not."""
+    p = target_props or {}
+    if str(p.get("sched_state", "")).upper() == "FLEE":
+        return True
+    if p.get("triggered", False):
+        return False                     # parked: its mark is only a memory
+    mark = p.get("_aggro_target")
+    if mark is not None:
+        return mark in tuple(you or ())
+    side = str(p.get("faction") or p.get("team") or "").lower()
+    return (str(p.get("aggression", "")).lower() == "hostile"
+            and bool(p.get("awake")) and side != "player")
+
+
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
                   draw: float = 1.0, rng: Optional[random.Random] = None,
                   dice: Optional[DiceRoller] = None,
                   guaranteed_hit: bool = False, power: float = 1.0,
-                  hand: str = "main") -> Dict:
+                  hand: str = "main", noticed: Optional[bool] = None) -> Dict:
     """Resolve a player attack against a creature's ``properties`` dict.
 
     Returns a result dict::
@@ -191,6 +216,10 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     ``hand`` is which weapon strikes: ``"main"`` or ``"off"`` (the second
     weapon of a dual wielder). Each hand is its own attack, with its own
     weapon, hit roll and damage.
+
+    A sneak attack needs ``sneaking`` and a target that has not noticed the
+    player: ``noticed`` says so, or, left None, :func:`has_noticed` judges
+    by the target's properties alone.
     """
     rng = rng or random
     w = eq.hand_weapon(character, hand)
@@ -268,8 +297,10 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     import game.rpg.classes as _classes
     dmg *= _classes.damage_mult(character)
 
-    # --- sneak attack ---
-    if sneaking:
+    # --- sneak attack: only on a target that has not noticed you ---
+    if noticed is None:
+        noticed = has_noticed(target_props)
+    if sneaking and not noticed:
         mult = 3.0 if kind == items.KIND_MELEE else 2.0
         # a dagger sneak is the assassin's classic ×6
         if w and w.id.endswith("dagger"):

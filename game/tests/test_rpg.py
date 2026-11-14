@@ -15,6 +15,8 @@ import os
 import random
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from ..rpg import (attributes as attr, skills as sk, races,
@@ -178,6 +180,55 @@ def test_sneak_attack_multiplies():
     sneak = combat.player_attack(c, {"health": 100, "endurance": 0}, sneaking=True, rng=random.Random(4))
     if normal["hit"] and sneak["hit"]:
         assert sneak["damage"] > normal["damage"]
+
+
+def test_a_sneak_attack_needs_a_target_that_has_not_noticed_you():
+    """Sneak damage applies only to a target that has not noticed the
+    player: one asleep, at its day, or fighting someone else -- never one
+    fleeing, fighting you, or hostile, awake and hunting you."""
+    me = 1234
+    unaware = [
+        {"aggression": "hostile", "awake": False, "triggered": False},  # asleep
+        {"aggression": "passive", "triggered": True},                   # townsfolk
+        {"aggression": "defensive", "triggered": True, "awake": False},  # a guard on duty
+        {"aggression": "hostile", "awake": True, "triggered": False,
+         "_aggro_target": 999},                                         # fighting another
+        {"aggression": "hostile", "awake": True, "triggered": True,
+         "_aggro_target": me},                                          # parked: a memory
+    ]
+    aware = [
+        {"aggression": "hostile", "awake": True, "triggered": False},   # hunting you
+        {"aggression": "hostile", "awake": True, "triggered": False,
+         "_aggro_target": me},                                          # fighting you
+        {"aggression": "passive", "triggered": True, "sched_state": "FLEE"},
+    ]
+    for props in unaware:
+        assert not combat.has_noticed(props, (me,)), props
+    for props in aware:
+        assert combat.has_noticed(props, (me,)), props
+    # Your own companion, hostile to monsters, is not hunting you.
+    assert not combat.has_noticed({"aggression": "hostile", "awake": True,
+                                   "team": "player"}, (me,))
+
+    c = Character.create("T", "tehani", "assassin", "thief")
+    c.skills[sk.BLADE] = 80
+    inv.add_item(c.inventory, items.make("iron_dagger"))
+    eq.equip(c, "iron_dagger")
+    target = {"health": 500, "armour_class": 1}
+
+    def strike(props, **kw):
+        return combat.player_attack(c, dict(target, **props), sneaking=True,
+                                    rng=random.Random(4), **kw)
+
+    plain = combat.player_attack(c, dict(target), sneaking=False, rng=random.Random(4))
+    sleeping = strike(unaware[0])
+    hunting = strike(aware[0])
+    assert plain["hit"] and sleeping["hit"] and hunting["hit"]
+    assert sleeping["sneak"] and sleeping["damage"] == pytest.approx(plain["damage"] * 6, abs=0.2)
+    assert not hunting["sneak"] and hunting["damage"] == plain["damage"]
+    # The caller's judgement wins over the properties when given.
+    assert not strike(unaware[0], noticed=True)["sneak"]
+    assert strike(aware[0], noticed=False)["sneak"]
 
 
 # --- magic -----------------------------------------------------------------

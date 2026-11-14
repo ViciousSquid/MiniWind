@@ -293,7 +293,8 @@ class GameState:
 
     def attack_creature(self, target_props: Dict, distance: float = 0.0,
                         draw: float = 1.0, guaranteed: bool = False,
-                        power: float = 1.0, hand: str = "main") -> Dict:
+                        power: float = 1.0, hand: str = "main",
+                        noticed: Optional[bool] = None) -> Dict:
         """Resolve a melee attack on a creature. Returns the combat result.
 
         Spends stamina, applies damage to the target's ``health`` property,
@@ -306,11 +307,15 @@ class GameState:
         Bow shots go through :meth:`fire_arrow` / :meth:`resolve_arrow_hit`
         instead, since a real flying arrow's damage is resolved when it
         physically lands, not the instant the string is released.
+
+        ``noticed``: whether the target has noticed the player (no sneak
+        attack then); None leaves it to :func:`combat.has_noticed`.
         """
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
                                    draw=draw, rng=self.rng, dice=self.dice,
-                                   guaranteed_hit=guaranteed, power=power, hand=hand)
+                                   guaranteed_hit=guaranteed, power=power, hand=hand,
+                                   noticed=noticed)
         if res.get("no_ammo"):
             self.message(out_of_ammo_text(eq.hand_weapon(char, hand)))
             return res
@@ -344,7 +349,7 @@ class GameState:
         return True
 
     def resolve_arrow_hit(self, target_props: Dict, draw: float = 1.0,
-                          hand: str = "main") -> Dict:
+                          hand: str = "main", noticed: Optional[bool] = None) -> Dict:
         """Resolve an already-fired arrow's impact on a creature.
 
         Mirrors :meth:`attack_creature` but assumes :meth:`fire_arrow` already
@@ -353,7 +358,8 @@ class GameState:
         """
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
-                                   draw=draw, rng=self.rng, dice=self.dice, hand=hand)
+                                   draw=draw, rng=self.rng, dice=self.dice, hand=hand,
+                                   noticed=noticed)
         return self._apply_hit(target_props, res)
 
     def _apply_hit(self, target_props: Dict, res: Dict) -> Dict:
