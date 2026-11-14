@@ -3,6 +3,10 @@ play; local players share one view through Multiplayer's local co-op."""
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.qt
+
 
 def _pointer(party=None):
     from engine.view_pointer import ViewPointer

@@ -26,8 +26,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 glm = pytest.importorskip("glm")
-pytest.importorskip("OpenGL")
 
+from engine.renderer.core.visibility import VisibilityMixin  # noqa: E402
 from engine.terrain_table import TerrainTable  # noqa: E402
 from tests.helpers.terrain_reference import (  # noqa: E402
     ReferenceChunkModel, reference_chunk_mesh)
@@ -39,13 +39,12 @@ MAX_UPDATES = 2
 
 
 def planes_for(eye, yaw_deg, far):
-    from engine.renderer.forward import ForwardRenderer
     yaw = math.radians(yaw_deg)
     target = (eye[0] + math.sin(yaw) * 100.0, eye[1] - 20.0,
               eye[2] - math.cos(yaw) * 100.0)
     projection = glm.perspective(glm.radians(70.0), 16 / 9, 1.0, far)
     view = glm.lookAt(glm.vec3(*eye), glm.vec3(*target), glm.vec3(0, 1, 0))
-    return ForwardRenderer._frustum_planes(projection * view)
+    return VisibilityMixin._frustum_planes(projection * view)
 
 
 def fake_heights(world_x, world_z, res, size):

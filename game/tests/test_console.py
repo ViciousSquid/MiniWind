@@ -5,6 +5,8 @@ play_mode)``; ``game.console`` adapts that to its ``handler(ctx, args)``
 form. These drive the real dispatch path of a fresh plugin manager.
 """
 
+import pytest
+
 from plugins.api import EditorAPI
 from plugins.manager import PluginManager
 
@@ -101,6 +103,7 @@ def test_pause_toggles_a_world_freeze_without_a_menu():
     assert not _Logic.session_runtime.owners
 
 
+@pytest.mark.qt
 def test_storyteller_dispatch_opens_the_live_view(monkeypatch):
     from types import SimpleNamespace
     # Patch the real module's opener: replacing the module on the package
@@ -118,6 +121,7 @@ def test_storyteller_dispatch_opens_the_live_view(monkeypatch):
     assert opened == [view]
 
 
+@pytest.mark.qt
 def test_storyteller_reports_missing_play_session_and_view(monkeypatch):
     from types import SimpleNamespace
     from ..ui import storyteller_window

@@ -136,6 +136,7 @@ def test_obsolete_k_binding_is_absent_and_pressing_k_does_not_cast():
     assert not hasattr(host, "K_CAST")
 
 
+@pytest.mark.qt
 def test_replacing_items_with_a_spell_is_atomic_when_pack_is_full(monkeypatch):
     s = _session()
     c = s.game.character
@@ -147,6 +148,7 @@ def test_replacing_items_with_a_spell_is_atomic_when_pack_is_full(monkeypatch):
     assert not c.hand_spells
 
 
+@pytest.mark.qt
 def test_dragging_a_spell_between_hands_moves_it_and_dragging_back_unequips():
     s = _session()
     c = s.game.character
@@ -181,6 +183,7 @@ def test_a_spell_dragged_to_the_shortcut_bar_keeps_one_slot_and_follows_the_spel
     assert "spell:flare" not in _strip(s)
 
 
+@pytest.mark.qt
 @pytest.mark.parametrize("handed", ["right", "left"])
 def test_a_bar_spell_is_readied_left_by_its_key_and_right_with_shift(handed):
     s = _session()
