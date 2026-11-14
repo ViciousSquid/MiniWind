@@ -695383,9 +695383,9 @@
             ],
             "properties": {
                 "type": "creature",
-                "name": "Bandit_457",
+                "name": "Rook Corbin",
                 "id": "86668850-6d75-4b01-8a7e-3d35a00b8e0d",
-                "display_name": "Bandit",
+                "display_name": "Rook Corbin",
                 "npc_role": "bandit",
                 "aggression": "hostile",
                 "sight_range": 520,
@@ -695435,7 +695435,10 @@
                 "hidden": false,
                 "handed": "left",
                 "dead": false,
-                "io_enabled": true
+                "io_enabled": true,
+                "relationships": {
+                    "Hal Corbin": "brother"
+                }
             },
             "io_connections": []
         },
@@ -764700,7 +764703,10 @@
                         "weight": 0.0,
                         "description": "The coin of the realm."
                     }
-                ]
+                ],
+                "relationships": {
+                    "Rook Corbin": "brother"
+                }
             },
             "io_connections": []
         },
@@ -764936,6 +764942,42 @@
                 "collect_enabled": false,
                 "physics_enabled": false,
                 "no_collision": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "noticeboard",
+            "pos": [
+                150.0,
+                300.0,
+                60.0
+            ],
+            "properties": {
+                "type": "notice_board",
+                "name": "millbrook_notice_board",
+                "display_name": "Notice Board",
+                "id": "0dc58be9-cbcc-534e-acd4-eacb00ddc382",
+                "use_radius": 120.0,
+                "angle": 0.0,
+                "custom_idle": "assets/sprites/miniwind/topdown/notice_board.png"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "noticeboard",
+            "pos": [
+                8600.0,
+                300.0,
+                6640.0
+            ],
+            "properties": {
+                "type": "notice_board",
+                "name": "hollins_cross_notice_board",
+                "display_name": "Notice Board",
+                "id": "43803d32-70c1-57bd-9963-8ab725071a03",
+                "use_radius": 120.0,
+                "angle": 0.0,
+                "custom_idle": "assets/sprites/miniwind/topdown/notice_board.png"
             },
             "io_connections": []
         }

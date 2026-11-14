@@ -29,6 +29,10 @@ _REPLIES = {
     "grave": ("Gods preserve us.", "Dead? I'll bar my door tonight.",
               "Someone should fetch the watch."),
     "violence": ("In broad daylight? I'll keep my distance.", "The watch had better hear of this."),
+    # A lawful killing or fight -- bandits cut down on the road -- is news, not
+    # a crime: nobody sends for the watch over it.
+    "lawful": ("Good riddance.", "One less cutthroat on the road, then.",
+               "Can't say I'll miss them."),
     "property": ("I'll keep a hand on my purse.", "Thieves, here? Lock everything."),
     "social": ("Kind of them.", "Well, that's good to hear for once."),
     "fire": ("Fire? Gods keep it from my roof.", "There goes the harvest, then.",
@@ -95,6 +99,9 @@ def gossip_lines(fact: Dict, speaker: str = "", listener: str = "") -> Tuple[str
     opener = _pick(_OPENERS.get(source, _OPENERS["told"]), *salt).format(
         what=what, What=what[:1].upper() + what[1:])
     kind = next((t for t in ("fire", "grave", "violence", "property", "social") if t in tags), "")
+    import game.sim.crime as crime
+    if kind in ("grave", "violence") and not crime.is_crime(fact):
+        kind = "lawful"
     return opener, _pick(_REPLIES[kind], *salt)
 
 

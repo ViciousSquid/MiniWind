@@ -2527,6 +2527,7 @@ class MiniwindSession(SettlementLaw):
             self._update_thoughts()
             self._update_small_talk()
             self._update_volunteering()
+            self._update_food_talk()
             self.flour_supply.refresh()
         for i, npc in enumerate(npcs):
             if npc.properties.get("resurrection_used") and npc.properties.get("follow_player"):
@@ -3653,7 +3654,8 @@ class MiniwindSession(SettlementLaw):
         """*tree* opening with what *npc* has to tell the player for a quest
         on a 'talk to me' stage with a ``say`` line -- a copy; the line's
         tokens read the world (:meth:`_quest_line`)."""
-        lines = [self._quest_line(st.say, npc) for _q, st in self._talk_stages_for(npc) if st.say]
+        lines = [self._quest_line(self._stage_say(st, npc), npc)
+                 for _q, st in self._talk_stages_for(npc) if st.say]
         if not lines or not isinstance(tree, dict):
             return tree
         start = tree.get("start")
@@ -3669,6 +3671,18 @@ class MiniwindSession(SettlementLaw):
             key = node_id
         tree["start"] = key
         return tree
+
+    def _stage_say(self, st, npc) -> str:
+        """*st*'s line for *npc*: its ``heard`` line if the death it names
+        has reached them (they saw it or were told), else its ``say``."""
+        heard = getattr(st, "heard", None)
+        if heard and heard.get("death"):
+            name = str(heard["death"]).strip().casefold()
+            for fact in sim_knowledge.facts(self.store, actor_key(npc)):
+                if (fact.get("kind") == "death"
+                        and str(fact.get("target_name", "")).strip().casefold() == name):
+                    return str(heard["say"])
+        return st.say
 
     def _quest_line(self, text: str, npc) -> str:
         """*text* with its tokens filled from the world as it is now:
@@ -6243,6 +6257,45 @@ class MiniwindSession(SettlementLaw):
                 a.properties["_chat_until"] = b.properties["_chat_until"] = now + CHAT_COOLDOWN
                 return
 
+    #: What a hungry resident says when they cannot get bread, by the reason
+    #: the flour supply gives (game/flour_supply.py ``_food_reason``).
+    FOOD_LINES = {
+        "The local shop has run out of flour.": (
+            "No flour at the shop again. I've had nothing but turnips for days.",
+            "The shelf's bare. Not a sack of flour in the place."),
+        "The local flour shop is closed.": (
+            "Shop's shut, and there's nothing in my larder.",
+            "Closed again. I'll go to bed hungry, then."),
+        "Cannot afford flour.": (
+            "Flour at that price? I can't buy it.",
+            "Bread's dearer every week, and my purse isn't."),
+    }
+    FOOD_TALK_RADIUS = 600.0
+
+    def _update_food_talk(self) -> None:
+        """A hungry resident near the player says why they cannot get bread
+        -- the shop's run dry, it's shut, it costs too much -- once for each
+        reason each day. What they say is the flour supply's own reason, so the
+        mill's trouble reaches the player as an empty belly in Millbrook."""
+        ppos = self._player_pos()
+        if ppos is None or self.dialogue is not None:
+            return
+        talking = self.__dict__.get("barks") or {}
+        for npc in self._things_of_type("npc"):
+            p = npc.properties
+            reason = p.get("_food_reason")
+            if (not reason or p.get("dead") or npc.pos is None or id(npc) in talking
+                    or self._dist2d(npc.pos, ppos) > self.FOOD_TALK_RADIUS):
+                continue
+            said = f"{reason}|{self.clock.day}"
+            if p.get("_food_said") == said:
+                continue
+            p["_food_said"] = said
+            lines = self.FOOD_LINES.get(str(reason)) or (str(reason),)
+            self.bark(npc, lines[(self.clock.day + len(str(p.get("name", "")))) % len(lines)],
+                      VOLUNTEER_SECONDS)
+            return                                 # one at a time
+
     def _update_volunteering(self) -> None:
         """Now and then the resident nearest the player, with nothing more
         pressing on, volunteers something they have heard -- three times as
@@ -6312,6 +6365,9 @@ class MiniwindSession(SettlementLaw):
             name = getattr(self.game.character, "name", "") or "the stranger"
             posts.append(f"WANTED: {name}, for crimes against this town. "
                          f"{bounty} gold to whoever brings them to the watch.")
+        flour = getattr(self, "_flour_notices", None)
+        if flour is not None:
+            posts += flour(board)
         living = getattr(self, "living", None)
         if living is not None and living.board is not None:
             place = living.board.nearest_place(board.pos[0], board.pos[2])
@@ -6319,6 +6375,29 @@ class MiniwindSession(SettlementLaw):
             posts += living.departures(place, 2)
             posts += living.board.news_at(place, 3)
         return posts
+
+    #: How far from a notice board a flour shop posts its shelf there.
+    BOARD_SHOP_RADIUS = 2500.0
+
+    def _flour_notices(self, board) -> List[str]:
+        """The flour on each nearby shop's shelf, as the shopkeeper chalks it
+        up: the real stock and the real price, or none."""
+        from .flour_supply import shelf_price
+        from .windmills import item_stock
+        out = []
+        supply = getattr(self, "flour_supply", None)
+        for shop in (supply.shops.values() if supply is not None else ()):
+            if shop.pos is None or shop.properties.get("dead") or (
+                    self._dist2d(shop.pos, board.pos) > self.BOARD_SHOP_RADIUS):
+                continue
+            name = shop.properties.get("display_name") or shop.properties.get("name")
+            n = item_stock(shop, "flour")
+            if n <= 0:
+                out.append(f"FLOUR at {name}'s: none today.")
+            else:
+                sacks = "1 sack" if n == 1 else f"{n} sacks"
+                out.append(f"FLOUR at {name}'s: {sacks}, {shelf_price(shop)} gold each.")
+        return out
 
     def _notice_board_tree(self, board) -> Dict:
         posts = self.notice_board_posts(board)

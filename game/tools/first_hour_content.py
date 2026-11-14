@@ -419,10 +419,51 @@ def the_tolls_in_the_strongbox(world, log):
         log.append("Old Mill strongbox: holds the Cross's tolls, Aldric's by right")
 
 
+#: Notice boards (the map had none, though the system was there): Millbrook
+#: square by the market stalls, and Hollin's Cross at its crossroads.
+NOTICE_BOARDS = (
+    dict(name="millbrook_notice_board", pos=(150.0, 300.0, 60.0), angle=0.0),
+    dict(name="hollins_cross_notice_board", pos=(8600.0, 300.0, 6640.0), angle=0.0),
+)
+
+
+def put_up_notice_boards(world, log):
+    import uuid
+    from game.entities import NOTICE_BOARD_SPRITE
+    for spec in NOTICE_BOARDS:
+        if _by_name(world["things"], spec["name"]):
+            continue
+        world["things"].append({"type": "noticeboard", "pos": list(spec["pos"]), "properties": {
+            "type": "notice_board", "name": spec["name"], "display_name": "Notice Board",
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, "miniwind:board:" + spec["name"])),
+            "use_radius": 120.0, "angle": spec["angle"], "custom_idle": NOTICE_BOARD_SPRITE,
+        }, "io_connections": []})
+        log.append(f"put up {spec['name']}")
+
+
+def hals_brother_rook(world, log):
+    """Hal Corbin's brother Rook lives with the bandits at Cutthroat Ridge.
+    When word of Hal's death reaches him, the storyteller can send him after
+    whoever did it -- a vendetta announced before he arrives, on the notice
+    boards and in the departures news (docs/main_quest.md beat 13)."""
+    things = world["things"]
+    for t in _by_name(things, "Bandit_457"):
+        p = t["properties"]
+        p.update(name="Rook Corbin", display_name="Rook Corbin",
+                 relationships={"Hal Corbin": "brother"})
+        log.append("Cutthroat Ridge: Bandit_457 is Rook Corbin, Hal's brother")
+    for t in _by_name(things, "Hal Corbin"):
+        rels = t["properties"].setdefault("relationships", {})
+        if rels.get("Rook Corbin") != "brother":
+            rels["Rook Corbin"] = "brother"
+            log.append("Hal Corbin: brother to Rook")
+
+
 STEPS = (fix_bryns_pasture, fix_old_mill_spawner, name_the_unnamed,
          send_stray_skeletons_home, rename_their_chests, place_first_locks,
          lock_the_chests, aldric_is_the_turn_in, old_mill_band, old_mill_windmill,
-         the_cross_buys_from_its_mill, the_tolls_in_the_strongbox)
+         the_cross_buys_from_its_mill, the_tolls_in_the_strongbox, put_up_notice_boards,
+         hals_brother_rook)
 
 
 def apply(world):

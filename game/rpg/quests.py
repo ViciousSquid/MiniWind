@@ -33,7 +33,7 @@ COND_KINDS = [COND_NONE, COND_FETCH, COND_TALK, COND_KILL, COND_VISIT, COND_ROLL
 class Stage:
     def __init__(self, index: int, journal: str, finishes: bool = False,
                  objective: str = "", condition=None, waypoint: str = "",
-                 say: str = "", call: str = ""):
+                 say: str = "", call: str = "", heard=None):
         self.index = index
         self.journal = journal
         self.finishes = finishes
@@ -57,6 +57,10 @@ class Stage:
         # Optional line the talk target calls out, once, as the stage begins
         # (if near enough to be heard): "You, new face!"
         self.call = str(call or "").strip()
+        # Optional line said *instead* of ``say`` once the talk target has
+        # heard of a death: ``{"death": "Hal Corbin", "say": "Word got here
+        # before you did."}`` -- the news reached them before the player.
+        self.heard = dict(heard) if isinstance(heard, dict) and heard.get("say") else None
 
     def condition_kind(self) -> str:
         c = self.condition or {}
@@ -159,7 +163,8 @@ def quest_from_dict(data: Dict) -> Optional[Quest]:
                             bool(s.get("finishes", False)), s.get("objective", ""),
                             condition=s.get("condition"),
                             waypoint=s.get("waypoint", ""),
-                            say=s.get("say", ""), call=s.get("call", "")))
+                            say=s.get("say", ""), call=s.get("call", ""),
+                            heard=s.get("heard")))
     if not stages:
         stages = [Stage(0, data.get("desc", "A new quest."))]
     rewards = dict(data.get("rewards", {}) or {})

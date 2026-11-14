@@ -51,6 +51,7 @@ One quest per file, named `<id>.quest`. Example (`a_word_with_wick.quest`):
 | `waypoint` | Where the quest arrow points on a stage with no machine-readable target (a place, NPC, monster type or item id). Never advances the quest. |
 | `call`     | On a `talk` stage: a line the person you are sent to calls out once, over their head, as the stage begins, if they are near enough to be heard ("You! New face!"). |
 | `say`      | On a `talk` stage: the line the person you were sent to opens the conversation with while you are on that stage ("Go on." then leads to their usual talk). Tokens read the world as it is: `{shelf_flour}` (flour on the speaker's own shelf: "no flour", "one sack of flour", "3 sacks of flour"), `{mill_wheat}` and `{mill_flour}` (in the working windmill nearest the speaker: "no", "12 measures of", "1 sack of"). |
+| `heard`    | Optional, with a `talk` condition: `{"death": "Hal Corbin", "say": "Word got here before you did."}`. Once the talk target knows of that death (they saw it, or the news reached them), they say this line instead of `say`. |
 
 ### Stage conditions
 

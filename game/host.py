@@ -291,7 +291,7 @@ class MiniwindGame:
         from .entities import (NPC, Creature, GameSettings, MiniwindSettings,
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
                                MiniwindTrigger, Spellbook,
-                               SPELLBOOK_COVERS, Container, CONTAINER_KINDS)
+                               SPELLBOOK_COVERS, Container, CONTAINER_KINDS, NoticeBoard)
         import game.rpg.bestiary as bestiary
         import game.rpg.items as rpg_items
         import game.rpg.magic as rpg_magic
@@ -304,6 +304,7 @@ class MiniwindGame:
         api.register_entity(CreatureSpawn, menu_label="Spawn Point")
         api.register_entity(Marker, menu_label="Path / Schedule Marker")
         api.register_entity(Container, menu_label="Container (chest / barrel)")
+        api.register_entity(NoticeBoard, menu_label="Notice Board")
         api.register_entity(GameSettings, menu_label="Game Settings")
         # A map may hold at most one Game Settings marker — it configures the
         # single game clock / start scenario, so a second one is meaningless.

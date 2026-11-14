@@ -1729,7 +1729,10 @@
     "value": 5,
     "weight": 0.3,
     "desc": "Hal Corbin's accounts, in a careful hand that does not match the man.",
-    "book": "corbin_ledger"
+    "book": "corbin_ledger",
+    "found": [
+      "unique"
+    ]
   },
   "toll_purse": {
     "name": "Hollin's Cross Tolls",

@@ -755,6 +755,22 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
   right. Taking them is theft from him. Handing them back when the quest
   completes adds 40 gold and 5 reputation; keeping them is the player's
   choice.
+* **Talk of the town.** What the mill's trouble does is said aloud:
+  * a hungry resident within 600 units of the player says why they cannot
+    get bread (the shop has run out, it is shut, it costs too much) -- the
+    flour supply's own reason, once for each reason each day;
+  * notice boards stand in Millbrook square and at Hollin's Cross's
+    crossroads (E to read). Besides the writ on the player's head, the
+    watch's appeals, departures and news, each posts the flour on every shop
+    shelf within 2,500 units: the real stock and price, or "none today";
+  * Aldric, once he knows of Hal Corbin's death (he saw it, or was told),
+    opens with "Word got here before you did";
+  * Hal's brother **Rook Corbin** lives with the bandits at Cutthroat Ridge.
+    When word of Hal's death reaches him, the storyteller can send him on a
+    vendetta, announced on the boards and in departures news before he
+    arrives;
+  * news of a lawful killing or fight (bandits cut down on the road) is met
+    with "Good riddance", never "the watch had better hear of this".
 
 ## Known gaps
 

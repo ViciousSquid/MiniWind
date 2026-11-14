@@ -12,6 +12,7 @@ they stand on:
   <kind>.png``, game/tools/make_container_art.py), turned by its ``angle``
   (degrees; an unturned one gets a steady turn of its own from its id, a
   chest square to the world);
+* a **notice board** in its top-down art (game/tools/make_notice_board_art.py);
 * an **item pickup** in its item's icon (game/item_icons.py) -- a book, a
   note, a sword dropped on the floor.
 
@@ -42,6 +43,11 @@ PICKUP_Y = GIB_Y + 4.0
 CONTAINER_SIZE = {"chest": 150.0, "barrel": 118.0, "crate": 140.0, "sack": 124.0,
                   "urn": 112.0}
 PICKUP_SIZE = 64.0
+#: A town's notice board (game/tools/make_notice_board_art.py).
+NOTICE_BOARD_SIZE = 150.0
+NOTICE_BOARD_ART = os.path.join("assets", "sprites", "miniwind", "topdown", "notice_board.png")
+#: Every kind this pass draws, in draw order.
+KINDS = ("container", "notice_board", "itempickup")
 
 assert CONTAINER_Y < ACTOR_Y
 
@@ -117,6 +123,10 @@ def _entry(logic, t, kind, item_icons):
         floor = floor_of(logic, t, CONTAINER_SIZE.get(ck, 130.0) * 0.35)
         return ((t.pos[0], floor, t.pos[2]), turn_of(p, square=ck in ("chest", "crate")),
                 container_art(ck), CONTAINER_SIZE.get(ck, 130.0), CONTAINER_Y)
+    if kind == "notice_board":
+        floor = floor_of(logic, t, NOTICE_BOARD_SIZE * 0.35)
+        return ((t.pos[0], floor, t.pos[2]), turn_of(p, square=True),
+                NOTICE_BOARD_ART, NOTICE_BOARD_SIZE, CONTAINER_Y)
     icon = item_icons.icon_path(p.get("item_id"), p.get("_stack"))
     if not icon:
         return None
@@ -169,8 +179,7 @@ class FloorObjects:
 
     def visible(self, session, ppos):
         from engine.change_journal import JOURNAL, OVERFLOW
-        buckets = tuple((kind, session._things_of_type(kind))
-                        for kind in ("container", "itempickup"))
+        buckets = tuple((kind, session._things_of_type(kind)) for kind in KINDS)
         # The buckets themselves (held, so a rebuilt one cannot reuse an id).
         key = tuple((bucket, len(bucket)) for _kind, bucket in buckets)
         if (self.key is None or len(key) != len(self.key)
@@ -214,7 +223,7 @@ def visible_reference(session):
     logic = getattr(session, "logic", None)
     r2 = DRAW_RADIUS * DRAW_RADIUS
     out = []
-    for kind in ("container", "itempickup"):
+    for kind in KINDS:
         for t in session._things_of_type(kind):
             dx, dz = float(t.pos[0]) - ppos[0], float(t.pos[2]) - ppos[2]
             if dx * dx + dz * dz > r2:

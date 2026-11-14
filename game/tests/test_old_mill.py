@@ -66,3 +66,21 @@ def test_keeping_the_tolls_is_the_players_choice(chapter):
     before = s.game.character.gold
     _finish(s)
     assert s.game.character.gold - before == 150
+
+
+def test_aldric_has_heard_if_the_news_got_there_first(chapter):
+    """Aldric's first line changes if word of Hal Corbin's death reached him
+    before the player did (he saw it, or someone told him)."""
+    from ..sim import knowledge
+    from ..sim.director import actor_key
+    s, log = chapter, chapter.game.quests
+    log.set_stage("mill_bandits", 50)
+    aldric = entities.NPC(pos=[0, 0, 0], properties={"name": "Aldric", "display_name": "Aldric the Reeve"})
+    tree = {"start": "greet", "nodes": {"greet": {"text": "Hello.", "responses": []}}}
+    first = s._with_quest_lines(tree, aldric)
+    assert first["nodes"][first["start"]]["text"].startswith("Corbin's book?")
+    knowledge.learn(s.store, actor_key(aldric), {
+        "e": 7, "kind": "death", "actor": "player", "target": "hal", "target_name": "Hal Corbin",
+        "certainty": 0.8, "day": 1, "hour": 9.0})
+    told = s._with_quest_lines(tree, aldric)
+    assert told["nodes"][told["start"]]["text"].startswith("Word got here before you did")

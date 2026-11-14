@@ -652,6 +652,24 @@ def _make_thing_pair(init_fn, icon):
 ItemPickup = _make_thing_pair(_init_item_pickup, "assets/sprites/pickup.png")
 ItemPickup.__name__ = ItemPickup.__qualname__ = "ItemPickup"
 
+#: A town's notice board, as the overhead camera sees it.
+NOTICE_BOARD_SPRITE = "assets/sprites/miniwind/topdown/notice_board.png"
+
+
+def _init_notice_board(self):
+    """A town's notice board: the player reads it (E) like a conversation --
+    the writ on their head, the watch's appeals, who set out and why, news
+    travellers brought (game.runtime.notice_board_posts)."""
+    p = self.properties
+    p["type"] = "notice_board"
+    p.setdefault("display_name", "Notice Board")
+    p.setdefault("use_radius", 120.0)
+    p["custom_idle"] = NOTICE_BOARD_SPRITE
+
+
+NoticeBoard = _make_thing_pair(_init_notice_board, NOTICE_BOARD_SPRITE)
+NoticeBoard.__name__ = NoticeBoard.__qualname__ = "NoticeBoard"
+
 
 # ---------------------------------------------------------------------------
 # Container — a world object the player USEs (E) to open a graphical inventory

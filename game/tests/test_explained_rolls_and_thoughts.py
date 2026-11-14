@@ -312,6 +312,17 @@ def test_a_rumour_is_passed_on_in_words():
     assert reply in chatter._REPLIES["grave"]
 
 
+def test_bandits_cut_down_are_good_riddance_not_a_matter_for_the_watch():
+    """A bystander used to answer news of bandits killed on the road with
+    "The watch had better hear of this", as if it were a murder."""
+    from .. import chatter
+    for kind in ("death", "attack"):
+        _o, reply = chatter.gossip_lines(
+            _fact(kind=kind, target_name="Hal Corbin", crime=False), "Ann", "Tom")
+        assert reply in chatter._REPLIES["lawful"]
+        assert "watch" not in reply.lower()
+
+
 def test_gossip_is_said_aloud_with_a_reply(config):
     ann = _npc({"name": "Ann"})
     tom = _npc({"name": "Tom"})
@@ -388,3 +399,19 @@ def test_whats_on_your_mind_is_offered_in_conversation(config):
     assert tree["nodes"]["g"]["responses"] == [{"text": "Bye.", "goto": "END"}]
     hostile = _npc({"name": "Brute", "aggression": "hostile"})
     assert s._with_mind_topic(tree, hostile) is tree
+
+
+def test_a_hungry_resident_says_why_there_is_no_bread(config):
+    """The flour shortage reaches the player as people saying so: the flour
+    supply's own reason, aloud, once for each reason each day."""
+    ann = _npc({"name": "Ann", "_food_reason": "The local shop has run out of flour."})
+    far = _npc({"name": "Far", "_food_reason": "Cannot afford flour."})
+    far.pos = [5000, 0, 0]
+    s = _session([ann, far], _FakePlayer([0, 0, 0]))
+    s._update_food_talk()
+    said = {id(thing): text for thing, text, _left in s.live_barks()}
+    assert said[id(ann)] in s.FOOD_LINES["The local shop has run out of flour."]
+    assert id(far) not in said                       # out of earshot
+    s.__dict__["barks"] = {}
+    s._update_food_talk()
+    assert not s.live_barks()                        # once a day for that reason
