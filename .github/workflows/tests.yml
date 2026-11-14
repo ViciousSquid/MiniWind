@@ -49,6 +49,14 @@ jobs:
           assert sys._is_gil_enabled()
           print(sys.version)
           PY
+      # PyOpenGL discovers the system GL/EGL loader at import time. These
+      # libraries provide the loader only; this tier still creates no context
+      # and requires neither Qt, Xvfb nor a GPU.
+      - name: Install headless OpenGL loader libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglx0 libopengl0 libegl1
       - name: Install headless runtime baseline
         run: |
           python -m pip install --upgrade pip
