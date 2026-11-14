@@ -388,10 +388,13 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
         soak = min(dmg, shield_mag * 0.5)
         dmg -= soak
 
-    # Elemental / magical resistances from race + effects.
+    # Elemental / magical resistances from race + birthsign + effects (the
+    # Apprentice's sign is a weakness: negative).
+    import game.rpg.birthsigns as birthsigns
     resist = 0.0
     race = races.get(character.race_id)
     resist += race.resistances.get(damage_kind, 0.0)
+    resist += birthsigns.get(character.birthsign_id).resistances.get(damage_kind, 0.0)
     resist += character.effect_magnitude("resist_" + damage_kind) / 100.0
     if damage_kind == "magic":
         resist += character.attrs.get(attr.ENDURANCE, 40) * 0.002

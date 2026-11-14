@@ -183,9 +183,16 @@ Racial powers are spells that cost nothing and never fizzle.
 
 Warrior (STR+10 END+5) · Mage (INT+10, +50 magicka) · Thief (END+10 SPD+5
 LUCK+5) · Lady (END+10 PER+10) · Steed (SPD+15) · Lord (+25 health, Minor
-Healing) · Apprentice (INT+5, +100 magicka) · Golem (+150 magicka; magicka
-never regenerates) · Shadow (END+5, Minor Invisibility) · None. The creator
+Healing) · Apprentice (INT+5, +100 magicka; **weaker to magic:** −50%
+resistance to magic, fire, frost and shock, so spells and those elements do
+×1.5 damage, added to the race's resistance) · Golem (+150 magicka; magicka
+never regenerates) · Shadow (END+5, Invisibility) · None. The creator
 offers Warrior, Mage, Thief, Lord and Shadow.
+
+Each sign's description is its flavour line followed by exactly what it
+gives, written from the same table the rules read ("+10 Strength, +5
+Endurance."). A sign with magicka or a spell adds "Magicka and spells only
+for a class that works magic."
 
 ---
 
@@ -320,8 +327,8 @@ floats in large white over whoever lands one.
 In order: the attacker rolls to hit your AC (a miss does nothing) → its
 critical roll → your block, if raised → your armour (`rating / (rating +
 100)` of the rest) → a Shield effect soaks `min(damage, magnitude × 0.5)` →
-resistance (race + effects, plus END × 0.2% against magic, between −100% and
-+100%). A creature's blow is scaled by its Strength first.
+resistance (race + birthsign + effects, plus END × 0.2% against magic,
+between −100% and +100%). A creature's blow is scaled by its Strength first.
 
 A blow that would kill you (with more than 1 health) may be escaped once per
 game day: a d20 at `(fortune − 40)%`, at most 60%, where fortune is the
@@ -786,8 +793,6 @@ night sees 45% as far. Sneak attacks multiply damage (see §7).
 
 Places where the code does not yet do what something in the game describes:
 
-* The **Apprentice** birthsign's "weaker to magic" is not implemented, and
-  some birthsign descriptions leave out bonuses they give.
 * **Sneak** is trained but read by no rule; **Acrobatics**, **Light Fingers**
   and **Alchemy** are neither trained nor read.
 * Sneak-attack damage applies whenever sneaking is on, even if the target has
