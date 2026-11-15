@@ -33,7 +33,86 @@ jobs:
         run: |
           $path = "editor/version.txt"
           $text = ([IO.File]::ReadAllText($path)).TrimEnd()
-          if ($text -notmatch '^version \d+(\.\d+)+$') {
+          $lines = $text -split '\r?\n'
+          if ($lines.Count -ne 2 -or
+              $lines[0] -notmatch '^Fio \d+(\.\d+)+
+          [IO.File]::WriteAllText($path, "$text WinX64`n")
+          Write-Host "editor/version.txt: $([IO.File]::ReadAllText($path).TrimEnd())"
+
+      - name: Build standalone executable (console visible)
+        run: |
+          python -m nuitka main.py `
+            --standalone `
+            --enable-plugin=pyqt5 `
+            --windows-console-mode=force `
+            --assume-yes-for-downloads `
+            --output-dir=build `
+            --output-filename=MiniWind.exe `
+            --include-data-dir=assets=assets `
+            --include-data-dir=engine=engine `
+            --include-data-dir=editor=editor `
+            --include-data-dir=plugins=plugins `
+            --include-data-dir=game=game `
+            --include-data-dir=maps=maps `
+            --include-data-dir=tools=tools `
+            --include-data-dir=tests=tests `
+            --include-data-files=settings.ini=settings.ini `
+            --include-data-files=editor/version.txt=editor/version.txt
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build/main.dist/MiniWind.exe")) {
+            throw "Nuitka did not produce build/main.dist/MiniWind.exe"
+          }
+
+      - name: Upload Windows x64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiniWind-Windows-x64-console
+          path: build/main.dist/
+          if-no-files-found: error
+          retention-days: 14
+ -or
+              $lines[1] -notmatch '^MiniWind \d+(\.\d+)+
+          [IO.File]::WriteAllText($path, "$text WinX64`n")
+          Write-Host "editor/version.txt: $([IO.File]::ReadAllText($path).TrimEnd())"
+
+      - name: Build standalone executable (console visible)
+        run: |
+          python -m nuitka main.py `
+            --standalone `
+            --enable-plugin=pyqt5 `
+            --windows-console-mode=force `
+            --assume-yes-for-downloads `
+            --output-dir=build `
+            --output-filename=MiniWind.exe `
+            --include-data-dir=assets=assets `
+            --include-data-dir=engine=engine `
+            --include-data-dir=editor=editor `
+            --include-data-dir=plugins=plugins `
+            --include-data-dir=game=game `
+            --include-data-dir=maps=maps `
+            --include-data-dir=tools=tools `
+            --include-data-dir=tests=tests `
+            --include-data-files=settings.ini=settings.ini `
+            --include-data-files=editor/version.txt=editor/version.txt
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build/main.dist/MiniWind.exe")) {
+            throw "Nuitka did not produce build/main.dist/MiniWind.exe"
+          }
+
+      - name: Upload Windows x64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiniWind-Windows-x64-console
+          path: build/main.dist/
+          if-no-files-found: error
+          retention-days: 14
+) {
             throw "Unexpected editor/version.txt: '$text'"
           }
           [IO.File]::WriteAllText($path, "$text WinX64`n")
