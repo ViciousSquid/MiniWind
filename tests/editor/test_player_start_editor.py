@@ -343,3 +343,49 @@ def test_retargeting_the_map_refreshes_the_destination_choices(window, dungeon_m
     assert panel._widgets["destination_spawn"].count() == 1
     panel.update_object_prop("target_map", dungeon_map)
     assert panel._widgets["destination_spawn"].count() == 4
+
+
+
+# -- map-owned sky image ---------------------------------------------------------
+
+
+def test_sky_image_property_is_only_shown_on_the_first_created_start(window):
+    first = _create(window, "A")
+    panel = window.property_editor
+    assert "player_start_sky_image" in panel._widgets
+    assert panel._widgets["player_start_sky_image"].text() == ""
+
+    second = _create(window, "B", (100, 40, 0))
+    assert "player_start_sky_image" not in panel._widgets
+
+    # Changing the primary spawn does not transfer ownership of the map sky.
+    window.save_state()
+    window.state.set_primary_player_start(second)
+    window.update_all_ui()
+    window.set_selected_objects([second])
+    assert "player_start_sky_image" not in panel._widgets
+    window.set_selected_objects([first])
+    assert "player_start_sky_image" in panel._widgets
+
+
+def test_sky_image_is_saved_with_first_player_start_and_published_to_view(window):
+    first = _create(window, "A")
+    first.properties["sky_image"] = "assets/backgrounds/void-panorama.webp"
+    window.update_all_ui()
+
+    assert window.view_3d.sky_image_path == (
+        "assets/backgrounds/void-panorama.webp")
+    data = json.loads(json.dumps(window.state.get_level_data()))
+    saved = next(
+        r for r in data["things"]
+        if r.get("type") == "playerstart"
+        and r.get("properties", {}).get("name") == "A"
+    )
+    assert saved["properties"]["sky_image"] == (
+        "assets/backgrounds/void-panorama.webp")
+
+    reloaded = EditorState()
+    reloaded.load_from_data(data)
+    restored = reloaded.resolve_player_start()
+    assert restored.properties["sky_image"] == (
+        "assets/backgrounds/void-panorama.webp")
