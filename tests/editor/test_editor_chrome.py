@@ -92,28 +92,14 @@ def test_p_opens_the_position_window_from_anywhere(main_window, qt_app):
 
 
 
-def test_view_background_menu_selects_editor_panorama_without_editing_map(
-        main_window, qt_app):
-    menu = main_window.view_background_image_menu
-    assert menu.title() == "Background image"
-    actions = main_window.view_background_image_actions
-    assert set(actions) == {"none", "space", "cloudy_sky"}
-    assert actions["none"].isChecked()
-
-    original_unsaved = main_window.unsaved_changes
-    actions["space"].trigger()
-    assert main_window.view_3d.editor_background_image == (
-        "assets/backgrounds/void-panorama.webp")
-    assert main_window.unsaved_changes == original_unsaved
-
-    actions["cloudy_sky"].trigger()
-    assert main_window.view_3d.editor_background_image == (
-        "assets/backgrounds/cloudy-sky-panorama.webp")
-    actions["none"].trigger()
-    assert main_window.view_3d.editor_background_image == ""
+def test_view_menu_no_longer_contains_a_global_background_setting(main_window):
+    source = Path("editor/ui.py").read_text(encoding="utf-8")
+    assert "Background image" not in source
+    assert not hasattr(main_window, "view_background_image_menu")
+    assert not hasattr(main_window, "choose_view_background_image")
 
 
-def test_editor_pre_scene_uses_view_background_panorama():
+def test_editor_pre_scene_uses_the_map_player_start_sky_image():
     from types import SimpleNamespace
     from game.host import MiniwindGame
 
@@ -127,10 +113,10 @@ def test_editor_pre_scene_uses_view_background_panorama():
     game = object.__new__(MiniwindGame)
     renderer = Renderer()
     viewport = SimpleNamespace(
-        editor_background_image="assets/backgrounds/cloudy-sky-panorama.webp")
+        sky_image_path="assets/backgrounds/cloudy-sky-panorama.webp")
     game._on_pre_scene({
         "renderer": renderer,
         "viewport": viewport,
         "play_mode": False,
     })
-    assert renderer.background_path == viewport.editor_background_image
+    assert renderer.background_path == viewport.sky_image_path
