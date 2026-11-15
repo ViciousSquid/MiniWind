@@ -370,7 +370,7 @@ def test_sky_image_property_is_only_shown_on_the_current_primary_start(window):
     assert "sky_image" not in first.properties
 
 
-def test_sky_image_is_saved_with_first_player_start_and_published_to_view(window):
+def test_sky_image_is_saved_with_primary_player_start_and_published_to_view(window):
     first = _create(window, "A")
     first.properties["sky_image"] = "assets/backgrounds/void-panorama.webp"
     window.update_all_ui()
@@ -418,3 +418,19 @@ def test_deleting_primary_moves_sky_image_to_promoted_start(window):
         "assets/backgrounds/void-panorama.webp")
     remaining = [s for s in window.state.player_starts() if s is not restored]
     assert all("sky_image" not in s.properties for s in remaining)
+
+
+
+def test_only_primary_retains_sky_image_when_map_has_duplicate_values(window):
+    first = _create(window, "A")
+    second = _create(window, "B", (100, 40, 0))
+    first.properties["sky_image"] = "assets/backgrounds/void-panorama.webp"
+    second.properties["sky_image"] = "assets/backgrounds/cloudy-sky-panorama.webp"
+
+    window.update_all_ui()
+
+    assert first.properties["sky_image"] == (
+        "assets/backgrounds/void-panorama.webp")
+    assert "sky_image" not in second.properties
+    assert window.view_3d.sky_image_path == (
+        "assets/backgrounds/void-panorama.webp")
