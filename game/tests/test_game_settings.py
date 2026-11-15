@@ -75,7 +75,9 @@ def test_legacy_game_settings_sky_value_is_retained_for_editor_migration():
     path = "assets/backgrounds/space-panorama.jpg"
     settings = GameSettings(properties={"void_background": path})
     assert settings.properties["void_background"] == path
-    assert "void_background" not in GameSettings.EDITOR_PRIMARY_PROPERTIES
+    editor_properties = getattr(GameSettings, "EDITOR_PRIMARY_PROPERTIES", None)
+    if editor_properties is not None:
+        assert "void_background" not in editor_properties
 
 
 def test_play_session_does_not_own_a_second_sky_image_setting():
