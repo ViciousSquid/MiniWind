@@ -2217,6 +2217,7 @@ class PropertyEditor(QWidget):
 
         if isinstance(thing, PlayerStart):
             self._build_player_start_primary(form, thing)
+            self._build_player_start_sky_image(form, thing)
 
         if isinstance(thing, LevelChanger):
             self._build_destination_spawn(form, thing)
@@ -3332,6 +3333,67 @@ class PropertyEditor(QWidget):
             lambda on: self._make_primary_start(thing) if on else None)
         form.addRow("Start:", primary_cb)
         self._widgets['player_start_primary'] = primary_cb
+
+    def _build_player_start_sky_image(self, form, thing):
+        """Edit the map panorama on its first-created PlayerStart only."""
+        starts = self.editor.state.player_starts()
+        first_position = start_rules.earliest_created(
+            [start.properties for start in starts])
+        if first_position is None or starts[first_position] is not thing:
+            return
+
+        value = str(thing.properties.get("sky_image", "") or "")
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        image_edit = QLineEdit(value)
+        image_edit.setReadOnly(True)
+        image_edit.setPlaceholderText("None")
+        image_edit.setToolTip(
+            "Optional 360-degree equirectangular panorama (2:1 aspect ratio), "
+            "drawn behind the world in the editor and Play mode."
+        )
+        browse_button = QPushButton("Browse...")
+        clear_button = QPushButton("Clear")
+        clear_button.setEnabled(bool(value))
+
+        def choose_sky_image():
+            current = str(thing.properties.get("sky_image", "") or "")
+            start = (
+                current if os.path.isabs(current)
+                else os.path.join(_project_root(), current) if current
+                else os.path.join(_project_root(), "assets", "backgrounds")
+            )
+            if not os.path.isdir(start):
+                start = os.path.dirname(start)
+            if not os.path.isdir(start):
+                start = os.path.join(_project_root(), "assets", "backgrounds")
+            filepath, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Sky Image",
+                start,
+                "Image Files (*.png *.jpg *.jpeg *.bmp *.tga *.tif *.tiff *.webp)",
+            )
+            if not filepath:
+                return
+            relative = _normalise_project_asset_path(filepath)
+            if relative:
+                self.update_object_prop("sky_image", relative)
+                image_edit.setText(relative)
+                clear_button.setEnabled(True)
+
+        def clear_sky_image():
+            self.update_object_prop("sky_image", "")
+            image_edit.clear()
+            clear_button.setEnabled(False)
+
+        browse_button.clicked.connect(choose_sky_image)
+        clear_button.clicked.connect(clear_sky_image)
+        row.addWidget(image_edit, 1)
+        row.addWidget(browse_button)
+        row.addWidget(clear_button)
+        form.addRow(QLabel("Sky image:"), widget)
+        self._widgets["player_start_sky_image"] = image_edit
 
     def _make_primary_start(self, thing):
         if self._populating or thing.primary:
@@ -5475,6 +5537,9 @@ class PropertyEditor(QWidget):
         # dense render/entity projections cache their cold columns behind the
         # editor's world epoch, so journal this exact object immediately.
         self.editor.state.mark_world_changed([self.current_object])
+
+        if isinstance(self.current_object, PlayerStart) and key == "sky_image":
+            self.editor.sync_sky_image_from_map()
 
         if key == 'name' and _io_system is not None:
             # A name is read by every *other* entity's panel — the "Targeted by"
