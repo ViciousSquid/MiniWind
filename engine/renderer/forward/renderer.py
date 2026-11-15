@@ -389,6 +389,14 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         from engine.asset_archives import asset_source
         source = asset_source(path)
         if source is None:
+            # The editor stores paths relative to the project root, not the
+            # process working directory (which can differ in packaged builds).
+            project_root = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), os.pardir,
+                             os.pardir, os.pardir)
+            )
+            source = asset_source(os.path.join(project_root, path))
+        if source is None:
             print(f"[Renderer] Void panorama not found: {path}")
             self._background_failed_path = path
             return False

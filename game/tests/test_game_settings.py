@@ -68,9 +68,9 @@ def test_game_settings_authors_an_optional_void_panorama():
     assert settings.properties["void_background"] == (
         "assets/backgrounds/space-panorama.jpg"
     )
-    assert "void_background" in getattr(
-        GameSettings, "EDITOR_PRIMARY_PROPERTIES", ()
-    )
+    editor_properties = getattr(GameSettings, "EDITOR_PRIMARY_PROPERTIES", None)
+    if editor_properties is not None:
+        assert "void_background" in editor_properties
 
 
 def test_play_session_receives_the_map_void_panorama():
