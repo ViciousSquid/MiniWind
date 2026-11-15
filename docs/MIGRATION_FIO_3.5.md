@@ -1,8 +1,9 @@
-# MiniWind → Fio 3.5 migration record (3.5.0.1211)
+# MiniWind → Fio 3.5 migration record (3.5.0.1511)
 
 MiniWind's engine moved from Fio 3.0.0.1010 (taken up to upstream commit
 `f445fac1`, plus later per-file backports) to **Fio 3.5.0.1111**, then to
-**Fio 3.5.0.1211** (Milestone 7). The game
+**Fio 3.5.0.1211** (Milestone 7), and now to **Fio 3.5.0.1511** (Milestone 8).
+The game
 layer (`game/`) needed four source changes: `multiplayer/replication.py` and
 `multiplayer/world.py` (a door's live position and state rows, below),
 `ui/launcher.py` (engine and game versions shown apart) and `tools/soak.py`
@@ -18,7 +19,8 @@ the concern.
 | Fio (first target) | `3.5.0.1111_Latest` | `9b2dca952b88e7c1abd1f5f5979764c3783490b4` |
 | Fio (then) | `3.5.0.1111_CANARY` | `a278e956` (26 commits past `9b2dca95`) |
 | Fio (then) | `3.5.0.1211_Latest` | `77387caaeba284b5467a180b1ba39e147aace86d` (40 commits past `a278e956`) |
-| Fio (now) | `3.5.0.1211_Latest` | `bcf4d297d9d78e5269428353db36d30ab3aca19e` (23 commits past `77387caa`: Play's mouse grab) |
+| Fio (then) | `3.5.0.1211_Latest` | `bcf4d297d9d78e5269428353db36d30ab3aca19e` (23 commits past `77387caa`: Play's mouse grab) |
+| Fio (now) | `3.5.0.1511_Latest` | `a11848bffd272d7d3deb180451856849cefed9f2` (73 commits past 1211) |
 | Common upstream ancestor | Fio `3.0.0.1010_Latest` | `f445fac1be58a1011da276a77de00ef9487add0a` |
 
 `backup_3.0.0.3010` is an ancestor of `41eeb2c` (22 commits behind it), so
@@ -51,9 +53,42 @@ deferral); Edit > Colours tabs; and its Decal button icon, added to
 MiniWind's branded `editor.fiopak`. Not taken: the Android player's decals
 and workflow, `CHANGELOG.md`, the `Wet_Decal_Test` demo map.
 
-Engine provenance is `editor/version.txt` (`version 3.5.0.1211`). MiniWind's
-own version is `game.rpg.GAME_VERSION`; the launcher shows both
-("Miniwind 1.0.0 · Fio 3.5.0.1211") and the log header names the engine build.
+Engine provenance is `editor/version.txt` (`Fio 3.5.0.1511`). MiniWind's own
+version remains `MiniWind 0.5.0`; the launcher shows both version lines and
+the log header names the engine build.
+
+Milestone 8 brings in Fio 3.5.0.1511 (`a11848bf`): 73 commits after the
+1211 baseline. The source merge keeps MiniWind's game/editor additions while
+taking the upstream fixes in the same owning modules:
+
+* The change journal supports filtered subscriptions. Physics subscribes only
+  to authored state/visibility changes, tracks hidden and disabled bodies
+  sparsely, defers placement settling until reactivation, and preserves this
+  state across dense repacks. Sleeping bodies do not need a per-tick property
+  poll; the player cannot push a hidden/disabled body.
+* Generic and Prop `Show` / `ToggleVisibility` wake physics only on a
+  hidden-to-visible transition. Repeated `Show` does not wake a body already at
+  rest, and a carried kinematic Prop remains owned by the carry runtime.
+* Placed decal entries use weak references; stopping a session releases the
+  projection's placed-decal references and rows so the previous map is not
+  retained by the long-lived decal table.
+* SysMon's FPS/frame-time samples now come from successful Qt-presented
+  frames, not the update timer or direct test/FBO calls. MiniWind's paint path
+  retains its camera interpolation and animated-texture clock. Numeric readouts
+  are smoothed and refreshed at the upstream cadence.
+* Play mouse capture now reacts to viewport focus changes and is restored
+  after an outer map-loading overlay has unwound, not only during nested Play
+  entry.
+
+The migration carries the upstream I/O, physics, decal, SysMon, editor and
+view tests that apply to MiniWind, plus the test-tool adaptation for the
+current per-map brush-semantics API. MiniWind's shipped maps remain version 3;
+Fio's refreshed version-5 demo maps and `_SHOWCASE` assets are not copied over.
+The existing loader migration and MiniWind map fixtures remain authoritative.
+
+`editor/version.txt` now records `Fio 3.5.0.1511`; MiniWind remains at
+`MiniWind 0.5.0`. Runtime package versions are unchanged from the previous
+Fio baseline (MiniWind continues to pin Pillow 13.0.0).
 
 ## Method
 
