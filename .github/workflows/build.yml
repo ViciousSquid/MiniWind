@@ -45,7 +45,10 @@ jobs:
         run: |
           $path = "editor/version.txt"
           $text = ([IO.File]::ReadAllText($path)).TrimEnd()
-          if ($text -notmatch '^version \d+(\.\d+)+$') {
+          $lines = $text -split '\r?\n'
+          if ($lines.Count -ne 2 -or
+              $lines[0] -notmatch '^Fio \d+(\.\d+)+$' -or
+              $lines[1] -notmatch '^MiniWind \d+(\.\d+)+$') {
             throw "Unexpected editor/version.txt: '$text'"
           }
           [IO.File]::WriteAllText($path, "$text$env:VERSION_SUFFIX`n")
@@ -255,7 +258,10 @@ jobs:
         run: |
           $path = "editor/version.txt"
           $text = ([IO.File]::ReadAllText($path)).TrimEnd()
-          if ($text -notmatch '^version \d+(\.\d+)+$') {
+          $lines = $text -split '\r?\n'
+          if ($lines.Count -ne 2 -or
+              $lines[0] -notmatch '^Fio \d+(\.\d+)+$' -or
+              $lines[1] -notmatch '^MiniWind \d+(\.\d+)+$') {
             throw "Unexpected editor/version.txt: '$text'"
           }
           [IO.File]::WriteAllText($path, "$text$env:ARM64_VERSION_SUFFIX`n")
@@ -366,8 +372,12 @@ jobs:
         run: |
           path=editor/version.txt
           text=$(tr -d '\r' < "$path" | sed -e 's/[[:space:]]*$//')
-          pattern='^version [0-9]+(\.[0-9]+)+$'
-          if ! [[ $text =~ $pattern ]]; then
+          first_line=\${text%%$'\n'*}
+          second_line=\${text#*$'\n'}
+          first_pattern='^Fio [0-9]+(\.[0-9]+)+$'
+          second_pattern='^MiniWind [0-9]+(\.[0-9]+)+$'
+          if ! [[ $text == *$'\n'* && $second_line != *$'\n'* &&
+                  $first_line =~ $first_pattern && $second_line =~ $second_pattern ]]; then
             echo "Unexpected editor/version.txt: '$text'"
             exit 1
           fi
@@ -595,8 +605,12 @@ jobs:
         run: |
           path=editor/version.txt
           text=$(tr -d '\r' < "$path" | sed -e 's/[[:space:]]*$//')
-          pattern='^version [0-9]+(\.[0-9]+)+$'
-          if ! [[ $text =~ $pattern ]]; then
+          first_line=\${text%%$'\n'*}
+          second_line=\${text#*$'\n'}
+          first_pattern='^Fio [0-9]+(\.[0-9]+)+$'
+          second_pattern='^MiniWind [0-9]+(\.[0-9]+)+$'
+          if ! [[ $text == *$'\n'* && $second_line != *$'\n'* &&
+                  $first_line =~ $first_pattern && $second_line =~ $second_pattern ]]; then
             echo "Unexpected editor/version.txt: '$text'"
             exit 1
           fi
