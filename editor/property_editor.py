@@ -1,6 +1,7 @@
 from engine.asset_qt import load_icon
 import json
 import os
+import shutil
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
                              QFormLayout, QCheckBox, QComboBox, QPushButton,
                              QHBoxLayout, QColorDialog, QFileDialog, QGridLayout,
@@ -231,6 +232,41 @@ def _normalise_project_asset_path(path: object) -> str:
         relative = relative[2:]
     return relative
 
+
+
+def _store_sky_image_in_project(path: object) -> str:
+    """Import a selected panorama into the project's portable asset tree.
+
+    Sky images are map dependencies, so keep them under assets/backgrounds
+    rather than recording an absolute path outside the project. Existing
+    files already in that folder are referenced in place; other selections
+    are copied there without overwriting an asset with the same filename.
+    """
+    source = os.path.abspath(str(path or "").strip())
+    if not source or not os.path.isfile(source):
+        raise FileNotFoundError(source or "No sky image selected")
+
+    root = _project_root()
+    backgrounds_dir = os.path.join(root, "assets", "backgrounds")
+    source_real = os.path.realpath(source)
+    backgrounds_real = os.path.realpath(backgrounds_dir)
+    try:
+        if os.path.commonpath((source_real, backgrounds_real)) == backgrounds_real:
+            return os.path.relpath(source_real, root).replace("\\\\", "/")
+    except ValueError:
+        # Different Windows drives: import the image into this project.
+        pass
+
+    os.makedirs(backgrounds_dir, exist_ok=True)
+    filename = os.path.basename(source)
+    stem, extension = os.path.splitext(filename)
+    destination = os.path.join(backgrounds_dir, filename)
+    suffix = 1
+    while os.path.exists(destination):
+        destination = os.path.join(backgrounds_dir, f"{stem}_{suffix}{extension}")
+        suffix += 1
+    shutil.copy2(source, destination)
+    return os.path.relpath(destination, root).replace("\\\\", "/")
 
 
 try:
@@ -3348,7 +3384,8 @@ class PropertyEditor(QWidget):
         image_edit.setPlaceholderText("None")
         image_edit.setToolTip(
             "Optional 360-degree equirectangular panorama (2:1 aspect ratio), "
-            "drawn behind the world in the editor and Play mode."
+            "drawn behind the world in the editor and Play mode. Selected images "
+            "are imported into assets/backgrounds so they travel with exported packages."
         )
         browse_button = QPushButton("Browse...")
         clear_button = QPushButton("Clear")
@@ -3373,7 +3410,11 @@ class PropertyEditor(QWidget):
             )
             if not filepath:
                 return
-            relative = _normalise_project_asset_path(filepath)
+            try:
+                relative = _store_sky_image_in_project(filepath)
+            except OSError as exc:
+                QMessageBox.warning(self, "Sky Image", f"Could not import sky image:\\n{exc}")
+                return
             if relative:
                 self.update_object_prop("sky_image", relative)
                 image_edit.setText(relative)
