@@ -33,8 +33,7 @@ from engine.render_cull import camera_xz as _cull_camera_xz
 from ..core import RendererCore
 
 
-_BACKGROUND_IMAGE_VERTEX_SHADER = "#version 330 core\nout vec2 v_uv;\nvoid main() {\n    vec2 p;\n    if (gl_VertexID == 0) {\n        p = vec2(-1.0, -1.0);\n    } else if (gl_VertexID == 1) {\n        p = vec2(3.0, -1.0);\n    } else {\n        p = vec2(-1.0, 3.0);\n    }\n    v_uv = p * 0.5 + 0.5;\n    gl_Position = vec4(p, 1.0, 1.0);\n}\n"
-_BACKGROUND_IMAGE_FRAGMENT_SHADER = "#version 330 core\nin vec2 v_uv;\nout vec4 frag_colour;\nuniform mat4 u_inverse_projection;\nuniform mat4 u_inverse_view;\nuniform sampler2D u_panorama;\nconst float PI = 3.14159265358979323846;\nvoid main() {\n    vec4 view_h = u_inverse_projection * vec4(v_uv * 2.0 - 1.0, 1.0, 1.0);\n    vec3 view_direction = normalize(view_h.xyz / view_h.w);\n    vec3 world_direction = normalize(mat3(u_inverse_view) * view_direction);\n    // Forward (-Z) is the image centre; right (+X) moves towards its right edge.\n    float u = atan(world_direction.x, -world_direction.z) / (2.0 * PI) + 0.5;\n    // Pillow's first row uploads at OpenGL v=0, so north maps to the top row.\n    float v = 0.5 - asin(clamp(world_direction.y, -1.0, 1.0)) / PI;\n    frag_colour = vec4(texture(u_panorama, vec2(u, v)).rgb, 1.0);\n}\n"
+
 from .instancing import InstancingMixin
 from .lighting import LightingMixin
 from .passes import PassesMixin
@@ -438,8 +437,8 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             return
         if not self._background_image_program:
             from OpenGL.GL.shaders import compileProgram, compileShader
-            vertex = compileShader(_BACKGROUND_IMAGE_VERTEX_SHADER, gl.GL_VERTEX_SHADER)
-            fragment = compileShader(_BACKGROUND_IMAGE_FRAGMENT_SHADER, gl.GL_FRAGMENT_SHADER)
+            vertex = compileShader(shaders.DEFAULT_SHADERS["void_background.vert"], gl.GL_VERTEX_SHADER)
+            fragment = compileShader(shaders.DEFAULT_SHADERS["void_background.frag"], gl.GL_FRAGMENT_SHADER)
             self._background_image_program = compileProgram(vertex, fragment, validate=False)
             self._background_image_vao = int(gl.glGenVertexArrays(1))
             program = self._background_image_program

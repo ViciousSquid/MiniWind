@@ -2946,6 +2946,45 @@ def _terrain_indexed_sources():
  DEFAULT_SHADERS['terrain_flat.frag']) = _terrain_indexed_sources()
 
 
+
+# The optional 360-degree void panorama, used by renderers which support a
+# camera-oriented background image. Kept in the central registry so the
+# shader portability suite compiles it with every other GLSL 3.30 shader.
+DEFAULT_SHADERS['void_background.vert'] = """#version 330 core
+out vec2 v_uv;
+void main() {
+    vec2 p;
+    if (gl_VertexID == 0) {
+        p = vec2(-1.0, -1.0);
+    } else if (gl_VertexID == 1) {
+        p = vec2(3.0, -1.0);
+    } else {
+        p = vec2(-1.0, 3.0);
+    }
+    v_uv = p * 0.5 + 0.5;
+    gl_Position = vec4(p, 1.0, 1.0);
+}
+"""
+DEFAULT_SHADERS['void_background.frag'] = """#version 330 core
+in vec2 v_uv;
+out vec4 frag_colour;
+uniform mat4 u_inverse_projection;
+uniform mat4 u_inverse_view;
+uniform sampler2D u_panorama;
+const float PI = 3.14159265358979323846;
+void main() {
+    vec4 view_h = u_inverse_projection * vec4(v_uv * 2.0 - 1.0, 1.0, 1.0);
+    vec3 view_direction = normalize(view_h.xyz / view_h.w);
+    vec3 world_direction = normalize(mat3(u_inverse_view) * view_direction);
+    // Forward (-Z) is the image centre; right (+X) moves towards its right edge.
+    float u = atan(world_direction.x, -world_direction.z) / (2.0 * PI) + 0.5;
+    // Pillow's first row uploads at OpenGL v=0, so north maps to the top row.
+    float v = 0.5 - asin(clamp(world_direction.y, -1.0, 1.0)) / PI;
+    frag_colour = vec4(texture(u_panorama, vec2(u, v)).rgb, 1.0);
+}
+"""
+
+
 # Central Registry: (Shader Name) -> (Vertex Filename, Fragment Filename)
 SHADER_MAP = {
     'simple':        ('simple.vert',         'simple.frag'),
