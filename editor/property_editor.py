@@ -1,8 +1,6 @@
 from engine.asset_qt import load_icon
 import json
-import filecmp
 import os
-import shutil
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
                              QFormLayout, QCheckBox, QComboBox, QPushButton,
                              QHBoxLayout, QColorDialog, QFileDialog, QGridLayout,
@@ -20,6 +18,7 @@ from editor.things import (Thing, Light, Effect, Prop, Monster, Speaker,
                            LogicState, PlayerStart, LevelChanger)
 from engine import player_starts as start_rules
 from editor import state_values as _sv
+from editor.sky_assets import store_sky_image_in_project
 from editor.portal_links import sync_group_to
 from engine.brush_geometry import GEO_RUNTIME_KEYS
 from engine.monster_constants import MONSTER_VARIANTS
@@ -233,49 +232,6 @@ def _normalise_project_asset_path(path: object) -> str:
         relative = relative[2:]
     return relative
 
-
-
-def _store_sky_image_in_project(path: object) -> str:
-    """Import a selected panorama into the project's portable asset tree.
-
-    Sky images are map dependencies, so keep them under assets/backgrounds
-    rather than recording an absolute path outside the project. Existing
-    files already in that folder are referenced in place; other selections
-    are copied there without overwriting an asset with the same filename.
-    """
-    raw_path = str(path or "").strip()
-    if not raw_path:
-        raise FileNotFoundError("No sky image selected")
-    source = os.path.abspath(raw_path)
-    if not os.path.isfile(source):
-        raise FileNotFoundError(source)
-
-    root = _project_root()
-    backgrounds_dir = os.path.join(root, "assets", "backgrounds")
-    source_real = os.path.realpath(source)
-    backgrounds_real = os.path.realpath(backgrounds_dir)
-    try:
-        if os.path.commonpath((source_real, backgrounds_real)) == backgrounds_real:
-            return os.path.relpath(source_real, root).replace("\\", "/")
-    except ValueError:
-        # Different Windows drives: import the image into this project.
-        pass
-
-    os.makedirs(backgrounds_dir, exist_ok=True)
-    filename = os.path.basename(source)
-    stem, extension = os.path.splitext(filename)
-    destination = os.path.join(backgrounds_dir, filename)
-    suffix = 1
-    while os.path.exists(destination):
-        try:
-            if filecmp.cmp(source, destination, shallow=False):
-                return os.path.relpath(destination, root).replace("\\", "/")
-        except OSError:
-            pass
-        destination = os.path.join(backgrounds_dir, f"{stem}_{suffix}{extension}")
-        suffix += 1
-    shutil.copy2(source, destination)
-    return os.path.relpath(destination, root).replace("\\", "/")
 
 
 try:
@@ -3420,7 +3376,7 @@ class PropertyEditor(QWidget):
             if not filepath:
                 return
             try:
-                relative = _store_sky_image_in_project(filepath)
+                relative = store_sky_image_in_project(filepath)
             except OSError as exc:
                 QMessageBox.warning(self, "Sky Image", f"Could not import sky image:\n{exc}")
                 return
@@ -3835,7 +3791,7 @@ class PropertyEditor(QWidget):
                     if not filepath:
                         return
                     try:
-                        relative = _store_sky_image_in_project(filepath)
+                        relative = store_sky_image_in_project(filepath)
                     except OSError as exc:
                         QMessageBox.warning(self, "Void Panorama", f"Could not import panorama:\n{exc}")
                         return
