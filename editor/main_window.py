@@ -2956,16 +2956,53 @@ class MainWindow(QMainWindow):
         application-level setting.
         """
         starts = self.state.player_starts()
-        position = start_rules.earliest_created(
-            [start.properties for start in starts])
+        primary = self.state.resolve_player_start()
         path = ""
-        if position is not None:
-            candidate = starts[position].properties.get("sky_image", "")
-            if isinstance(candidate, str):
-                path = candidate.strip()
+        changed = []
+
+        if primary is not None:
+            candidate = primary.properties.get("sky_image", "")
+            if not isinstance(candidate, str) or not candidate.strip():
+                # Preserve a value written on the former owner when Primary
+                # changes, and canonicalise older maps with duplicate values.
+                position = start_rules.earliest_created(
+                    [start.properties for start in starts])
+                ordered = [starts[position]] if position is not None else []
+                ordered.extend(
+                    start for start in starts
+                    if start is not primary
+                    and (position is None or start is not starts[position])
+                )
+                candidate = ""
+                for start in ordered:
+                    value = start.properties.get("sky_image", "")
+                    if isinstance(value, str) and value.strip():
+                        candidate = value.strip()
+                        break
+            else:
+                candidate = candidate.strip()
+
+            if candidate:
+                if primary.properties.get("sky_image") != candidate:
+                    primary.properties["sky_image"] = candidate
+                    changed.append(primary)
+                path = candidate
+            elif "sky_image" in primary.properties:
+                primary.properties.pop("sky_image", None)
+                changed.append(primary)
+
+        # The current Primary is the only possible owner, including on maps
+        # that were edited before this invariant existed.
+        for start in starts:
+            if start is not primary and "sky_image" in start.properties:
+                start.properties.pop("sky_image", None)
+                changed.append(start)
+
         view = getattr(self, "view_3d", None)
         if view is not None:
             view.sky_image_path = path
+        if changed:
+            self.state.mark_world_changed(changed)
         return path
 
     def set_show_whole_world(self, shown):
@@ -4332,6 +4369,14 @@ class MainWindow(QMainWindow):
             return
         if self.primary_selection() and event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             self.save_state()
+            primary_start = self.state.resolve_player_start()
+            sky_image = (
+                str(primary_start.properties.get("sky_image", "") or "")
+                if primary_start is not None else ""
+            )
+            primary_is_deleted = any(
+                obj is primary_start for obj in self.state.selected_objects
+            )
             for obj in list(self.state.selected_objects):
                 if isinstance(obj, dict):
                     if obj in self.state.brushes:
@@ -4339,6 +4384,14 @@ class MainWindow(QMainWindow):
                 else:
                     if obj in self.state.things:
                         self.state.things.remove(obj)
+            if primary_is_deleted:
+                # Carry the one map setting across promotion before its old
+                # PlayerStart is discarded.
+                self.state.settle_player_starts()
+                promoted = self.state.resolve_player_start()
+                if promoted is not None and sky_image:
+                    promoted.properties["sky_image"] = sky_image
+                    self.state.mark_world_changed([promoted])
             self.set_selected_objects([])
             return
 
