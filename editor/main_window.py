@@ -2949,11 +2949,11 @@ class MainWindow(QMainWindow):
         self.update_all_ui()
 
     def sync_sky_image_from_map(self):
-        """Publish the earliest-created PlayerStart's panorama to the 3D view.
+        """Publish the current Primary PlayerStart's panorama to the 3D view.
 
-        The path remains ordinary map data on that one PlayerStart. This method
-        only mirrors it to the renderer host; it does not create a second
-        application-level setting.
+        The path remains ordinary map data on that one PlayerStart. If Primary
+        changes, the existing value moves with it; other starts cannot retain
+        a competing sky setting.
         """
         starts = self.state.player_starts()
         primary = self.state.resolve_player_start()
