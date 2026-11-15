@@ -3335,11 +3335,8 @@ class PropertyEditor(QWidget):
         self._widgets['player_start_primary'] = primary_cb
 
     def _build_player_start_sky_image(self, form, thing):
-        """Edit the map panorama on its first-created PlayerStart only."""
-        starts = self.editor.state.player_starts()
-        first_position = start_rules.earliest_created(
-            [start.properties for start in starts])
-        if first_position is None or starts[first_position] is not thing:
+        """Edit the map panorama on the current Primary PlayerStart only."""
+        if self.editor.state.resolve_player_start() is not thing:
             return
 
         value = str(thing.properties.get("sky_image", "") or "")
