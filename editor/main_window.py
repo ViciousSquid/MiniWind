@@ -2947,6 +2947,44 @@ class MainWindow(QMainWindow):
         self.update_title()
         self.update_all_ui()
 
+    def set_view_background_image(self, path):
+        """Set the editor viewport's panorama preview, not the map settings."""
+        path = str(path or "").strip()
+        self.view_3d.editor_background_image = path
+        self.view_3d.update()
+
+    def choose_view_background_image(self):
+        """Choose a custom panorama for the editor viewport preview."""
+        current = str(getattr(self.view_3d, "editor_background_image", "") or "")
+        if current and os.path.isabs(current):
+            start = current
+        elif current:
+            start = os.path.join(self.root_dir, current)
+        else:
+            start = os.path.join(self.root_dir, "assets", "backgrounds")
+        if not os.path.isdir(start):
+            start = os.path.dirname(start)
+        if not os.path.isdir(start):
+            start = self.root_dir
+
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select View Background Panorama",
+            start,
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.tga *.tif *.tiff *.webp)",
+        )
+        if not filepath:
+            return
+
+        filepath = os.path.abspath(filepath)
+        try:
+            relative = os.path.relpath(filepath, self.root_dir)
+            if relative != os.pardir and not relative.startswith(os.pardir + os.sep):
+                filepath = relative.replace(os.sep, "/")
+        except ValueError:
+            pass
+        self.set_view_background_image(filepath)
+
     def set_show_whole_world(self, shown):
         """Load every editor cell of a Big World map, or only those near the camera."""
         if not self.config.has_section('Display'):

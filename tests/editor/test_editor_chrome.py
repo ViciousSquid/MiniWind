@@ -89,3 +89,48 @@ def test_p_opens_the_position_window_from_anywhere(main_window, qt_app):
     qt_app.processEvents()
     assert field.text() == "p" and view.pos_window is None
     field.deleteLater()
+
+
+
+def test_view_background_menu_selects_editor_panorama_without_editing_map(
+        main_window, qt_app):
+    menu = main_window.view_background_image_menu
+    assert menu.title() == "Background image"
+    actions = main_window.view_background_image_actions
+    assert set(actions) == {"none", "space", "cloudy_sky"}
+    assert actions["none"].isChecked()
+
+    original_unsaved = main_window.unsaved_changes
+    actions["space"].trigger()
+    assert main_window.view_3d.editor_background_image == (
+        "assets/backgrounds/void-panorama.webp")
+    assert main_window.unsaved_changes == original_unsaved
+
+    actions["cloudy_sky"].trigger()
+    assert main_window.view_3d.editor_background_image == (
+        "assets/backgrounds/cloudy-sky-panorama.webp")
+    actions["none"].trigger()
+    assert main_window.view_3d.editor_background_image == ""
+
+
+def test_editor_pre_scene_uses_view_background_panorama():
+    from types import SimpleNamespace
+    from game.host import MiniwindGame
+
+    class Renderer:
+        def __init__(self):
+            self.background_path = None
+
+        def set_background_image(self, path):
+            self.background_path = path
+
+    game = object.__new__(MiniwindGame)
+    renderer = Renderer()
+    viewport = SimpleNamespace(
+        editor_background_image="assets/backgrounds/cloudy-sky-panorama.webp")
+    game._on_pre_scene({
+        "renderer": renderer,
+        "viewport": viewport,
+        "play_mode": False,
+    })
+    assert renderer.background_path == viewport.editor_background_image

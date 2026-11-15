@@ -840,7 +840,9 @@ class MiniwindGame:
         if renderer is None:
             return
         if not ev.get("play_mode"):
-            renderer.set_background_image("")
+            viewport = ev.get("viewport")
+            renderer.set_background_image(
+                getattr(viewport, "editor_background_image", "") or "")
             # Out of Play the editor's grass sways in the default breeze, not
             # in the last storm played.
             if getattr(renderer, "grass_wind", None) is not None:
