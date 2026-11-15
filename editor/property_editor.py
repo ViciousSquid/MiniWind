@@ -1,5 +1,6 @@
 from engine.asset_qt import load_icon
 import json
+import filecmp
 import os
 import shutil
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
@@ -266,6 +267,11 @@ def _store_sky_image_in_project(path: object) -> str:
     destination = os.path.join(backgrounds_dir, filename)
     suffix = 1
     while os.path.exists(destination):
+        try:
+            if filecmp.cmp(source, destination, shallow=False):
+                return os.path.relpath(destination, root).replace("\\", "/")
+        except OSError:
+            pass
         destination = os.path.join(backgrounds_dir, f"{stem}_{suffix}{extension}")
         suffix += 1
     shutil.copy2(source, destination)
@@ -3416,7 +3422,7 @@ class PropertyEditor(QWidget):
             try:
                 relative = _store_sky_image_in_project(filepath)
             except OSError as exc:
-                QMessageBox.warning(self, "Sky Image", f"Could not import sky image:\\n{exc}")
+                QMessageBox.warning(self, "Sky Image", f"Could not import sky image:\n{exc}")
                 return
             if relative:
                 self.update_object_prop("sky_image", relative)
@@ -3831,7 +3837,7 @@ class PropertyEditor(QWidget):
                     try:
                         relative = _store_sky_image_in_project(filepath)
                     except OSError as exc:
-                        QMessageBox.warning(self, "Void Panorama", f"Could not import panorama:\\n{exc}")
+                        QMessageBox.warning(self, "Void Panorama", f"Could not import panorama:\n{exc}")
                         return
                     if relative:
                         self.update_object_prop('void_background', relative)
