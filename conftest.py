@@ -597,7 +597,6 @@ def _fail_on_a_held_modifier():
 
 _SETTINGS_INI = os.path.join(_ROOT, "settings.ini")
 
- 
 
 def _restore_settings_ini_snapshot(before):
     """Restore settings atomically so other xdist workers never read a truncation."""
