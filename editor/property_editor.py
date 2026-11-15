@@ -242,9 +242,12 @@ def _store_sky_image_in_project(path: object) -> str:
     files already in that folder are referenced in place; other selections
     are copied there without overwriting an asset with the same filename.
     """
-    source = os.path.abspath(str(path or "").strip())
-    if not source or not os.path.isfile(source):
-        raise FileNotFoundError(source or "No sky image selected")
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        raise FileNotFoundError("No sky image selected")
+    source = os.path.abspath(raw_path)
+    if not os.path.isfile(source):
+        raise FileNotFoundError(source)
 
     root = _project_root()
     backgrounds_dir = os.path.join(root, "assets", "backgrounds")
@@ -252,7 +255,7 @@ def _store_sky_image_in_project(path: object) -> str:
     backgrounds_real = os.path.realpath(backgrounds_dir)
     try:
         if os.path.commonpath((source_real, backgrounds_real)) == backgrounds_real:
-            return os.path.relpath(source_real, root).replace("\\\\", "/")
+            return os.path.relpath(source_real, root).replace("\\", "/")
     except ValueError:
         # Different Windows drives: import the image into this project.
         pass
@@ -266,7 +269,7 @@ def _store_sky_image_in_project(path: object) -> str:
         destination = os.path.join(backgrounds_dir, f"{stem}_{suffix}{extension}")
         suffix += 1
     shutil.copy2(source, destination)
-    return os.path.relpath(destination, root).replace("\\\\", "/")
+    return os.path.relpath(destination, root).replace("\\", "/")
 
 
 try:
@@ -3825,7 +3828,11 @@ class PropertyEditor(QWidget):
                     )
                     if not filepath:
                         return
-                    relative = _normalise_project_asset_path(filepath)
+                    try:
+                        relative = _store_sky_image_in_project(filepath)
+                    except OSError as exc:
+                        QMessageBox.warning(self, "Void Panorama", f"Could not import panorama:\\n{exc}")
+                        return
                     if relative:
                         self.update_object_prop('void_background', relative)
                         image_edit.setText(relative)
