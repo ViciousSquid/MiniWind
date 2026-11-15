@@ -115,7 +115,7 @@ class ProjectAssets:
             return None
         name = posixpath.normpath(name)
         candidates = [name, 'assets/' + name]
-        for folder in ('textures', 'models', 'sounds', 'music', 'sprites', 'fonts', 'materials'):
+        for folder in ('textures', 'models', 'sounds', 'music', 'sprites', 'fonts', 'materials', 'backgrounds'):
             candidates.append(f'assets/{folder}/{name}')
         for candidate in candidates:
             if candidate in self.sources:
