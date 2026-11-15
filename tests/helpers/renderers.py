@@ -21,6 +21,10 @@ class StubRenderer:
         self.water_quality = 'expensive'
         self.render_stats = RenderStats()
         self.frames = []
+        self.background_image = ""
+
+    def set_background_image(self, path):
+        self.background_image = str(path or "")
 
     @property
     def ready(self):

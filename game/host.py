@@ -833,10 +833,14 @@ class MiniwindGame:
         host.on("render.pre_scene", self._on_pre_scene)
 
     def _on_pre_scene(self, ev):
-        """Before the world is drawn: tell the renderer what sky the water
-        reflects -- the hour, the cloud, the wind's drift (game/sky.py) --
-        and the wind the grass sways in (game/wind.py grass_sway)."""
+        """Update MiniWind's weather and grass wind before the world is drawn.
+
+        The renderer's background panorama is owned by QtGameView and comes
+        only from the map's Primary PlayerStart.
+        """
         renderer = ev.get("renderer")
+        if renderer is None:
+            return
         if not ev.get("play_mode"):
             # Out of Play the editor's grass sways in the default breeze, not
             # in the last storm played.
@@ -845,7 +849,7 @@ class MiniwindGame:
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
-        if session is None or renderer is None:
+        if session is None:
             return
         import game.sky as sky
         import game.wind as wind

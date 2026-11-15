@@ -1700,6 +1700,7 @@ class MainWindow(QMainWindow):
         # pasted or cloned is held to the primary invariant inside that
         # operation (and its undo step), before anything shows the level.
         self.state.settle_player_starts()
+        self.sync_sky_image_from_map()
         self.property_editor.set_object(self.primary_selection())
         self.scene_hierarchy.refresh_list()
         self.sync_surface_inspector()
@@ -2868,7 +2869,12 @@ class MainWindow(QMainWindow):
         
         # Update play button color
         self.update_play_button_color()
-        
+
+        # A map transition may have restarted Play inside an outer loading
+        # overlay. Its final hide can invalidate the grab made above; run one
+        # last focus/capture pass after the whole nested operation unwinds.
+        QTimer.singleShot(0, self.view_3d.restore_play_mouse_capture)
+
         #self.ui.notification_label.setText("ESC = EXIT PLAY MODE  |  F12 = FULLSCREEN")
 
 
@@ -2941,6 +2947,84 @@ class MainWindow(QMainWindow):
         self.unsaved_changes = unsaved
         self.update_title()
         self.update_all_ui()
+
+    def sync_sky_image_from_map(self):
+        """Publish the current Primary PlayerStart's panorama to the 3D view.
+
+        The path remains ordinary map data on that one PlayerStart. If Primary
+        changes, the existing value moves with it; other starts cannot retain
+        a competing sky setting.
+        """
+        starts = self.state.player_starts()
+        primary = self.state.resolve_player_start()
+        path = ""
+        changed = []
+        legacy_path = ""
+
+        if primary is not None:
+            # Older MiniWind maps stored their panorama on Game Settings.
+            # Move that value to the map's Primary PlayerStart exactly once.
+            for setting in self.state.things:
+                properties = getattr(setting, "properties", {})
+                entity_type = str(properties.get("type", "")).replace("_", "").lower()
+                if entity_type != "miniwindsettings":
+                    continue
+                legacy = properties.pop("void_background", None)
+                if isinstance(legacy, str) and legacy.strip() and not legacy_path:
+                    legacy_path = legacy.strip()
+                if legacy is not None:
+                    changed.append(setting)
+
+            candidate = primary.properties.get("sky_image", "")
+            if not isinstance(candidate, str) or not candidate.strip():
+                # Preserve a value written on the former owner when Primary
+                # changes, and canonicalise older maps with duplicate values.
+                position = start_rules.earliest_created(
+                    [start.properties for start in starts])
+                ordered = [starts[position]] if position is not None else []
+                ordered.extend(
+                    start for start in starts
+                    if start is not primary
+                    and (position is None or start is not starts[position])
+                )
+                candidate = ""
+                for start in ordered:
+                    value = start.properties.get("sky_image", "")
+                    if isinstance(value, str) and value.strip():
+                        candidate = value.strip()
+                        break
+            else:
+                candidate = candidate.strip()
+
+            if not candidate and legacy_path:
+                candidate = legacy_path
+            # Fio Canary replaced the damaged legacy Space panorama with the
+            # q80 asset. Older MiniWind map properties should resolve to it.
+            if str(candidate).replace("\\", "/") == "assets/backgrounds/void-panorama.webp":
+                candidate = "assets/backgrounds/void-panorama-q80.webp"
+
+            if candidate:
+                if primary.properties.get("sky_image") != candidate:
+                    primary.properties["sky_image"] = candidate
+                    changed.append(primary)
+                path = candidate
+            elif "sky_image" in primary.properties:
+                primary.properties.pop("sky_image", None)
+                changed.append(primary)
+
+        # The current Primary is the only possible owner, including on maps
+        # that were edited before this invariant existed.
+        for start in starts:
+            if start is not primary and "sky_image" in start.properties:
+                start.properties.pop("sky_image", None)
+                changed.append(start)
+
+        view = getattr(self, "view_3d", None)
+        if view is not None:
+            view.sky_image_path = path
+        if changed:
+            self.state.mark_world_changed(changed)
+        return path
 
     def set_show_whole_world(self, shown):
         """Load every editor cell of a Big World map, or only those near the camera."""
@@ -4306,6 +4390,14 @@ class MainWindow(QMainWindow):
             return
         if self.primary_selection() and event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             self.save_state()
+            primary_start = self.state.resolve_player_start()
+            sky_image = (
+                str(primary_start.properties.get("sky_image", "") or "")
+                if primary_start is not None else ""
+            )
+            primary_is_deleted = any(
+                obj is primary_start for obj in self.state.selected_objects
+            )
             for obj in list(self.state.selected_objects):
                 if isinstance(obj, dict):
                     if obj in self.state.brushes:
@@ -4313,6 +4405,14 @@ class MainWindow(QMainWindow):
                 else:
                     if obj in self.state.things:
                         self.state.things.remove(obj)
+            if primary_is_deleted:
+                # Carry the one map setting across promotion before its old
+                # PlayerStart is discarded.
+                self.state.settle_player_starts()
+                promoted = self.state.resolve_player_start()
+                if promoted is not None and sky_image:
+                    promoted.properties["sky_image"] = sky_image
+                    self.state.mark_world_changed([promoted])
             self.set_selected_objects([])
             return
 
@@ -4965,6 +5065,7 @@ class MainWindow(QMainWindow):
         # got past the shape check.
         self.state.load_from_data(level_data, validated=validated, stream_editor=True,
                                   owned=owned)
+        self.sync_sky_image_from_map()
         self.state.set_editor_whole_world(
             self.config.getboolean('Display', 'show_whole_world', fallback=True),
             self.view_3d.camera.pos)

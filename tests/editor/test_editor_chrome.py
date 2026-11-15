@@ -89,3 +89,32 @@ def test_p_opens_the_position_window_from_anywhere(main_window, qt_app):
     qt_app.processEvents()
     assert field.text() == "p" and view.pos_window is None
     field.deleteLater()
+
+
+
+def test_view_menu_no_longer_contains_a_global_background_setting(main_window):
+    source = Path("editor/ui.py").read_text(encoding="utf-8")
+    assert "Background image" not in source
+    assert not hasattr(main_window, "view_background_image_menu")
+    assert not hasattr(main_window, "choose_view_background_image")
+
+
+def test_editor_pre_scene_does_not_override_view_owned_background():
+    from game.host import MiniwindGame
+
+    class Renderer:
+        def __init__(self):
+            self.background_path = "set-by-qt-game-view"
+            self.grass_wind = object()
+
+        def set_background_image(self, path):
+            self.background_path = path
+
+    game = object.__new__(MiniwindGame)
+    renderer = Renderer()
+    game._on_pre_scene({
+        "renderer": renderer,
+        "play_mode": False,
+    })
+    assert renderer.background_path == "set-by-qt-game-view"
+    assert renderer.grass_wind is None

@@ -245,7 +245,12 @@ def test_a_party_resting_waits_out_the_storm():
 
 # -- what the renderer and the overlay are handed ------------------------------
 class _Renderer:
-    pass
+    def __init__(self):
+        # QtGameView owns this path; the MiniWind weather hook must not replace it.
+        self.background_path = "set-by-qt-game-view"
+
+    def set_background_image(self, path):
+        self.background_path = path
 
 
 def _host_with(session):
@@ -266,10 +271,12 @@ def test_the_host_hands_the_renderer_the_wind_for_the_grass():
     game = _host_with(session)
     renderer = _Renderer()
     game._on_pre_scene({"play_mode": True, "renderer": renderer})
+    assert renderer.background_path == "set-by-qt-game-view"
     dx, dz, breeze = renderer.grass_wind
     assert (dx, dz) == pytest.approx(w.direction()) and breeze < 0.85
     _blow(w, 10.0, 1.0)
     game._on_pre_scene({"play_mode": True, "renderer": renderer})
+    assert renderer.background_path == "set-by-qt-game-view"
     assert renderer.grass_wind[2] >= 1.0                  # it thrashes in the storm
     # Out of Play the editor's grass is back in the default breeze.
     game._on_pre_scene({"play_mode": False, "renderer": renderer})

@@ -22,7 +22,7 @@ class PackageExporter:
     # Asset path patterns to scan for in map JSON
     ASSET_KEYS = {
         'textures': ['textures', 'texture', 'texture_path', 'sprite_2d', 'custom_idle',
-                     'custom_shoot', 'custom_dead'],
+                     'custom_shoot', 'custom_dead', 'sky_image', 'void_background'],
         'models': ['model_path', 'mesh'],
         'sounds': ['sound_file', 'sound', 'audio']
     }
@@ -35,7 +35,7 @@ class PackageExporter:
     CUTSCENE_KEY = 'cutscene_file'
 
     # Where a bare asset filename may live under assets/.
-    ASSET_SUBDIRS = ('textures', 'models', 'sounds', 'music', 'sprites', 'materials')
+    ASSET_SUBDIRS = ('textures', 'models', 'sounds', 'music', 'sprites', 'materials', 'backgrounds')
 
     def __init__(self, editor_state, root_dir: str):
         self.editor_state = editor_state
