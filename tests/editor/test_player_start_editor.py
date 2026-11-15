@@ -349,7 +349,7 @@ def test_retargeting_the_map_refreshes_the_destination_choices(window, dungeon_m
 # -- map-owned sky image ---------------------------------------------------------
 
 
-def test_sky_image_property_is_only_shown_on_the_first_created_start(window):
+def test_sky_image_property_is_only_shown_on_the_current_primary_start(window):
     first = _create(window, "A")
     panel = window.property_editor
     assert "player_start_sky_image" in panel._widgets
@@ -358,14 +358,16 @@ def test_sky_image_property_is_only_shown_on_the_first_created_start(window):
     second = _create(window, "B", (100, 40, 0))
     assert "player_start_sky_image" not in panel._widgets
 
-    # Changing the primary spawn does not transfer ownership of the map sky.
+    # The one map setting follows Primary when the author changes the spawn.
+    first.properties["sky_image"] = "assets/backgrounds/cloudy-sky-panorama.webp"
     window.save_state()
     window.state.set_primary_player_start(second)
     window.update_all_ui()
     window.set_selected_objects([second])
-    assert "player_start_sky_image" not in panel._widgets
-    window.set_selected_objects([first])
     assert "player_start_sky_image" in panel._widgets
+    assert panel._widgets["player_start_sky_image"].text() == (
+        "assets/backgrounds/cloudy-sky-panorama.webp")
+    assert "sky_image" not in first.properties
 
 
 def test_sky_image_is_saved_with_first_player_start_and_published_to_view(window):
@@ -389,3 +391,30 @@ def test_sky_image_is_saved_with_first_player_start_and_published_to_view(window
     restored = reloaded.resolve_player_start()
     assert restored.properties["sky_image"] == (
         "assets/backgrounds/void-panorama.webp")
+
+
+
+def test_deleting_primary_moves_sky_image_to_promoted_start(window):
+    first = _create(window, "A")
+    second = _create(window, "B", (100, 40, 0))
+    third = _create(window, "C", (200, 40, 0))
+    first.properties["sky_image"] = "assets/backgrounds/void-panorama.webp"
+    window.update_all_ui()
+
+    _delete(window, first)
+
+    assert _primaries(window) == ["B"]
+    assert second.properties["sky_image"] == (
+        "assets/backgrounds/void-panorama.webp")
+    assert "sky_image" not in third.properties
+    assert window.view_3d.sky_image_path == (
+        "assets/backgrounds/void-panorama.webp")
+
+    # Undo restores the previous single owner.
+    window.undo()
+    assert _primaries(window) == ["A"]
+    restored = window.state.resolve_player_start()
+    assert restored.properties["sky_image"] == (
+        "assets/backgrounds/void-panorama.webp")
+    remaining = [s for s in window.state.player_starts() if s is not restored]
+    assert all("sky_image" not in s.properties for s in remaining)
