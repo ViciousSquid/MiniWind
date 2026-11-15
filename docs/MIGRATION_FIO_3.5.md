@@ -426,3 +426,30 @@ builds' test sessions size the 3D view differently. Run with
   the world with 256-texel paint (a content change), or keep converted chunks
   per process (~26 MB more memory).
 * Hardware parity on M5/Adreno is unverified; macOS behaviour is unverified.
+
+
+## Milestone 9 — Fio Canary sky-map integration (2026-11-15)
+
+MiniWind's map-owned panorama workflow is aligned with Fio Canary through
+`84f2dca16946dc77e6640e7972f4d8959a909cb2`:
+
+* The Primary PlayerStart property editor uses Fio's ordered built-ins:
+  `None`, `Cloudy sky`, `Space` (the shipped q80 Space image), plus a custom
+  project asset selected through Browse. Custom JPG/JPEG images and other
+  common formats remain supported.
+* `QtGameView` publishes the Primary PlayerStart's `sky_image` to the active
+  renderer every frame. The renderer contract owns the background in both
+  editor and Play; the MiniWind weather hook no longer competes with it.
+* Older maps with MiniWind's `miniwindsettings.void_background` value migrate
+  that image to the Primary PlayerStart when the map is normalised. The damaged
+  `void-panorama.webp` preset path is redirected to
+  `void-panorama-q80.webp`. New maps have one sky setting only.
+* Game-package asset discovery follows `sky_image`; the obsolete second
+  `void_background` property is no longer exposed or loaded into the runtime.
+* The independent deferred-renderer example implements the same panorama
+  contract. Native Windows x64 and ARM64 no-GPU/Qt test tiers have also been
+  added as report-only CI coverage.
+
+The built-in panorama assets are byte-identical to Fio Canary. The legacy
+`assets/backgrounds/void-panorama.webp` file is removed; existing maps that
+refer to it are migrated to the q80 preset on load.

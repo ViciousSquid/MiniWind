@@ -3336,67 +3336,105 @@ class PropertyEditor(QWidget):
         self._widgets['player_start_primary'] = primary_cb
 
     def _build_player_start_sky_image(self, form, thing):
-        """Edit the map panorama on the current Primary PlayerStart only."""
+        """Choose a built-in or project-owned panorama for the Primary start."""
         if self.editor.state.resolve_player_start() is not thing:
             return
 
-        value = str(thing.properties.get("sky_image", "") or "")
+        presets = (
+            ("None", ""),
+            ("Cloudy sky", "assets/backgrounds/cloudy-sky-panorama.webp"),
+            ("Space", "assets/backgrounds/void-panorama-q80.webp"),
+        )
+        preset_paths = {path for _label, path in presets}
+        value = str(thing.properties.get("sky_image", "") or "").strip()
+
         widget = QWidget()
         row = QHBoxLayout(widget)
         row.setContentsMargins(0, 0, 0, 0)
-        image_edit = QLineEdit(value)
-        image_edit.setReadOnly(True)
-        image_edit.setPlaceholderText("None")
-        image_edit.setToolTip(
-            "Optional 360-degree equirectangular panorama (2:1 aspect ratio), "
-            "drawn behind the world in the editor and Play mode. Selected images "
-            "are imported into assets/backgrounds so they travel with exported packages."
+        sky_combo = QComboBox()
+        sky_combo.setToolTip(
+            "Background panorama used in the editor and Play mode. Choose "
+            "Cloudy sky or Space, or Browse for a custom 360-degree image."
         )
+        for label, path in presets:
+            sky_combo.addItem(label, path)
+        if value and value not in preset_paths:
+            sky_combo.addItem(f"Custom: {os.path.basename(value)}", value)
+
+        sky_combo.setCurrentIndex(max(0, sky_combo.findData(value)))
         browse_button = QPushButton("Browse...")
+        browse_button.setToolTip(
+            "Import a custom panorama into assets/backgrounds/")
         clear_button = QPushButton("Clear")
-        clear_button.setEnabled(bool(value))
+        clear_button.setToolTip("Clear the selected custom panorama")
+        clear_button.setEnabled(bool(value and value not in preset_paths))
+
+        def show_sky_path(path):
+            """Select *path*, adding/removing the custom entry as needed."""
+            path = str(path or "").strip()
+            sky_combo.blockSignals(True)
+            if path and path not in preset_paths:
+                index = sky_combo.findData(path)
+                if index < 0:
+                    sky_combo.addItem(f"Custom: {os.path.basename(path)}", path)
+            else:
+                for index in range(sky_combo.count() - 1, len(presets) - 1, -1):
+                    sky_combo.removeItem(index)
+            sky_combo.setCurrentIndex(max(0, sky_combo.findData(path)))
+            clear_button.setEnabled(bool(path and path not in preset_paths))
+            sky_combo.blockSignals(False)
+
+        def on_sky_choice_changed(_index):
+            path = sky_combo.currentData() or ""
+            self.update_object_prop("sky_image", path)
+            if path in preset_paths:
+                show_sky_path(path)
+            clear_button.setEnabled(bool(path and path not in preset_paths))
 
         def choose_sky_image():
             current = str(thing.properties.get("sky_image", "") or "")
-            start = (
+            start_path = (
                 current if os.path.isabs(current)
                 else os.path.join(_project_root(), current) if current
                 else os.path.join(_project_root(), "assets", "backgrounds")
             )
-            if not os.path.isdir(start):
-                start = os.path.dirname(start)
-            if not os.path.isdir(start):
-                start = os.path.join(_project_root(), "assets", "backgrounds")
+            if not os.path.isdir(start_path):
+                start_path = os.path.dirname(start_path)
+            if not os.path.isdir(start_path):
+                start_path = _project_root()
             filepath, _ = QFileDialog.getOpenFileName(
                 self,
                 "Select Sky Image",
-                start,
+                start_path,
                 "Image Files (*.png *.jpg *.jpeg *.bmp *.tga *.tif *.tiff *.webp)",
             )
             if not filepath:
                 return
             try:
-                relative = store_sky_image_in_project(filepath)
+                relative = store_sky_image_in_project(filepath, _project_root())
             except OSError as exc:
-                QMessageBox.warning(self, "Sky Image", f"Could not import sky image:\n{exc}")
+                QMessageBox.warning(
+                    self, "Sky Image", f"Could not import sky image:\n{exc}")
                 return
-            if relative:
-                self.update_object_prop("sky_image", relative)
-                image_edit.setText(relative)
-                clear_button.setEnabled(True)
+            self.update_object_prop("sky_image", relative)
+            show_sky_path(relative)
 
         def clear_sky_image():
+            if not clear_button.isEnabled():
+                return
             self.update_object_prop("sky_image", "")
-            image_edit.clear()
-            clear_button.setEnabled(False)
+            show_sky_path("")
 
+        sky_combo.currentIndexChanged.connect(on_sky_choice_changed)
         browse_button.clicked.connect(choose_sky_image)
         clear_button.clicked.connect(clear_sky_image)
-        row.addWidget(image_edit, 1)
+        row.addWidget(sky_combo, 1)
         row.addWidget(browse_button)
         row.addWidget(clear_button)
         form.addRow(QLabel("Sky image:"), widget)
-        self._widgets["player_start_sky_image"] = image_edit
+        self._widgets["player_start_sky_image"] = sky_combo
+        self._widgets["player_start_sky_image_browse"] = browse_button
+        self._widgets["player_start_sky_image_clear"] = clear_button
 
     def _make_primary_start(self, thing):
         if self._populating or thing.primary:
@@ -3753,65 +3791,6 @@ class PropertyEditor(QWidget):
             # still gets its checkbox instead of falling through to a text field.
             if key == 'show_radius' and isinstance(thing, Light):
                 value = thing.get_show_radius()
-
-            # Game Settings' panorama is an image asset, not a free-form
-            # string: provide a picker and an explicit way to restore the void.
-            if entity_type == 'miniwindsettings' and key == 'void_background':
-                widget = QWidget()
-                row = QHBoxLayout(widget)
-                row.setContentsMargins(0, 0, 0, 0)
-                image_edit = QLineEdit(str(value or ''))
-                image_edit.setReadOnly(True)
-                image_edit.setPlaceholderText("No panorama selected")
-                image_edit.setToolTip(
-                    "A 360-degree equirectangular panorama (2:1 aspect ratio). "
-                    "The image wraps around the camera and appears behind the world."
-                )
-                browse_button = QPushButton("Browse...")
-                clear_button = QPushButton("Clear")
-                clear_button.setEnabled(bool(value))
-
-                def choose_void_background():
-                    current = str(thing.properties.get('void_background', '') or '')
-                    start = (
-                        current if os.path.isabs(current)
-                        else os.path.join(_project_root(), current) if current
-                        else os.path.join(_project_root(), 'assets')
-                    )
-                    if not os.path.isdir(start):
-                        start = os.path.dirname(start)
-                    if not os.path.isdir(start):
-                        start = os.path.join(_project_root(), 'assets')
-                    filepath, _ = QFileDialog.getOpenFileName(
-                        self,
-                        "Select Void Panorama",
-                        start,
-                        "Image Files (*.png *.jpg *.jpeg *.bmp *.tga *.tif *.tiff *.webp)",
-                    )
-                    if not filepath:
-                        return
-                    try:
-                        relative = store_sky_image_in_project(filepath)
-                    except OSError as exc:
-                        QMessageBox.warning(self, "Void Panorama", f"Could not import panorama:\n{exc}")
-                        return
-                    if relative:
-                        self.update_object_prop('void_background', relative)
-                        image_edit.setText(relative)
-                        clear_button.setEnabled(True)
-
-                def clear_void_background():
-                    self.update_object_prop('void_background', '')
-                    image_edit.clear()
-                    clear_button.setEnabled(False)
-
-                browse_button.clicked.connect(choose_void_background)
-                clear_button.clicked.connect(clear_void_background)
-                row.addWidget(image_edit, 1)
-                row.addWidget(browse_button)
-                row.addWidget(clear_button)
-                form.addRow(QLabel("Void Panorama:"), widget)
-                continue
 
             # Generic booleans.
             if isinstance(value, bool):

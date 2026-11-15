@@ -1160,6 +1160,8 @@ class QtGameView(QOpenGLWidget):
         # pays a single dict lookup and builds no payload — see the render.*
         # events in the plugin API. The manager handle is fetched once per frame.
         _pmgr = self.logic_thread.plugins if self.logic_thread is not None else None
+        # The map's Primary PlayerStart owns the panorama in both editor and Play.
+        self.renderer.set_background_image(self.sky_image_path)
         if _pmgr is not None and _pmgr.has_listeners("render.pre_scene"):
             _pmgr.emit("render.pre_scene", viewport=self, renderer=self.renderer,
                        projection=self.projection_matrix, view=self.view_matrix,

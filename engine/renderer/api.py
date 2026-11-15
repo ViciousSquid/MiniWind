@@ -242,7 +242,11 @@ class Renderer(Protocol):
         """Size the editor grid (drawn when ``grid_visible``); 0 removes it."""
 
     def set_background_image(self, path: str) -> None:
-        """Set the equirectangular panorama drawn behind the scene; empty disables it."""
+        """Set a camera-locked equirectangular panorama behind the scene.
+
+        *path* is a project asset path or an absolute image path; an empty
+        path disables the panorama and restores the renderer's clear colour.
+        """
 
     # -- resources -------------------------------------------------------------
     def load_texture(self, texture_name: str, subfolder: str) -> int:

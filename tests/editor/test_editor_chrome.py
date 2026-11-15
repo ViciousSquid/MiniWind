@@ -99,24 +99,22 @@ def test_view_menu_no_longer_contains_a_global_background_setting(main_window):
     assert not hasattr(main_window, "choose_view_background_image")
 
 
-def test_editor_pre_scene_uses_the_map_player_start_sky_image():
-    from types import SimpleNamespace
+def test_editor_pre_scene_does_not_override_view_owned_background():
     from game.host import MiniwindGame
 
     class Renderer:
         def __init__(self):
-            self.background_path = None
+            self.background_path = "set-by-qt-game-view"
+            self.grass_wind = object()
 
         def set_background_image(self, path):
             self.background_path = path
 
     game = object.__new__(MiniwindGame)
     renderer = Renderer()
-    viewport = SimpleNamespace(
-        sky_image_path="assets/backgrounds/cloudy-sky-panorama.webp")
     game._on_pre_scene({
         "renderer": renderer,
-        "viewport": viewport,
         "play_mode": False,
     })
-    assert renderer.background_path == viewport.sky_image_path
+    assert renderer.background_path == "set-by-qt-game-view"
+    assert renderer.grass_wind is None
