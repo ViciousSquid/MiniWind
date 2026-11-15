@@ -21,6 +21,7 @@ import ast
 import os
 import random
 import sys
+import tempfile
 import threading
 
 import pytest
@@ -596,6 +597,30 @@ def _fail_on_a_held_modifier():
 
 _SETTINGS_INI = os.path.join(_ROOT, "settings.ini")
 
+ 
+
+def _restore_settings_ini_snapshot(before):
+    """Restore settings atomically so other xdist workers never read a truncation."""
+    if before is None:
+        return
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(
+            prefix=".settings.ini.", suffix=".tmp", dir=_ROOT)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(before)
+        os.replace(temporary, _SETTINGS_INI)
+    except OSError:  # pragma: no cover - read-only checkout
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            except OSError:  # pragma: no cover - cleanup on read-only checkout
+                pass
+
 
 @pytest.fixture(autouse=True, scope="session")
 def _restore_repo_settings_ini_at_exit():
@@ -613,8 +638,7 @@ def _restore_repo_settings_ini_at_exit():
             with open(_SETTINGS_INI, "rb") as fh:
                 if fh.read() == before:
                     return
-            with open(_SETTINGS_INI, "wb") as fh:
-                fh.write(before)
+            _restore_settings_ini_snapshot(before)
         except OSError:  # pragma: no cover - read-only checkout
             pass
 
@@ -640,8 +664,7 @@ def _restore_repo_settings_ini(_restore_repo_settings_ini_at_exit):
         with open(_SETTINGS_INI, "rb") as fh:
             after = fh.read()
         if after != before:
-            with open(_SETTINGS_INI, "wb") as fh:
-                fh.write(before)
+            _restore_settings_ini_snapshot(before)
     except OSError:  # pragma: no cover - read-only checkout
         pass
 
