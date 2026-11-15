@@ -245,8 +245,8 @@ class QtGameView(QOpenGLWidget):
         self.hud_pixmaps = {}              # sprite path -> QPixmap (None if missing)
         self.show_spatial_grid = False
         self.renderer = None
-        #: Editor-only panorama preview selected from View > Background image.
-        self.editor_background_image = ""
+        #: Panorama selected by the earliest-created PlayerStart in the open map.
+        self.sky_image_path = ""
         #: Registry name of the renderer initializeGL creates and switch_renderer replaces.
         self._renderer_mode = DEFAULT_RENDERER
 
