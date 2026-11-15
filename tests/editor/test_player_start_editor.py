@@ -490,7 +490,8 @@ def test_sky_image_custom_entry_can_be_cleared_to_none(window):
 
 
 def test_legacy_game_settings_sky_migrates_to_primary_player_start(window):
-    from game.entities import GameSettings
+    import importlib
+    GameSettings = importlib.import_module("game.entities").GameSettings
 
     start = _create(window, "A")
     settings = GameSettings(

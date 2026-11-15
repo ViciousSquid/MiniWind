@@ -100,7 +100,8 @@ def test_view_menu_no_longer_contains_a_global_background_setting(main_window):
 
 
 def test_editor_pre_scene_does_not_override_view_owned_background():
-    from game.host import MiniwindGame
+    import importlib
+    MiniwindGame = importlib.import_module("game.host").MiniwindGame
 
     class Renderer:
         def __init__(self):
@@ -110,7 +111,7 @@ def test_editor_pre_scene_does_not_override_view_owned_background():
         def set_background_image(self, path):
             self.background_path = path
 
-    game = object.__new__(MiniwindGame)
+    game = MiniwindGame()
     renderer = Renderer()
     game._on_pre_scene({
         "renderer": renderer,

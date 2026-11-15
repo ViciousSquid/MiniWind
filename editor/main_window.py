@@ -2962,11 +2962,11 @@ class MainWindow(QMainWindow):
         legacy_path = ""
 
         if primary is not None:
-            # Older MiniWind maps stored their panorama on Game Settings.
+            # Older maps stored their panorama on Game Settings.
             # Move that value to the map's Primary PlayerStart exactly once.
             for setting in self.state.things:
                 properties = getattr(setting, "properties", {})
-                entity_type = str(properties.get("type", "")).replace("_", "").lower()
+                entity_type = str(getattr(setting, "map_type", properties.get("type", ""))).replace("_", "").lower()
                 if entity_type != "miniwindsettings":
                     continue
                 legacy = properties.pop("void_background", None)
@@ -2999,7 +2999,7 @@ class MainWindow(QMainWindow):
             if not candidate and legacy_path:
                 candidate = legacy_path
             # Fio Canary replaced the damaged legacy Space panorama with the
-            # q80 asset. Older MiniWind map properties should resolve to it.
+            # q80 asset. Existing map properties should resolve to it.
             if str(candidate).replace("\\", "/") == "assets/backgrounds/void-panorama.webp":
                 candidate = "assets/backgrounds/void-panorama-q80.webp"
 

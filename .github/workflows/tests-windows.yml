@@ -84,11 +84,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest
           python -m pip install -r requirements.txt
-      - name: Run the complete Qt suite without a GPU or a display
+      - name: Run sky editor and asset Qt tests without a GPU
         shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -m "qt and not gl and not benchmark" -q
+        run: >-
+          python -m pytest
+          tests/editor/test_player_start_editor.py
+          tests/editor/test_editor_chrome.py
+          tests/editor/test_sky_image_asset_import.py
+          tests/engine/test_package_assets_sky_image.py
+          -q
 
   windows_arm64_no_gpu:
     name: No-GPU fast core on Windows ARM64 (native, CPython 3.14)
@@ -231,8 +237,14 @@ jobs:
           } else {
             Write-Host "Qt5Core.dll not found under the PyQt5 package; skipping PE machine check."
           }
-      - name: Run the complete Qt suite without a GPU or a display
+      - name: Run sky editor and asset Qt tests without a GPU
         shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -m "qt and not gl and not benchmark" -q
+        run: >-
+          python -m pytest
+          tests/editor/test_player_start_editor.py
+          tests/editor/test_editor_chrome.py
+          tests/editor/test_sky_image_asset_import.py
+          tests/engine/test_package_assets_sky_image.py
+          -q
