@@ -13,7 +13,7 @@ Fio is treated here as the **engine powering a total conversion** — a first-pa
 title, not an optional plugin. It ships enabled and is the canonical
 demonstration that Fio can drive an entire RPG.
 
-2.5 million parked world objects. `BigWorld` (part of fio) streams cells around the player
+2.5 million parked world objects. 20x20KM world. `BigWorld` (part of Fio) streams cells around the player
 
 > **No guns.** Miniwind is a sword-and-sorcery world. The engine's combat was
 > extended so creatures and NPCs fight with **melee**, **bows & arrows** or
