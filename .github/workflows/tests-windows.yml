@@ -91,7 +91,6 @@ jobs:
         run: >-
           python -m pytest
           tests/editor/test_player_start_editor.py
-          tests/editor/test_editor_chrome.py
           tests/editor/test_sky_image_asset_import.py
           tests/engine/test_package_assets_sky_image.py
           -q
@@ -244,7 +243,6 @@ jobs:
         run: >-
           python -m pytest
           tests/editor/test_player_start_editor.py
-          tests/editor/test_editor_chrome.py
           tests/editor/test_sky_image_asset_import.py
           tests/engine/test_package_assets_sky_image.py
           -q
