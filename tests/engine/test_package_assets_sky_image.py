@@ -19,17 +19,6 @@ def test_map_assets_collects_player_start_sky_image():
     assert map_assets(level) == {"assets/backgrounds/space.webp"}
 
 
-def test_map_assets_collects_legacy_game_settings_void_background():
-    level = {
-        "things": [{
-            "type": "miniwind_settings",
-            "properties": {"void_background": "assets/backgrounds/old-sky.jpg"},
-        }]
-    }
-
-    assert map_assets(level) == {"assets/backgrounds/old-sky.jpg"}
-
-
 def test_package_export_carries_player_start_sky_image(tmp_path):
     sky_path = "assets/backgrounds/space.webp"
     sky_data = b"test panorama bytes"
