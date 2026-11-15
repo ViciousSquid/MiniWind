@@ -1700,6 +1700,7 @@ class MainWindow(QMainWindow):
         # pasted or cloned is held to the primary invariant inside that
         # operation (and its undo step), before anything shows the level.
         self.state.settle_player_starts()
+        self.sync_sky_image_from_map()
         self.property_editor.set_object(self.primary_selection())
         self.scene_hierarchy.refresh_list()
         self.sync_surface_inspector()
@@ -2947,43 +2948,25 @@ class MainWindow(QMainWindow):
         self.update_title()
         self.update_all_ui()
 
-    def set_view_background_image(self, path):
-        """Set the editor viewport's panorama preview, not the map settings."""
-        path = str(path or "").strip()
-        self.view_3d.editor_background_image = path
-        self.view_3d.update()
+    def sync_sky_image_from_map(self):
+        """Publish the earliest-created PlayerStart's panorama to the 3D view.
 
-    def choose_view_background_image(self):
-        """Choose a custom panorama for the editor viewport preview."""
-        current = str(getattr(self.view_3d, "editor_background_image", "") or "")
-        if current and os.path.isabs(current):
-            start = current
-        elif current:
-            start = os.path.join(self.root_dir, current)
-        else:
-            start = os.path.join(self.root_dir, "assets", "backgrounds")
-        if not os.path.isdir(start):
-            start = os.path.dirname(start)
-        if not os.path.isdir(start):
-            start = self.root_dir
-
-        filepath, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select View Background Panorama",
-            start,
-            "Image Files (*.png *.jpg *.jpeg *.bmp *.tga *.tif *.tiff *.webp)",
-        )
-        if not filepath:
-            return
-
-        filepath = os.path.abspath(filepath)
-        try:
-            relative = os.path.relpath(filepath, self.root_dir)
-            if relative != os.pardir and not relative.startswith(os.pardir + os.sep):
-                filepath = relative.replace(os.sep, "/")
-        except ValueError:
-            pass
-        self.set_view_background_image(filepath)
+        The path remains ordinary map data on that one PlayerStart. This method
+        only mirrors it to the renderer host; it does not create a second
+        application-level setting.
+        """
+        starts = self.state.player_starts()
+        position = start_rules.earliest_created(
+            [start.properties for start in starts])
+        path = ""
+        if position is not None:
+            candidate = starts[position].properties.get("sky_image", "")
+            if isinstance(candidate, str):
+                path = candidate.strip()
+        view = getattr(self, "view_3d", None)
+        if view is not None:
+            view.sky_image_path = path
+        return path
 
     def set_show_whole_world(self, shown):
         """Load every editor cell of a Big World map, or only those near the camera."""
@@ -5008,6 +4991,7 @@ class MainWindow(QMainWindow):
         # got past the shape check.
         self.state.load_from_data(level_data, validated=validated, stream_editor=True,
                                   owned=owned)
+        self.sync_sky_image_from_map()
         self.state.set_editor_whole_world(
             self.config.getboolean('Display', 'show_whole_world', fallback=True),
             self.view_3d.camera.pos)
