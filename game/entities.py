@@ -431,6 +431,8 @@ def _init_settings(self):
     p.setdefault("difficulty", "normal")        # easy | normal | hard
     p.setdefault("start_scenario", "prompt")    # prompt=char creation, or quick
     p.setdefault("region_name", "The Vale of Miniwind")
+    # Optional 2:1 equirectangular image shown beyond the world geometry.
+    p.setdefault("void_background", "")
     # Spell ids granted to the player at character creation (in addition to the
     # ones their race / birthsign / class provide). Edited via the "Player
     # Spells" tab on this entity.
@@ -456,6 +458,7 @@ if _HAVE_EDITOR:
             "difficulty",
             "start_scenario",
             "region_name",
+            "void_background",
         )
         EDITOR_ADVANCED_PROPERTIES = (
             "player_spells",

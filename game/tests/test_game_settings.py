@@ -59,6 +59,33 @@ def test_a_roll_is_shown_only_when_dice_visuals_are_on(config):
     assert s.dice_animation is not None
 
 
+def test_game_settings_authors_an_optional_void_panorama():
+    from ..entities import GameSettings
+
+    settings = GameSettings(properties={
+        "void_background": "assets/backgrounds/space-panorama.jpg",
+    })
+    assert settings.properties["void_background"] == (
+        "assets/backgrounds/space-panorama.jpg"
+    )
+    assert "void_background" in getattr(
+        GameSettings, "EDITOR_PRIMARY_PROPERTIES", ()
+    )
+
+
+def test_play_session_receives_the_map_void_panorama():
+    from ..runtime import MiniwindSession
+    from .test_ember_tome import _FakeLogic, _Globals
+
+    path = "assets/backgrounds/space-panorama.jpg"
+    session = MiniwindSession(
+        _FakeLogic([], _FakePlayer([0, 0, 0])),
+        cfg={"void_background": path},
+        globals_store=_Globals(),
+    )
+    assert session.void_background == path
+
+
 @pytest.mark.qt
 def test_settings_has_a_game_tab_that_loads_and_saves(qt_app):
     from .. import integration

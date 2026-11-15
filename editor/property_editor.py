@@ -3689,6 +3689,61 @@ class PropertyEditor(QWidget):
             if key == 'show_radius' and isinstance(thing, Light):
                 value = thing.get_show_radius()
 
+            # Game Settings' panorama is an image asset, not a free-form
+            # string: provide a picker and an explicit way to restore the void.
+            if entity_type == 'miniwindsettings' and key == 'void_background':
+                widget = QWidget()
+                row = QHBoxLayout(widget)
+                row.setContentsMargins(0, 0, 0, 0)
+                image_edit = QLineEdit(str(value or ''))
+                image_edit.setReadOnly(True)
+                image_edit.setPlaceholderText("No panorama selected")
+                image_edit.setToolTip(
+                    "A 360-degree equirectangular panorama (2:1 aspect ratio). "
+                    "The image wraps around the camera and appears behind the world."
+                )
+                browse_button = QPushButton("Browse...")
+                clear_button = QPushButton("Clear")
+                clear_button.setEnabled(bool(value))
+
+                def choose_void_background():
+                    current = str(thing.properties.get('void_background', '') or '')
+                    start = (
+                        current if os.path.isabs(current)
+                        else os.path.join(_project_root(), current) if current
+                        else os.path.join(_project_root(), 'assets')
+                    )
+                    if not os.path.isdir(start):
+                        start = os.path.dirname(start)
+                    if not os.path.isdir(start):
+                        start = os.path.join(_project_root(), 'assets')
+                    filepath, _ = QFileDialog.getOpenFileName(
+                        self,
+                        "Select Void Panorama",
+                        start,
+                        "Image Files (*.png *.jpg *.jpeg *.bmp *.tga *.tif *.tiff *.webp)",
+                    )
+                    if not filepath:
+                        return
+                    relative = _normalise_project_asset_path(filepath)
+                    if relative:
+                        self.update_object_prop('void_background', relative)
+                        image_edit.setText(relative)
+                        clear_button.setEnabled(True)
+
+                def clear_void_background():
+                    self.update_object_prop('void_background', '')
+                    image_edit.clear()
+                    clear_button.setEnabled(False)
+
+                browse_button.clicked.connect(choose_void_background)
+                clear_button.clicked.connect(clear_void_background)
+                row.addWidget(image_edit, 1)
+                row.addWidget(browse_button)
+                row.addWidget(clear_button)
+                form.addRow(QLabel("Void Panorama:"), widget)
+                continue
+
             # Generic booleans.
             if isinstance(value, bool):
                 cb = _make_checkbox(

@@ -241,6 +241,9 @@ class Renderer(Protocol):
     def set_grid(self, world_size: int, grid_size: int) -> None:
         """Size the editor grid (drawn when ``grid_visible``); 0 removes it."""
 
+    def set_background_image(self, path: str) -> None:
+        """Set the equirectangular panorama drawn behind the scene; empty disables it."""
+
     # -- resources -------------------------------------------------------------
     def load_texture(self, texture_name: str, subfolder: str) -> int:
         """Load (or return the cached) texture; returns its GL name, 0 on failure."""

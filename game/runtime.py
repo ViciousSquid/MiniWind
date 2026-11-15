@@ -758,6 +758,7 @@ class MiniwindSession(SettlementLaw):
             _ps = [s.strip() for s in _ps.split(",") if s.strip()]
         self._player_start_spells = list(_ps) if isinstance(_ps, list) else []
         self.region_name = str(cfg.get("region_name", "The Vale of Miniwind"))
+        self.void_background = str(cfg.get("void_background", "") or "").strip()
         #: A cave or dungeon (Game Settings): it has cave music (game/music.py).
         self.underground = bool(cfg.get("underground", False))
         self.store = StateStore(globals_store, str(cfg.get("state_store", "miniwind")))

@@ -837,7 +837,10 @@ class MiniwindGame:
         reflects -- the hour, the cloud, the wind's drift (game/sky.py) --
         and the wind the grass sways in (game/wind.py grass_sway)."""
         renderer = ev.get("renderer")
+        if renderer is None:
+            return
         if not ev.get("play_mode"):
+            renderer.set_background_image("")
             # Out of Play the editor's grass sways in the default breeze, not
             # in the last storm played.
             if getattr(renderer, "grass_wind", None) is not None:
@@ -845,8 +848,10 @@ class MiniwindGame:
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
-        if session is None or renderer is None:
+        if session is None:
+            renderer.set_background_image("")
             return
+        renderer.set_background_image(session.void_background)
         import game.sky as sky
         import game.wind as wind
         renderer.sky_state, renderer.sky_drift = sky.state(session)
