@@ -372,8 +372,8 @@ jobs:
         run: |
           path=editor/version.txt
           text=$(tr -d '\r' < "$path" | sed -e 's/[[:space:]]*$//')
-          first_line=\${text%%$'\n'*}
-          second_line=\${text#*$'\n'}
+          first_line=${text%%$'\n'*}
+          second_line=${text#*$'\n'}
           first_pattern='^Fio [0-9]+(\.[0-9]+)+$'
           second_pattern='^MiniWind [0-9]+(\.[0-9]+)+$'
           if ! [[ $text == *$'\n'* && $second_line != *$'\n'* &&
@@ -605,8 +605,8 @@ jobs:
         run: |
           path=editor/version.txt
           text=$(tr -d '\r' < "$path" | sed -e 's/[[:space:]]*$//')
-          first_line=\${text%%$'\n'*}
-          second_line=\${text#*$'\n'}
+          first_line=${text%%$'\n'*}
+          second_line=${text#*$'\n'}
           first_pattern='^Fio [0-9]+(\.[0-9]+)+$'
           second_pattern='^MiniWind [0-9]+(\.[0-9]+)+$'
           if ! [[ $text == *$'\n'* && $second_line != *$'\n'* &&
