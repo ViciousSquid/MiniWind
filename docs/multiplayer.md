@@ -11,21 +11,33 @@ creator, controls, quest rules and save slots.
 
 ## Form a party
 
-1. For one computer, choose **Local co-op on this computer**. For network play,
-   choose **Host LAN / Internet game**, select a port and name the party.
-2. Other computers can **Refresh LAN games** and join a discovered host, or
-   enter an IP address/hostname and TCP port with **Join by address**.
-3. On each computer, choose a name, **head appearance**, race, class, birthsign,
-   handedness and control device; press **Add local player** for each person.
-   Each character needs a different head and each local player needs a different
-   device. Use **Refresh controllers** after connecting pads.
-4. Select an existing local character and **Apply changes** to edit it. Ready
-   applies to all characters on that computer. A selection change clears lobby
-   readiness. The host chooses **Start adventure** once everyone connected is
-   ready. Characters enter with these appearances; there is no in-game co-op
-   character-creation screen.
+1. **Host a game** opens a party and shows its friend code; **Play on this
+   computer** is for local co-op and AI companions (no network). The host is
+   in the lobby at once, with a character already in the party.
+2. A friend pastes the code into **Join a friend** -- a whole, valid code joins
+   by itself -- or clicks a game listed under *Games on this network* (shown
+   when one is found). They are in the lobby at once, with a character already
+   in the party: the one they played last (kept in
+   `saves/.multiplayer-profile.json`), with a free head should theirs be taken.
+3. *Your character* (name, **head appearance**, race, class, birthsign,
+   controls, handedness, gender) can be changed in the lobby; changes apply by
+   themselves. Each character needs a different head: one somebody else wears
+   cannot be picked. A joiner presses **Ready**; a change to your own character
+   clears your own readiness only.
+4. The host presses **Start adventure** -- its own Ready -- once every friend
+   is ready; the line over the button says who is being waited for. The host
+   cannot start while a connected computer has no character, so nobody enters
+   as an onlooker. Characters enter with these appearances; there is no in-game
+   co-op character-creation screen.
 
-The host can resume a campaign before adding characters. Saved characters keep
+Rarer things are folded under headings. *More players and party options*: **Add
+a player on this computer** (each needs a control device of their own; **Find
+controllers** after connecting pads), **Add AI companion**, **Remove**,
+*Respawn at village* and *Allow late arrivals*. *A friend can't get in?*: the
+reply code box, *Let in* and *New code*. On the first page, *More options*: the
+party's name and joining over TCP.
+
+**Continue a saved campaign…** (first page) hosts a campaign from its save. Saved characters keep
 their race, class and birthsign, while their name, head and controller assignment
 can be changed in the lobby. Offline friends remain in the roster and do not
 prevent the host from continuing alone. Rejoining from the same game installation
@@ -34,12 +46,11 @@ Keep `saves/.multiplayer-identity` on a joining machine to retain that identity.
 
 ## Play with bots
 
-Host a local or network party, add your own character, then choose **Add AI
-companion** for each one you want (four at most). Bots do not count toward the
+Host a local or network party, then choose **Add AI companion** (under *More
+players and party options*) for each one you want (four at most). Bots do not count toward the
 four-player limit and require no keyboard, gamepad or other computer. Select a
 bot in the roster to change its name, head, race, class and birthsign, or remove
-it before starting. Their readiness is automatic; ready your human characters
-and start as usual. A party still needs a human host character.
+it before starting. Their readiness is automatic; start as usual. A party still needs a human host character.
 
 Companions follow a human leader in formation, use the game's navigator and
 player collision, defend the nearby party with their own equipment, drink
@@ -99,7 +110,8 @@ rejoin. The option and companions still returning are kept in campaign saves.
 With the option off, companions use the usual revive and party checkpoint flow.
 
 A running party with a free character slot accepts direct joins. New players
-choose their characters and ready up in the lobby before entering. Started games
+choose their character in the lobby and press **Join the adventure** (a
+character cannot be changed once it is in the game). Started games
 are no longer advertised in the LAN browser.
 
 ## Travelling together
@@ -130,9 +142,9 @@ The operating system may ask for firewall access when Multiplayer is first
 opened or a network game is hosted. MiniWind does not install firewall rules or
 request administrator privileges. Allow the game on the network you use.
 
-**Friend codes (UDP).** Host game shows a code (`XXXXX-XXXXX-XXXXX`, Copy
-code); friends paste it into Join, enter the lobby and set up their characters
-there, exactly as on a LAN. The code is the address -- the host's public IPv4
+**Friend codes (UDP).** Host a game shows a code (`XXXXX-XXXXX-XXXXX`, Copy
+code); friends paste it into Join a friend and are in the lobby with their
+character, exactly as on a LAN. The code is the address -- the host's public IPv4
 address, the party's port and a random invitation, with a check character --
 so there is no server to look anything up on. Friend codes connect over UDP
 (`game/multiplayer/udp.py`), which gets through home routers the way TCP

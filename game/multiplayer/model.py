@@ -79,6 +79,45 @@ def validate_profile(data, *, saved_class=None, allow_bot=False):
     )
 
 
+def default_profile(name="Adventurer"):
+    """The character a player enters a lobby with until they choose their own
+    (the lobby gives it a head nobody else has)."""
+    import game.rpg.classes as classes
+    import game.rpg.heads as heads
+    import game.rpg.races as races
+
+    return dict(
+        name=name,
+        head=heads.HEAD_IDS[0],
+        race=next(iter(races.RACES)),
+        **{"class": next(iter(classes.CLASSES))},
+        birthsign="none",
+        gender="male",
+        device="keyboard",
+        handed="right",
+    )
+
+
+def start_blocker(state):
+    """Why the host cannot start the party in the lobby snapshot *state* --
+    a sentence fit to show the players -- or "" when Start would work.
+
+    The host's own characters need no Ready: pressing Start readies them."""
+    host = state.get("host", "host")
+    connected = [m for m in state.get("members", []) if m.get("connected")]
+    if not any(m["owner"] == host and not m.get("bot") for m in connected):
+        return "The host needs a character to start."
+    waiting = int(state.get("waiting", 0) or 0)
+    if waiting:
+        return ("A player who joined has no character yet." if waiting == 1
+                else f"{waiting} players who joined have no character yet.")
+    names = [m["profile"]["name"] for m in connected
+             if m["owner"] != host and not m.get("bot") and not m.get("ready")]
+    if names:
+        return "Waiting for " + ", ".join(names) + " to press Ready."
+    return ""
+
+
 @dataclass
 class Member:
     player_id: str
@@ -120,12 +159,25 @@ class Lobby:
         #: Late arrival: players may join after the adventure has started (the
         #: host's choice in the lobby). Off, the party is closed at Start.
         self.late_arrival = True
+        #: Owners (computers) connected to the party right now, as the
+        #: controller reports them -- so one that has joined but has no
+        #: character yet holds Start back instead of entering as a spectator.
+        self.present = set()
 
-    def _changed(self):
+    def _changed(self, owner=None):
+        """The party changed. A change to the party's rules clears everyone's
+        readiness; a change to one computer's characters (*owner*) clears
+        only that computer's."""
         self.revision += 1
         if not self.started:
             for member in self.members:
-                member.ready = member.bot
+                if owner is None or member.owner == owner:
+                    member.ready = member.bot
+
+    def waiting(self):
+        """Connected computers that have no character in the party yet."""
+        return sorted(o for o in self.present
+                      if not any(not m.bot for m in self.owned(o)))
 
     def humans(self) -> int:
         """Human players in the party (AI companions do not count)."""
@@ -143,7 +195,18 @@ class Lobby:
             raise LobbyError("That character does not belong to this connection.")
         return found
 
-    def add(self, owner, profile, *, player_id=None, character=None, bot=False):
+    def free_head(self, wanted=None, excluding=None):
+        """*wanted* if nobody else has that head, else the first free one."""
+        import game.rpg.heads as heads
+
+        taken = {m.profile["head"] for m in self.members if m.player_id != excluding}
+        if wanted not in taken:
+            return wanted
+        return next((h for h in heads.HEAD_IDS if h not in taken), wanted)
+
+    def add(self, owner, profile, *, player_id=None, character=None, bot=False, fit=False):
+        """Add a character. With *fit*, a head somebody else already has is
+        swapped for a free one instead of refusing the character."""
         if self.started and not self.late_arrival:
             raise LobbyError(LATE_ARRIVAL_CLOSED)
         if bot and self.companions() >= MAX_COMPANIONS:
@@ -159,6 +222,8 @@ class Lobby:
         profile = validate_profile(
             profile, saved_class=(character or {}).get("class"), allow_bot=bot
         )
+        if fit:
+            profile["head"] = self.free_head(profile["head"])
         self._check_selection(owner, profile)
         member = Member(
             player_id or str(uuid.uuid4()),
@@ -170,7 +235,8 @@ class Lobby:
         if any(p.player_id == member.player_id for p in self.members):
             raise LobbyError("That character is already in the party.")
         self.members.append(member)
-        self._changed()
+        self._changed(owner)
+        member.ready = member.bot
         return member
 
     def _check_selection(self, owner, profile, excluding=None):
@@ -199,15 +265,14 @@ class Lobby:
         ):
             raise LobbyError("A saved character keeps its race, class and birthsign.")
         member.profile = profile
-        self._changed()
+        self._changed(member.owner)
 
     def remove(self, owner, player_id):
         if self.started:
             raise LobbyError("Leave the game to remove a character.")
-        self.members.remove(
-            self.member(player_id, None if owner == self.host else owner)
-        )
-        self._changed()
+        member = self.member(player_id, None if owner == self.host else owner)
+        self.members.remove(member)
+        self._changed(member.owner)
 
     def ready(self, owner, ready):
         if not isinstance(ready, bool) or not any(not p.bot for p in self.owned(owner)):
@@ -237,13 +302,24 @@ class Lobby:
     @property
     def can_start(self):
         connected = [p for p in self.members if p.connected]
-        return any(p.owner == self.host and not p.bot for p in connected) and all(
-            p.ready for p in connected
+        return (
+            any(p.owner == self.host and not p.bot for p in connected)
+            and all(p.ready for p in connected)
+            and not self.waiting()
         )
 
     def start(self, owner):
-        if owner != self.host or not self.can_start:
+        """The host starts the adventure. Pressing Start is the host's own
+        Ready; everyone else connected must be ready, and every connected
+        computer must have a character."""
+        if owner != self.host:
             raise LobbyError("Only the host can start, after every player is ready.")
+        blocker = start_blocker(self.snapshot())
+        if blocker:
+            raise LobbyError(blocker)
+        for member in self.owned(self.host):
+            if member.connected:
+                member.ready = True
         self.started = True
         self.revision += 1
 
@@ -260,6 +336,7 @@ class Lobby:
             "map_hash": self.map_hash,
             "respawn_at_village": self.respawn_at_village,
             "late_arrival": self.late_arrival,
+            "waiting": 0 if self.started else len(self.waiting()),
             "members": [p.public() for p in self.members],
         }
 
