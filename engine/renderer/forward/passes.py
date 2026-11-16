@@ -1437,15 +1437,33 @@ class PassesMixin:
         nearest = np.where(inside, d2, np.inf).argmin(axis=1)
         return np.where(inside.any(axis=1), textures[nearest], 0)
 
+    #: Whether the warm-up below also imports the frames a fight switches the
+    #: warmed monsters to (EntityTable.fight_frame_ids), as Fio does. Off in
+    #: MiniWind: an actor's attack frame is its own head, already imported,
+    #: and its dead frame is Fio's stock corpse, 341 x 512 among 128 x 128
+    #: heads -- every layer is as large as the largest image, so importing it
+    #: at Play's start made each of them sixteen times the size (a 2.7 MB
+    #: array became 341 MB) for a frame most play never shows. It is imported
+    #: when a corpse is first drawn, as it always was.
+    WARM_FIGHT_FRAMES = False
+
     def _warm_sprite_layers(self, table, slots, play_mode, show_sprites):
         """Put every image the sprite pass may draw for *slots* into the layer
-        array (engine.sprite_layers) in one import: each sprite and the frames
-        a fight switches a monster to (EntityTable._intern_fight_frames), near
-        or far, hidden or not. Done when the
-        table's sprite recipes change -- the map loads, Play starts, something
-        new appears -- not per frame. Imported one at a time as each sprite
-        first came into view, the array grew while it filled and every growth
-        re-uploaded every layer: 46 and 130 ms frames into _SHOWCASE's Play."""
+        array (engine.sprite_layers) in one import, in view or not, hidden or
+        not. Done when the table's sprite recipes change -- the map loads,
+        Play starts, something new appears -- not per frame. Imported one at a
+        time as each sprite first came into view, the array grew while it
+        filled and every growth re-uploaded every layer: 46 and 130 ms frames
+        into _SHOWCASE's Play.
+
+        *slots* are the things within the camera's view distance, not the
+        whole map's (Fio 3.5.0.1611 warmed every row, and every monster
+        recipe in the table). A map the view distance covers is warmed whole,
+        as Fio's are. MiniWind's world is not: its 890 sprite rows and ~500
+        recipes made that one import 252 layers -- 3.4 s before Play started
+        and 540 MB resident -- for the 19 images the opening draws. What is
+        further off is imported when it is first drawn, as before (the array
+        has room for it: sprite_layers.reserve_all)."""
         if table is None or not len(slots) or 'sprite_layered' not in self.shaders:
             return
         recipes = table.sprite_recipes()
@@ -1462,10 +1480,10 @@ class PassesMixin:
             play_mode, show_sprites)
         if not len(sprites):
             return
-        fight = [sid for sid, recipe in enumerate(recipes)
-                 if recipe and str(recipe[0][0]).startswith('msprite_')]
-        keys = np.concatenate((table.sprite_key_id[sprites],
-                               np.asarray(fight, dtype=table.sprite_key_id.dtype)))
+        keys = table.sprite_key_id[sprites]
+        if play_mode and self.WARM_FIGHT_FRAMES:    # nothing fights in the editor
+            keys = np.concatenate((keys, np.asarray(table.fight_frame_ids(keys),
+                                                    dtype=keys.dtype)))
         keys = keys[keys >= 0]
         gl_ids = self._sprite_gl_ids(table)
         if not len(keys) or not len(gl_ids):

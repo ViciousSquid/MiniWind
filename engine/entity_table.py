@@ -726,7 +726,7 @@ class EntityTable:
         'refs', 'all_slots', 'light_slots', 'portal_slots', 'monster_slots',
         'path_node_slots',
         'effect_slots',
-        '_sprite_ids', '_sprite_recipes', '_model_ids', '_model_recipes',
+        '_sprite_ids', '_sprite_recipes', '_fight_frames', '_model_ids', '_model_recipes',
         '_effect_custom_ids', '_effect_custom_paths',
         '_epoch', '_slot_of_obj', '_poll_slots', '_row_tuple', '_row_list',
         '_row_list_version', 'rows_read',
@@ -766,6 +766,9 @@ class EntityTable:
         # objects once per unique recipe on the thread that has a context.
         self._sprite_ids: dict = {}
         self._sprite_recipes: list = []
+        #: An alive monster's sprite id -> {(custom_shoot, custom_dead): the
+        #: ids of its shooting and dead frames} (_intern_fight_frames).
+        self._fight_frames: dict = {}
         self._model_ids = {}
         self._model_recipes = []
         #: Interned CUSTOM GIF paths; these remain cold data outside numeric rows.
@@ -803,19 +806,35 @@ class EntityTable:
             self._sprite_recipes.append(candidates)
         return sid
 
-    def _intern_fight_frames(self, props):
+    def _intern_fight_frames(self, props, key_id):
         """Intern the frames a fight switches an alive monster to -- shooting
         and dead -- so the renderer loads them, and puts them in its sprite
         array, with everything else (PassesMixin._warm_sprite_layers) instead
         of at the first shot. Once per kind of monster. (MiniWind draws every
-        actor as one top-down head: Fio's eight facings are not interned.)"""
+        actor as one top-down head: Fio's eight facings are not interned.)
+
+        They are filed under *key_id*, the sprite the monster shows now, so
+        the renderer can ask for the fight frames of the monsters it is about
+        to draw (:meth:`fight_frame_ids`) rather than of every monster in the
+        map: MiniWind's world holds hundreds of kinds, a few on screen."""
+        frames = self._fight_frames.setdefault(key_id, {})
+        kind = (props.get('custom_shoot') or '', props.get('custom_dead') or '')
+        if kind in frames:
+            return
         shooting = _monster_sprite_candidates(
             dict(props, dead=False, is_shooting=True))
         dead = _monster_sprite_candidates(dict(props, dead=True))
-        if shooting in self._sprite_ids and dead in self._sprite_ids:
-            return
-        self.intern_sprite(shooting)
-        self.intern_sprite(dead)
+        frames[kind] = (self.intern_sprite(shooting), self.intern_sprite(dead))
+
+    def fight_frame_ids(self, key_ids) -> list:
+        """The sprite ids of the shooting and dead frames of the monsters
+        whose current sprite id is one of *key_ids*."""
+        found = set()
+        frames = self._fight_frames
+        for key in set(np.asarray(key_ids).tolist()):
+            for ids in frames.get(key, {}).values():
+                found.update(ids)
+        return sorted(found)
 
     def sprite_recipes(self) -> list:
         """Interned candidate lists, indexed by id."""
@@ -984,6 +1003,8 @@ class EntityTable:
             setattr(self, name, getattr(peer, name).copy())
         self._sprite_ids = dict(peer._sprite_ids)
         self._sprite_recipes = list(peer._sprite_recipes)
+        self._fight_frames = {key: dict(frames)
+                              for key, frames in peer._fight_frames.items()}
         self._model_ids = dict(peer._model_ids)
         self._model_recipes = list(peer._model_recipes)
         self._effect_custom_ids = dict(peer._effect_custom_ids)
@@ -1422,7 +1443,7 @@ class EntityTable:
         self.sprite_overlay[slot] = bool(props.get('_sprite_overlay', False))
         self.sprite_key_id[slot] = self.intern_sprite(sprite_candidates(thing))
         if self.class_bits[slot] & ENT_MONSTER and not props.get('dead'):
-            self._intern_fight_frames(props)
+            self._intern_fight_frames(props, int(self.sprite_key_id[slot]))
 
         if self.class_bits[slot] & ENT_EFFECT:
             self._effect_published = None

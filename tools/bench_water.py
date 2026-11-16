@@ -96,11 +96,21 @@ def _pool_world():
     return brushes, [light]
 
 
+def _map_path(name):
+    """*name* among the shipped maps, or among the Fio example maps a game
+    built on Fio keeps only as test fixtures (MiniWind); None if neither."""
+    for folder in ('maps', os.path.join('tests', 'fixtures', 'maps')):
+        path = os.path.join(ROOT, folder, name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def _map_world(name):
     """A shipped map's brushes and its lights (the water's light loop)."""
     from editor.things import Thing
     from engine import brush_placement as bp
-    with open(os.path.join(ROOT, 'maps', name)) as handle:
+    with open(_map_path(name)) as handle:
         doc = json.load(handle)
     brushes = doc['brushes']
     for b in brushes:
@@ -192,6 +202,9 @@ def main(argv=None):
     results = {}
     for scene in [s for s in args.scenes.split(',') if s]:
         mapname, cameras = SCENES[scene]
+        if mapname is not None and _map_path(mapname) is None:
+            print('%s: %s is not in this tree, skipped' % (scene, mapname))
+            continue
         brushes, lights = _pool_world() if mapname is None else _map_world(mapname)
         table = RenderTable()
         table.begin_frame(brushes, epoch=1)

@@ -1,8 +1,9 @@
-# MiniWind → Fio 3.5 migration record (3.5.0.1511)
+# MiniWind → Fio 3.5 migration record (3.5.0.1611)
 
 MiniWind's engine moved from Fio 3.0.0.1010 (taken up to upstream commit
 `f445fac1`, plus later per-file backports) to **Fio 3.5.0.1111**, then to
-**Fio 3.5.0.1211** (Milestone 7), and now to **Fio 3.5.0.1511** (Milestone 8).
+**Fio 3.5.0.1211** (Milestone 7), to **Fio 3.5.0.1511** (Milestone 8), and now
+to **Fio 3.5.0.1611** (Milestone 10, at the end of this record).
 The game
 layer (`game/`) needed four source changes: `multiplayer/replication.py` and
 `multiplayer/world.py` (a door's live position and state rows, below),
@@ -20,7 +21,8 @@ the concern.
 | Fio (then) | `3.5.0.1111_CANARY` | `a278e956` (26 commits past `9b2dca95`) |
 | Fio (then) | `3.5.0.1211_Latest` | `77387caaeba284b5467a180b1ba39e147aace86d` (40 commits past `a278e956`) |
 | Fio (then) | `3.5.0.1211_Latest` | `bcf4d297d9d78e5269428353db36d30ab3aca19e` (23 commits past `77387caa`: Play's mouse grab) |
-| Fio (now) | `3.5.0.1511_Latest` | `a11848bffd272d7d3deb180451856849cefed9f2` (73 commits past 1211) |
+| Fio (then) | `3.5.0.1511_Latest` | `a11848bffd272d7d3deb180451856849cefed9f2` (73 commits past 1211) |
+| Fio (now) | `Canary_1611` | `68d052b9` (52 commits past `a11848bf`; version 3.5.0.1611) |
 | Common upstream ancestor | Fio `3.0.0.1010_Latest` | `f445fac1be58a1011da276a77de00ef9487add0a` |
 
 `backup_3.0.0.3010` is an ancestor of `41eeb2c` (22 commits behind it), so

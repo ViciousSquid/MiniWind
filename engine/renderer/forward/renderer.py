@@ -955,7 +955,8 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             etable, tslots, thing_hidden,
             config.get('play_mode', False),
             config.get('show_sprites_in_play_mode', False))
-        self._warm_sprite_layers(etable, thing_slots, config.get('play_mode', False),
+        # What is within the view distance, not the whole map (see there).
+        self._warm_sprite_layers(etable, tslots, config.get('play_mode', False),
                                  config.get('show_sprites_in_play_mode', False))
         # Frustum, against this view's own camera. The logic thread publishes
         # every entity row, because lights, portals and effects need them all;
