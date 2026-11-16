@@ -37,12 +37,11 @@ controllers** after connecting pads), **Add AI companion**, **Remove**,
 reply code box, *Let in* and *New code*. On the first page, *More options*: the
 party's name and joining over TCP.
 
-**Continue a saved campaign…** (first page) hosts a campaign from its save. Saved characters keep
-their race, class and birthsign, while their name, head and controller assignment
-can be changed in the lobby. Offline friends remain in the roster and do not
-prevent the host from continuing alone. Rejoining from the same game installation
-reclaims that installation's characters instead of creating replacements.
-Keep `saves/.multiplayer-identity` on a joining machine to retain that identity.
+A party from the launcher always begins a new campaign: the launcher has no
+button for opening a saved one (see *Quests and saves*). Rejoining a running
+party from the same game installation reclaims that installation's characters
+instead of creating replacements. Keep `saves/.multiplayer-identity` on a
+joining machine to retain that identity.
 
 ## Play with bots
 
@@ -257,14 +256,17 @@ The host owns the campaign. Co-op slots, autosaves and the latest exit save use
 `saves/coop_<campaign-id>_*.fiosave`; they do not overwrite ordinary single-player
 slots. A save retains the whole roster, personal characters, party journal,
 reward receipts and world state. The host may load a slot on the current map
-with the current roster in place, keeping the connections. To restore a save
-with a different map or roster, quit, relaunch and select it in the launcher lobby.
+with the current roster in place, keeping the connections.
 
-**Copy a solo save** creates a separate campaign, preserving the original
-character and quest progress without modifying the source file. Co-op saves use
+The launcher does not open saved campaigns: there is no button for resuming a
+co-op campaign after quitting, or for copying a solo save into a party.
+`LobbyController.resume_campaign` (`game/multiplayer/lobby.py`) still does
+both -- a saved roster keeps each character's race, class and birthsign, offline
+friends stay in the roster, and a solo save is copied without modifying the
+source file -- but nothing in the launcher calls it. Co-op saves use
 the version 4 party extension; single-player games continue writing version 3.
-Co-op saves reopen through Multiplayer. There is no host migration: if the host
-leaves, clients stop and can rejoin when that host resumes the campaign.
+There is no host migration: if the host leaves, clients stop and can rejoin
+while that host's party is open.
 
 ## Authoring and verification
 

@@ -26,7 +26,6 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QCheckBox,
     QDialog,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -217,18 +216,11 @@ class MultiplayerDialog(QDialog):
         self.host_button.setToolTip("Open a party and get a friend code to send to up to three friends.")
         self.host_button.clicked.connect(lambda: self._host(False))
         host_layout.addWidget(self.host_button)
-        row = QHBoxLayout()
         self.local_button = QPushButton("Play on this computer")
         self.local_button.setToolTip("Local co-op on shared controllers, or a party of AI companions. "
                                      "Opens no network connection.")
         self.local_button.clicked.connect(lambda: self._host(True))
-        row.addWidget(self.local_button)
-        self.resume_button = QPushButton("Continue a saved campaign…")
-        self.resume_button.setToolTip("Host a co-op campaign from its save, or start one from a "
-                                      "copy of a solo save.")
-        self.resume_button.clicked.connect(self._resume)
-        row.addWidget(self.resume_button)
-        host_layout.addLayout(row)
+        host_layout.addWidget(self.local_button)
         layout.addWidget(host_box)
         # Rarely needed.
         more = QWidget()
@@ -523,7 +515,7 @@ class MultiplayerDialog(QDialog):
             return False
 
     # -- hosting -----------------------------------------------------------------
-    def _host(self, local, save=None):
+    def _host(self, local):
         if not self._try(
             lambda: self.controller.host(
                 self.party_name.text(), local_only=local, port=self.game_port
@@ -531,8 +523,6 @@ class MultiplayerDialog(QDialog):
         ):
             return
         self._say("")
-        if save is not None and not self._try(lambda: self.controller.resume_campaign(save)):
-            self._say(self.status.text() + " Started a new party instead.", error=True)
         if not self._mine():
             # The host is in its own party from the start.
             self._try(lambda: self.controller.request("add", profile=self._profile()))
@@ -542,16 +532,6 @@ class MultiplayerDialog(QDialog):
             self._show_code()
         self.options_toggle.setChecked(bool(local))
         self._render_lobby()
-
-    def _resume(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Choose a campaign",
-            str(self.root / "saves"),
-            "Fio saves (*.fiosave);;All files (*)",
-        )
-        if path:
-            self._host(False, save=path)
 
     # -- friend codes ------------------------------------------------------------
     _CODE_NOTES = {
