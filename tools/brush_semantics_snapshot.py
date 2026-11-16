@@ -66,6 +66,15 @@ def _dump(path, data):
         handle.write('\n')
 
 
+def _shown(path):
+    """*path* relative to the repository when it can be: on Windows a file on
+    another drive has no relative path (relpath raises)."""
+    try:
+        return os.path.relpath(path, ROOT)
+    except ValueError:
+        return os.path.abspath(path)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--write', action='store_true',
@@ -75,8 +84,7 @@ def main(argv=None):
     if args.write:
         _dump(SNAPSHOT, snapshot)
         _dump(WRITE_SITES, sites)
-        print('wrote %s and %s' % (os.path.relpath(SNAPSHOT, ROOT),
-                                   os.path.relpath(WRITE_SITES, ROOT)))
+        print('wrote %s and %s' % (_shown(SNAPSHOT), _shown(WRITE_SITES)))
         return 0
     from tests.helpers.write_sites import ratchet
     status = 0
