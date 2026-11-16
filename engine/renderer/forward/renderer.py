@@ -112,7 +112,7 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         self._water_depth_size = (0, 0)
         self._water_depth_texture_unit = 3
         #: The sky panorama, which the water reflects. GL 3.3 and GLES 3.0
-        #: both guarantee 16 fragment texture units. (MiniWind's terrain
+        #: both guarantee 16 fragment texture units. (The terrain's regional
         #: biome map is on 15 too, in the terrain program only, which binds
         #: it at every terrain draw: TerrainGL._bind_biome_map.)
         self._panorama_texture_unit = 15
