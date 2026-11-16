@@ -3,8 +3,9 @@
 Every Play builds a session runtime -- a physics world subscribed to the
 change journal, render and entity tables, decal rows for the map's Decal
 entities, the sky resolved from the Primary PlayerStart -- and Stop must
-let all of it go. ``_SHOWCASE`` is version 5 and carries a sky, a decal,
-physics props and monsters, so it reaches each 3.5.0.1611 change at once.
+let all of it go. Fio's ``_SHOWCASE`` is version 5 and carries a sky, a decal,
+physics props and monsters, so it reaches each 3.5.0.1611 change at once
+(MiniWind's fixture copy is the older one: see LEVEL).
 
 Across many sessions: the traced heap, live journal subscribers and thread
 count stay flat after warm-up, the sky survives every round trip, and a
@@ -23,7 +24,10 @@ from engine.change_journal import JOURNAL     # noqa: E402
 
 pytestmark = [pytest.mark.qt, pytest.mark.soak, pytest.mark.slow]
 
-LEVEL = "maps/_SHOWCASE.json"
+# Fio's showcase is a test fixture in MiniWind, not a shipped map -- and the
+# older version-3 one, with no sky of its own: the test gives it one.
+LEVEL = "tests/fixtures/maps/_SHOWCASE.json"
+SKY = "assets/backgrounds/cloudy-sky-panorama.webp"
 
 
 def _live_sinks():
@@ -34,6 +38,12 @@ def test_repeated_play_sessions_release_what_they_build(fio_session, qt_app):
     from PyQt5.QtCore import QEvent
 
     session = fio_session(LEVEL)
+    if not session.window.sky_image_path_from_map():
+        # As the property editor does it: an edit, so Stop restores the
+        # edited scene, not the file it was read from.
+        session.window.save_state()
+        session.window.canonicalize_sky_image_ownership(SKY)
+        session.window.mark_as_modified()
     sky = session.window.sky_image_path_from_map()
     assert sky, "the showcase map is expected to carry a sky panorama"
 
