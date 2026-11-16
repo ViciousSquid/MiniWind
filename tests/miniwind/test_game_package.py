@@ -19,8 +19,20 @@ def _package(tmp_path, extra=(), metadata=None):
             {"map_path": "maps/start.json"} if metadata is None else metadata))
         archive.writestr("maps/start.json", '{"version":3,"brushes":[],"things":[]}')
         for name, data in extra:
-            archive.writestr(name, data)
+            archive.writestr(_raw_member(name), data)
     return path
+
+
+def _raw_member(name):
+    """*name* exactly as given, as a package entry. zipfile turns a backslash
+    into "/" when it builds a ZipInfo on Windows, which would make a crafted
+    name harmless there before the validator ever saw it."""
+    if isinstance(name, zipfile.ZipInfo):
+        return name
+    info = zipfile.ZipInfo(name)
+    info.filename = name
+    info.compress_type = zipfile.ZIP_DEFLATED
+    return info
 
 
 def test_exported_package_opens_at_its_manifest_map(tmp_path):

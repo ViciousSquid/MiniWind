@@ -184,6 +184,9 @@ def test_an_error_banner_can_link_to_logs_on_another_windows_drive(monkeypatch):
 
     path = r"D:\logs\miniwind.log"
     monkeypatch.setitem(error_report._state, "log_path", path)
+    # On Windows os.path *is* ntpath: keep the real relpath before patching,
+    # or the replacement would call itself.
+    relpath = ntpath.relpath
     monkeypatch.setattr(error_report.os.path, "relpath",
-                        lambda value: ntpath.relpath(value, r"C:\MiniWind"))
+                        lambda value: relpath(value, r"C:\MiniWind"))
     assert path in error_report.Notice("bad tick", None).text()

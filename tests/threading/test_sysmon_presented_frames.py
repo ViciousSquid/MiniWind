@@ -80,7 +80,10 @@ def test_paint_gl_records_only_successful_renders(main_window, monkeypatch):
         view_patch.setattr(target, "renderer", ReadyRenderer())
         view_patch.setattr(target, "logic_thread", object())
         view_patch.setattr(target, "fps", 0.0)
-        state = object()
+        # A real published snapshot: paintGL interpolates its camera first
+        # (engine.render_camera), and a fresh one has no history to blend.
+        from engine.threaded_game_state import RenderState
+        state = RenderState()
         monkeypatch.setattr(target.game_state, "get_render_state", lambda: state)
         monkeypatch.setattr(target.game_state, "release_render_state", lambda _state: None)
         monkeypatch.setattr(target, "_animate_textures", lambda: None)

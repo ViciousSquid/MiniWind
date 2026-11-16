@@ -480,10 +480,31 @@ def test_sky_image_custom_entry_can_be_cleared_to_none(window):
 
     panel._widgets["player_start_sky_image_clear"].click()
 
-    assert start.properties["sky_image"] == ""
+    # No sky is stored as no key, as on every other start (the map keeps one
+    # canonical form; see sync_sky_image_from_map).
+    assert "sky_image" not in start.properties
     assert combo.currentText() == "None"
     assert combo.currentData() == ""
     assert [combo.itemText(i) for i in range(combo.count())] == [
         "None", "Cloudy sky", "Space"]
     assert not panel._widgets["player_start_sky_image_clear"].isEnabled()
     assert window.view_3d.sky_image_path == ""
+
+
+def test_legacy_game_settings_sky_migrates_to_primary_player_start(window):
+    import importlib
+    GameSettings = importlib.import_module("game.entities").GameSettings
+
+    start = _create(window, "A")
+    settings = GameSettings(
+        pos=[0, 0, 0],
+        properties={"void_background": "assets/backgrounds/void-panorama.webp"},
+    )
+    window.state.things.append(settings)
+
+    path = window.sync_sky_image_from_map()
+
+    assert path == "assets/backgrounds/void-panorama-q80.webp"
+    assert start.properties["sky_image"] == path
+    assert "void_background" not in settings.properties
+    assert window.view_3d.sky_image_path == path

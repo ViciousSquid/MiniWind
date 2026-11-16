@@ -40,12 +40,16 @@ FIELDS = frozenset(
         "handed",
         "is_shooting",
         "angle",
+        # Runtime pose state the overhead weapons draw from. Underscored, so
+        # capture() sends these explicitly: clean() drops "_" keys, and these
+        # entries never reached a client while it did. (A ward's
+        # ``_ward_until`` is a time on the host's own game clock, and
+        # ``_sim_tier`` is stamped by each machine's own Big World, so neither
+        # can be copied across.)
         "_attack_anim",
         "_offhand_anim",
         "_active_weapon",
         "_bow_charge",
-        "_ward_until",
-        "_ward_strength",
         "_shield_blocking",
         "_shield_pose",
         "item_id",
@@ -64,10 +68,34 @@ FIELDS = frozenset(
         "color",
         "state",
         "orientation",
-        "angle",
-        "_sim_tier",
     )
 )
+
+#: Values sent as they are: immutable, and already what JSON carries.
+_PLAIN = frozenset((str, int, bool, type(None)))
+#: A property absent from a replica (never equal to any sent value).
+_MISSING = object()
+#: Seconds between a client's full passes over the frame's entities; between
+#: them it applies only the entities each patch changed (see :func:`apply`).
+FULL_APPLY_EVERY = 2.0
+
+
+def _entity_props(props):
+    """The replicated subset of an entity's *props* (:data:`FIELDS`), as
+    :func:`clean` would give it, but with the ``_`` fields kept: the
+    per-entity work of every frame the host sends, so scalars (nearly all of
+    them) skip the recursive walk."""
+    out = {}
+    for key in FIELDS.intersection(props):
+        value = props[key]
+        kind = type(value)
+        if kind in _PLAIN:
+            out[key] = value
+        elif kind is float:
+            out[key] = value if math.isfinite(value) else 0.0
+        elif not callable(value):
+            out[key] = clean(value)
+    return out
 
 
 def clean(value):
@@ -153,18 +181,26 @@ def capture(coop):
 
     coop.sequence += 1
     entities = []
+    # An entity that has not changed since the last frame is sent as the very
+    # record sent then: the frame shares it with its baseline, so the patch
+    # stops at ``old is new``, and the frame histories (delta.HISTORY per
+    # peer) hold one copy of the world rather than one per frame for the
+    # collector to keep walking. Records are never changed once sent.
+    records = coop.__dict__.get("_entity_records") or {}
+    fresh = {}
     for thing in fio.things(coop.logic):
         props = getattr(thing, "properties", {})
         sid = identity(thing)
         if not sid:
             continue
-        entities.append(
-            {
-                "id": sid,
-                "pos": [float(v) for v in thing.pos],
-                "props": clean({k: v for k, v in props.items() if k in FIELDS}),
-            }
-        )
+        pos = [float(v) for v in thing.pos]
+        fields = _entity_props(props)
+        record = records.get(sid)
+        if record is None or record["pos"] != pos or record["props"] != fields:
+            record = {"id": sid, "pos": pos, "props": fields}
+        fresh[sid] = record
+        entities.append(record)
+    coop._entity_records = fresh
     players = {}
     for pid, p in coop.players.items():
         s = p.session
@@ -271,24 +307,55 @@ def apply(coop, message):
     try:
         import glm
 
-        from editor.things import Thing
+        from editor.things import Monster, Thing
+        from engine.change_journal import FACING, STATE, touch
         from engine.savegame import _restore_moving_brushes
 
         from ..entities import NPC, Creature
+        from .delta import clone
 
         _restore_moving_brushes(coop.logic, message.get("moving_brushes"))
         coop.paused = bool(message.get("paused"))
 
+        # A frame rebuilt from a patch says which entities the patch touched
+        # (delta.Frame); only those are applied. Every FULL_APPLY_EVERY
+        # seconds, and for a whole frame, every entity is checked again, so
+        # a replica that drifted is put right.
+        now = time.monotonic()
+        changes = getattr(message, "changes", None)
+        full = (changes is None or now - coop.__dict__.get("_full_apply_at", -math.inf)
+                >= FULL_APPLY_EVERY)
+        if full:
+            coop._full_apply_at = now
         things = fio.things(coop.logic)
-        here = {identity(t): t for t in things if identity(t)}
-        present = set()
+        # Every replica by identity, kept from frame to frame and built again
+        # whenever the world's membership may have changed under it.
+        here = coop.__dict__.get("_replica_index")
+        if (full or here is None or coop.__dict__.get("_replica_things") is not things
+                or coop.__dict__.get("_replica_count") != len(things)):
+            here = {}
+            for t in things:
+                sid = identity(t)
+                if sid:
+                    here[sid] = t
+        targets = coop.__dict__.get("_render_targets")
+        if targets is None:
+            targets = coop._render_targets = {}
+        if full:
+            work = entities
+        else:
+            changed = changes[0]
+            work = [data for data in entities if data["id"] in changed]
+        present = set() if full else None
         rebuilt = False
-        for data in entities:
+        for data in work:
             sid = str(data["id"])
-            present.add(sid)
+            if present is not None:
+                present.add(sid)
+            incoming = data["props"]
             thing = here.get(sid)
             if thing is None:
-                kind = str(data["props"].get("type", "")).lower()
+                kind = str(incoming.get("type", "")).lower()
                 from editor.things import ENTITY_TYPES
                 from plugins.manager import get_manager
 
@@ -306,33 +373,55 @@ def apply(coop, message):
                         else Thing
                     )
                 )
-                thing = cls(pos=data["pos"], properties=data["props"])
+                # The frame's own records may be the receiver's baselines:
+                # a live entity gets copies.
+                thing = cls(pos=list(data["pos"]), properties=clone(incoming))
                 things.append(thing)
                 here[sid] = thing
                 rebuilt = True
-            if not hasattr(coop, "_render_targets"):
-                coop._render_targets = {}
-            coop._render_targets[sid] = (
-                thing,
-                list(thing.pos),
-                list(data["pos"]),
-                time.monotonic(),
-            )
-            thing.properties.update(data["props"])
-            # Replicas never decide or produce independent actions.
-            from engine.change_journal import touch
-
-            touch(thing)
-        removed = [t for t in things if identity(t) and identity(t) not in present]
+                touch(thing)
+                continue
+            # Glide towards where the host has it (interpolate); an entity
+            # already there, most of the world, is left alone.
+            end = data["pos"]
+            target = targets.get(sid)
+            if target is None or target[2] != end:
+                start = list(thing.pos)
+                if start != end:
+                    targets[sid] = (thing, start, list(end), now)
+                elif target is not None:
+                    del targets[sid]
+            # Replicas never decide or produce independent actions. Only a
+            # real change is written and journalled: touching every entity of
+            # every frame had the client re-resolve the whole world's render
+            # rows twenty times a second.
+            props = thing.properties
+            differs = [k for k, v in incoming.items() if props.get(k, _MISSING) != v]
+            if differs:
+                props.update(clone(incoming))
+                turned = differs == ["angle"] and isinstance(thing, Monster)
+                touch(thing, FACING if turned else STATE)
+        if full:
+            removed = [t for t in things if (sid := identity(t)) and sid not in present]
+        else:
+            gone = {sid for sid in changes[1] if sid in here}
+            removed = [t for t in things if identity(t) in gone] if gone else []
         if removed:
-            things[:] = [t for t in things if t not in removed]
+            dropped = {id(t) for t in removed}
+            things[:] = [t for t in things if id(t) not in dropped]
+            here = {}
+            for t in things:
+                sid = identity(t)
+                if sid:
+                    here[sid] = t
             rebuilt = True
-        if hasattr(coop, "_render_targets"):
-            coop._render_targets = {
-                k: v for k, v in coop._render_targets.items() if k in present
-            }
+        for sid in ([k for k in targets if k not in present] if full else changes[1]):
+            targets.pop(sid, None)
         if rebuilt:
             fio.rebuild_entity_caches(coop.logic)
+        coop._replica_index = here
+        coop._replica_things = things
+        coop._replica_count = len(things)
         for pid, data in players.items():
             context = coop.players.get(pid)
             if context is None:
@@ -388,14 +477,18 @@ def apply(coop, message):
                 context.physics.pos = glm.vec3(*data["pos"])
                 context.physics.angle = float(data["angle"])
         values = message.get("world", {})
-        for key in coop.party_quests.store.all():
+        store = coop.party_quests.store
+        current = store.all()
+        for key, value in current.items():
             if (
                 key.startswith(("quest.", "party.", "visited.", "players."))
                 and key not in values
+                and value != ""
             ):
-                coop.party_quests.store.set(key, "")
+                store.set(key, "")
         for key, value in values.items():
-            coop.party_quests.store.set(key, value)
+            if current.get(key, _MISSING) != value:
+                store.set(key, value)
         clock = message.get("clock", {})
         coop.root.clock.hour = float(clock.get("hour", coop.root.clock.hour))
         coop.root.clock.day = int(clock.get("day", coop.root.clock.day))
@@ -423,17 +516,37 @@ def apply(coop, message):
 
 
 def interpolate(coop):
+    """Glide each replica the last frame moved towards where the host has it.
+
+    Only entities still on their way are touched: one that has arrived is put
+    exactly at its destination and dropped, so a still world costs nothing.
+    A body this computer controls is predicted locally (reconcile), never
+    glided."""
+    targets = getattr(coop, "_render_targets", None)
+    if not targets:
+        return
     now = time.monotonic()
-    for thing, start, end, received in getattr(coop, "_render_targets", {}).values():
-        if thing.properties.get("multiplayer_player") and any(
-            p.actor is thing and p.owner == coop.lobby.owner
-            for p in coop.players.values()
-        ):
+    own = {
+        id(p.actor)
+        for p in coop.players.values()
+        if p.actor is not None and p.owner == coop.lobby.owner
+    }
+    arrived = []
+    for sid, (thing, start, end, received) in targets.items():
+        if id(thing) in own and thing.properties.get("multiplayer_player"):
+            arrived.append(sid)
             continue
-        alpha = min(1.0, max(0.0, (now - received) / coop.SNAPSHOT_INTERVAL))
+        alpha = (now - received) / coop.SNAPSHOT_INTERVAL
         # Assigning pos journals the move (MOVED, with the position): only
         # that column is re-read. apply() says STATE when properties arrive.
-        thing.pos = [a + (b - a) * alpha for a, b in zip(start, end)]
+        if alpha >= 1.0:
+            thing.pos = end
+            arrived.append(sid)
+        else:
+            alpha = max(0.0, alpha)
+            thing.pos = [a + (b - a) * alpha for a, b in zip(start, end)]
+    for sid in arrived:
+        del targets[sid]
 
 
 def make_remote(context):

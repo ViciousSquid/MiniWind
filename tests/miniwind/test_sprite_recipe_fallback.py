@@ -17,12 +17,15 @@ class _Resolver(TablesMixin):
     def __init__(self, existing):
         self.sprite_textures = {}
         self.loaded = []
-        self._existing = {os.path.join('assets', *name.split('/')): tex
+        self._existing = {os.path.normpath(os.path.join('assets', *name.split('/'))): tex
                           for name, tex in existing.items()}
 
     def load_texture(self, filename, subfolder):
         self.loaded.append((filename, subfolder))
-        return self._existing.get(os.path.join('assets', subfolder, filename), self.DEFAULT)
+        # Normalised: a candidate's filename keeps "/" (heads/mara.png), so on
+        # Windows the joined path mixes separators.
+        return self._existing.get(
+            os.path.normpath(os.path.join('assets', subfolder, filename)), self.DEFAULT)
 
 
 def _resolve(monkeypatch, existing, props):

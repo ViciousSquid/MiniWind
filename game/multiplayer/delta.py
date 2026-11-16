@@ -19,8 +19,11 @@ A patch is plain JSON, tagged so it is never mistaken for a value:
 
 :func:`apply` never changes the frame it patches, and the receiver hands the
 game a private copy (:func:`clone`): frames it keeps as baselines are never
-touched by the game. Numbers compare as numbers (``1 == 1.0``), as in JSON.
-Pure Python, no I/O; tested headless.
+touched by the game. Copying the whole world for every frame was most of a
+client's receive cost, so a frame rebuilt from a patch copies only the
+entities the patch touched, and says which they were (:class:`Frame`); the
+game reads the others but never keeps them. Numbers compare as numbers
+(``1 == 1.0``), as in JSON. Pure Python, no I/O; tested headless.
 """
 
 from __future__ import annotations
@@ -136,6 +139,103 @@ def _value(patch):
     raise ValueError("Invalid frame patch.")
 
 
+#: The list of id-keyed items (the world's entities) whose changes a
+#: :class:`Frame` reports.
+ENTITIES = "entities"
+
+
+def entity_changes(patch, key=ENTITIES):
+    """What *patch* did to the id-keyed list under *key*: ``(changed,
+    removed)`` -- a frozenset of the ids it changed or appended and a tuple of
+    the ids it removed -- or None when it replaced the list or the whole frame
+    (then every item counts as changed)."""
+    if patch is None:
+        return frozenset(), ()
+    if not (isinstance(patch, list) and len(patch) == 3 and patch[0] == "d"
+            and isinstance(patch[1], dict)):
+        return None
+    sub = patch[1].get(key)
+    if sub is None:
+        return frozenset(), ()
+    if not (isinstance(sub, list) and len(sub) == 4 and sub[0] == "l"
+            and isinstance(sub[1], dict) and isinstance(sub[2], list)
+            and isinstance(sub[3], list)):
+        return None
+    changed = set(sub[1])
+    changed.update(item["id"] for item in sub[3]
+                   if isinstance(item, dict) and isinstance(item.get("id"), str))
+    return frozenset(changed), tuple(i for i in sub[2] if isinstance(i, str))
+
+
+def merge_changes(older, newer):
+    """The changes of two frames in a row, as one (see :func:`entity_changes`):
+    what applying *newer* alone must cover when *older* was never applied."""
+    if older is None or newer is None:
+        return None
+    gone = set(newer[1])
+    changed = (older[0] - gone) | newer[0]
+    removed = (set(older[1]) - newer[0]) | gone
+    return frozenset(changed), tuple(removed)
+
+
+def deliver(events, peer, frame, waiting=None):
+    """Put world *frame* from *peer* on the event queue *events*, latest wins.
+
+    While *waiting* (the frame this returned last time) still sits in the
+    queue unread, it becomes *frame* in place, their changes merged, instead
+    of a second frame queueing behind it: a game that is loading, or busy,
+    takes the newest world once rather than drowning in frames it would only
+    skip -- and a full queue disconnects the peer. Done under the queue's own
+    lock, so a reader never sees a frame half replaced. Returns the frame now
+    waiting; raises ``queue.Full`` like ``put_nowait``.
+    """
+    if waiting is not None:
+        with events.mutex:
+            if any(item[1] is waiting for item in events.queue):
+                changes = merge_changes(getattr(waiting, "changes", None),
+                                        getattr(frame, "changes", None))
+                waiting.clear()
+                waiting.update(frame)
+                waiting.changes = changes
+                return waiting
+    if not isinstance(frame, Frame):
+        frame = Frame(frame)
+    events.put_nowait((peer, frame))
+    return frame
+
+
+class Frame(dict):
+    """A world frame as the game receives it: a plain dict (equal to the
+    frame it copies), plus :attr:`changes` -- what the patch it was rebuilt
+    from did to its entities (:func:`entity_changes`), or None when it came
+    whole and everything must be treated as changed. Any copy of it is a
+    plain dict, which reads as "everything changed": always safe."""
+
+    __slots__ = ("changes",)
+
+    def __init__(self, *args, changes=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.changes = changes
+
+
+def private(frame, changes=None) -> Frame:
+    """The game's own copy of *frame*. With *changes*, only the entities they
+    name are copied: the rest are the receiver's baselines, shared, which
+    the game may read but must never keep or change
+    (:func:`game.multiplayer.replication.apply` skips them)."""
+    if changes is None or not isinstance(frame.get(ENTITIES), list):
+        return Frame(clone(frame), changes=None)
+    changed = changes[0]
+    out = Frame({k: clone(v) for k, v in frame.items() if k != ENTITIES},
+                changes=changes)
+    out[ENTITIES] = [
+        clone(item) if (isinstance(item, dict) and isinstance(item.get("id"), str)
+                        and item["id"] in changed) else item
+        for item in frame[ENTITIES]
+    ] if changed else list(frame[ENTITIES])
+    return out
+
+
 class PatchCache:
     """One patch per (baseline, frame) pair, shared by every peer: a frame
     broadcast to three peers with the same baseline is diffed once."""
@@ -203,11 +303,14 @@ class FrameReceiver:
         if not isinstance(fid, int) or fid <= self.newest:
             return None, fid
         base_id = packet.get("base", 0)
+        changes = None
         if base_id:
             base = self.frames.get(base_id)
             if base is None:
                 return None, fid
-            frame = apply(base, packet.get("patch"))
+            patch = packet.get("patch")
+            frame = apply(base, patch)
+            changes = entity_changes(patch)
         else:
             frame = packet.get("full")
         if not isinstance(frame, dict):
@@ -216,4 +319,4 @@ class FrameReceiver:
         while len(self.frames) > HISTORY:
             self.frames.popitem(last=False)
         self.newest = fid
-        return clone(frame), fid
+        return private(frame, changes), fid

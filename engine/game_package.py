@@ -33,8 +33,13 @@ def validate_package(archive):
     total = 0
     for member in members:
         name = member.filename.rstrip("/") if member.is_dir() else member.filename
-        if not _safe_path(name):
-            raise ValueError(f"Unsafe package path: {member.filename}")
+        # orig_filename is the name as stored: on Windows zipfile turns a
+        # backslash into "/" (and cuts at a NUL) when it reads one, so the
+        # normalised name alone would let a crafted member through there.
+        raw = member.orig_filename
+        raw = raw.rstrip("/") if member.is_dir() else raw
+        if not _safe_path(name) or not _safe_path(raw):
+            raise ValueError(f"Unsafe package path: {member.orig_filename}")
         key = name.casefold()
         if key in names:
             raise ValueError(f"Duplicate package path: {name}")

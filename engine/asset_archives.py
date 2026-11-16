@@ -585,7 +585,12 @@ def _ensure_index() -> Dict[str, str]:
             try:
                 with zipfile.ZipFile(path, "r") as z:
                     for info in z.infolist():
-                        if info.is_dir() or not _safe(info.filename):
+                        # orig_filename is the name as stored: on Windows
+                        # zipfile turns a backslash into "/" (and cuts at a
+                        # NUL) when it reads one, which would pass a crafted
+                        # member off as safe there and refuse it elsewhere.
+                        if (info.is_dir() or not _safe(info.filename)
+                                or not _safe(info.orig_filename)):
                             continue
                         index[info.filename] = path      # later archives win
             except (OSError, zipfile.BadZipFile) as exc:

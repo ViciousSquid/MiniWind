@@ -49,7 +49,7 @@ import uuid
 import zlib
 from collections import deque
 
-from .delta import FrameReceiver, FrameSender, PatchCache
+from .delta import FrameReceiver, FrameSender, PatchCache, deliver as _deliver_latest
 from . import friend_code
 
 MAGIC = b"MW"
@@ -169,6 +169,7 @@ class UdpPeer:
         self.tokens = float(BURST)
         self.tokens_at = time.monotonic()
         self.incoming = {}                 # frame id -> [pieces, base, {index: bytes}]
+        self.waiting = None                # the frame on the event queue not yet read
         # timing
         now = time.monotonic()
         self.heard = now
@@ -242,7 +243,7 @@ class UdpPeer:
                     continue
                 if message.get("type") == "_frame":
                     if frame is not None:
-                        self.endpoint.deliver(self, frame)
+                        self.endpoint.deliver_frame(self, frame)
                 else:
                     self.endpoint.deliver(self, message)
 
@@ -290,7 +291,7 @@ class UdpPeer:
                 return
             if frame is not None:
                 self.endpoint.send_raw(self, FRAME_ACK, _FRAME_ACK.pack(got))
-                self.endpoint.deliver(self, frame)
+                self.endpoint.deliver_frame(self, frame)
             for old in [k for k in self.incoming if k <= self.frames_in.newest]:
                 del self.incoming[old]
 
@@ -518,6 +519,14 @@ class UdpEndpoint:
             pass                            # full send buffer: a resend covers it
         except OSError:
             pass
+
+    def deliver_frame(self, peer, frame):
+        """A world frame: latest wins while the last one is still unread
+        (:func:`game.multiplayer.delta.deliver`)."""
+        try:
+            peer.waiting = _deliver_latest(self.events, peer.peer, frame, peer.waiting)
+        except queue.Full:
+            raise PeerAbuse("Peer exceeded the incoming message limit.")
 
     def deliver(self, peer, message):
         try:

@@ -59,6 +59,38 @@ def test_every_entity_gets_a_stable_id(state):
     assert brush["id"], "a brush fixture was created with no id"
 
 
+def test_serializing_and_loading_never_change_an_id(populated, monkeypatch):
+    """A UUID is an object's identity for saves, deltas and links: it must
+    never change. Serializing keeps every id exactly, and does not even mint
+    one for an object that has it (a UUID built per brush per save was the
+    largest single cost of serializing a big world); a brush without one is
+    given a single id that then stays."""
+    import uuid
+
+    ids = [b["id"] for b in populated.brushes]
+    thing_ids = [t.properties["id"] for t in populated.things]
+
+    def no_new_ids():
+        raise AssertionError("a UUID was minted for an object that has one")
+
+    monkeypatch.setattr(uuid, "uuid4", no_new_ids)
+    for _ in range(2):
+        level = populated.get_level_data()
+        assert [b["id"] for b in level["brushes"]] == ids
+        assert [t["properties"]["id"] for t in level["things"]] == thing_ids
+    loaded = EditorState()
+    loaded.load_from_data(level)
+    assert [b["id"] for b in loaded.brushes] == ids
+    assert [t.properties["id"] for t in loaded.things] == thing_ids
+    monkeypatch.undo()
+
+    del populated.brushes[0]["id"]
+    minted = populated.get_level_data()["brushes"][0]["id"]
+    assert minted and minted not in ids
+    assert populated.get_level_data()["brushes"][0]["id"] == minted
+    assert [b["id"] for b in populated.get_level_data()["brushes"][1:]] == ids[1:]
+
+
 def test_two_entities_never_share_an_id():
     first = Light(pos=[0, 0, 0])
     second = Light(pos=[0, 0, 0])

@@ -162,3 +162,61 @@ def test_one_patch_per_baseline_for_every_peer():
         s.ack(s.make(a)["id"])
     patches = [s.make(b)["patch"] for s in senders]
     assert patches[0] is patches[1] is patches[2]      # diffed once, shared
+
+
+def test_a_patched_frame_says_which_entities_changed_and_copies_only_those():
+    rng = random.Random(9)
+    sender, receiver = delta.FrameSender(), delta.FrameReceiver()
+    world = _world(200)
+    got, fid = receiver.take(json.loads(json.dumps(sender.make(world))))
+    assert got.changes is None                  # a whole frame: everything counts
+    sender.ack(fid)
+    new = _step(world, rng, 3)
+    new["entities"].pop(0)
+    new["entities"].append({"id": "newcomer", "pos": [1.0, 2.0, 3.0], "props": {}})
+    moved = {e["id"] for e, o in zip(new["entities"], world["entities"][1:]) if e != o}
+    got, fid = receiver.take(json.loads(json.dumps(sender.make(new))))
+    assert got == new
+    changed, removed = got.changes
+    assert changed == moved | {"newcomer"} and removed == ("thing0",)
+    held = {e["id"]: e for e in receiver.frames[fid]["entities"]}
+    for entity in got["entities"]:
+        # Changed entities are the game's own copies; the rest are shared
+        # baselines it only reads.
+        assert (entity is held[entity["id"]]) == (entity["id"] not in changed)
+    got["entities"][-1]["props"]["hp"] = 1      # the game keeps a newcomer
+    assert "hp" not in receiver.frames[fid]["entities"][-1]["props"]
+
+
+def test_entity_changes_reads_patches():
+    assert delta.entity_changes(None) == (frozenset(), ())
+    assert delta.entity_changes(["d", {"clock": ["=", 1]}, []]) == (frozenset(), ())
+    assert delta.entity_changes(["d", {"entities": ["=", []]}, []]) is None
+    assert delta.entity_changes(["=", {}]) is None
+    patch = ["d", {"entities": ["l", {"a": ["=", 1]}, ["b"], [{"id": "c"}, {"id": ["x"]}, 5]]}, []]
+    assert delta.entity_changes(patch) == (frozenset({"a", "c"}), ("b",))
+
+
+def test_an_unread_frame_is_replaced_by_the_next_with_changes_merged():
+    import queue
+
+    events = queue.Queue(maxsize=4)
+    first = delta.Frame({"sequence": 1}, changes=(frozenset({"a", "b"}), ("x",)))
+    waiting = delta.deliver(events, "host", first)
+    events.put_nowait(("host", {"type": "sounds"}))
+    second = delta.Frame({"sequence": 2}, changes=(frozenset({"x"}), ("b",)))
+    assert delta.deliver(events, "host", second, waiting) is first
+    assert events.qsize() == 2                       # replaced in place, not queued
+    peer, got = events.get_nowait()
+    assert got == {"sequence": 2}
+    assert got.changes == (frozenset({"a", "x"}), ("b",))
+    # Once read, the next frame queues afresh (the reader holds the last one).
+    third = delta.Frame({"sequence": 3}, changes=None)
+    assert delta.deliver(events, "host", third, got) is third and got == {"sequence": 2}
+
+
+def test_merged_changes():
+    a = (frozenset({"p", "q"}), ("r",))
+    b = (frozenset({"r"}), ("q",))
+    assert delta.merge_changes(a, b) == (frozenset({"p", "r"}), ("q",))
+    assert delta.merge_changes(None, b) is None and delta.merge_changes(a, None) is None

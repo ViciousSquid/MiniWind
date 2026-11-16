@@ -46,6 +46,10 @@ class PlayerContext:
     bot_target: object = None
     returning: bool = False
     mind: CompanionMind | None = None
+    #: Seconds until this character's next proximity pass (pickups, triggers,
+    #: location visits): ten a second, as the primary session's own, and
+    #: staggered so the party does not all run them on one tick.
+    proximity_wait: float = 0.0
 
 
 class PlayerLogic:
@@ -243,7 +247,7 @@ class CoopSession:
 
         from engine.player import Player
 
-        from ..runtime import MiniwindSession
+        from ..runtime import PROXIMITY_INTERVAL, MiniwindSession
 
         pid, profile = member["player_id"], member["profile"]
         origin = fio.player(self.logic)
@@ -320,6 +324,7 @@ class CoopSession:
             connected=member.get("connected", True),
             bot=bool(member.get("bot", False)),
         )
+        context.proximity_wait = (len(self.players) % 4) * PROXIMITY_INTERVAL / 4
         if context.bot:
             context.mind = CompanionMind(
                 (self.lobby.state or self.lobby.lobby.snapshot())["campaign_id"],
@@ -809,6 +814,7 @@ class CoopSession:
                 alive.append(actor)
         if not alive:
             return
+        alive_ids = {id(actor) for actor in alive}
         for thing in monsters:
             props = thing.properties
             if props.get("multiplayer_player") or props.get("dead"):
@@ -816,7 +822,7 @@ class CoopSession:
             # A retaliating NPC keeps its specific offender; ordinary hunters
             # choose the nearest living party member, never an invisible P1.
             target = props.get("_aggro_target")
-            if any(id(actor) == target for actor in alive):
+            if type(target) is int and target in alive_ids:
                 continue
             if not self.logic.monster_ai._hunts_player(thing):
                 continue
@@ -845,6 +851,11 @@ class CoopSession:
                         self.action(context, action, args)
                     except (ValueError, TypeError, KeyError, IndexError) as exc:
                         context.session.notify(str(exc)[:200], 4.0)
+            elif self._received_sequence < 0:
+                # The host has not sent this map's world yet: it is still
+                # loading it. Input sent now (sixty a second per player) only
+                # piles up in its queue, which disconnects us when full.
+                continue
             else:
                 self.sequence += 1
                 context.local_sequence = self.sequence
@@ -1069,6 +1080,20 @@ class CoopSession:
             context.frame = InputFrame()
             self._sync_actor(context)
             return
+        from ..runtime import PROXIMITY_INTERVAL
+
+        if not primary:
+            # The root rebuilt the shared actor index at the top of this tick.
+            # This session never runs tick() itself, so tell it the index is
+            # live: otherwise every nearest_* query scans the whole cast.
+            session._wi_live = getattr(self.root, "_wi_live", False)
+            session._wi_cache = None
+        context.proximity_wait -= delta
+        proximity = context.proximity_wait <= 0.0
+        if proximity:
+            context.proximity_wait += PROXIMITY_INTERVAL
+            if context.proximity_wait <= 0.0:
+                context.proximity_wait = PROXIMITY_INTERVAL
         frame = context.frame
         if not session.game.character.is_dead:
             session.logic.interaction_runtime.handle(False)
@@ -1085,19 +1110,8 @@ class CoopSession:
                         or target.properties.get("name")
                         or "object"
                     )
-            for marker in self.root._things_of_type("marker"):
-                props = marker.properties
-                if props.get("marker_kind") != "location":
-                    continue
-                if session._dist2d(context.physics.pos, marker.pos) <= float(
-                    props.get("discover_radius", 200)
-                ):
-                    self.party_quests.record(
-                        "visit",
-                        [props.get(k) for k in ("id", "name", "place_name")],
-                        session._thing_id(marker),
-                        context.player_id,
-                    )
+            if proximity:
+                self._record_visits(context)
         if not primary:
             session.game.tick(delta, session._sprint(delta))
             session._update_bow_draw(delta)
@@ -1113,10 +1127,11 @@ class CoopSession:
                 "_offhand_anim_time",
             ):
                 setattr(session, name, max(0.0, getattr(session, name, 0.0) - delta))
-            session._tick_pickups()
-            session._tick_spellbooks()
-            session._tick_triggers()
-            session._tick_locations()
+            if proximity:
+                session._tick_pickups()
+                session._tick_spellbooks()
+                session._tick_triggers()
+                session._tick_locations()
             session._age_lists(delta)
             session._sync_engine_health()
         session.toggle_block("block" in frame.held)
@@ -1145,6 +1160,27 @@ class CoopSession:
             session.tick_lockpicking(delta)
         context.previous = frame
         self._sync_actor(context)
+
+    def _record_visits(self, context):
+        """Count the location markers *context*'s character stands in towards
+        any active visit objective (the party's quests). The locations are
+        found again only when the scene's marker list changes."""
+        markers = self.root._things_of_type("marker")
+        cached = self.__dict__.get("_locations")
+        if cached is None or cached[0] is not markers or cached[1] != len(markers):
+            locations = [m for m in markers
+                         if m.properties.get("marker_kind") == "location"]
+            cached = self._locations = (markers, len(markers), locations)
+        session, pos = context.session, context.physics.pos
+        for marker in cached[2]:
+            props = marker.properties
+            if session._dist2d(pos, marker.pos) <= float(props.get("discover_radius", 200)):
+                self.party_quests.record(
+                    "visit",
+                    [props.get(k) for k in ("id", "name", "place_name")],
+                    session._thing_id(marker),
+                    context.player_id,
+                )
 
     def install_added_player(self, context):
         # A late arrival is put beside the current party at a collision-checked

@@ -89,6 +89,8 @@ class Connection:
         # sent: TCP delivers every byte in order, so the peer holds it.
         self.frames_out = FrameSender(cache)
         self.frames_in = FrameReceiver()
+        #: The world frame on the event queue not yet read (delta.deliver).
+        self._waiting = None
         self.outgoing = queue.Queue(maxsize=128)
         self._latest = None
         self._lock = threading.Lock()
@@ -129,6 +131,13 @@ class Connection:
         except queue.Full:
             raise ValueError("Peer exceeded the incoming message limit.")
 
+    def _frame(self, frame):
+        from .delta import deliver
+        try:
+            self._waiting = deliver(self.events, self.peer, frame, self._waiting)
+        except queue.Full:
+            raise ValueError("Peer exceeded the incoming message limit.")
+
     def _run(self):
         decoder = Decoder()
         pending = b""
@@ -166,8 +175,9 @@ class Connection:
                     for message in decoder.feed(raw):
                         if message["type"] == "_frame":
                             message, _fid = self.frames_in.take(message)
-                            if message is None:
-                                continue
+                            if message is not None:
+                                self._frame(message)
+                            continue
                         if message["type"] != "ping":
                             self._event(message)
                 if writable:
@@ -206,8 +216,14 @@ class Connection:
 
 
 class NetworkService:
+    #: Unread messages from every peer together. Each player's input arrives
+    #: about 60 times a second, so this is headroom for a game that stalls
+    #: (an autosave, a slow map load) -- when it is full, the next peer to
+    #: send is disconnected.
+    MAX_EVENTS = 4096
+
     def __init__(self):
-        self.events = queue.Queue(maxsize=1024)
+        self.events = queue.Queue(maxsize=self.MAX_EVENTS)
         self.connections = {}
         self.games = {}
         self.discovery = None

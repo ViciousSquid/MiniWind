@@ -46,8 +46,12 @@ def test_package_members_are_streamed_without_extraction(package, monkeypatch):
 @pytest.mark.parametrize("name", ["../escape.json", "/escape.json",
                                   r"assets\escape.json", "assets/../escape.json"])
 def test_unsafe_members_are_not_mounted(package, name):
+    # Written byte for byte: zipfile turns a backslash into "/" when it
+    # builds a ZipInfo on Windows, which would store a harmless name there.
+    member = zipfile.ZipInfo(name)
+    member.filename = name
     with zipfile.ZipFile(package, "a") as zf:
-        zf.writestr(name, "escape")
+        zf.writestr(member, "escape")
     asset_archives.refresh()
 
     assert asset_archives.archive_of(name) is None
