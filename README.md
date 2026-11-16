@@ -42,7 +42,7 @@ consequence of what it saw — see *The reactive simulation* below.
 on one shared screen, using local controllers, LAN or direct Internet joining.
 The host can fill unused slots with AI companions, including three bots when
 playing alone.
-Choose each player's head in the launcher lobby, then ready up before starting.
+A friend code takes you straight to the lobby with a character; press Ready, and the host starts.
 Network discovery starts only when Multiplayer is visible. See
 [multiplayer setup, controls, quests and campaign saves](docs/multiplayer.md).
 

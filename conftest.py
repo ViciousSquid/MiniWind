@@ -75,6 +75,11 @@ def pytest_addoption(parser):
         "--run-benchmarks", action="store_true", default=False,
         help="run the renderer/engine benchmarks (they report timings and are "
              "excluded from the normal suite)")
+    parser.addoption(
+        "--run-soak", action="store_true", default=False,
+        help="run the soak tier (long repeated cycles that check memory, "
+             "resource counts and per-cycle cost stay flat; excluded from the "
+             "normal suite). FIO_SOAK_SCALE multiplies the cycle counts.")
 
 
 #: Where MiniWind's own tests live: the game layer's, and the engine seams'
@@ -93,12 +98,18 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if str(item.fspath).startswith(_MINIWIND_TEST_ROOTS):
             item.add_marker(miniwind)
-    if config.getoption("--run-benchmarks"):
-        return
-    skip = pytest.mark.skip(reason="benchmark tier: pass --run-benchmarks to run it")
-    for item in items:
-        if "benchmark" in item.keywords:
-            item.add_marker(skip)
+    opt_in = (
+        ("benchmark", "--run-benchmarks",
+         "benchmark tier: pass --run-benchmarks to run it"),
+        ("soak", "--run-soak", "soak tier: pass --run-soak to run it"),
+    )
+    for keyword, option, reason in opt_in:
+        if config.getoption(option):
+            continue
+        skip = pytest.mark.skip(reason=reason)
+        for item in items:
+            if keyword in item.keywords:
+                item.add_marker(skip)
 
 
 # ---------------------------------------------------------------------------

@@ -248,6 +248,12 @@ class Renderer(Protocol):
         path disables the panorama and restores the renderer's clear colour.
         """
 
+    def invalidate_reflection_probes(self) -> None:
+        """Retake the snapshots of the map's reflection probes (EntityTable
+        rows with ``ENT_PROBE``) on the next frame. The host calls it when a
+        map has loaded and when Play starts. A renderer that does not draw
+        probe reflections does nothing."""
+
     # -- resources -------------------------------------------------------------
     def load_texture(self, texture_name: str, subfolder: str) -> int:
         """Load (or return the cached) texture; returns its GL name, 0 on failure."""

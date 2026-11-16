@@ -784,9 +784,12 @@ class Launcher(QDialog):
     # -- finishing ---------------------------------------------------------
     def _multiplayer(self):
         from .multiplayer import MultiplayerDialog
-        dialog = MultiplayerDialog(self.banner.root_dir if hasattr(self.banner, "root_dir")
-                                   else os.path.dirname(os.path.abspath(self.settings.path)),
-                                   self.settings.path, self)
+        root = (self.banner.root_dir if hasattr(self.banner, "root_dir")
+                else os.path.dirname(os.path.abspath(self.settings.path)))
+        # The player's last co-op character is kept beside their saves, so
+        # the next party starts with it already chosen.
+        dialog = MultiplayerDialog(root, self.settings.path, self,
+                                   profile_path=os.path.join(root, "saves", ".multiplayer-profile.json"))
         if dialog.exec_() == QDialog.Accepted and dialog.handed_off:
             self._finish(PLAY)
 

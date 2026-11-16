@@ -4,7 +4,7 @@ import json
 import zipfile
 
 from editor.sky_assets import store_sky_image_in_project
-from engine.package_assets import map_assets
+from engine.package_assets import ProjectAssets, map_assets
 from editor.package_exporter import PackageExporter
 
 
@@ -74,3 +74,12 @@ def test_selecting_same_external_sky_image_reuses_existing_copy(tmp_path):
 
     assert relative == "assets/backgrounds/nebula.webp"
     assert sorted(path.name for path in backgrounds.iterdir()) == ["nebula.webp"]
+
+
+def test_project_assets_resolves_bare_background_filename(tmp_path):
+    image = tmp_path / "assets" / "backgrounds" / "nebula.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"panorama data")
+
+    with ProjectAssets(tmp_path) as assets:
+        assert assets.resolve("nebula.jpg") == "assets/backgrounds/nebula.jpg"

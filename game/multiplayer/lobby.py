@@ -14,7 +14,14 @@ from pathlib import Path
 from . import MAX_PARTY, MAX_PLAYERS, PROTOCOL_VERSION
 from . import friend_code
 from .compatibility import map_hash
-from .model import LATE_ARRIVAL_CLOSED, Lobby, LobbyError, content_signature, map_path
+from .model import (
+    LATE_ARRIVAL_CLOSED,
+    Lobby,
+    LobbyError,
+    content_signature,
+    default_profile,
+    map_path,
+)
 from .transport import GAME_PORT, NetworkService
 
 
@@ -77,6 +84,10 @@ class LobbyController:
         self.join_invitation = 0
         self.public_port = 0
         self.reply = ""                 # a joiner's reply code, once found
+        #: The character this computer enters a lobby with (set by the UI).
+        #: A joiner sends it with its hello and the host puts it straight
+        #: into the party, so nobody is in a lobby without a character.
+        self.profile = None
         self._wrong_invitations = []    # (time, invitation)
         self._code_thread = None
 
@@ -235,6 +246,22 @@ class LobbyController:
             self._wrong_invitations.append((now, invitation))
             raise LobbyError("That friend code is out of date: ask the host for the new one.")
 
+    def _welcome(self, owner, profile):
+        """A computer joining the lobby with no character in the party gets
+        the one it asked for at once (with a free head, should its own be
+        taken), so it is never in the party as a mere onlooker. A party
+        that has started leaves the choice to the newcomer's lobby (the
+        character cannot be changed once it is in the game)."""
+        if self.started or not isinstance(profile, dict) or self.lobby.owned(owner):
+            return
+        if self.lobby.humans() >= MAX_PLAYERS:
+            raise LobbyError("The party is full (four players).")
+        profile = dict(profile, device="keyboard")
+        try:
+            self.lobby.add(owner, profile, fit=True)
+        except LobbyError:
+            self.lobby.add(owner, default_profile(), fit=True)
+
     def resume_campaign(self, path):
         """Load a co-op roster, or explicitly copy a solo save into this party."""
         if self.lobby is None or self.lobby.members or self.started:
@@ -335,9 +362,9 @@ class LobbyController:
     def _request(self, owner, message):
         op = message.get("op")
         if op == "add":
-            self.lobby.add(owner, message.get("profile"))
+            self.lobby.add(owner, message.get("profile"), fit=True)
         elif op == "add_bot":
-            self.lobby.add(owner, message.get("profile"), bot=True)
+            self.lobby.add(owner, message.get("profile"), bot=True, fit=True)
         elif op == "update":
             self.lobby.update(owner, message.get("player_id"), message.get("profile"))
         elif op == "remove":
@@ -352,8 +379,11 @@ class LobbyController:
             self.lobby.start(owner)
             self.started = True
             self.network.advertisement = None
+            # Only to computers with a character in the party: anyone else
+            # stays in the lobby, where they can still join (late arrival).
             self.network.broadcast(
-                {"type": "start", "state": self.lobby.snapshot()}, peers=self.peers
+                {"type": "start", "state": self.lobby.snapshot()},
+                peers={p: o for p, o in self.peers.items() if self.lobby.owned(o)},
             )
         else:
             raise LobbyError("Unknown lobby action.")
@@ -387,6 +417,7 @@ class LobbyController:
                             "signature": self.signature,
                             "identity": self.identity,
                             "invite": int(self.join_invitation or 0),
+                            "profile": self.profile,
                         },
                     )
                 else:
@@ -419,7 +450,9 @@ class LobbyController:
                         raise LobbyError(LATE_ARRIVAL_CLOSED)
                     if self.lobby.humans() >= MAX_PLAYERS:
                         raise LobbyError("The party is full.")
+                self._welcome(owner, message.get("profile"))
                 self.peers[peer] = owner
+                self.lobby.present.add(owner)
                 self._pending_peers.pop(peer, None)
                 for member in self.lobby.owned(owner):
                     member.connected = True
@@ -466,7 +499,11 @@ class LobbyController:
                 self.state = state
                 self.map_name = state["map"]
                 self.network.stop_browser()
-                if kind == "start":
+                # Only a computer with a character enters the game; without
+                # one this is still the lobby (of a party that has started).
+                if kind == "start" and any(
+                    m.get("owner") == self.owner for m in state.get("members", [])
+                ):
                     self.started = True
                 return True
             if kind in ("error", "connection_error"):
@@ -482,6 +519,7 @@ class LobbyController:
                     )
                 else:
                     owner = self.peers.pop(peer, None)
+                    self.lobby.present.discard(owner)
                     for member in self.lobby.owned(owner):
                         member.connected = False
                         member.ready = False

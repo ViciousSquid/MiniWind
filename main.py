@@ -204,7 +204,7 @@ if __name__ == "__main__":
         print(f"       Logging to {log_file}")
     # Index the asset archives before Qt asks for the splash or icons.
     from engine.asset_archives import asset_exists, prepare_asset_archives
-    from engine.asset_qt import load_icon, load_pixmap
+    from engine.asset_qt import load_icon, load_pixmap, portable_stylesheet
     prepare_asset_archives(root_directory)
     
     # Set the application ID for Windows taskbar (required for Windows 7+)
@@ -312,7 +312,9 @@ if __name__ == "__main__":
     # callback, losing the open map.
     from editor.debug_console import install_excepthook
     install_excepthook()
-    app.setStyleSheet(dark_stylesheet)
+    # Qt builds without QtSvg (Windows on ARM) draw the sheet's check marks
+    # and arrows from their pre-rendered PNGs instead.
+    app.setStyleSheet(portable_stylesheet(dark_stylesheet))
 
     # The user's font size, applied up front so the splash and a game's
     # launcher match the editor rather than only the main window honouring it.

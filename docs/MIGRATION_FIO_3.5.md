@@ -1,8 +1,9 @@
-# MiniWind → Fio 3.5 migration record (3.5.0.1511)
+# MiniWind → Fio 3.5 migration record (3.5.0.1611)
 
 MiniWind's engine moved from Fio 3.0.0.1010 (taken up to upstream commit
 `f445fac1`, plus later per-file backports) to **Fio 3.5.0.1111**, then to
-**Fio 3.5.0.1211** (Milestone 7), and now to **Fio 3.5.0.1511** (Milestone 8).
+**Fio 3.5.0.1211** (Milestone 7), to **Fio 3.5.0.1511** (Milestone 8), and now
+to **Fio 3.5.0.1611** (Milestone 10, at the end of this record).
 The game
 layer (`game/`) needed four source changes: `multiplayer/replication.py` and
 `multiplayer/world.py` (a door's live position and state rows, below),
@@ -20,7 +21,8 @@ the concern.
 | Fio (then) | `3.5.0.1111_CANARY` | `a278e956` (26 commits past `9b2dca95`) |
 | Fio (then) | `3.5.0.1211_Latest` | `77387caaeba284b5467a180b1ba39e147aace86d` (40 commits past `a278e956`) |
 | Fio (then) | `3.5.0.1211_Latest` | `bcf4d297d9d78e5269428353db36d30ab3aca19e` (23 commits past `77387caa`: Play's mouse grab) |
-| Fio (now) | `3.5.0.1511_Latest` | `a11848bffd272d7d3deb180451856849cefed9f2` (73 commits past 1211) |
+| Fio (then) | `3.5.0.1511_Latest` | `a11848bffd272d7d3deb180451856849cefed9f2` (73 commits past 1211) |
+| Fio (now) | `Canary_1611` | `68d052b9` (52 commits past `a11848bf`; version 3.5.0.1611) |
 | Common upstream ancestor | Fio `3.0.0.1010_Latest` | `f445fac1be58a1011da276a77de00ef9487add0a` |
 
 `backup_3.0.0.3010` is an ancestor of `41eeb2c` (22 commits behind it), so
@@ -453,3 +455,179 @@ MiniWind's map-owned panorama workflow is aligned with Fio Canary through
 The built-in panorama assets are byte-identical to Fio Canary. The legacy
 `assets/backgrounds/void-panorama.webp` file is removed; existing maps that
 refer to it are migrated to the q80 preset on load.
+
+
+## Milestone 10 — Fio 3.5.0.1611 (`Canary_1611`), and a performance audit (2026-11-16)
+
+MiniWind's engine is now Fio `Canary_1611` at `68d052b9`: the 52 commits after
+the 3.5.0.1511 baseline (`a11848bf`), version 3.5.0.1611. Milestone 9 had
+already taken the first of them (the map-owned sky, to `84f2dca1`); this takes
+the rest. Merged three-way as before, each file against its closest upstream
+ancestor, then checked both ways (five test files sat closest to a mid-way
+commit and silently lost upstream additions; they were re-merged against
+`a11848bf`).
+
+What it brings:
+
+* **Decal text.** A Decal entity paints words over its image, or alone, in
+  Fio's fonts, black or white, sized and offset inside a plate, changeable by
+  IO (`SetText`, `ClearText`, `SetFont`, `SetTextColor`); `engine/decal_text.py`.
+  Decal images are read the right way round and may be JPEGs; three sign
+  textures are added. A package carries the font its signs use.
+* **Reflection probes.** A `ReflectionProbe` entity (Environment): water whose
+  centre is inside its radius reflects a snapshot taken from the probe instead
+  of the sky. Taken when the map loads, when Play starts and when the probe
+  moves; nothing is redrawn per frame.
+* **Sky.** The panorama is drawn from a cube map built once
+  (`[Renderer] sky_cubemap_size`, 384), behind the opaque world rather than
+  under it, so a covered pixel never shades it.
+* **Water.** It reflects the map's sky panorama when the map has one; box
+  water does not shade the walls its own top surface covers; caustics and foam
+  are computed on the top surface only; the reflection march steps in clip
+  space. Wet decals reflect glossily rather than as a mirror.
+* **Sprites.** The sprite texture array is filled up front (changed for
+  MiniWind; see the audit below).
+* **Editor.** A map's sky is resolved read-only and repaired only at an edit,
+  inside that edit's undo step (a UI refresh no longer edits the map);
+  superseded property pages are destroyed; the stylesheet's SVG controls have
+  PNG fallbacks where Qt has no QtSvg (`assets/ui/controls/raster/`); the
+  loading overlay's backdrop is stretched at paint time; Big World's debug
+  overlay is off by default.
+* **Tests.** An opt-in soak tier (`tests/soak`, `--run-soak`): Play/Stop
+  sessions, editor history, map round trips, physics activation, decals and
+  sky switches, each checked for flat memory, resource counts and per-cycle
+  time.
+
+Where MiniWind differs from Fio in what was merged:
+
+| Fio 3.5.0.1611 | MiniWind |
+|---|---|
+| Water reflects the panorama or Fio's procedural sky | MiniWind's game sky (night, cloud cover, dusk, the moon and stars) stays; a map with a panorama reflects that instead, and the moon and stars are not added to it (`water.frag`: `skyColor`, `skyLights`) |
+| A water brush's "High quality" checkbox places a reflection probe | MiniWind has no per-brush quality (one graphics setting): the checkbox and its handler are not taken. A probe is placed by hand; `make_water_probe` / `water_probe_of` are present, unused |
+| A monster's fight frames are interned for each of eight facings | One facing: shooting and dead only. They are filed under the monster that shows them (`EntityTable.fight_frame_ids`) |
+| The sky is stored on a PlayerStart | Also read from an older MiniWind map's Game Settings (`void_background`) without editing it; moved to the Primary PlayerStart at the first edit. The damaged `void-panorama.webp` still resolves to the q80 file |
+| The panorama is on texture unit 15 | So is MiniWind's terrain biome map, in the terrain program only, which binds it at every terrain draw |
+| Windows Qt tiers run the whole suite in six shards | `tools/run_qt_suite_shard.py` and its test are in; MiniWind's `tests-windows.yml` is unchanged |
+
+Not taken: the Android player's decal changes, the Deathmatch plugin's test,
+Fio's refreshed demo maps (`_SHOWCASE` and the `Terrain_Test` maps, version 5),
+the wiki pages. Tests that read those maps build the level in code, use the
+fixture copy, or keep MiniWind's own expectations (the brush-model drift
+counts). Pillow stays at 13.0.0.
+
+### Performance audit
+
+Same host, software GL (llvmpipe under Xvfb), `main` (`a2c389d`) against this
+branch. Three tools, all in the tree:
+
+* `tools/perf_gate.py`: every probe in a fresh process pinned to one core,
+  base and head interleaved, five rounds, a one-sided Mann-Whitney test on the
+  round medians. Its probes read Fio's example maps from `maps/`, where
+  MiniWind does not keep them, so five of the eight failed here and the
+  gameplay probe hung; they now find the fixture copies, skip a map a tree
+  does not have, and measure `miniwind_world` and `cave01` too
+  (`tools/perf_probes.py`; `tools/bench_water.py` likewise).
+* `game/tools/audit_launch.py`: `main.py` as shipped, the launcher answered,
+  a new character, 30 s walked through Millbrook at 960x540; three runs a
+  tree, alternating.
+* `tools/bench_water.py` (new in 1611): the water pass alone, fixed cameras.
+
+**The upgrade as merged had one regression, in MiniWind only.** Fio now
+imports, when a map's sprite recipes change, every image the sprite pass may
+draw for every row of the map and every monster's fight frames, so that no
+sprite is imported -- and the array regrown, re-uploading every layer -- as it
+first comes into view. Fio's maps are small. MiniWind's world has 890 sprite
+rows and about 500 monster recipes, and the opening draws 19 images:
+
+| Each tree's first run (cold caches) | `main` | 1611 as merged |
+|---|---|---|
+| Play started | 5.9 s | 9.3 s |
+| Sprite array | 19 layers of 128 x 128, 2.7 MB | 252 layers of 512 x 512, 341 MB |
+| Resident memory after 30 s | 1,476 MB | 2,013 MB |
+
+Two things made it so large. The warm-up took the whole map's rows, and every
+`msprite_` recipe in the table (485 of 500). And every layer is as large as
+the largest image: among MiniWind's 128 x 128 heads, the one 341 x 512 image
+was Fio's stock corpse (`sprites/monsters/human/dead.png`), the dead frame of
+every actor with no death sprite of its own. So:
+
+* the warm-up takes the rows within the camera's view distance (a map the
+  view distance covers is still warmed whole, as Fio's are, and so is any map
+  while it is edited); what is further off is imported when first drawn, as
+  before, into the room `sprite_layers.reserve_all` leaves;
+* fight frames are found per monster, and MiniWind does not warm them
+  (`PassesMixin.WARM_FIGHT_FRAMES`): an actor's attack frame is its own head.
+
+With that the array is 75 layers of 128 x 128, 21 MB, and over three
+alternating runs each (medians; warm caches, so lower than the table above):
+
+| | `main` | 1611 |
+|---|---|---|
+| Play started | 5.18 s | 5.31 s |
+| First gameplay frame | 6.02 s | 6.09 s |
+| Frame interval p50 / p95 / p99 | 88.8 / 104.3 / 113.1 ms | 88.1 / 100.2 / 106.1 ms |
+| Paint p50 | 77.9 ms | 77.4 ms |
+| Logic tick p50 / p99 | 1.6 / 8.1 ms | 1.6 / 7.6 ms |
+| Hitches in 30 s (a frame over the median by 16.7 ms) | 15 | 5 |
+| Their excess | 350 ms | 126 ms |
+| Resident memory | 1,295 MB | 1,298 MB |
+
+Launch and frame time are level. Fewer frames run long; the part of that
+which was measured is texture loading during play (44 ms to 6 ms: what is
+near is imported before the first frame), the rest is not attributed.
+
+**The gate:** 102 metrics, 98 unchanged, none slower in MiniWind's own maps.
+`miniwind_world`: frame 32.2 to 32.3 ms, logic 0.86 ms both; `cave01`: 8.9 to
+8.8 ms. Fio's Big World test map paints 16% faster (its debug overlay is off).
+One metric is flagged, +3.0% (5.14 to 5.29 ms) of submission CPU for a still
+frame of Fio's showcase: the per-brush work of the new covered-wall skip on
+box water. It buys rasteriser time the metric does not count, and MiniWind's
+water is all top-surface-only, which never takes that path.
+
+**Water** (960x540, the pass with its rasteriser time, one llvmpipe thread):
+
+| Scene | `main` | 1611 |
+|---|---|---|
+| Open water, no panorama | 72.0 ms | 70.9 ms |
+| Open water, panorama | 71.8 ms (frame 85.7) | 66.6 ms (frame 77.0) |
+| Showcase pool, no panorama | 81.5 ms | 80.0 ms |
+| Showcase pool, panorama | 81.1 ms (frame 115.3) | 72.8 ms (frame 101.8) |
+
+**Memory over time.** The new soak tier passes on MiniWind (its Play/Stop
+test plays the fixture showcase, given a sky). Its map round-trip test at
+first read the open world as a native leak: loading it over and over, resident
+memory climbs about 15 MB a load, then levels off some 200 MB up after about
+fifteen loads (forty were run), with the Python object count flat throughout
+-- the allocator settling, and the same on `main`. The world is round-tripped
+once for its fixed point and left out of that test's memory loop.
+
+**Where the time goes now** (the 30 s walk; software GL, so the rasteriser
+dominates and these are not a GPU's proportions): of the main thread's
+samples, 65% are in the renderer's passes -- most in the grass draw and in the
+water's frame copy, which is where llvmpipe finishes the frame so far -- 13%
+in Qt (presenting the frame, events), 2% painting the HUD. Before Play:
+texture loads 1.1 s (343 textures), `toggle_play_mode` 1.0 s, the
+level-texture preload 0.5 s, `on_play_start` 0.5 s, the first music track
+0.2-0.5 s. The logic tick is 1.6 ms at the median; sampled, about a seventh of
+its Python is `WorldIndex.rebuild`, which snapshots every actor each tick.
+
+**Found, not changed:**
+
+* **One oversized sprite sets the size of every layer.** A dead actor with no
+  `custom_dead` is drawn with Fio's 341 x 512 stock frame. When the sprite
+  pass first draws one, the array is rebuilt at 512 x 512: sixteen times the
+  memory of every head layer, and a re-upload of all of them, mid-play
+  (reproduced with three head actors: 128 x 128 while they live, 512 x 512
+  once one is dead; nothing died in the 30 s runs above). This was so before the upgrade; the bounded warm-up
+  only keeps it from happening at Play's start. A head-sized death frame for
+  MiniWind's actors removes it (`heads/dead.png`, 128 x 128, is in the tree
+  and drawn by nothing); that is art and a game decision, not an engine one.
+* **A map's first play paints its world-map picture during play**: 12-13
+  hitches, 250-370 ms in all, in the first 30 s, once per map (`cache/`).
+* **MiniWind's game sky costs the water about 10% a pixel** over Fio's
+  procedural sky (70.9 ms against 64.5 ms on the open-water scene). It is the
+  look; `[Renderer] water_quality = low` is the existing way out.
+* `WorldIndex.rebuild` every tick, above: correct and already tuned, but a
+  cost that grows with the cast rather than with what moved.
+* Every GL number here is llvmpipe's. Hardware parity (M5, Adreno, a desktop
+  GPU) is still unverified, as before.

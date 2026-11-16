@@ -811,9 +811,9 @@ It does nothing for anything else you do, and hearing is unchanged.
   and **up to four AI companions on top** (the host adds them in the lobby;
   they never take a player's place). Each member has their own colour; with
   more than four, the party cards go compact (name, then health).
-* **Friend codes** are the main way to play together. Host game gives a
+* **Friend codes** are the main way to play together. Host a game gives a
   code such as `7K2QD-M4XA9-0RT3V` (Copy code); a friend pastes it into
-  Join, lands in the lobby and makes their character there. The code holds
+  Join a friend and is in the lobby (a whole code joins by itself). The code holds
   the host's Internet address, the party's port and a random invitation,
   with a check character that catches a mistyped letter or two swapped.
   It connects over **UDP**, which gets through home routers: the joiner's
@@ -824,6 +824,14 @@ It does nothing for anything else you do, and hearing is unchanged.
   server asked from the game's own socket (`[Multiplayer] stun_server`;
   empty turns it off), else the computer's own network address (LAN or VPN
   only). Nothing is sent until you host or join.
+* **Into the lobby with a character.** Everyone arrives in the lobby with a
+  character already in the party -- the one they played last, with a free
+  head should theirs be taken -- and changes to it apply as they are made.
+  A joiner presses Ready; the host's Start adventure is its own Ready. The
+  host cannot start while a connected computer has no character or a friend
+  is not ready (the lobby says who): nobody enters as an onlooker. Changing
+  your character clears your own readiness only
+  (`game/multiplayer/model.py`).
 * **TCP still works**: a typed address (`1.2.3.4[:port]`) and games found on
   the local network join over TCP, on the same port.
 * **The code is the key.** A joiner from outside the host's own network must
@@ -839,7 +847,8 @@ It does nothing for anything else you do, and hearing is unchanged.
   or replaced by the next frame), and a message that will not decode is
   skipped.
 * **Late arrival** (the host's choice in the lobby, on by default): players
-  may join while the adventure is running, while there is room. Off, they
+  may join while the adventure is running, while there is room (they choose
+  their character in the lobby, then Join the adventure). Off, they
   join only in the lobby before Start; anyone new afterwards is told "Game
   has already started and does not allow late arrival".
 

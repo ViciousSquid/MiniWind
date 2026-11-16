@@ -38,8 +38,25 @@ def _qt():
     return QApplication.instance() or QApplication([])
 
 
+#: Where a probe's map may be: the tree's shipped maps, then the Fio example
+#: maps a game built on Fio keeps only as test fixtures (MiniWind).
+MAP_FOLDERS = ('maps', os.path.join('tests', 'fixtures', 'maps'))
+
+
+def _map_path(name):
+    """*name* in the first of :data:`MAP_FOLDERS` that has it, or None."""
+    for folder in MAP_FOLDERS:
+        path = os.path.join(folder, name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def _maps(name):
-    with open(os.path.join('maps', name)) as handle:
+    path = _map_path(name)
+    if path is None:
+        raise FileNotFoundError('%s is in none of %s' % (name, ', '.join(MAP_FOLDERS)))
+    with open(path) as handle:
         return json.load(handle)['brushes']
 
 
@@ -440,8 +457,11 @@ def probe_frames(out, frames=150):
 # Representative gameplay: the real editor host (GL)
 # ---------------------------------------------------------------------------
 
+#: A map the tree does not have is skipped (MonsterTest in MiniWind; the
+#: game's own world and a cave in Fio), so one probe serves both.
 GAMEPLAY_MAPS = (('show', '_SHOWCASE.json'), ('monster', 'MonsterTest.json'),
-                 ('big', 'BigWorld_streaming_test.json'), ('office', 'Office_Corridor.json'))
+                 ('big', 'BigWorld_streaming_test.json'), ('office', 'Office_Corridor.json'),
+                 ('world', 'miniwind_world.json'), ('cave', 'cave01.json'))
 
 
 def probe_gameplay(out, frames=240):
@@ -473,10 +493,13 @@ def probe_gameplay(out, frames=240):
     from PyQt5.QtCore import Qt
     bench = bc.Bench(app)
     for label, name in GAMEPLAY_MAPS:
+        map_path = _map_path(name)
+        if map_path is None:
+            continue
         window, view = bench.window, bench.view
         gc.collect()
         logic = bench._halt_logic_thread()
-        window.load_level_file(os.path.join(os.getcwd(), 'maps', name))
+        window.load_level_file(os.path.join(os.getcwd(), map_path))
         app.processEvents()
         window.enter_play_mode()
         for thread in threading.enumerate():

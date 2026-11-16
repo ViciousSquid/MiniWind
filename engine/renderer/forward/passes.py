@@ -1420,6 +1420,83 @@ class PassesMixin:
     # --------------------------------------------------------------------------
     # Sprites, billboards and glasses
     # --------------------------------------------------------------------------
+    def _water_probe_textures(self, table, brushes):
+        """Per water brush, the snapshot of the nearest reflection probe whose
+        radius holds the brush's centre (0: none, the sky as usual), or None
+        when no water is near a probe -- the common case, which changes
+        nothing about the pass."""
+        frame = self._probe_frame
+        if frame is None or self._probe_capture_pass or not len(brushes):
+            return None
+        positions, radii, textures = frame
+        centres = np.asarray(table.bounds[brushes, 0:3], dtype=np.float64)
+        d2 = ((centres[:, None, :] - positions[None, :, :]) ** 2).sum(axis=2)
+        inside = (d2 <= (radii * radii)[None, :]) & (textures > 0)[None, :]
+        if not inside.any():
+            return None
+        nearest = np.where(inside, d2, np.inf).argmin(axis=1)
+        return np.where(inside.any(axis=1), textures[nearest], 0)
+
+    #: Whether the warm-up below also imports the frames a fight switches the
+    #: warmed monsters to (EntityTable.fight_frame_ids), as Fio does. Off in
+    #: MiniWind: an actor's attack frame is its own head, already imported,
+    #: and its dead frame is Fio's stock corpse, 341 x 512 among 128 x 128
+    #: heads -- every layer is as large as the largest image, so importing it
+    #: at Play's start made each of them sixteen times the size (a 2.7 MB
+    #: array became 341 MB) for a frame most play never shows. It is imported
+    #: when a corpse is first drawn, as it always was.
+    WARM_FIGHT_FRAMES = False
+
+    def _warm_sprite_layers(self, table, slots, play_mode, show_sprites):
+        """Put every image the sprite pass may draw for *slots* into the layer
+        array (engine.sprite_layers) in one import, in view or not, hidden or
+        not. Done when the table's sprite recipes change -- the map loads,
+        Play starts, something new appears -- not per frame. Imported one at a
+        time as each sprite first came into view, the array grew while it
+        filled and every growth re-uploaded every layer: 46 and 130 ms frames
+        into _SHOWCASE's Play.
+
+        *slots* are the things within the camera's view distance, not the
+        whole map's (Fio 3.5.0.1611 warmed every row, and every monster
+        recipe in the table). A map the view distance covers is warmed whole,
+        as Fio's are. MiniWind's world is not: its 890 sprite rows and ~500
+        recipes made that one import 252 layers -- 3.4 s before Play started
+        and 540 MB resident -- for the 19 images the opening draws. What is
+        further off is imported when it is first drawn, as before (the array
+        has room for it: sprite_layers.reserve_all)."""
+        if table is None or not len(slots) or 'sprite_layered' not in self.shaders:
+            return
+        recipes = table.sprite_recipes()
+        seen = self._sprite_warm_seen
+        entry = seen.get(id(recipes))
+        if entry is not None and entry[0] is recipes and entry[1] == len(recipes):
+            return
+        if len(seen) >= 4:              # the render buffers' tables, and a spare
+            seen.clear()
+        seen[id(recipes)] = (recipes, len(recipes))
+        from engine.entity_table import classify_slots
+        _models, sprites = classify_slots(
+            table, slots, np.zeros(len(table.class_bits), dtype=bool),
+            play_mode, show_sprites)
+        if not len(sprites):
+            return
+        keys = table.sprite_key_id[sprites]
+        if play_mode and self.WARM_FIGHT_FRAMES:    # nothing fights in the editor
+            keys = np.concatenate((keys, np.asarray(table.fight_frame_ids(keys),
+                                                    dtype=keys.dtype)))
+        keys = keys[keys >= 0]
+        gl_ids = self._sprite_gl_ids(table)
+        if not len(keys) or not len(gl_ids):
+            return
+        textures = np.unique(gl_ids[keys])
+        textures = textures[textures > 0]
+        layers = self._sprite_layer_array()
+        # Never more than the array can hold: an import that does not fit
+        # turns the array off for good (SpriteLayers.layers_for), whereas
+        # sprites imported as they are seen may never all be on screen.
+        if len(textures) and layers.count + len(textures) <= layers._layer_limit():
+            layers.layers_for(textures)
+
     @timed_pass('sprites')
     def draw_sprites_instanced(self, projection, view, table, slots,
                                gl_ids=None, camera_pos=None, mirror=None):
@@ -2306,6 +2383,32 @@ class PassesMixin:
             float(scene_height),
         )
 
+        # The map's sky panorama, when it has one, is what all its water
+        # reflects (water.frag skyColor, high quality and cheap alike) -- the
+        # texture the sky pass already holds, on a unit of its own. No sky:
+        # the procedural sky, exactly as before. Water inside a reflection
+        # probe's radius reads the probe's snapshot there instead: the same
+        # kind of texture, read the same way.
+        panorama = self._background_panorama_texture()
+        probe_skies = self._water_probe_textures(table, brushes)
+        unit = self._panorama_texture_unit
+        if panorama or probe_skies is not None:
+            gl.glUniform1i(uniforms['skyPanorama'], unit)
+        if panorama:
+            gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, panorama)
+        sky_loc = uniforms['reflectSky']
+        gl.glUniform1i(sky_loc, 1 if panorama else 0)
+        bound_sky = panorama
+        # High-quality box water: side-wall fragments behind the (opaque) top
+        # surface are not shaded (water.frag main). The test runs in the
+        # box's unit space, so the camera is taken into it per brush.
+        skip_loc = uniforms['skipCoveredSides']
+        local_eye_loc = uniforms['localEye']
+        margin_loc = uniforms['sideSkipMargin']
+        gl.glUniform1i(skip_loc, 0)
+        eye = np.array((*self._camera_xyz(camera_pos), 1.0))
+
         opacity_loc = uniforms['waterOpacity']
         reflectivity_loc = uniforms['waterReflectivity']
         fresnel_loc = uniforms['fresnelIntensity']
@@ -2353,6 +2456,14 @@ class PassesMixin:
             upload_model(model_loc, i)
             if normal_mat_loc >= 0:
                 upload_normal(normal_mat_loc, i)
+            if probe_skies is not None:
+                sky = int(probe_skies[i]) or panorama
+                if sky != bound_sky:
+                    gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, sky)
+                    if bool(sky) != bool(bound_sky):
+                        gl.glUniform1i(sky_loc, 1 if sky else 0)
+                    bound_sky = sky
 
             opacity = float(params[i, 0])
             fresnel = float(params[i, 1])
@@ -2416,8 +2527,21 @@ class PassesMixin:
                 continue
 
             if not bool(planes[i]):
+                # The walls are drawn before the top surface; with depth and
+                # high quality that surface is opaque where it covers them.
+                skip = has_depth and bool(high_quality[i])
+                if skip:
+                    local = np.linalg.solve(
+                        models[i].reshape(4, 4).T.astype(np.float64), eye)
+                    gl.glUniform3f(local_eye_loc, float(local[0]),
+                                   float(local[1]), float(local[2]))
+                    gl.glUniform1f(margin_loc,
+                                   amp / max(float(sizes[i, 1]), 1.0e-6))
+                    gl.glUniform1i(skip_loc, 1)
                 gl.glBindVertexArray(cube_vao)
                 gl.glDrawArrays(gl.GL_TRIANGLES, 0, 24)
+                if skip:
+                    gl.glUniform1i(skip_loc, 0)
             if surface_vao:
                 gl.glBindVertexArray(surface_vao)
                 glraw.draw_elements(gl, 

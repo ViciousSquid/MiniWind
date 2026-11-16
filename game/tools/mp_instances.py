@@ -5,8 +5,10 @@ Real multiplayer across separate game instances (one OS process each).
 
 The host process opens a party, gets a friend code and writes it to the
 output folder; each client process reads the code, joins with it (over UDP;
-``--tcp`` joins with the same code over TCP instead), makes a
-character and readies up; the host starts the adventure; then every
+``--tcp`` joins with the same code over TCP instead) bringing its
+character -- which the host puts in the party at once, as the launcher's
+lobby does -- and readies up; the host starts the adventure (its own Start
+is its Ready); then every
 instance loads the world (its own MiniWind, its own window) and plays for a
 while, walking its own character. Each instance writes what it saw --
 every party member's position, on its own screen, the transport and the
@@ -159,14 +161,13 @@ def host_main(args):
     _log(out, role, f"code {controller.code} (stale {stale})")
     controller.request("add", profile=_profile(0))
     expected = 1 + args.clients
+    from game.multiplayer.model import start_blocker
 
-    def ready_up():
-        lobby = controller.lobby
-        if len(lobby.members) == expected and not all(m.ready for m in lobby.owned(controller.owner)):
-            controller.request("ready", ready=True)
-
-    if not _pump(controller, lambda: controller.lobby.can_start and len(controller.lobby.members) == expected,
-                 240, out, role, ready_up):
+    # As in the launcher: the host presses Start once nothing holds it back
+    # (every friend has a character and is ready); it has no Ready of its own.
+    if not _pump(controller, lambda: (len(controller.lobby.members) == expected
+                                      and not start_blocker(controller.lobby.snapshot())),
+                 240, out, role):
         return 1
     if args.bad_code:
         _pump(controller, lambda: (Path(out) / "bad.json").exists(), 60, out, role)
@@ -189,6 +190,9 @@ def client_main(args):
     import hashlib
     controller = LobbyController(ROOT, MAP, identity=hashlib.sha256(role.encode()).hexdigest())
     controller.open()
+    # As in the launcher: the joiner brings its character, and is in the
+    # party with it the moment it is in the lobby.
+    controller.profile = _profile(index)
     controller.join_code(code, tcp=args.tcp)
     _log(out, role, f"joining with {code}" + (" over TCP" if args.tcp else " over UDP"))
     if role == "bad":
@@ -204,7 +208,10 @@ def client_main(args):
         _log(out, role, f"refused: {controller.errors}")
         controller.close()
         return 0
-    controller.request("add", profile=_profile(index))
+    if not any(m["owner"] == controller.owner for m in controller.state.get("members", [])):
+        # A party already on its adventure: the newcomer joins it from its
+        # lobby ("Join the adventure").
+        controller.request("add", profile=_profile(index))
 
     def ready_up():
         state = controller.state or {}

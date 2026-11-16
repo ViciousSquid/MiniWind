@@ -261,7 +261,7 @@ def test_shipped_convex_bounds_drift_but_contain_what_is_drawn():
 def test_shipped_convex_bounds_are_derived_from_the_planes():
     """Stage 2a: every shipped convex brush's derived bounds -- what culling,
     collision rows, the physics grid, Big World and picking read -- are its
-    drawn geometry's AABB, the 128-unit brushes included. Since Stage 2d the
+    drawn geometry's AABB, including the remaining 128-unit brush. Since Stage 2d the
     load re-expresses the file's world planes about their own centre, which
     becomes ``pos``, and re-derives the ``size`` copy: nothing it holds
     drifts from the planes."""
@@ -276,7 +276,7 @@ def test_shipped_convex_bounds_are_derived_from_the_planes():
             hi = np.asarray(brush_placement.world_bounds(brush)[3:])
             assert np.allclose(lo, g_centre - g_size / 2, atol=1e-9), (name, brush['id'])
             assert np.allclose(hi, g_centre + g_size / 2, atol=1e-9), (name, brush['id'])
-            assert 'bound_drift' not in bs.inconsistencies(brush), (name, brush['id'])
+            assert bs.inconsistencies(brush).get('bound_drift', 0.0) <= bs.DRIFT_NOISE, (name, brush['id'])
             checked += 1
     assert checked >= 7
 

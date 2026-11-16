@@ -15,7 +15,7 @@ from engine.prop_entity import (MODEL_PRESETS, model_preset_name, model_settings
                                  normalise_collect_type)
 from editor.things import (Thing, Light, Effect, Prop, Monster, Speaker,
                            LogicGate, PathNode, LogicCamera, LogicSpawner, Portal,
-                           LogicState, PlayerStart, LevelChanger)
+                           LogicState, PlayerStart, LevelChanger, Decal)
 from engine import player_starts as start_rules
 from editor import state_values as _sv
 from editor.sky_assets import store_sky_image_in_project
@@ -728,8 +728,16 @@ class PropertyEditor(QWidget):
             if page is not None:
                 page.deleteLater()
             return
-        self._page_cache = [e for e in self._page_cache
-                            if e[0] is not self.current_object]
+        # A page already parked for this object was built for an older
+        # signature and is superseded; destroy it rather than just forgetting
+        # it, or it stays parented to _parking for the rest of the session.
+        kept = []
+        for entry in self._page_cache:
+            if entry[0] is self.current_object:
+                entry[2].deleteLater()
+            else:
+                kept.append(entry)
+        self._page_cache = kept
         self._page_cache.append((self.current_object, self._signature, page,
                                  self._capture_page_state()))
         while len(self._page_cache) > self.PAGE_CACHE_SIZE:
@@ -3346,7 +3354,7 @@ class PropertyEditor(QWidget):
             ("Space", "assets/backgrounds/void-panorama-q80.webp"),
         )
         preset_paths = {path for _label, path in presets}
-        value = str(thing.properties.get("sky_image", "") or "").strip()
+        value = str(self.editor.sky_image_path_from_map() or "").strip()
 
         widget = QWidget()
         row = QHBoxLayout(widget)
@@ -3439,8 +3447,10 @@ class PropertyEditor(QWidget):
     def _make_primary_start(self, thing):
         if self._populating or thing.primary:
             return
+        sky_image = self.editor.sky_image_path_from_map()
         self.editor.save_state()
         self.editor.state.set_primary_player_start(thing)
+        self.editor.canonicalize_sky_image_ownership(sky_image)
         self.editor.mark_as_modified()
         self.editor.update_all_ui()
 
@@ -3757,6 +3767,62 @@ class PropertyEditor(QWidget):
                 self.add_sound_file_widget(
                     form, thing, 'sound_file', str(value or '')
                 )
+                continue
+
+            # A decal's words, and the font they are drawn in (by name).
+            if isinstance(thing, Decal) and key == 'text':
+                edit = QLineEdit(str(value or ''))
+                edit.setPlaceholderText(r"Words to paint on  (\n: new line)")
+                edit.setToolTip(
+                    "Painted over the decal's image, centred; with no image, alone.\n"
+                    "Type \\n for a new line. IO: SetText, ClearText, SetFont, SetTextColor.")
+                edit.editingFinished.connect(
+                    lambda e=edit: e.text() != str(thing.properties.get('text') or '')
+                    and self.update_object_prop('text', e.text()))
+                form.addRow(QLabel("Text:"), edit)
+                continue
+
+            if isinstance(thing, Decal) and key == 'font':
+                from engine import decal_text
+                combo = _make_combo(
+                    decal_text.font_names(), decal_text.font_name(value),
+                    lambda text: self.update_object_prop('font', text),
+                    tooltip="The font the decal's text is drawn in")
+                form.addRow(QLabel("Font:"), combo)
+                continue
+
+            if isinstance(thing, Decal) and key == 'text_scale':
+                from engine import decal_text
+                slider, label = _make_slider(
+                    self, decal_text.text_scale(value), 10, 100, fmt="{:.0%}",
+                    callback=lambda v: self.update_object_prop('text_scale', v),
+                    tooltip="How big the words are: 100% fills as much of the decal "
+                            "as they can; smaller, to fit inside its image")
+                self._widgets['decal_text_scale'] = slider
+                form.addRow("Text Size:", _hbox(slider, label, stretch=False))
+                continue
+
+            if isinstance(thing, Decal) and key in ('text_offset_x', 'text_offset_y'):
+                from engine import decal_text
+                across = key == 'text_offset_x'
+                slider, label = _make_slider(
+                    self, decal_text.text_offset(value), -50, 50, fmt="{:+.0%}",
+                    callback=lambda v, k=key: self.update_object_prop(k, v),
+                    tooltip=("Move the words right (+) or left (-)" if across else
+                             "Move the words up (+) or down (-)")
+                            + ", by up to half the decal")
+                self._widgets['decal_' + key] = slider
+                form.addRow("Text Offset X:" if across else "Text Offset Y:",
+                            _hbox(slider, label, stretch=False))
+                continue
+
+            if isinstance(thing, Decal) and key == 'text_colour':
+                from engine import decal_text
+                combo = _make_combo(
+                    list(decal_text.TEXT_COLOURS), decal_text.text_colour(value),
+                    lambda text: self.update_object_prop('text_colour', text),
+                    tooltip="Black lettering, or white (which brightens the surface)")
+                form.addRow(QLabel("Text Colour:"), combo)
                 continue
 
             # Logic gate type.
@@ -5523,9 +5589,10 @@ class PropertyEditor(QWidget):
         # dense render/entity projections cache their cold columns behind the
         # editor's world epoch, so journal this exact object immediately.
         self.editor.state.mark_world_changed([self.current_object])
-
-        if isinstance(self.current_object, PlayerStart) and key == "sky_image":
-            self.editor.sync_sky_image_from_map()
+        if isinstance(self.current_object, PlayerStart) and key == 'sky_image':
+            # This is an explicit authoring action, so the selected value
+            # (including an empty value) replaces any legacy copies.
+            self.editor.canonicalize_sky_image_ownership(value)
 
         if key == 'name' and _io_system is not None:
             # A name is read by every *other* entity's panel — the "Targeted by"
