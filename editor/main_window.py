@@ -579,7 +579,14 @@ class MainWindow(QMainWindow):
         return True
 
     def mark_as_modified(self):
-        """Mark the project as having unsaved changes."""
+        """Mark the project as having unsaved changes.
+
+        Legacy maps may store sky_image on a non-primary PlayerStart or on
+        several starts. Preserve that data on load and during UI refreshes;
+        the first actual edit is the boundary at which it is canonicalised.
+        """
+        if getattr(self, "state", None) is not None:
+            self.canonicalize_sky_image_ownership()
         if not self.unsaved_changes:
             self.unsaved_changes = True
             self.update_title()
@@ -2948,82 +2955,114 @@ class MainWindow(QMainWindow):
         self.update_title()
         self.update_all_ui()
 
-    def sync_sky_image_from_map(self):
-        """Publish the current Primary PlayerStart's panorama to the 3D view.
+    #: Fio Canary replaced the damaged legacy Space panorama with the q80
+    #: asset; a map that still names the old file resolves to the new one.
+    _LEGACY_SKY_IMAGES = {
+        "assets/backgrounds/void-panorama.webp":
+            "assets/backgrounds/void-panorama-q80.webp",
+    }
 
-        The path remains ordinary map data on that one PlayerStart. If Primary
-        changes, the existing value moves with it; other starts cannot retain
-        a competing sky setting.
+    def _legacy_game_settings_sky(self):
+        """MiniWind's older maps stored their panorama on Game Settings
+        (``void_background``): the things that still carry it, and the first
+        value among them. Reads only."""
+        holders = []
+        path = ""
+        for setting in self.state.things:
+            properties = getattr(setting, "properties", None)
+            if not isinstance(properties, dict) or "void_background" not in properties:
+                continue
+            entity_type = str(getattr(setting, "map_type", properties.get("type", ""))
+                              ).replace("_", "").lower()
+            if entity_type != "miniwindsettings":
+                continue
+            holders.append(setting)
+            legacy = properties.get("void_background")
+            if isinstance(legacy, str) and legacy.strip() and not path:
+                path = legacy.strip()
+        return holders, path
+
+    def sky_image_path_from_map(self):
+        """Resolve the effective panorama without changing authored map data.
+
+        A legacy map may have stored the value on a non-primary PlayerStart
+        (or, in MiniWind's older maps, on Game Settings). Prefer the current
+        Primary, then recover the earliest-created stored value so old maps
+        still render correctly until the author edits them.
+        """
+        return self._current_sky_image(self._stored_sky_image())
+
+    def _current_sky_image(self, path):
+        return self._LEGACY_SKY_IMAGES.get(str(path).replace("\\", "/"), path)
+
+    def _stored_sky_image(self):
+        starts = self.state.player_starts()
+        primary = self.state.resolve_player_start()
+        if primary is not None:
+            candidate = primary.properties.get("sky_image", "")
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+
+        position = start_rules.earliest_created(
+            [start.properties for start in starts])
+        ordered = [starts[position]] if position is not None else []
+        ordered.extend(
+            start for start in starts
+            if start is not primary
+            and (position is None or start is not starts[position])
+        )
+        for start in ordered:
+            value = start.properties.get("sky_image", "")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if primary is not None:
+            return self._legacy_game_settings_sky()[1]
+        return ""
+
+    def canonicalize_sky_image_ownership(self, path=None):
+        """Store one panorama on the current Primary PlayerStart.
+
+        Called at explicit edit boundaries, never as part of a UI refresh.
+        Passing an empty path is an explicit request to clear the map setting;
+        omitting it recovers the current effective value from legacy data.
         """
         starts = self.state.player_starts()
         primary = self.state.resolve_player_start()
-        path = ""
+        if path is None:
+            path = self.sky_image_path_from_map()
+        path = self._current_sky_image(path.strip()) if isinstance(path, str) else ""
         changed = []
-        legacy_path = ""
 
         if primary is not None:
-            # Older maps stored their panorama on Game Settings.
-            # Move that value to the map's Primary PlayerStart exactly once.
-            for setting in self.state.things:
-                properties = getattr(setting, "properties", {})
-                entity_type = str(getattr(setting, "map_type", properties.get("type", ""))).replace("_", "").lower()
-                if entity_type != "miniwindsettings":
-                    continue
-                legacy = properties.pop("void_background", None)
-                if isinstance(legacy, str) and legacy.strip() and not legacy_path:
-                    legacy_path = legacy.strip()
-                if legacy is not None:
-                    changed.append(setting)
-
-            candidate = primary.properties.get("sky_image", "")
-            if not isinstance(candidate, str) or not candidate.strip():
-                # Preserve a value written on the former owner when Primary
-                # changes, and canonicalise older maps with duplicate values.
-                position = start_rules.earliest_created(
-                    [start.properties for start in starts])
-                ordered = [starts[position]] if position is not None else []
-                ordered.extend(
-                    start for start in starts
-                    if start is not primary
-                    and (position is None or start is not starts[position])
-                )
-                candidate = ""
-                for start in ordered:
-                    value = start.properties.get("sky_image", "")
-                    if isinstance(value, str) and value.strip():
-                        candidate = value.strip()
-                        break
-            else:
-                candidate = candidate.strip()
-
-            if not candidate and legacy_path:
-                candidate = legacy_path
-            # Fio Canary replaced the damaged legacy Space panorama with the
-            # q80 asset. Existing map properties should resolve to it.
-            if str(candidate).replace("\\", "/") == "assets/backgrounds/void-panorama.webp":
-                candidate = "assets/backgrounds/void-panorama-q80.webp"
-
-            if candidate:
-                if primary.properties.get("sky_image") != candidate:
-                    primary.properties["sky_image"] = candidate
+            # The Primary PlayerStart owns the map's sky now: Game Settings'
+            # older copy of it is moved there exactly once.
+            for setting in self._legacy_game_settings_sky()[0]:
+                setting.properties.pop("void_background", None)
+                changed.append(setting)
+            if path:
+                if primary.properties.get("sky_image") != path:
+                    primary.properties["sky_image"] = path
                     changed.append(primary)
-                path = candidate
             elif "sky_image" in primary.properties:
                 primary.properties.pop("sky_image", None)
                 changed.append(primary)
 
-        # The current Primary is the only possible owner, including on maps
-        # that were edited before this invariant existed.
         for start in starts:
             if start is not primary and "sky_image" in start.properties:
                 start.properties.pop("sky_image", None)
                 changed.append(start)
 
+        if changed:
+            self.state.mark_world_changed(changed)
+        self.sync_sky_image_from_map()
+        return path
+
+    def sync_sky_image_from_map(self):
+        """Publish the effective map panorama to the 3D renderer, read-only."""
+        path = self.sky_image_path_from_map()
         view = getattr(self, "view_3d", None)
         if view is not None:
             view.sky_image_path = path
-        if changed:
-            self.state.mark_world_changed(changed)
         return path
 
     def set_show_whole_world(self, shown):
@@ -3265,6 +3304,9 @@ class MainWindow(QMainWindow):
                 spin.blockSignals(False)
 
     def save_state(self):
+        # Put legacy sky ownership repair inside this operation's undo
+        # checkpoint; undo must restore the canonical pre-edit state.
+        self.canonicalize_sky_image_ownership()
         self.state.save_state()
         # Every scene mutation funnels through here, so this is the cheap,
         # once-per-operation place to tell the component overlay its cached
@@ -4391,10 +4433,7 @@ class MainWindow(QMainWindow):
         if self.primary_selection() and event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             self.save_state()
             primary_start = self.state.resolve_player_start()
-            sky_image = (
-                str(primary_start.properties.get("sky_image", "") or "")
-                if primary_start is not None else ""
-            )
+            sky_image = self.sky_image_path_from_map()
             primary_is_deleted = any(
                 obj is primary_start for obj in self.state.selected_objects
             )
@@ -4406,13 +4445,10 @@ class MainWindow(QMainWindow):
                     if obj in self.state.things:
                         self.state.things.remove(obj)
             if primary_is_deleted:
-                # Carry the one map setting across promotion before its old
-                # PlayerStart is discarded.
+                # Preserve the map setting while the deleted Primary is
+                # replaced. Canonicalisation is part of this explicit edit.
                 self.state.settle_player_starts()
-                promoted = self.state.resolve_player_start()
-                if promoted is not None and sky_image:
-                    promoted.properties["sky_image"] = sky_image
-                    self.state.mark_world_changed([promoted])
+                self.canonicalize_sky_image_ownership(sky_image)
             self.set_selected_objects([])
             return
 

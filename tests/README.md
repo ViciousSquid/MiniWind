@@ -1,6 +1,6 @@
 # Fio test suite (MiniWind)
 
-One suite, five tiers, selected by marker: Fio's four, and MiniWind's own. Everything is run with `pytest` from
+One suite, five tiers, selected by marker (Fio's four, and MiniWind's own), plus two opt-in ones. Everything is run with `pytest` from
 the repository root; `pytest.ini` already points it at the three roots that hold
 tests (`tests/`, `plugins/`, `game/tests/`), so no path arguments are needed.
 
@@ -22,6 +22,7 @@ python -m pytest                     # everything except the benchmarks
 | Renderer benchmark (reports timings) | `xvfb-run -a python -m pytest -m benchmark --run-benchmarks -s` |
 | Fio's suite as Fio ships it (not MiniWind's) | `QT_QPA_PLATFORM=offscreen python -m pytest -m "not miniwind and not gl and not benchmark"` |
 | MiniWind's own tests | `QT_QPA_PLATFORM=offscreen python -m pytest -m "miniwind and not gl and not benchmark"` |
+| Soak (long repeated cycles; leaks, growth) | `LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a python -m pytest tests/soak --run-soak -s` |
 | One area | `python -m pytest tests/geometry` |
 
 On a machine with no GPU, `LIBGL_ALWAYS_SOFTWARE=1` in front of the `xvfb-run`
@@ -72,6 +73,15 @@ tree differs (a fixture map instead of a demo map): `-m "not miniwind"` is the
 check that the engine still meets upstream's contract, and a failure there is
 a migration defect, not a game one.
 
+**`soak` — nothing accumulates.** Excluded from every normal run; `--run-soak`
+opts in. Each test repeats one realistic cycle (a Play/Stop, an edit and its
+undo, a flag toggled on a sleeping body, a sky switched) hundreds of times and
+fails if, after warm-up, the traced Python heap, a named resource count (GL
+textures, journal subscribers, threads) or the per-cycle time keeps climbing.
+`FIO_SOAK_SCALE` multiplies the cycle counts (5-10 for a pre-release run, 0.2 to
+smoke the tier); `FIO_SOAK_TRACE_FRAMES` deepens `tracemalloc` tracebacks when a
+failure needs diagnosing. The modules carry the usual `qt`/`gl` tier markers.
+
 Two more markers are orthogonal to the tiers: `integration` (several subsystems
 driven together) and `perf` (guards that count work rather than timing it, e.g.
 "this array is built once per session, not once per frame"). `slow` marks the
@@ -100,6 +110,7 @@ handful of tests that use real threads and real time.
 | `tests/visual/` | The `gl` tier: a lit cube, its shadow, and a moving light |
 | `tests/performance/` | Work-per-frame guards and the renderer benchmark |
 | `tests/miniwind/` | The `miniwind` tier's engine and editor tests: MiniWind's seams in Fio |
+| `tests/soak/` | Opt-in soak tier: Play/Stop sessions, editor history, map round trips, physics activation, decals, sky panoramas |
 | `tests/helpers/` | Shared factories and fakes (not collected) |
 
 The plugins and first-party game keep their own tests next to the code

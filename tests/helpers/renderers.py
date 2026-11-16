@@ -37,6 +37,12 @@ class StubRenderer:
                      config, clear=True, brush_slots=None):
         self.frames.append((primary_selection, dict(config), brush_slots))
 
+    def set_background_image(self, path):
+        self.background_image = str(path or "")
+
+    def invalidate_reflection_probes(self):
+        self.probe_invalidations = getattr(self, 'probe_invalidations', 0) + 1
+
     def set_grid(self, world_size, grid_size):
         pass
 

@@ -481,13 +481,13 @@ def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
                 if str(b.get('id')).startswith(CLIPPED_TERRAIN))
     brush = brushes[slot]
     raw = raws[slot]
-    stored_lo_x = raw['pos'][0] - raw['size'][0] / 2      # the file's copy
+    stored_lo_x = raw['pos'][0] - raw['size'][0] / 2
     planes = bg.get_convex(brush)
     lo, hi = planes.bounds
     assert lo[0] - stored_lo_x == pytest.approx(-2032.0)
     assert np.allclose(lo, bs.world_convex(raw).bounds[0], atol=1e-9)
-    # Since Stage 2d the load places the planes about their own centre, so
-    # what the editor holds no longer drifts from them.
+    assert np.allclose(hi, bs.world_convex(raw).bounds[1], atol=1e-9)
+    # Loading either representation leaves the brush's world bound on its planes.
     assert brush['pos'][0] - brush['size'][0] / 2 == pytest.approx(lo[0], abs=1e-9)
 
     # Drawn exactly where its planes are.
@@ -500,7 +500,7 @@ def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
     drawn = (model[:3, :3] @ local.astype(np.float64).T).T + model[:3, 3]
     assert np.allclose(drawn, planes.verts, atol=1e-3)
 
-    # Every consumer's bound is the planes'.
+    # Every consumer's bound is the planes' world-space AABB.
     want = np.concatenate((lo, hi))
     assert np.allclose(bp.world_bounds(brush), want, atol=1e-9)
     assert np.allclose(table.bounds[slot, :3] - table.bounds[slot, 3:], lo, atol=1e-9)
