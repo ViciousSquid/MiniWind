@@ -13,6 +13,10 @@ from PyQt5.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from editor.main_window import Toast  # noqa: E402
 
+#: Read from the repository, not the working folder: the main_window fixture
+#: runs each test in its own temporary directory.
+_EDITOR_UI = Path(__file__).resolve().parents[2] / "editor" / "ui.py"
+
 pytestmark = pytest.mark.qt
 
 
@@ -48,7 +52,7 @@ def test_error_toast_also_fades_its_coloured_background(qt_app):
 
 
 def test_view_menu_contains_surface_inspector_and_debug_contains_sysmon():
-    source = Path("editor/ui.py").read_text(encoding="utf-8")
+    source = _EDITOR_UI.read_text(encoding="utf-8")
 
     assert "Surface Inspector (T)" in source
     assert "MainWindow.debug_menu.addAction(MainWindow.system_monitor_action)" in source
@@ -93,7 +97,7 @@ def test_p_opens_the_position_window_from_anywhere(main_window, qt_app):
 
 
 def test_view_menu_no_longer_contains_a_global_background_setting(main_window):
-    source = Path("editor/ui.py").read_text(encoding="utf-8")
+    source = _EDITOR_UI.read_text(encoding="utf-8")
     assert "Background image" not in source
     assert not hasattr(main_window, "view_background_image_menu")
     assert not hasattr(main_window, "choose_view_background_image")
