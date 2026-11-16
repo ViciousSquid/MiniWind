@@ -483,6 +483,7 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
         self._background_image_texture = 0
         self._background_image_vao = 0
         self._background_image_program = 0
+        self._background_image_uniforms = None
 
     def render_scene(self, projection, view, camera_pos,
                      primary_selection, config, clear=True, brush_slots=None):

@@ -59,31 +59,37 @@ def test_a_roll_is_shown_only_when_dice_visuals_are_on(config):
     assert s.dice_animation is not None
 
 
-def test_game_settings_authors_an_optional_void_panorama():
+def test_game_settings_has_no_second_sky_image_property():
     from ..entities import GameSettings
 
-    settings = GameSettings(properties={
-        "void_background": "assets/backgrounds/space-panorama.jpg",
-    })
-    assert settings.properties["void_background"] == (
-        "assets/backgrounds/space-panorama.jpg"
-    )
+    settings = GameSettings(properties={})
+    assert "void_background" not in settings.properties
     editor_properties = getattr(GameSettings, "EDITOR_PRIMARY_PROPERTIES", None)
     if editor_properties is not None:
-        assert "void_background" in editor_properties
+        assert "void_background" not in editor_properties
 
 
-def test_play_session_receives_the_map_void_panorama():
+def test_legacy_game_settings_sky_value_is_retained_for_editor_migration():
+    from ..entities import GameSettings
+
+    path = "assets/backgrounds/space-panorama.jpg"
+    settings = GameSettings(properties={"void_background": path})
+    assert settings.properties["void_background"] == path
+    editor_properties = getattr(GameSettings, "EDITOR_PRIMARY_PROPERTIES", None)
+    if editor_properties is not None:
+        assert "void_background" not in editor_properties
+
+
+def test_play_session_does_not_own_a_second_sky_image_setting():
     from ..runtime import MiniwindSession
     from .test_ember_tome import _FakeLogic, _Globals
 
-    path = "assets/backgrounds/space-panorama.jpg"
     session = MiniwindSession(
         _FakeLogic([], _FakePlayer([0, 0, 0])),
-        cfg={"void_background": path},
+        cfg={"void_background": "assets/backgrounds/space-panorama.jpg"},
         globals_store=_Globals(),
     )
-    assert session.void_background == path
+    assert not hasattr(session, "void_background")
 
 
 @pytest.mark.qt

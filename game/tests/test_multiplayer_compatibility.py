@@ -48,7 +48,10 @@ def test_manifest_matches_source_and_normalises_windows_newlines(tmp_path):
     assert gameplay_signature(frozen, 1) == expected
     assert manifest.is_file()
     for path in source.rglob("*.py"):
-        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        # A Windows checkout can already contain CRLF; canonicalise first so
+        # this step writes exactly one CRLF rather than accidentally CRCRLF.
+        normalised = path.read_bytes().replace(b"\r\n", b"\n")
+        path.write_bytes(normalised.replace(b"\n", b"\r\n"))
     assert gameplay_signature(source, 1) == expected
     assert gameplay_signature(source, 2) != expected
     (source / "engine/player.py").write_text("speed = 200\n")
