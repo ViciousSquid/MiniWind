@@ -1438,10 +1438,10 @@ class PassesMixin:
         return np.where(inside.any(axis=1), textures[nearest], 0)
 
     #: Whether the warm-up below also imports the frames a fight switches the
-    #: warmed monsters to (EntityTable.fight_frame_ids), as Fio does. Off in
-    #: MiniWind: an actor's attack frame is its own head, already imported,
-    #: and its dead frame is Fio's stock corpse, 341 x 512 among 128 x 128
-    #: heads -- every layer is as large as the largest image, so importing it
+    #: warmed monsters to (EntityTable.fight_frame_ids), as Fio does. Off
+    #: here: this game's actors attack with the image they already show, and
+    #: their dead frame is Fio's stock corpse, 341 x 512 among 128 x 128
+    #: images -- every layer is as large as the largest image, so importing it
     #: at Play's start made each of them sixteen times the size (a 2.7 MB
     #: array became 341 MB) for a frame most play never shows. It is imported
     #: when a corpse is first drawn, as it always was.
@@ -1459,11 +1459,11 @@ class PassesMixin:
         *slots* are the things within the camera's view distance, not the
         whole map's (Fio 3.5.0.1611 warmed every row, and every monster
         recipe in the table). A map the view distance covers is warmed whole,
-        as Fio's are. MiniWind's world is not: its 890 sprite rows and ~500
-        recipes made that one import 252 layers -- 3.4 s before Play started
-        and 540 MB resident -- for the 19 images the opening draws. What is
-        further off is imported when it is first drawn, as before (the array
-        has room for it: sprite_layers.reserve_all)."""
+        as Fio's are. A streamed open world is not: one of 890 sprite rows and
+        ~500 recipes made that one import 252 layers -- 3.4 s before Play
+        started and 540 MB resident -- for the 19 images its opening draws.
+        What is further off is imported when it is first drawn, as before (the
+        array has room for it: sprite_layers.reserve_all)."""
         if table is None or not len(slots) or 'sprite_layered' not in self.shaders:
             return
         recipes = table.sprite_recipes()
