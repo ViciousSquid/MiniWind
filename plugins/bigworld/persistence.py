@@ -180,6 +180,11 @@ def uuids_stable(before: Dict[str, set], after: Dict[str, set]) -> bool:
 _DEFAULT_FALSE_KEYS = ("hidden", "disabled")
 
 
+#: Any of these on a brush record means :func:`normalize_streaming_state` has
+#: something to resolve on it.
+_BRUSH_STREAMING_KEYS = frozenset(RUNTIME_KEYS) | {_HID_MARK} | frozenset(_DEFAULT_FALSE_KEYS)
+
+
 def _canonicalise_false(container: dict) -> None:
     for k in _DEFAULT_FALSE_KEYS:
         if k in container and not container[k]:
@@ -227,6 +232,11 @@ def normalize_streaming_state(level: dict, *, deep: bool = True) -> dict:
             _unpark_props(props)
         out["things"].append(t2)
     for b in level.get("brushes", []) or []:
+        if not deep and isinstance(b, dict) and not (b.keys() & _BRUSH_STREAMING_KEYS):
+            # Nothing of streaming to resolve -- nearly every brush: shared as
+            # it is (a level just serialized is fresh records), not copied.
+            out["brushes"].append(b)
+            continue
         b2 = data_copy(b) if deep else (dict(b) if isinstance(b, dict) else b)
         if isinstance(b2, dict):
             if _HID_MARK in b2:
@@ -279,12 +289,16 @@ def build_cell_delta_registry(base_level: dict, live_level: dict,
 
     # Brush delta entries carry only {id, overlay keys}; recover a position for
     # bucketing from the live/base brush record (falls back to origin).
+    # Looked up only for the brushes that changed (usually none): indexing
+    # every brush of a large world twice was most of this function.
+    wanted = {b.get("id") for b in delta.get("brushes", [])}
     pos_by_bid: Dict[str, object] = {}
-    for src in (live_level, base_level):
+    for src in ((live_level, base_level) if wanted else ()):
         for b in (src or {}).get("brushes", []) or []:
             if isinstance(b, dict):
                 bid = b.get("id")
-                if bid and bid not in pos_by_bid and b.get("pos") is not None:
+                if (bid in wanted and bid not in pos_by_bid
+                        and b.get("pos") is not None):
                     pos_by_bid[bid] = b.get("pos")
     for b in delta.get("brushes", []):
         pos = pos_by_bid.get(b.get("id"), (0.0, 0.0, 0.0))

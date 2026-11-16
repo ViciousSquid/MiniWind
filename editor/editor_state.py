@@ -675,14 +675,19 @@ class EditorState:
         serialized = []
 
         for brush in self.brushes:
-            # Ensure every brush has a stable ID
-            brush.setdefault('id', str(uuid.uuid4()))
+            # Ensure every brush has a stable ID. Tested first: setdefault's
+            # default is built even when the key exists, and a UUID per brush
+            # per call was ~40% of serializing a large world (each Big World
+            # save and co-op checkpoint serializes all of it).
+            if 'id' not in brush:
+                brush['id'] = str(uuid.uuid4())
 
             brush_copy = brush.copy()
 
-            # Strip renderer-internal cache keys (GLM objects, not JSON-safe)
-            for k in _RENDERER_PRIVATE_KEYS:
-                brush_copy.pop(k, None)
+            # Strip renderer-internal cache keys (GLM objects, not JSON-safe):
+            # only those present, found by one set intersection.
+            for k in brush_copy.keys() & _RENDERER_PRIVATE_KEYS:
+                del brush_copy[k]
 
             # Handle I/O connections
             if IO_AVAILABLE and '_io_connections' in brush:
@@ -724,8 +729,10 @@ class EditorState:
                 yield_hook()
             brush = brush_data.copy()
 
-            # Backfill stable ID for legacy maps
-            brush.setdefault('id', str(uuid.uuid4()))
+            # Backfill stable ID for legacy maps (only when missing: a UUID
+            # built for every brush of a large map was real load time).
+            if 'id' not in brush:
+                brush['id'] = str(uuid.uuid4())
 
             # Play state an older build saved into the map (Stage 2b):
             # dropped, a box saved mid-motion put back where it was authored.

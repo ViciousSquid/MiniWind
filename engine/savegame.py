@@ -473,6 +473,37 @@ def _jsonify(value):
     return json.loads(json.dumps(value, default=_json_default))
 
 
+def _same(a, b) -> bool:
+    """Whether *a* and *b* serialize alike -- :func:`_jsonify` on both sides,
+    asked only when plain equality cannot answer.
+
+    Nearly every record of a save is unchanged and compares equal as it is,
+    so the JSON round-trip of both sides (two encodes and two decodes per
+    record, ~40,000 of them per Big World save) is spent only on the few that
+    differ, where a runtime type (a tuple, a NumPy value) may still serialize
+    the same. Equal values always serialize alike."""
+    try:
+        if a == b:
+            return True
+    except (ValueError, TypeError):
+        pass                    # e.g. NumPy arrays: no single truth value
+    return _jsonify(a) == _jsonify(b)
+
+
+def _public_props(t_data: dict) -> dict:
+    return {
+        k: v for k, v in (t_data.get("properties") or {}).items()
+        if not str(k).startswith("_") and k != "_io_connections"
+    }
+
+
+def _thing_changed(base_t: dict, live_t: dict) -> bool:
+    """Whether *live_t* differs from *base_t* in what :func:`_thing_state`
+    compares (position and public properties)."""
+    return not (_same(base_t.get("pos"), live_t.get("pos"))
+                and _same(_public_props(base_t), _public_props(live_t)))
+
+
 def _thing_state(t_data: dict) -> dict:
     """The gameplay-comparable part of a serialized thing.
 
@@ -533,7 +564,7 @@ def compute_delta_level(base_level: dict, live_level: dict) -> dict:
         if not tid:
             continue
         base_t = base_things.get(tid)
-        if base_t is None or _thing_state(base_t) != _thing_state(t):
+        if base_t is None or _thing_changed(base_t, t):
             delta_things.append(t)
 
     base_brushes = _brushes_by_id((base_level or {}).get("brushes", []))
@@ -545,7 +576,7 @@ def compute_delta_level(base_level: dict, live_level: dict) -> dict:
         base_b = base_brushes.get(bid)
         live_ov = _brush_overlay(b)
         base_ov = _brush_overlay(base_b) if base_b is not None else {}
-        if base_b is None or _jsonify(live_ov) != _jsonify(base_ov):
+        if base_b is None or not _same(live_ov, base_ov):
             entry = {"id": bid}
             entry.update(live_ov)
             delta_brushes.append(entry)
