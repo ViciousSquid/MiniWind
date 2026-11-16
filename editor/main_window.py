@@ -2963,7 +2963,7 @@ class MainWindow(QMainWindow):
     }
 
     def _legacy_game_settings_sky(self):
-        """MiniWind's older maps stored their panorama on Game Settings
+        """This game's older maps stored their panorama on Game Settings
         (``void_background``): the things that still carry it, and the first
         value among them. Reads only."""
         holders = []
@@ -2986,7 +2986,7 @@ class MainWindow(QMainWindow):
         """Resolve the effective panorama without changing authored map data.
 
         A legacy map may have stored the value on a non-primary PlayerStart
-        (or, in MiniWind's older maps, on Game Settings). Prefer the current
+        (or, in this game's older maps, on Game Settings). Prefer the current
         Primary, then recover the earliest-created stored value so old maps
         still render correctly until the author edits them.
         """
