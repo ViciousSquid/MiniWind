@@ -251,6 +251,8 @@ class PartyQuests:
                         seen = set(json.loads(self.store.get(key, "[]")))
                     except (ValueError, TypeError):
                         seen = set()
+                    if str(event_id) in seen:
+                        continue        # counted already (a visit is seen every pass)
                     seen.add(str(event_id))
                     self.store.set(key, json.dumps(sorted(seen)))
 
@@ -375,8 +377,21 @@ class PartyQuests:
                         self.complete(q.id, pid)
                     else:
                         self.set_stage(q.id, following.index, pid)
+                # A finished quest still owes rewards to members not yet paid
+                # (offline when it finished); once every member holds a
+                # receipt there is nothing to do, so it is not completed
+                # again on every tick for every player.
                 for q in game.quests.completed_quests():
-                    if self._members(q.id):
+                    key = (q.id, pid if q.coop_scope == "personal" else "party")
+                    if key in done:
+                        continue
+                    done.add(key)
+                    members = self._members(q.id)
+                    if not members:
+                        continue
+                    owed = [pid] if q.coop_scope == "personal" else members
+                    if any(str(self.store.get(self._receipt(q.id, m), "")) != "1"
+                           for m in owed):
                         self.complete(q.id, pid)
 
     def transaction(self, action):

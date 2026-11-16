@@ -215,7 +215,14 @@ def client_main(args):
     if not _pump(controller, lambda: controller.started, 300, out, role, ready_up):
         return 1
     _log(out, role, "started")
-    _play(app, controller, out, role, args.seconds, (("d",), ("a",), ("s",), ("d",))[index % 4])
+    session = _play(app, controller, out, role, args.seconds,
+                    (("d",), ("a",), ("s",), ("d",))[index % 4])
+    # Instances finish within a fraction of a second of one another: stay
+    # connected a moment, so the others' last look still finds this player.
+    linger = time.monotonic() + 3.0
+    while time.monotonic() < linger:
+        session.step(3)
+        app.processEvents()
     controller.close()
     return 0
 

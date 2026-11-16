@@ -813,3 +813,118 @@ def test_every_client_sees_the_same_dice(coop_game, monkeypatch):
     (client_box,) = s.__dict__["roll_boxes"].values()
     assert client_box["actor"] is npc and client_box["result"]["total"] == 4
     assert seen(client_box) == host_box
+
+
+def _replicated_npc(coop):
+    from game import fio
+
+    return next(t for t in fio.things(coop.logic)
+                if t.properties.get("id") and getattr(t, "pos", None) is not None
+                and not t.properties.get("multiplayer_player"))
+
+
+def test_frames_share_unchanged_entities_and_carry_weapon_poses(coop_game):
+    from game.multiplayer.replication import capture
+
+    coop = coop_game.logic.game_session.coop
+    npc = _replicated_npc(coop)
+    sid = npc.properties["id"]
+    npc.properties.update(_shield_blocking=True, _shield_pose=0.5,
+                          _active_weapon="iron_mace", _ward_until=99.0)
+
+    def by_id(frame):
+        return {e["id"]: e for e in frame["entities"]}
+
+    first, second = by_id(capture(coop)), by_id(capture(coop))
+    # Nothing changed: the very records already sent, shared with the baseline.
+    assert all(second[k] is first[k] for k in first)
+    props = second[sid]["props"]
+    assert props["_shield_blocking"] is True and props["_shield_pose"] == 0.5
+    assert props["_active_weapon"] == "iron_mace"
+    assert "_ward_until" not in props       # a time on the host's own clock
+    npc.properties["health"] = 3
+    third = by_id(capture(coop))
+    assert third[sid] is not second[sid] and third[sid]["props"]["health"] == 3
+    assert all(third[k] is second[k] for k in second if k != sid)
+
+
+def test_client_applies_and_journals_only_what_changed(coop_game, monkeypatch):
+    import json
+    import math
+    import time
+
+    from engine import change_journal
+    from game.multiplayer import delta
+    from game.multiplayer.replication import apply, capture, interpolate
+
+    coop = coop_game.logic.game_session.coop
+    npc = _replicated_npc(coop)
+    sid = npc.properties["id"]
+    apply(coop, json.loads(json.dumps(capture(coop))))
+    touched = []
+    monkeypatch.setattr(change_journal, "touch",
+                        lambda obj, flags=change_journal.STATE: touched.append((obj, flags)))
+
+    def world_touches():
+        return [(o, f) for o, f in touched if not o.properties.get("multiplayer_player")]
+
+    # A whole frame that matches the world journals nothing.
+    apply(coop, json.loads(json.dumps(capture(coop))))
+    assert world_touches() == [] and sid not in coop._render_targets
+    frame = json.loads(json.dumps(capture(coop)))
+    entry = next(e for e in frame["entities"] if e["id"] == sid)
+    entry["props"]["health"] = 1
+    start = list(npc.pos)
+    entry["pos"] = [start[0] + 100.0, start[1], start[2]]
+    carried = {e["id"] for e in frame["entities"] if "health" in e["props"]}
+    drifted = next(t for k, t in coop._replica_index.items()
+                   if k in carried and t is not npc
+                   and not t.properties.get("multiplayer_player"))
+    drifted.properties["health"] = 12345     # wrong here; the frame has it right
+    coop._full_apply_at = time.monotonic()
+    apply(coop, delta.Frame(frame, changes=(frozenset({sid}), ())))
+    assert npc.properties["health"] == 1 and world_touches() == [(npc, change_journal.STATE)]
+    assert drifted.properties["health"] == 12345   # not in this patch
+    assert coop._render_targets[sid][2] == entry["pos"]
+    thing, begin, end, _ = coop._render_targets[sid]
+    coop._render_targets[sid] = (thing, begin, end, time.monotonic() - 1.0)
+    interpolate(coop)
+    assert list(npc.pos) == entry["pos"] and sid not in coop._render_targets
+    # The periodic full pass puts a drifted replica right.
+    coop._full_apply_at = -math.inf
+    frame["sequence"] = coop._received_sequence + 1
+    apply(coop, delta.Frame(frame, changes=(frozenset(), ())))
+    assert drifted.properties["health"] != 12345
+
+
+def test_client_sends_no_input_before_the_hosts_world(coop_game, monkeypatch):
+    coop = coop_game.logic.game_session.coop
+    sent = []
+    monkeypatch.setattr(coop.lobby.network, "send",
+                        lambda peer, message, **kwargs: sent.append(message), raising=False)
+    player = coop.local_players[0]
+    coop.authority = False
+    try:
+        coop._received_sequence = -1       # the host is still loading this map
+        coop.local_input(player.player_id, InputFrame(1.0, 0.0), ())
+        coop._drain_inputs()
+        assert sent == []
+        coop._received_sequence = 0
+        coop.local_input(player.player_id, InputFrame(1.0, 0.0), ())
+        coop._drain_inputs()
+        assert [m["type"] for m in sent] == ["input"]
+    finally:
+        coop.authority = True
+
+
+def test_extra_characters_share_the_actor_index_and_check_proximity_ten_times_a_second(
+        coop_game, monkeypatch):
+    coop = coop_game.logic.game_session.coop
+    coop_game.step(2)
+    other = next(p for p in coop.players.values() if p.session is not coop.root)
+    calls = []
+    monkeypatch.setattr(other.session, "_tick_pickups", lambda: calls.append(1))
+    for _ in range(12):                    # a fifth of a second
+        coop._player_tick(other, 1 / 60)
+    assert other.session._wi_live == coop.root._wi_live
+    assert 2 <= len(calls) <= 3
