@@ -732,3 +732,27 @@ the tests that followed.
 
 Engine provenance is `editor/version.txt` (`Fio 3.5.2.2411`); MiniWind stays
 at `MiniWind 0.5.0`. Pillow stays at 13.0.0.
+
+### Verification
+
+* No-GPU suite (`-m "not gl and not benchmark"`, Qt offscreen, 8 workers):
+  14,447 passed, 78 skipped. Every failure found was fixed; the editor
+  free-look and kiosk tests that timed out under eight workers pass run alone.
+* GL tier (`-m gl`, Mesa llvmpipe under Xvfb): 604 passed, 10 skipped.
+* Classic's golden frames and source lock re-recorded for MiniWind
+  (`tools/hd_golden.py --update`, `--lock-sources`) on the two fixture maps it
+  keeps; Fio's frames of maps MiniWind does not ship are removed.
+* The game as shipped (`game/tools/audit_launch.py`: `main.py`, the launcher
+  answered, a new character, 30 s walked through Millbrook at 960x540,
+  software GL), two alternating runs a tree on one host:
+
+| | `main` (3.5.0.1611) | 3.5.2.2411 |
+|---|---|---|
+| Play started | 11.4 s / 7.5 s | 9.9 s / 7.4 s |
+| Frame interval p50 | 114.0 / 109.8 ms | 110.7 / 112.6 ms |
+| Frame interval p95 | 144.2 / 131.8 ms | 150.9 / 146.4 ms |
+| Logic tick p50 | 2.2 / 2.1 ms | 2.1 / 2.1 ms |
+| Resident memory | 1,376 / 1,213 MB | 1,383 / 1,225 MB |
+
+  Level within run-to-run noise; no error reached the screen or the log.
+  Hardware GPUs (and HD_High on them) are, as before, unmeasured.
