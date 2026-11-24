@@ -328,6 +328,18 @@ def _plugins_loaded_before_isolation():
 
 
 @pytest.fixture(autouse=True)
+def _error_notices_stay_with_their_test():
+    """MiniWind's on-screen error notices (engine/error_report.py) are one
+    process-wide queue that an editor window drains every 250 ms into a
+    toast: a notice one test raised must not surface in the next test's
+    console as that test's toast."""
+    from engine import error_report
+    error_report.clear_notices()
+    yield
+    error_report.clear_notices()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_process_singletons(_plugins_loaded_before_isolation):
     """Undo the process-wide state a test can leave behind.
 
