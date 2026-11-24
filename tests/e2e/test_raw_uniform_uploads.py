@@ -335,15 +335,46 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
         monkeypatch.setattr(gl, name, recording)
 
     raw = session.paint()
+    raw_stats = _stats(session)
     assert not wrapped, "%d row uniforms still went through the wrappers: %s" % (
         len(wrapped), sorted(set(wrapped)))
 
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: False)
     through_wrappers = session.paint()
+    wrapped_stats = _stats(session)
     assert wrapped, "the wrapper path sent nothing: the frame drew no row-uploading pass"
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: True)
     assert raw.max() > 0, "the frame is blank"
-    assert np.array_equal(raw, through_wrappers), _frames_differ(raw, through_wrappers)
+    if not np.array_equal(raw, through_wrappers):
+        # Which differs: the upload path, or the first paint from the ones
+        # after it? A third paint, raw again, says.
+        again = session.paint()
+        message = _frames_differ(raw, through_wrappers)
+        message += ("; a third paint (raw again) %s; render stats that differ, "
+                    "raw -> wrapped: %s" % (
+                        "matches the raw one" if np.array_equal(again, raw) else
+                        "matches the wrapped one" if np.array_equal(again, through_wrappers)
+                        else "matches neither",
+                        {k: (raw_stats.get(k), wrapped_stats.get(k))
+                         for k in sorted(set(raw_stats) | set(wrapped_stats))
+                         if raw_stats.get(k) != wrapped_stats.get(k)}))
+        raise AssertionError(message)
+
+
+def _stats(session):
+    """The renderer's per-frame counters after a paint (flattened)."""
+    try:
+        stats = session.view.renderer.render_stats() or {}
+    except Exception as exc:      # diagnostic only
+        return {'error': repr(exc)}
+    flat = {}
+    for key, value in dict(stats).items():
+        if isinstance(value, dict):
+            for inner, item in value.items():
+                flat['%s.%s' % (key, inner)] = item
+        else:
+            flat[key] = value
+    return flat
 
 
 def _frames_differ(a, b):
