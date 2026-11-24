@@ -343,6 +343,28 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
     assert wrapped, "the wrapper path sent nothing: the frame drew no row-uploading pass"
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: True)
     assert raw.max() > 0, "the frame is blank"
-    assert np.array_equal(raw, through_wrappers), (
-        "raw and wrapped uploads drew different frames (%d pixels differ)"
-        % int(np.any(raw != through_wrappers, axis=2).sum()))
+    assert np.array_equal(raw, through_wrappers), _frames_differ(raw, through_wrappers)
+
+
+def _frames_differ(a, b):
+    """What a mismatch looks like: how many pixels, where (the box holding
+    them, in a frame of ``height x width``), and by how much. With
+    ``FIO_TEST_ARTIFACTS`` set the two frames are saved there as PNGs (CI
+    uploads them), so a difference seen only on another machine can be
+    looked at."""
+    import os
+    differ = np.any(a != b, axis=2)
+    ys, xs = np.nonzero(differ)
+    message = ("raw and wrapped uploads drew different frames (%d pixels differ, "
+               "in x %d..%d, y %d..%d of %dx%d; largest channel difference %d)"
+               % (int(differ.sum()), xs.min(), xs.max(), ys.min(), ys.max(),
+                  a.shape[1], a.shape[0],
+                  int(np.abs(a.astype(np.int16) - b.astype(np.int16)).max())))
+    folder = os.environ.get("FIO_TEST_ARTIFACTS")
+    if folder:
+        from PIL import Image
+        os.makedirs(folder, exist_ok=True)
+        Image.fromarray(a).save(os.path.join(folder, "raw_uploads.png"))
+        Image.fromarray(b).save(os.path.join(folder, "wrapped_uploads.png"))
+        message += "; frames saved in " + folder
+    return message

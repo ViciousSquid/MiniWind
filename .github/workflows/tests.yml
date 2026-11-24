@@ -206,7 +206,15 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
           FIO_REQUIRE_GL: '1'
+          FIO_TEST_ARTIFACTS: ${{ runner.temp }}/gl-artifacts
         run: xvfb-run -a python -m pytest -m gl -q
+      - name: Keep the frames of a failed pixel comparison
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gl-test-frames
+          path: ${{ runner.temp }}/gl-artifacts
+          if-no-files-found: ignore
       - name: Compile every shader with the Khronos reference compiler
         env:
           FIO_REQUIRE_GLSLANG: '1'
