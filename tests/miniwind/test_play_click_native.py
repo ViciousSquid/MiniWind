@@ -152,3 +152,7 @@ def test_control_without_plays_mouse_grab_the_click_presses_stop(armed, qt_app, 
         'without the grab the click should have pressed Stop (the reported '
         'bug); it did not, so this platform does not exercise the bug')
     assert shots_queued(session.game_state) == 0
+    # Stop left Play for the editor's view of the whole world, which a
+    # software rasteriser (the hosted macOS runner) paints in tens of
+    # seconds a frame: hidden, nothing paints while the session closes.
+    session.window.hide()
