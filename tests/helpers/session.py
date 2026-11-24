@@ -58,7 +58,12 @@ class FioTestSession:
     def __init__(self, app, level, *, size=(320, 180)):
         """Open the editor on *level*: a repo-relative map path or level data."""
         from editor.main_window import MainWindow
+        from engine import sky_clouds
 
+        # MiniWind's water sky reads clouds baked once per process on a
+        # thread of their own (engine/sky_clouds.py, 0.3 s). Baked before the
+        # first paint, every frame a test compares has the same sky.
+        sky_clouds.wait(60)
         self.app = app
         self._previous_cwd = os.getcwd()
         os.chdir(REPO_ROOT)

@@ -512,7 +512,6 @@ class QtGameView(QOpenGLWidget):
         timer.setInterval(16)
         timer.timeout.connect(self.update_loop)
         timer.start()
-        self.frameSwapped.connect(self._frame_swapped)
 
         self.setFocusPolicy(Qt.ClickFocus)
         self.setMouseTracking(True)
@@ -1246,22 +1245,17 @@ class QtGameView(QOpenGLWidget):
             self._poll_mouse_look()
             # Update Player 2 input from arrow keys (if no gamepad)
             self._update_p2_keyboard_input()
-            new_frame = self.game_state.try_swap()
-            # Play may need an interpolated camera frame between publications.
-            # This timer also restarts presentation after exposure/minimising;
-            # frameSwapped normally schedules the next vsynced play frame.
-            if new_frame or self.play_mode:
+            # Paint only a frame that is new. Repainting the one already on
+            # screen draws the same image again, and -- publication being
+            # double-buffered -- borrows the published frame for the whole
+            # paint, so back-to-back repaints leave the logic thread no gap
+            # to publish the next one in. Input that changes only editor
+            # overlays asks Qt for a paint on its own (``update()``).
+            if self.game_state.try_swap():
                 self.update()
                 self._follow_play_in_2d_views(current_time)
         else:
             self.repaint()
-
-    def _frame_swapped(self):
-        # Qt's compositor supplies the cadence, including ProMotion's refresh
-        # rate. A separate 16 ms timer beats against both 60 and 120 Hz vsync.
-        # Keep the timer as the fallback when vsync is disabled or hidden.
-        if self.play_mode and self.isVisible() and self.format().swapInterval() > 0:
-            self.update()
 
     def _check_logic_thread_health(self):
         """Notice a logic thread that has died, and say so once.

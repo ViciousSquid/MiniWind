@@ -313,6 +313,10 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
     # (the last frame's draws, VRAM) differ from one paint to the next, so it
     # made this pixel comparison flaky. The renderer is what is compared.
     session.view.sysmon.set_active(False)
+    # MiniWind's water sky reads clouds baked on a thread of their own: both
+    # paints must find them baked, or the first is cloudless.
+    from engine import sky_clouds
+    assert sky_clouds.wait(60) is not None
     session.start_play()
     session.step(20)
     session.publish()

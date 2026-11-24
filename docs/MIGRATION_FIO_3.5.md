@@ -692,6 +692,7 @@ MiniWind's parallel implementations, removed in favour of Fio's:
 | A second `MainWindow.editor_dormant` that overrode Fio's | Fio's property, which now also counts MiniWind's dormant game launch; panels catch up through Fio's `_editor_ui_stale` |
 | The scene hierarchy's dormant deferral (`_refresh_deferred`) | Fio's out-of-sight deferral (`_stale`) |
 | Visible-views-only 2D repaints in Play | Fio's `update_views()`, which Fio now skips in kiosk mode |
+| Play repainted at the display's refresh (`frameSwapped`, and every update-loop tick) for camera interpolation between ticks | Fio's paint on publish: one paint per published frame (60 Hz, also while paused). MiniWind's camera interpolation (`engine/render_camera.py`) still dates each painted pose |
 | `engine/game_package.py` (extract a package to play it; unused) | `editor/package_session.py` (read in place) |
 | Big World editor streaming's `data_copy` | Fio's `copy_record` |
 | Sculpt-list cache, one-pass legacy sculpt load | Fio's compressed `sculpt_tiles` and dense-grid dab patching |
