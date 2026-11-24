@@ -23,7 +23,7 @@ from tests.native.test_play_click_native import (  # noqa: F401  (fixture)
     PressCounter, WaylandPointer, _activate_macos_app, _swaymsg, _wayland,
     clear_shots, click_editor_view, in_view_point, macos_first_window,
     move_pointer, os_click, platform_name, pump, pump_until, report,
-    shots_queued, warm_up_input)
+    shots_queued, wait_for_press, warm_up_input)
 
 pytestmark = [
     pytest.mark.qt,
@@ -93,8 +93,10 @@ def armed(fio_session, qt_app, monkeypatch):
 
 def assert_click_attacked(session, qt_app, label):
     """After a real click: it reached the app, Play goes on, and the game
-    took it as an attack -- a shot queued, then taken by the next tick."""
-    pump(qt_app, 0.3)
+    took it as an attack -- a shot queued, then taken by the next tick.
+    Nothing is judged before the click has arrived (Fio's wait_for_press: on
+    a hosted runner MiniWind's world draws in software, seconds a frame)."""
+    wait_for_press(session, qt_app)
     report(label, session)
     assert session.presses.presses, (
         'no left press reached the application: the window system did not '
@@ -124,7 +126,7 @@ def test_left_click_attacks_even_with_the_hidden_pointer_over_the_play_button(ar
     button.clicked.connect(lambda *_: stops.append(True))
     move_pointer(button, button.rect().center())
     os_click()
-    pump(qt_app, 0.3)
+    wait_for_press(session, qt_app)
     assert not stops, 'the click pressed the Play/Stop button'
     assert_click_attacked(session, qt_app, 'click over the Play button')
 
@@ -143,7 +145,7 @@ def test_control_without_plays_mouse_grab_the_click_presses_stop(armed, qt_app, 
     button.clicked.connect(lambda *_: stops.append(True))
     move_pointer(button, button.rect().center())
     os_click()
-    pump(qt_app, 0.3)
+    wait_for_press(session, qt_app)
     report('control: click over the Play button, no grab', session)
     assert session.presses.presses, 'no left press reached the application'
     assert stops and not view.play_mode, (
