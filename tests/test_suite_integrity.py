@@ -150,6 +150,10 @@ def test_a_module_the_headless_tier_leaves_out_is_in_a_desktop_tier(path):
     OpenGL anywhere, even in one function; the Qt and GL tiers select by
     marker. Unmarked, such a module is collected by neither: six modules, 72
     tests, ran in no CI job."""
+    if _rel(path).startswith(("game/tests/", "tests/miniwind/")):
+        # MiniWind's own tier (conftest: by path) runs with the full desktop
+        # dependency set (.github/workflows/tests.yml, job `miniwind`).
+        return
     tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     if _imports_qt_or_gl(tree):
         assert _module_is_in_a_desktop_tier(tree), (

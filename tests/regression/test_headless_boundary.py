@@ -57,7 +57,6 @@ DEPENDENCY_LIGHT_MODULES = [
     # Data archives and packages are read by the engine; MiniWind ships no
     # standalone player package.
     "engine.asset_archives",
-    "engine.game_package",
     "engine.fiopak",
     "engine.package_assets",
 ]
