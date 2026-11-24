@@ -114,12 +114,28 @@ _GLOBAL_THINGS = {"bigworldsettings", "miniwindsettings", "logic_command",
 # Terrain helpers
 # ---------------------------------------------------------------------------
 
+def sculpt_cells(terrain_data):
+    """``{(gx, gz): offset}``: a map's sculpting, as Fio saves it (compressed
+    ``sculpt_tiles``) or as older maps hold it (a ``sculpt_offsets`` list)."""
+    from engine.terrain import Terrain
+    cells = {(int(a), int(b)): float(v)
+             for a, b, v in terrain_data.get("sculpt_offsets", ())}
+    decoder = Terrain.__new__(Terrain)          # the class constants only
+    for entry in terrain_data.get("sculpt_tiles", ()):
+        decoded = decoder._decode_sculpt_tile(entry)
+        if decoded is not None:
+            _tile, gx, gz, values = decoded
+            cells.update(zip(zip(gx.tolist(), gz.tolist()), values.tolist()))
+    return cells
+
+
 def _terrain(terrain_data, heightmap=None, sculpt=True):
     from engine.terrain import Terrain
     t = Terrain()
     data = dict(terrain_data)
     if not sculpt:
         data.pop("sculpt_offsets", None)
+        data.pop("sculpt_tiles", None)
     data.pop("heightmap_blob", None)
     t.from_dict(data)
     if heightmap is not None:
@@ -433,8 +449,7 @@ class Expander:
         td["max_chunk_x"] = td["max_chunk_z"] = self.max_c
         self.new_base = _terrain(td, heightmap=self.heightmap, sculpt=False)
         res = float(self.old_td.get("sculpt_grid_resolution", 16.0))
-        old_sculpt = {(int(gx), int(gz)): float(v)
-                      for gx, gz, v in self.old_td.get("sculpt_offsets", [])}
+        old_sculpt = sculpt_cells(self.old_td)
         new = {}
         # The village keeps its own sculpting exactly.
         for (gx, gz), v in old_sculpt.items():
@@ -473,6 +488,7 @@ class Expander:
         """Write the sculpt and heightmap into the map and rebuild the
         terrain the placement code samples."""
         td = self.world["terrain_data"]
+        td.pop("sculpt_tiles", None)    # replaced by the list below
         td["sculpt_offsets"] = [[gx, gz, round(v, 2)] for (gx, gz), v in
                                 sorted(self.sculpt.items()) if abs(v) >= 0.25]
         td["sculpt_grid_resolution"] = self.res

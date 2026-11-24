@@ -1,10 +1,16 @@
-"""Shadow selection and invalidation, independent of a GL driver."""
+"""Shadow selection and invalidation, independent of a GL driver.
+
+Fio's caster selection (``VisibilityMixin._casters_in_reach``) with MiniWind's
+two fixes folded in: the rotation-safe bound and the geometry epoch in the
+signature."""
 
 from types import SimpleNamespace
 
 import numpy as np
 
-from engine.render_cull import shadow_casters_in_reach
+from engine.renderer.core.visibility import VisibilityMixin
+
+shadow_casters_in_reach = VisibilityMixin._casters_in_reach
 
 
 def caster_table():
@@ -37,13 +43,15 @@ def test_reshaping_a_caster_without_changing_its_box_invalidates_the_shadow():
     assert changed != first
 
 
-def test_reusing_a_slot_for_new_geometry_invalidates_the_shadow():
+def test_a_reconciled_table_keeps_an_unchanged_shadow():
+    """Fio keeps a cube-map whose casters are unchanged across a reconcile
+    (tests/renderer/test_shadow_cache.py); a new row generation alone does
+    not redraw it."""
     table = caster_table()
     _, first = selection(table)
-    # A replacement may start with the same local epoch and transform.
     table.generation += 1
-    _, changed = selection(table)
-    assert changed != first
+    _, again = selection(table)
+    assert again == first
 
 
 def test_reshaping_an_out_of_range_brush_keeps_the_shadow_cached():

@@ -2,14 +2,110 @@ from engine.asset_qt import load_icon
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, 
                              QMenu, QAction, QHeaderView, QAbstractItemView, 
                              QPushButton, QHBoxLayout, QLabel, QFrame, QGridLayout,
-                             QLineEdit, QStyle)
-from PyQt5.QtGui import QIcon, QColor, QBrush, QFont, QPainter, QPixmap
+                             QLineEdit, QStyle, QStyledItemDelegate)
+from PyQt5.QtGui import QIcon, QColor, QBrush, QFont, QPainter, QPixmap, QPen, QPolygonF
 from PyQt5 import QtCore
 import re
-from PyQt5.QtCore import Qt, QTimer, QEvent
+from PyQt5.QtCore import Qt, QTimer, QEvent, QPointF
 
 from engine.change_journal import touch
+from engine.spatial import set_live_flag
 from editor.selection import SelectionLookup
+from editor import brush_groups
+
+try:
+    from editor.io_system import io_revision as _io_revision
+except ImportError:                                  # pragma: no cover
+    def _io_revision():
+        return 0
+
+#: Item data: a grouped brush row's group colour ('#rrggbb') and which edges
+#: of its group's outline box it carries (1: first row, 2: last row).
+GROUP_COLOUR_ROLE = Qt.UserRole + 1
+GROUP_EDGE_ROLE = Qt.UserRole + 2
+GROUP_FIRST, GROUP_LAST = 1, 2
+#: How strongly a group's colour tints its rows' background.
+GROUP_TINT_ALPHA = 46
+#: The section titles' background (their text is white).
+HEADER_BACKGROUND = "#000000"
+
+
+def group_tint(colour):
+    """The row background for a group of *colour* (transparent for none)."""
+    if not colour:
+        return QBrush(Qt.transparent)
+    tint = QColor(colour)
+    tint.setAlpha(GROUP_TINT_ALPHA)
+    return QBrush(tint)
+
+
+class GroupOutlineDelegate(QStyledItemDelegate):
+    """Draws one box, in the group's colour, round the rows of each brush
+    group: sides on every member, the top on the first, the bottom on the
+    last."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        # The row background is painted once, by paint() below -- never a
+        # second time by the style, which would double a translucent tint
+        # wherever the style does honour item backgrounds.
+        option.backgroundBrush = QBrush()
+
+    def paint(self, painter, option, index):
+        # The row's own background -- a section title's black, a group's
+        # tint, a search match -- is painted here: the tree's style sheet
+        # takes over item painting, and Qt's style-sheet style then ignores
+        # per-item background brushes, so they never showed. A selected row
+        # keeps the selection colour.
+        background = index.data(Qt.BackgroundRole)
+        if (isinstance(background, QBrush) and background.style() != Qt.NoBrush
+                and background.color().alpha() > 0
+                and not option.state & QStyle.State_Selected):
+            painter.fillRect(option.rect, background)
+        super().paint(painter, option, index)
+        if not index.parent().isValid():
+            self._paint_section_arrow(painter, option, index)
+            return
+        colour = index.data(GROUP_COLOUR_ROLE)
+        if not colour:
+            return
+        edges = index.data(GROUP_EDGE_ROLE) or 0
+        rect = option.rect.adjusted(1, 0, -1, 0)
+        painter.save()
+        painter.setPen(QPen(QColor(colour), 2))
+        painter.drawLine(rect.topLeft(), rect.bottomLeft())
+        painter.drawLine(rect.topRight(), rect.bottomRight())
+        if edges & GROUP_FIRST:
+            painter.drawLine(rect.left(), rect.top() + 1, rect.right(), rect.top() + 1)
+        if edges & GROUP_LAST:
+            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+        painter.restore()
+
+    def _paint_section_arrow(self, painter, option, index):
+        """A section title's expand/collapse arrow, at its right end (the
+        tree has no branch column; a title still opens and closes on a
+        double-click)."""
+        model = index.model()
+        if model is None or not model.hasChildren(index):
+            return
+        tree = self.parent()
+        expanded = bool(tree is not None and tree.isExpanded(index))
+        rect = option.rect
+        size = 4.0
+        cx = rect.right() - 12.0
+        cy = rect.center().y() + 0.5
+        if expanded:                    # pointing down
+            points = (QPointF(cx - size, cy - size / 2), QPointF(cx + size, cy - size / 2),
+                      QPointF(cx, cy + size / 2))
+        else:                           # pointing right
+            points = (QPointF(cx - size / 2, cy - size), QPointF(cx - size / 2, cy + size),
+                      QPointF(cx + size / 2, cy))
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor('white'))
+        painter.drawPolygon(QPolygonF(points))
+        painter.restore()
 
 
 try:
@@ -105,7 +201,7 @@ class SceneHierarchy(QWidget):
                 border: none;
                 border-bottom: 1px solid #425F5D;
                 font-weight: bold;
-                font-family: 'IBM Plex Mono';
+                font-family: 'Fio Mono';
                 font-size: 13px;
             }
             QPushButton:hover {
@@ -125,6 +221,21 @@ class SceneHierarchy(QWidget):
 
         #: Names matched by the last search, so a rebuilt tree keeps showing them.
         self._search_matches = set()
+        #: The last rebuild's rows -- ``(headers, [(item, kind, index)],
+        #: terrain item)`` -- and the :meth:`_structure_key` they were built
+        #: for. A refresh whose key is unchanged only reselects rows.
+        self._rows = None
+        self._rows_key = None
+        #: ``(token, objects key)``: the per-object half of the structure key,
+        #: kept until the world says something changed (:meth:`_world_token`).
+        self._objects_key_cache = None
+        #: ``(token, rows, {id(obj): (item, obj)}, exact)``: which row stands
+        #: for which object, so a selection change touches only the rows whose
+        #: selection changed (:meth:`_rows_selected_by_identity`).
+        self._row_index = None
+        #: A refresh was skipped while the panel was out of sight; the next
+        #: show catches up (:meth:`showEvent`).
+        self._stale = False
 
         # Create sort button
         self.sort_button = QPushButton(f"Sort: {self.SORT_MODE_NAMES[self.sort_mode]}")
@@ -156,7 +267,12 @@ class SceneHierarchy(QWidget):
         # Create tree widget
         self.tree = QTreeWidget()
         self.tree.setUniformRowHeights(True)
-        self.tree.setIndentation(12)
+        # Rows sit flush under their section titles (Brushes, Things, ...):
+        # no indentation and no branch column. The titles draw their own
+        # expand/collapse arrow (GroupOutlineDelegate).
+        self.tree.setIndentation(0)
+        self.tree.setRootIsDecorated(False)
+        self.tree.setItemDelegate(GroupOutlineDelegate(self.tree))
         content_layout.addWidget(self.tree, stretch=2)
         
         # Configure tree widget
@@ -174,6 +290,11 @@ class SceneHierarchy(QWidget):
         self.lock_icon = load_icon("assets/lock.png")
         self.hidden_icon = load_icon("assets/hidden.png")
         self.tree.itemSelectionChanged.connect(self.handle_selection_change)
+        #: True while a selection made in the tree is being applied (its
+        #: rebuild keeps the list still: refresh_list).
+        self._selecting_in_tree = False
+        #: Section titles (Brushes, Things, ...) the user has closed.
+        self._collapsed_sections = set()
         # Double-clicks are read off the viewport, not itemDoubleClicked: the
         # first click of a double-click changes the selection, which rebuilds
         # the tree, so Qt never pairs the two clicks on one item.
@@ -392,13 +513,55 @@ class SceneHierarchy(QWidget):
                     obj = None
                 matched = obj is not None and id(obj) in self._search_matches
                 background = (QBrush(QColor("#4a4320")) if matched
-                              else QBrush(Qt.transparent))
+                              else group_tint(item.data(0, GROUP_COLOUR_ROLE)))
                 if item is self._highlighted_item:
                     # A search can change before the temporary highlight's
                     # timer expires. Its cleanup must keep the new styling.
                     self._highlight_backgrounds = (background, background)
                 for column in (0, 1):
                     item.setBackground(column, background)
+
+    def groups_of(self, objects):
+        """``(id, name)`` of the groups any of *objects* is in: visgroups by
+        their UUID, then brush groups (id '')."""
+        filters = self.main_window.state.view_filters
+        found = []
+        for obj in objects:
+            for group in filters.visgroups_of(obj):
+                if (group.id, group.name) not in found:
+                    found.append((group.id, group.name))
+        for obj in objects:
+            # Brushes and entities alike: a grouped model offers its group.
+            name = brush_groups.group_of(obj)
+            if name and ('', name) not in found:
+                found.append(('', name))
+        return found
+
+    def select_group(self, name='', group_id=''):
+        """Select every member of a group -- what an I/O connection targeting
+        it reaches (engine.io_groups): the visgroup whose UUID is *group_id*,
+        else the group called *name*."""
+        from engine.io_groups import resolve_group
+        main_window = self.main_window
+        members = resolve_group(main_window.state, name, group_id) or []
+        main_window.set_selected_objects(members)
+        main_window.update_views()
+        return members
+
+    def _add_select_group_actions(self, menu, objects):
+        """"Select Group 'name'" for each group the clicked objects are in."""
+        actions = []
+        for group_id, name in self.groups_of(objects):
+            action = menu.addAction("Select Group '%s'" % name)
+            action.setToolTip(
+                "Select every member of this group. An I/O connection that "
+                "targets the group sends its input to all of them; members "
+                "without that input ignore it."
+                + ("\nGroup ID: %s" % group_id if group_id else ""))
+            action.triggered.connect(
+                lambda _checked=False, n=name, g=group_id: self.select_group(n, g))
+            actions.append(action)
+        return actions
 
     def _add_visgroup_menu(self, menu, objects):
         """The Visgroup submenu: put the clicked objects in a visgroup, take
@@ -434,6 +597,36 @@ class SceneHierarchy(QWidget):
             lambda _checked=False: main_window.show_visgroup(groups[0] if groups else None))
         return sub
 
+    def _add_group_action(self, menu, brushes):
+        """"Add to Group..." for objects (brushes and/or entities) that are in
+        none, "Edit Group..." when one of them already is: both open the
+        group dialog."""
+        brushes = [b for b in brushes if brush_groups.is_groupable(b)]
+        if not brushes:
+            return None
+        grouped = any(brush_groups.group_of(b) for b in brushes)
+        action = menu.addAction("Edit Group..." if grouped else "Add to Group...")
+        action.setToolTip("Grouped objects are attached: they always move together "
+                          "in the editor (and brushes in Play)")
+        action.triggered.connect(
+            lambda _checked=False, chosen=list(brushes):
+            self.main_window.open_brush_group_dialog(chosen))
+        if grouped:
+            ungroup = menu.addAction("Ungroup")
+            ungroup.setToolTip("Take these objects out of their group")
+            ungroup.triggered.connect(
+                lambda _checked=False, chosen=list(brushes):
+                self.main_window.ungroup_brushes(chosen))
+            every = self.main_window.with_group_mates(
+                [b for b in brushes if brush_groups.group_of(b)])
+            hidden = all(brush_groups.is_hidden(b) for b in every)
+            toggle = menu.addAction("Show Group" if hidden else "Hide Group")
+            toggle.setToolTip("Show or hide every object in the group")
+            toggle.triggered.connect(
+                lambda _checked=False, chosen=every, hide=not hidden:
+                self.main_window.set_brushes_hidden(chosen, hide))
+        return action
+
     def cycle_sort_mode(self):
         """Cycle through sort modes and refresh."""
         self.sort_mode = (self.sort_mode + 1) % self.SORT_MODE_COUNT
@@ -451,7 +644,35 @@ class SceneHierarchy(QWidget):
         # Default brush name
         return f'Brush {index + 1}'
 
+    @staticmethod
+    def _get_thing_display_name(thing_obj, index):
+        """Get display name for an entity: its name, else 'Thing N'."""
+        return thing_obj.name if thing_obj.name else f'Thing {index + 1}'
+
+    @staticmethod
+    def _mark_group_row(item, rows, row, group_colours):
+        """Tint and box *item* (``rows[row]``) in its group's colour: the
+        box's top on a group's first row, its bottom on the last."""
+        group = brush_groups.group_of(rows[row][1])
+        if not group:
+            return
+        colour = group_colours[group]
+        edges = 0
+        if row == 0 or brush_groups.group_of(rows[row - 1][1]) != group:
+            edges |= GROUP_FIRST
+        if row + 1 == len(rows) or brush_groups.group_of(rows[row + 1][1]) != group:
+            edges |= GROUP_LAST
+        item.setData(0, GROUP_COLOUR_ROLE, colour)
+        item.setData(0, GROUP_EDGE_ROLE, edges)
+        item.setBackground(0, group_tint(colour))
+        item.setToolTip(0, "Group: %s" % group)
+
     def _get_sorted_brushes(self):
+        """Brushes in the current sort order, each brush group's members
+        kept together (where the group's first member sorts)."""
+        return brush_groups.ordered(self._sorted_brushes())
+
+    def _sorted_brushes(self):
         """Return brushes in sorted order based on current sort mode."""
         brushes = list(enumerate(self.main_window.state.brushes))
         
@@ -486,6 +707,11 @@ class SceneHierarchy(QWidget):
         return brushes
 
     def _get_sorted_things(self):
+        """Things in the current sort order, each group's entities kept
+        together (where the group's first entity sorts)."""
+        return brush_groups.ordered(self._sorted_things())
+
+    def _sorted_things(self):
         """Return things in sorted order based on current sort mode."""
         things = list(enumerate(self.main_window.state.things))
         
@@ -531,38 +757,282 @@ class SceneHierarchy(QWidget):
         terrain_data = self.main_window.state.terrain_data
         return terrain_data is not None
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        if getattr(self, '_refresh_deferred', False):
-            self.refresh_list()
+    def refresh_list(self, selection_only=False):
+        """Rebuild the tree (every selection change does, through the editor's
+        update_all_ui) without the list moving under the cursor.
 
-    def refresh_list(self):
-        # A selection signal is still using these items. Rebuilding here
-        # deletes them while Qt (or a tree iterator) still holds a pointer.
-        if getattr(self, '_handling_selection', False):
+        *selection_only*: the caller changed only the selection
+        (``MainWindow.set_selected_objects``), so the objects' names and flags
+        are re-read only if an editor transaction has happened since they last
+        were (:meth:`_objects_key`).
+
+        The scroll position is kept across the rebuild. A selection made in
+        the tree itself -- a click, a Ctrl-click adding a row, a Shift-click
+        range -- does not scroll at all, and the row clicked stays the current
+        row (the anchor the next Shift-click ranges from). A selection made
+        elsewhere (the 2D or 3D view) scrolls only if its first row is out of
+        sight. Scrolling to the first selected row after every rebuild made
+        the list jump to the top of a Ctrl-click selection on each click.
+        """
+        if self._out_of_sight():
+            # A closed, collapsed or tabbed-away dock: nobody sees the rows,
+            # and every selection change used to rebuild or rescan all of
+            # them. Brought up to date once, when the panel is shown again.
+            self._stale = True
             return
-        # In the game (kiosk mode) the editor's docks are hidden, and a level
-        # change would rebuild one tree item per entity of the new map for
-        # nobody to see: rebuild once the panel is shown again instead.
-        if getattr(self.main_window, 'editor_dormant', False) and not self.isVisible():
-            self._refresh_deferred = True
-            return
-        self._refresh_deferred = False
+        self._stale = False
+        bar = self.tree.verticalScrollBar()
+        scrolled = bar.value()
+        current_obj = self._object_of(self.tree.currentItem())
+        from_tree = self._selecting_in_tree
         # A failed rebuild must not leave selection notifications disabled,
         # and callers may already have blocked signals for a larger operation.
         was_blocked = self.tree.blockSignals(True)
         try:
-            self._rebuild_items()
+            key = self._structure_key(selection_only)
+            if self._reselect_rows(key):
+                pass
+            elif getattr(self, '_handling_selection', False):
+                # A selection signal is still using these items: rebuilding
+                # now deletes them while Qt (or a tree iterator) still holds
+                # a pointer. Rebuilt once the signal has been handled.
+                self._rebuild_after_selection = True
+                return
+            else:
+                self._rebuild_items(key)
+                # Lay the new rows out now, so the scroll range is the rebuilt
+                # tree's (rebuilding row by row clamped the position as it went).
+                self.tree.doItemsLayout()
+                bar.setValue(min(scrolled, bar.maximum()))
+                if current_obj is not None:
+                    item = self._find_item(current_obj)
+                    if item is not None:
+                        self.tree.setCurrentItem(item, 0, QtCore.QItemSelectionModel.NoUpdate)
         finally:
             self.tree.blockSignals(was_blocked)
 
-        # Scroll after restoring signals, as in the original refresh path.
+        if from_tree:
+            return
         first_selected = self.tree.selectedItems()
         if first_selected:
             self.tree.scrollToItem(first_selected[0], QAbstractItemView.EnsureVisible)
 
-    def _rebuild_items(self):
+    def _out_of_sight(self):
+        """Whether the panel is hidden inside its window (its dock closed,
+        collapsed to the strip, or behind another tab). A window that is not
+        shown yet does not count: the panel would be seen once it is."""
+        window = self.window()
+        return window is not self and not self.isVisibleTo(window)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._stale:
+            self.refresh_list()
+
+    def _object_of(self, item):
+        """The brush or Thing a tree row stands for, or None."""
+        if item is None:
+            return None
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return None
+        kind, index = data
+        state = self.main_window.state
+        try:
+            if kind == 'brush':
+                return state.brushes[index]
+            if kind == 'thing':
+                return state.things[index]
+        except (IndexError, TypeError):
+            return None
+        return None
+
+    def _find_item(self, obj):
+        """The row standing for *obj*, at any depth (groups nest), or None."""
+        stack = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while stack:
+            item = stack.pop()
+            if self._object_of(item) is obj:
+                return item
+            stack.extend(item.child(j) for j in range(item.childCount()))
+        return None
+
+    def _structure_key(self, selection_only=False):
+        """Everything a rebuild reads except the selection.
+
+        Equal keys mean a rebuild would make the same rows, in the same
+        order, with the same text, colours and icons: only which rows are
+        selected can differ, and :meth:`_reselect_rows` updates just that.
+        Read from the objects' current values (not their identities), so an
+        edit, an undo or a replaced list is seen; rows are found by index,
+        exactly as a rebuild stores them. Building it costs a few
+        milliseconds on thousands of brushes, against tens for a rebuild.
+        """
+        terrain = None
+        if self._has_terrain():
+            terrain = (self._get_terrain_display_name(),
+                       bool(self.main_window.terrain_locked()))
+        return (self.sort_mode, terrain, frozenset(self._search_matches),
+                self._objects_key(reuse=selection_only))
+
+    def _world_token(self):
+        """What says the scene's objects may have changed since a cached
+        answer about them: the world epoch every editor transaction bumps
+        (:meth:`EditorState.mark_world_changed`), the I/O revision a rename
+        bumps, and the lists themselves (held, so a replaced list is seen and
+        its id cannot be reused by another)."""
+        state = self.main_window.state
+        return (getattr(state, 'world_epoch', None), _io_revision(),
+                state.brushes, len(state.brushes), state.things, len(state.things))
+
+    @staticmethod
+    def _same_token(a, b):
+        return (a is not None and b is not None and a[0] == b[0] and a[1] == b[1]
+                and a[2] is b[2] and a[3] == b[3] and a[4] is b[4] and a[5] == b[5])
+
+    def _objects_key(self, reuse=False):
+        """The per-object part of :meth:`_structure_key`.
+
+        With *reuse* (a selection change) the last answer is kept while
+        :meth:`_world_token` has not moved: a selection change does not move
+        it, and reading every object's name and flags was most of the cost of
+        one on a big map (40 of 90 ms at 20k brushes). Every editor operation
+        that changes what a row shows checkpoints (or journals) first, which
+        moves the token. Any other refresh reads the objects afresh, so a
+        value written outside a transaction still shows on the next one.
+        """
+        token = self._world_token()
+        cached = self._objects_key_cache
+        if reuse and cached is not None and self._same_token(cached[0], token):
+            return cached[1]
+        state = self.main_window.state
+        group_key = brush_groups.GROUP_KEY
+        brushes = tuple(
+            (b.get('name'), b.get('is_trigger', False), b.get('hidden', False),
+             b.get('lock', False), 'color' in b, b.get('color'), b.get(group_key))
+            for b in state.brushes)
+        things = []
+        for t in state.things:
+            p = t.properties
+            things.append((type(t), t.name, p.get('hidden', False), p.get('lock', False),
+                           'color' in p, p.get('color'), p.get(group_key)))
+        value = (brushes, tuple(things))
+        self._objects_key_cache = (token, value)
+        return value
+
+    def _rows_selected_by_identity(self):
+        """The rows the selection selects, found through an object -> row
+        map, or None when only the full scan can say.
+
+        The full scan asks :class:`SelectionLookup` about every row, which
+        also matches by *equality* (a copied brush dict, an object with its
+        own ``__eq__``). The map answers by identity, which is the same
+        answer only when no row could be matched any other way: every
+        selected object is a row's own object, a plain dict whose id no other
+        row shares or an object compared by identity, and no row is of a type
+        that compares by value. Anything else falls back.
+        """
+        rows = self._rows
+        token = self._world_token()
+        index = self._row_index
+        if index is None or index[1] is not rows or not self._same_token(index[0], token):
+            index = (token, rows) + self._build_row_index(rows)
+            self._row_index = index
+        by_obj, duplicate_ids, exact = index[2], index[3], index[4]
+        if not exact:
+            return None
+        wanted = []
+        for obj in self.main_window.state.selected_objects:
+            entry = by_obj.get(id(obj))
+            if entry is None or entry[1] is not obj:
+                return None
+            if type(obj) is dict:
+                try:
+                    if obj.get('id') in duplicate_ids:
+                        return None
+                except TypeError:
+                    return None
+            elif type(obj).__eq__ is not object.__eq__:
+                return None
+            wanted.append(entry[0])
+        return wanted
+
+    def _build_row_index(self, rows):
+        """``(by_obj, duplicate brush ids, exact)`` for the rows *rows*."""
+        state = self.main_window.state
+        lists = {'brush': state.brushes, 'thing': state.things}
+        by_obj, seen, duplicates, exact = {}, set(), set(), True
+        for item, kind, index in rows[1]:
+            obj = lists[kind][index]
+            by_obj[id(obj)] = (item, obj)
+            if kind == 'brush':
+                if type(obj) is not dict:
+                    exact = False           # a dict subclass compares by value
+                    continue
+                try:
+                    brush_id = obj.get('id')
+                    if brush_id in seen:
+                        duplicates.add(brush_id)
+                    seen.add(brush_id)
+                except TypeError:
+                    exact = False
+            elif type(obj).__eq__ is not object.__eq__:
+                exact = False
+        return by_obj, duplicates, exact
+
+    def _reselect_rows(self, key):
+        """Bring the existing rows' selection up to date without rebuilding,
+        when nothing else a rebuild reads has changed (*key*). Returns False,
+        touching nothing, when a rebuild is needed."""
+        rows = getattr(self, '_rows', None)
+        if rows is None or key != self._rows_key:
+            return False
+        headers, items, terrain_item = rows
+        try:
+            if (self.tree.topLevelItemCount() != len(headers)
+                    or any(self.tree.indexOfTopLevelItem(h) != i
+                           for i, h in enumerate(headers))):
+                return False
+        except RuntimeError:          # the rows were deleted (tree.clear())
+            return False
+        # As a rebuild does: a temporary highlight ends with the refresh.
+        self._clear_highlight()
+        self._highlight_timer.stop()
+        state = self.main_window.state
+        wanted = self._rows_selected_by_identity()
+        if wanted is not None:
+            # Only the rows whose selection changed are touched: what Qt has
+            # selected now against what the selection wants.
+            # (Keyed by id: a QTreeWidgetItem is not hashable. Qt hands back
+            # the same wrappers, which self._rows keeps alive.)
+            wanted = {id(item): item for item in wanted}
+            for item in self.tree.selectedItems():
+                if item is not terrain_item and id(item) not in wanted:
+                    item.setSelected(False)
+            for item in wanted.values():
+                if not item.isSelected():
+                    item.setSelected(True)
+        else:
+            selected = SelectionLookup(state.selected_objects)
+            lists = {'brush': state.brushes, 'thing': state.things}
+            for item, kind, index in items:
+                want = lists[kind][index] in selected
+                if item.isSelected() != want:
+                    item.setSelected(want)
+        if terrain_item is not None:
+            want = bool(getattr(self.main_window, 'terrain_selected', False))
+            if terrain_item.isSelected() != want:
+                terrain_item.setSelected(want)
+        return True
+
+    def _rebuild_items(self, key=None):
+        # Invalid until this rebuild completes: a failed one must not leave a
+        # key that lets the next refresh skip rebuilding a half-built tree.
+        self._rows = None
+        self._rows_key = None
+        self._row_index = None
         self.tree.clear()
+        headers, row_items, terrain_item = [], [], None
         
         # Clear any pending highlight since items are being rebuilt
         self._highlighted_item = None
@@ -576,8 +1046,8 @@ class SceneHierarchy(QWidget):
         header_font = QFont()
         header_font.setBold(True)
         
-        # Header background colour
-        header_brush = QBrush(QColor("#425F5D"))
+        # Section titles: white on black.
+        header_brush = QBrush(QColor(HEADER_BACKGROUND))
 
         # =====================================================================
         # TERRAIN SECTION
@@ -590,13 +1060,18 @@ class SceneHierarchy(QWidget):
             terrain_header.setBackground(0, header_brush)
             terrain_header.setBackground(1, header_brush)
             terrain_header.setFont(0, header_font)
-            terrain_header.setExpanded(True)
+            self._expand_section(terrain_header)
+            headers.append(terrain_header)
 
             terrain_name = self._get_terrain_display_name()
             terrain_item = QTreeWidgetItem(terrain_header, [terrain_name, ""])
             terrain_item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
             terrain_item.setData(0, Qt.UserRole, ('terrain', 0))
             terrain_item.setForeground(0, QBrush(QColor("#8FBC8F")))  # Earthy green
+            if self.main_window.terrain_locked():
+                terrain_item.setIcon(0, self.lock_icon)
+            if getattr(self.main_window, 'terrain_selected', False):
+                terrain_item.setSelected(True)
 
         # =====================================================================
         # BRUSHES SECTION
@@ -610,14 +1085,22 @@ class SceneHierarchy(QWidget):
         brushes_header.setBackground(0, header_brush)
         brushes_header.setBackground(1, header_brush)
         brushes_header.setFont(0, header_font)
-        brushes_header.setExpanded(True)
+        self._expand_section(brushes_header)
+        headers.append(brushes_header)
         
-        # Add Brushes (sorted)
-        for i, brush_dict in self._get_sorted_brushes():
+        # Add Brushes (sorted; a group's members adjacent, tinted and boxed)
+        sorted_brushes = self._get_sorted_brushes()
+        # One colour per group across both sections: a group holding brushes
+        # and entities is boxed in the same colour under each header.
+        group_colours = brush_groups.colours(
+            brush_groups.scene_objects(self.main_window.state))
+        for row, (i, brush_dict) in enumerate(sorted_brushes):
             item_text = self._get_brush_display_name(brush_dict, i)
             item = QTreeWidgetItem(brushes_header, [item_text, ""])
             item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
             item.setData(0, Qt.UserRole, ('brush', i))
+            row_items.append((item, 'brush', i))
+            self._mark_group_row(item, sorted_brushes, row, group_colours)
             
             if brush_dict.get('hidden', False):
                 item.setForeground(0, QBrush(QColor("#FFAC1C")))
@@ -659,14 +1142,18 @@ class SceneHierarchy(QWidget):
         things_header.setBackground(0, header_brush)
         things_header.setBackground(1, header_brush)
         things_header.setFont(0, header_font)
-        things_header.setExpanded(True)
+        self._expand_section(things_header)
+        headers.append(things_header)
         
-        # Add Things (sorted)
-        for i, thing_obj in self._get_sorted_things():
-            item_text = thing_obj.name if thing_obj.name else f'Thing {i+1}'
+        # Add Things (sorted; a group's members adjacent, tinted and boxed)
+        sorted_things = self._get_sorted_things()
+        for row, (i, thing_obj) in enumerate(sorted_things):
+            item_text = self._get_thing_display_name(thing_obj, i)
             item = QTreeWidgetItem(things_header, [item_text, ""])
             item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
             item.setData(0, Qt.UserRole, ('thing', i))
+            row_items.append((item, 'thing', i))
+            self._mark_group_row(item, sorted_things, row, group_colours)
             
             # Check if hidden
             if thing_obj.properties.get('hidden', False):
@@ -700,6 +1187,9 @@ class SceneHierarchy(QWidget):
         # to be reapplied or it vanishes the moment anything else happens.
         if self._search_matches:
             self._apply_search_styling()
+
+        self._rows = (headers, row_items, terrain_item)
+        self._rows_key = key
 
     def highlight_item(self, obj):
         """Highlight an object in the hierarchy without selecting it.
@@ -825,7 +1315,10 @@ class SceneHierarchy(QWidget):
         # Terrain context menu
         # -----------------------------------------------------------------
         if terrain_items and not brush_items and not thing_items:
+            locked = self.main_window.terrain_locked()
             edit_action = menu.addAction("Edit Terrain...")
+            edit_action.setEnabled(not locked)
+            lock_action = menu.addAction("Unlock" if locked else "Lock")
             menu.addSeparator()
             delete_action = menu.addAction("Delete Terrain")
 
@@ -833,16 +1326,17 @@ class SceneHierarchy(QWidget):
 
             if action == edit_action:
                 self.main_window.open_terrain_editor()
+            elif action == lock_action:
+                self.main_window.set_terrain_locked(not locked)
             elif action == delete_action:
                 self.main_window.save_state()
                 self.main_window.state.terrain_data = None
                 # Remove the live terrain object so the 3D view stops rendering it
                 self.main_window.terrain = None
-                panel = self.main_window._current_overlay
-                if panel is not None:
-                    if self.main_window._current_overlay is panel:
-                        self.main_window._close_current_overlay()
-                    self.main_window.terrain_editor_window = None
+                if self.main_window.terrain_editor_window is not None:
+                    self.main_window.close_terrain_editor()
+                elif self.main_window._current_overlay is not None:
+                    self.main_window._close_current_overlay()
                 self.main_window.set_selected_objects([])
                 self.main_window.update_all_ui()
             return
@@ -871,7 +1365,9 @@ class SceneHierarchy(QWidget):
             focus_action.triggered.connect(
                 lambda _checked=False, targets=list(focus_targets):
                 self.focus_on(targets))
+            self._add_select_group_actions(menu, focus_targets)
             self._add_visgroup_menu(menu, focus_targets)
+            self._add_group_action(menu, focus_targets)
             menu.addSeparator()
 
         # If multiple items of the same type selected, show bulk operations
@@ -932,14 +1428,12 @@ class SceneHierarchy(QWidget):
             elif action == hide_action:
                 self.main_window.save_state()
                 for _, idx in thing_items:
-                    self.main_window.state.things[idx].properties['hidden'] = True
-                    touch(self.main_window.state.things[idx])
+                    set_live_flag(self.main_window.state.things[idx], 'hidden', True)
                 self.main_window.update_all_ui()
             elif action == show_action:
                 self.main_window.save_state()
                 for _, idx in thing_items:
-                    self.main_window.state.things[idx].properties['hidden'] = False
-                    touch(self.main_window.state.things[idx])
+                    set_live_flag(self.main_window.state.things[idx], 'hidden', False)
                 self.main_window.update_all_ui()
             return
 
@@ -1055,8 +1549,7 @@ class SceneHierarchy(QWidget):
                 self.main_window.update_all_ui()
             elif action == hide_action:
                 self.main_window.save_state()
-                thing_obj.properties['hidden'] = not is_hidden
-                touch(thing_obj)
+                set_live_flag(thing_obj, 'hidden', not is_hidden)
                 self.main_window.update_all_ui()
             elif action == properties_action:
                 self.show_properties_for(thing_obj)
@@ -1075,13 +1568,21 @@ class SceneHierarchy(QWidget):
         self.main_window.show_properties_panel()
 
     def handle_selection_change(self):
+        # The tree made this selection: its rebuild must not scroll. And a
+        # selection signal is still using these items: a rebuild now would
+        # delete them while Qt (or a tree iterator) still holds a pointer.
+        self._selecting_in_tree = True
         self._handling_selection = True
         try:
-            self._publish_selection()
+            self._apply_tree_selection()
         finally:
             self._handling_selection = False
+            self._selecting_in_tree = False
+        if getattr(self, '_rebuild_after_selection', False):
+            self._rebuild_after_selection = False
+            self.refresh_list()
 
-    def _publish_selection(self):
+    def _apply_tree_selection(self):
         selected_items = self.tree.selectedItems()
         if not selected_items:
             self.main_window.set_selected_objects([])
@@ -1101,7 +1602,9 @@ class SceneHierarchy(QWidget):
                     terrain_selected = True
         
         if terrain_selected and not selected_objects:
-            self.main_window.set_selected_objects([])
+            # The terrain's row: selected as such, locked or not (the row is
+            # how a locked terrain is reached to unlock it).
+            self.main_window.select_terrain()
             return
 
         self.main_window.set_selected_objects(selected_objects)
@@ -1131,7 +1634,33 @@ class SceneHierarchy(QWidget):
             for axis in range(3))
         self.main_window.focus_on_bounds(mid, max(radius, spread * 0.5))
 
+    def _expand_section(self, header):
+        """Open a section title unless the user closed it (kept across the
+        rebuild every selection change makes)."""
+        header.setExpanded(header.text(0) not in self._collapsed_sections)
+
+    def toggle_section(self, header):
+        """Open or close a section title (a click on it: the tree has no
+        branch arrows to click)."""
+        expanded = not header.isExpanded()
+        header.setExpanded(expanded)
+        if expanded:
+            self._collapsed_sections.discard(header.text(0))
+        else:
+            self._collapsed_sections.add(header.text(0))
+
     def eventFilter(self, obj, event):
+        if (event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick)
+                and event.button() == Qt.LeftButton
+                and obj is self.tree.viewport()):
+            item = self.tree.itemAt(event.pos())
+            if item is not None and item.parent() is None and item.childCount():
+                # A double-click arrives as a press and then a double-click:
+                # toggling on both closed and reopened the section. The
+                # press toggles; the double-click is swallowed.
+                if event.type() == QEvent.MouseButtonPress:
+                    self.toggle_section(item)
+                return True
         if (event.type() == QEvent.MouseButtonDblClick
                 and event.button() == Qt.LeftButton
                 and obj is self.tree.viewport()):
@@ -1188,6 +1717,7 @@ class SceneHierarchy(QWidget):
         return self.tree.selectedItems()
     
     def clear(self):
+        self._rows = None
         return self.tree.clear()
     
     def topLevelItemCount(self):

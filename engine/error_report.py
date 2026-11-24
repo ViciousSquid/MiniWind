@@ -13,8 +13,9 @@ left nothing behind. Every error now goes three places:
 :func:`configure` sets up the file and installs the hooks that catch what
 nothing else does: exceptions escaping a thread (``threading.excepthook``) or
 the main loop (``sys.excepthook``), ``traceback.print_exc()`` output written
-to stderr anywhere in the code base, and native crashes or fatal errors
-(``faulthandler`` into ``logs/crash.log``).
+to stderr anywhere in the code base. Unhandled exceptions are recorded in
+Fio's crash log too, and native crashes are Fio's alone (``editor.crash_log``:
+``fio_crash.log`` and ``fio_fault.log`` next to settings.ini).
 
 Pure Python; nothing here imports Qt, so the logic and AI threads may call
 :func:`report_error` directly. Without :func:`configure` (unit tests, tools)
@@ -25,7 +26,6 @@ notice queue, and nothing is written to disk.
 from __future__ import annotations
 
 import collections
-import faulthandler
 import logging
 import logging.handlers
 import os
@@ -36,7 +36,6 @@ import traceback
 
 LOGGER_NAME = "miniwind"
 LOG_FILE = "miniwind.log"
-CRASH_FILE = "crash.log"
 #: Notices of the same text within this many seconds are merged ("×3").
 NOTICE_MERGE_SECONDS = 10.0
 MAX_NOTICES = 32
@@ -381,6 +380,18 @@ def configure(log_dir=None, *, level=None, console=True, tee_stderr=True,
     return path
 
 
+def _to_crash_log(exc_type, exc, tb):
+    """Record an unhandled exception in Fio's crash log too
+    (editor.crash_log, once main.py has installed it). Never raises."""
+    crash_log = sys.modules.get("editor.crash_log")
+    if crash_log is None:
+        return
+    try:
+        crash_log.record(exc_type, exc, tb)
+    except Exception:
+        pass
+
+
 def _install_hooks(log_dir):
     previous_sys_hook = sys.excepthook
 
@@ -388,6 +399,7 @@ def _install_hooks(log_dir):
         if issubclass(exc_type, KeyboardInterrupt):
             previous_sys_hook(exc_type, exc, tb)
             return
+        _to_crash_log(exc_type, exc, tb)
         report_error("Unhandled exception: %s" % (exc,) if str(exc) else exc_type.__name__,
                      trace="".join(traceback.format_exception(exc_type, exc, tb)))
 
@@ -396,24 +408,13 @@ def _install_hooks(log_dir):
     def thread_hook(args):
         if args.exc_type is SystemExit:
             return
+        _to_crash_log(args.exc_type, args.exc_value, args.exc_traceback)
         name = getattr(args.thread, "name", "thread")
         report_error("%s crashed: %s" % (name, args.exc_value),
                      trace="".join(traceback.format_exception(
                          args.exc_type, args.exc_value, args.exc_traceback)))
 
     threading.excepthook = thread_hook
-    if log_dir is None:
-        return
-    try:
-        handle = open(os.path.join(log_dir, CRASH_FILE), "a", encoding="utf-8")
-        handle.write("\n==== %s %s ====\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), _session_header()))
-        handle.flush()
-        faulthandler.enable(file=handle, all_threads=True)
-        _state["crash_handle"] = handle
-    except OSError:
-        pass
-
-
-def crash_file():
-    """The open ``crash.log`` handle (faulthandler's), or None."""
-    return _state["crash_handle"]
+    # Native crashes and the crash log on disk are Fio's (editor.crash_log:
+    # fio_fault.log and fio_crash.log); this reports to the screen and to
+    # logs/miniwind.log only.

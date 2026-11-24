@@ -14,7 +14,9 @@ import uuid
 import importlib
 
 from engine.change_journal import TrackedAttribute, TrackedPosition, touch
-from engine.constants import PLAYER_HULL_SIZE
+from engine.light_paths import LIGHT_PATH_DEFAULTS
+from engine.constants import (PLAYER_HULL_SIZE, SHADOW_BIAS_DEFAULT,
+                              SHADOW_SOFTNESS_DEFAULT)
 from engine.portal_transform import (
     basis_from_rotation as _portal_basis_from_rotation,
     map_point as _portal_map_point,
@@ -22,8 +24,17 @@ from engine.portal_transform import (
     corners as _portal_corners,
     contains_point as _portal_contains_point,
 )
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
+if __name__.startswith('editor.'):
+    # The editor tier. It is PyQt-backed, and the headless boundary is this
+    # import: without Qt the module does not load, and a headless desktop
+    # host falls back to plugins.entitybase.
+    from PyQt5.QtGui import QPixmap
+    from PyQt5.QtCore import Qt
+else:
+    # The same file staged as ``engine.entities`` for the standalone player
+    # (player/tools/stage_runtime.py), which ships no Qt and draws no editor
+    # icon: the entity classes load, their 2D pixmaps are never asked for.
+    QPixmap = Qt = None
 import ast
 import posixpath
 
@@ -247,17 +258,27 @@ class Thing:
         return self.__class__.get_pixmap()
 
     def _pixmap_for_path(self, sprite_path):
-        """Cached QPixmap for an authored sprite path (project-relative or absolute).
+        """Cached QPixmap for an authored, project-relative sprite path.
 
-        Returns None when the file is missing or unreadable. Shared by any
-        entity whose 2D icon comes from an authored path rather than its class.
+        Returns None when the file is missing or unreadable, or when the path
+        (map data) is absolute, a drive or UNC path, or leaves the project's
+        ``assets``/``plugins`` folders. Shared by any entity whose 2D icon
+        comes from an authored path rather than its class.
         """
         cache_key = ('sprite_path', sprite_path)
         if cache_key in self._pixmap_cache:
             return self._pixmap_cache[cache_key]
+        from engine.asset_paths import confined_path, safe_relative, warn_refused
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-        absolute_path = sprite_path if os.path.isabs(sprite_path) else os.path.join(project_root, sprite_path)
-        pixmap = load_pixmap(absolute_path) if asset_exists(absolute_path) else None
+        relative = safe_relative(sprite_path)
+        absolute_path = None
+        if relative is not None and relative.split('/')[0] in ('assets', 'plugins'):
+            top, _, rest = relative.partition('/')
+            absolute_path = confined_path(os.path.join(project_root, top), rest)
+        if absolute_path is None:
+            warn_refused(sprite_path, 'sprite')
+        pixmap = (load_pixmap(absolute_path)
+                  if absolute_path and asset_exists(absolute_path) else None)
         if pixmap is not None and pixmap.isNull():
             pixmap = None
         self._pixmap_cache[cache_key] = pixmap
@@ -514,6 +535,17 @@ class UnresolvedThing(Thing):
     def to_dict(self):
         data = copy.deepcopy(self._record)
         data['pos'] = [float(v) for v in self.pos]
+        # Its brush group is the editor's, not the missing plugin's: it
+        # follows edits as ``pos`` does (editor.brush_groups).
+        group = self.properties.get('brush_group')
+        props = data.get('properties')
+        if group or (isinstance(props, dict) and 'brush_group' in props):
+            if not isinstance(props, dict):
+                props = data['properties'] = {}
+            if group:
+                props['brush_group'] = group
+            else:
+                props.pop('brush_group', None)
         return data
 
     def duplicate(self, existing_names=()):
@@ -538,6 +570,11 @@ class Light(Thing):
     'terrain_shadow_only',
     'terrain_shadow_strength',
     'shadow_map_size',
+    'shadow_softness',
+    'shadow_bias',
+    'cookie_enabled',
+    'cookie_texture',
+    'cookie_shadow_floor',
     )
 
     def __init__(self, pos=None, properties=None):
@@ -552,15 +589,31 @@ class Light(Thing):
         # Artist-controlled silhouette shadows without additive terrain light.
         self.properties.setdefault('terrain_shadow_only', False)
         self.properties.setdefault('terrain_shadow_strength', 0.5)
+        # The shadow's map resolution per cube face (0: [Renderer]
+        # shadow_map_size), its edge softness (PCF disk radius in shadow-map
+        # texels) and the multiplier on its acne-preventing depth bias.
+        self.properties.setdefault('shadow_map_size', 0)
+        self.properties.setdefault('shadow_softness', SHADOW_SOFTNESS_DEFAULT)
+        self.properties.setdefault('shadow_bias', SHADOW_BIAS_DEFAULT)
+        # Projected image (engine.light_cookies): explicit opt-in, and
+        # independent of casts_shadows. With both, the image stays visible in
+        # the light's own shadow at cookie_shadow_floor brightness.
+        self.properties.setdefault('cookie_enabled', False)
+        self.properties.setdefault('cookie_texture', '')
+        self.properties.setdefault('cookie_shadow_floor', 0.15)
 
         # Parenting: attach this light to a mover brush by name.
         # When parent_mover is non-empty the logic thread moves this
         # light to (mover.pos + parent_offset) every tick during play.
         self.properties.setdefault('parent_mover', '')
         self.properties.setdefault('parent_offset', [0.0, 0.0, 0.0])
+        # Travelling along a path-node chain in Play (engine.light_paths);
+        # a light parented to a mover ignores its path.
+        for key, value in LIGHT_PATH_DEFAULTS.items():
+            self.properties.setdefault(key, value)
 
     def get_color(self):
-        color = self.properties.get('colour', [255, 255, 255])
+        color = self.properties.get('colour') or [255, 255, 255]
         return [c / 255.0 for c in color]
 
     def get_intensity(self):
@@ -579,6 +632,113 @@ class Light(Thing):
         self.properties['show_radius'] = bool(value)
 
     show_radius = property(get_show_radius, set_show_radius)
+
+
+class LightVolume(Thing):
+    """An idTech 4-style bounded light: a box that is lit, and a light source.
+
+    Unlike :class:`Light` -- a point whose light reaches a sphere and fades
+    with distance -- a light volume lights exactly the box it is given and
+    nothing outside it. The light (and its shadows) come from its *light
+    source*, a point that may be anywhere, inside the box or not: a long box
+    lit from one end, a shaft lit from above. It sits beside the point Light;
+    the two are separate entities and a map's point lights are untouched.
+
+    Created in a 2D view by right-clicking a brush and choosing Light Volume:
+    the box takes the brush's bounds and the brush is removed (one undo puts
+    it back). The box is resized with its handles and the source dragged by
+    its marker, in the 2D views.
+
+    Properties
+    ----------
+    volume_size     The box: width, height and depth (x, y, z), world units,
+                    centred on the entity's position.
+    source_offset   The light source, relative to the box's centre.
+    colour, intensity, state
+                    As a Light's.
+    casts_shadows, shadow_map_size, shadow_softness, shadow_bias
+                    As a Light's, cast from the light source.
+
+    It has no icon: the views show its box and its light source.
+    """
+    pixmap_path = None
+    EDITOR_PRIMARY_PROPERTIES = (
+        'volume_size',
+        'source_offset',
+        'intensity',
+        'state',
+        'casts_shadows',
+        'shadow_map_size',
+        'shadow_softness',
+        'shadow_bias',
+    )
+    #: The smallest box edge, world units: a volume never collapses to a
+    #: plane (its handles and its light both need a thickness).
+    MIN_SIZE = 8.0
+
+    def __init__(self, pos=None, properties=None):
+        super().__init__(pos, properties)
+        self.properties['type'] = 'light_volume'
+        self.properties.setdefault('colour', [255, 255, 255])
+        self.properties.setdefault('intensity', 1.0)
+        self.properties.setdefault('state', 'on')
+        self.properties.setdefault('volume_size', [256.0, 256.0, 256.0])
+        self.properties.setdefault('source_offset', [0.0, 0.0, 0.0])
+        self.properties.setdefault('casts_shadows', False)
+        self.properties.setdefault('shadow_map_size', 0)
+        self.properties.setdefault('shadow_softness', SHADOW_SOFTNESS_DEFAULT)
+        self.properties.setdefault('shadow_bias', SHADOW_BIAS_DEFAULT)
+
+    @staticmethod
+    def _vec3(value, default):
+        try:
+            out = [float(v) for v in value][:3]
+        except (TypeError, ValueError):
+            return list(default)
+        if len(out) != 3 or not all(math.isfinite(v) for v in out):
+            return list(default)
+        return out
+
+    def get_volume_size(self):
+        """The box's (x, y, z) extents, each at least MIN_SIZE."""
+        size = self._vec3(self.properties.get('volume_size'), (256.0, 256.0, 256.0))
+        return [max(self.MIN_SIZE, abs(v)) for v in size]
+
+    def get_bounds(self):
+        """``(lo, hi)``: the box's world corners."""
+        half = [v / 2.0 for v in self.get_volume_size()]
+        centre = [float(v) for v in self.pos]
+        return ([c - h for c, h in zip(centre, half)],
+                [c + h for c, h in zip(centre, half)])
+
+    def get_source_offset(self):
+        return self._vec3(self.properties.get('source_offset'), (0.0, 0.0, 0.0))
+
+    def get_source_position(self):
+        """Where the light and its shadows come from, in the world."""
+        return [float(c) + o for c, o in zip(self.pos, self.get_source_offset())]
+
+    def get_color(self):
+        color = self.properties.get('colour') or [255, 255, 255]
+        return [c / 255.0 for c in color]
+
+    def get_intensity(self):
+        try:
+            return float(self.properties.get('intensity', 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+
+    @classmethod
+    def from_bounds(cls, lo, hi, **properties):
+        """A light volume filling the box *lo*..*hi*, its source at the centre."""
+        lo = [float(v) for v in lo]
+        hi = [float(v) for v in hi]
+        centre = [(a + b) / 2.0 for a, b in zip(lo, hi)]
+        size = [max(cls.MIN_SIZE, abs(b - a)) for a, b in zip(lo, hi)]
+        props = dict(properties)
+        props['volume_size'] = size
+        props.setdefault('source_offset', [0.0, 0.0, 0.0])
+        return cls(pos=centre, properties=props)
 
 
 class Speaker(Thing):
@@ -664,7 +824,9 @@ def make_water_probe(brush):
     WATER_PROBE_HEIGHT above its top surface, its radius reaching the brush's
     centre (which is what decides which water a probe serves) and at least the
     brush's half-width. The brush is given an id if it has none."""
-    brush_id = brush.setdefault('id', str(uuid.uuid4()))
+    brush_id = brush.get('id')
+    if brush_id is None:
+        brush_id = brush['id'] = str(uuid.uuid4())
     pos = [float(v) for v in brush.get('pos', (0.0, 0.0, 0.0))]
     size = [abs(float(v)) for v in brush.get('size', (64.0, 64.0, 64.0))]
     top = pos[1] + size[1] / 2.0
@@ -695,6 +857,9 @@ class Decal(Thing):
     roll        The image's rotation about the throw, degrees.
     mirrored    Flip the image left to right.
     opacity     How strongly it paints (for 'wet', how wet).
+    tint        A colour the image is multiplied by, ``[r, g, b]`` 0..1:
+                white (the default) leaves it as it is. A wet decal's tint
+                colours the wet surface. IO: SetTint.
     text        Words painted on, centred over the image (engine.decal_text);
                 empty for none. ``\\n`` starts a new line. With no image
                 (``texture`` empty) the words are painted alone. IO: SetText,
@@ -709,16 +874,29 @@ class Decal(Thing):
     text_offset_x, text_offset_y
                 Text Offset: the words moved from the centre, right and up,
                 by up to half the box (-0.5 to 0.5) -- into a plate's panel.
+    emissive    Glows, as a screen or a lit sign does: the whole image is
+                painted in its own colours whatever light falls on it, and
+                its face emits light -- into the room in front of it, not onto
+                the wall it is on -- in the main colour of its image (the one
+                most of it is) times its tint.
+                Off (the default) it is not a light at all and costs nothing.
+    emissive_intensity, emissive_radius
+                How bright that light is and how far it reaches, as a
+                Light's intensity and radius. Read only while emissive.
     """
-    #: No icon and no box: what the decal paints is how the editor shows it
-    #: (placed, selected, dragged and nudged with the Decal tool).
+    #: No sprite in the 3D view: what the decal paints is how it shows there
+    #: (placed, selected, dragged and nudged with the Decal tool). The 2D
+    #: views mark it with :data:`ICON_PATH` instead.
     pixmap_path = None
+    #: The 2D views' marker: the Asset Browser's DECAL button icon.
+    ICON_PATH = "assets/decal_button.png"
     #: The Decal tool's selection; selected decals draw tinted.
     editor_selected = False
     EDITOR_PRIMARY_PROPERTIES = (
         'texture', 'width', 'height', 'depth',
-        'yaw', 'pitch', 'roll', 'mirrored', 'opacity', 'text', 'font', 'text_colour',
+        'yaw', 'pitch', 'roll', 'mirrored', 'opacity', 'tint', 'text', 'font', 'text_colour',
         'text_scale', 'text_offset_x', 'text_offset_y',
+        'emissive', 'emissive_intensity', 'emissive_radius',
     )
 
     def __init__(self, pos=None, properties=None):
@@ -736,12 +914,21 @@ class Decal(Thing):
         self.properties.setdefault('roll', 0.0)
         self.properties.setdefault('mirrored', False)
         self.properties.setdefault('opacity', 1.0)
+        self.properties.setdefault('tint', [1.0, 1.0, 1.0])
         self.properties.setdefault('text', '')
         self.properties.setdefault('font', 'Fio UI')
         self.properties.setdefault('text_colour', 'Black')
         self.properties.setdefault('text_scale', 1.0)
         self.properties.setdefault('text_offset_x', 0.0)
         self.properties.setdefault('text_offset_y', 0.0)
+        self.properties.setdefault('emissive', False)
+        self.properties.setdefault('emissive_intensity', 1.0)
+        self.properties.setdefault('emissive_radius', 256.0)
+
+    def get_icon_pixmap(self):
+        """The 2D views' marker: the same icon as the Asset Browser's DECAL
+        button (``assets/decal_button.png``)."""
+        return self._pixmap_for_path(self.ICON_PATH)
 
     @staticmethod
     def default_texture():
@@ -952,6 +1139,17 @@ class Monster(Thing):
         variant     = self.properties.get('variant', '<None>')
         is_dead     = self.properties.get('dead', False)
         is_shooting = self.properties.get('is_shooting', False)
+
+        source = getattr(self, '_asset_source', None)
+        if source is not None:
+            state = 'dead' if is_dead else 'shoot' if is_shooting else 'idle'
+            custom = self.properties.get('custom_' + state, '')
+            base = f'assets/sprites/monsters/{mtype}'
+            candidates = [custom]
+            if variant and variant != '<None>':
+                candidates.append(f'{base}/{variant}/{state}.png')
+            candidates += [f'{base}/{state}.png', f'{base}/idle.png']
+            return next((p for p in candidates if p and source.has_asset(p)), f'{base}/idle.png')
 
         project_root = Monster._get_project_root()
         default_idle, default_dead, default_shoot = Monster._get_default_paths(mtype, variant)
@@ -1479,6 +1677,32 @@ class LogicSpawner(Thing):
         self.properties.setdefault('max_spawn', 0)
         # Extra properties merged into the spawned entity
         self.properties.setdefault('spawn_properties', {})
+        # Entities made by one Spawn, and how far around the spawn point
+        # they are scattered (0: all on it)
+        self.properties.setdefault('spawn_count', 1)
+        self.properties.setdefault('spawn_radius', 0.0)
+
+
+# =============================================================================
+# SHAKE ENTITY
+# =============================================================================
+
+class Shake(Thing):
+    """Shakes the screen when triggered (its Shake input, from any I/O -- a
+    trigger brush's OnTrigger, a button, a timer). Purely visual: the camera
+    view wobbles, dying away over ``duration`` seconds; the player, physics
+    and the world are untouched (engine.shake).
+
+    Properties: ``intensity`` 0..1 (how hard), ``duration`` seconds.
+    """
+    pixmap_path = "assets/sprites/shake.png"
+
+    def __init__(self, pos=None, properties=None):
+        super().__init__(pos, properties)
+        from engine.shake import SHAKE_DEFAULTS
+        self.properties['type'] = 'shake'
+        for key, value in SHAKE_DEFAULTS.items():
+            self.properties.setdefault(key, value)
 
 
 # =============================================================================
@@ -1910,6 +2134,24 @@ class LogicState(Thing):
         if store_name:
             LogicState._persistent_registry[store_name] = dict(self._runtime_data)
 
+    @classmethod
+    def reset_stores(cls, things=()):
+        """Forget every store, and put the stores in *things* back to their
+        authored ``initial_data``.
+
+        The registry carries values from level to level while a game runs.
+        That is a play session's memory, so whoever starts or ends a session
+        calls this: without it a playtest's values were still there on the
+        next Play, were written into the map by the next save, and replaced
+        the ``initial_data`` of any map opened later that used the same store
+        name. The registry is cleared in place: plugins hold a reference to it.
+        """
+        cls._persistent_registry.clear()
+        for thing in things:
+            if isinstance(thing, cls):
+                thing._sync_from_persistent()
+                thing._sync_to_persistent()
+
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------
@@ -2224,6 +2466,7 @@ def _same_value(a, b) -> bool:
 ENTITY_TYPES = {
     'PlayerStart': PlayerStart,
     'Light': Light,
+    'LightVolume': LightVolume,
     'Speaker': Speaker,
     'ReflectionProbe': ReflectionProbe,
     'Decal': Decal,
@@ -2236,6 +2479,7 @@ ENTITY_TYPES = {
     'PathNode': PathNode,
     'LogicCamera': LogicCamera,
     'LogicSpawner': LogicSpawner,
+    'Shake': Shake,
     'Portal': Portal,
     'LogicState': LogicState,
 }
@@ -2252,7 +2496,7 @@ if _effect_class is not None:
 # Categories for editor UI
 ENTITY_CATEGORIES = {
     'Gameplay': ['PlayerStart', 'Monster', 'Prop', 'LevelChanger'],
-    'Environment': ['Light', 'Effect', 'Speaker', 'ReflectionProbe', 'Portal', 'Decal'],
+    'Environment': ['Light', 'LightVolume', 'Effect', 'Speaker', 'ReflectionProbe', 'Portal', 'Decal', 'Shake'],
     'Logic': ['LogicRelay', 'LogicGate', 'LogicTimer', 'LogicCommand', 'LogicCamera', 'LogicSpawner', 'LogicState'],
     'AI': ['PathNode'],
 }

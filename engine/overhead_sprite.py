@@ -639,8 +639,7 @@ class OverheadSpriteRenderer:
 
         loc = self._batch_loc
         gl.glUseProgram(self._batch_prog)
-        self._glraw().uniform_matrix4fv(gl, loc["vp"], 1, gl.GL_FALSE,
-                              self._glm.value_ptr(self._batch_vp))
+        gl.glUniformMatrix4fv(loc["vp"], 1, gl.GL_FALSE, self._glm.value_ptr(self._batch_vp))
         gl.glActiveTexture(gl.GL_TEXTURE1)
         gl.glBindTexture(gl.GL_TEXTURE_BUFFER, self._batch_texture)
         gl.glTexBuffer(gl.GL_TEXTURE_BUFFER, gl.GL_RGBA32F, self._batch_buffer)
@@ -746,12 +745,7 @@ class OverheadSpriteRenderer:
             mvp = projection * view * model
 
             gl.glUseProgram(self._prog)
-            self._glraw().uniform_matrix4fv(gl, 
-                self._mvp_loc,
-                1,
-                gl.GL_FALSE,
-                glm.value_ptr(mvp),
-            )
+            gl.glUniformMatrix4fv(self._mvp_loc, 1, gl.GL_FALSE, glm.value_ptr(mvp))
 
             if self._tint_loc not in (-1, None):
                 gl.glUniform4f(
@@ -802,11 +796,6 @@ class OverheadSpriteRenderer:
 
         except Exception:
             self._ok = False
-
-    @staticmethod
-    def _glraw():
-        from engine import glraw
-        return glraw
 
     def _ready(self) -> bool:
         if self._ok is False:

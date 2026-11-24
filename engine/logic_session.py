@@ -32,6 +32,12 @@ except ImportError:
     PlayerStart = None
 
 
+def _thread_alive(logic) -> bool:
+    """Whether *logic* is a started, running thread (a test may tick it by hand)."""
+    is_alive = getattr(logic, 'is_alive', None)
+    return bool(is_alive is not None and is_alive())
+
+
 class LogicSession:
     """Runtime lifecycle for a LogicThread play session."""
 
@@ -40,11 +46,17 @@ class LogicSession:
         self.play_mode = False
         self._world_pause_owners = frozenset()
         self.physics_world = None
+        #: The global physics switch (Settings > Play Modes > Enable physics):
+        #: off, a session has no physics engine at all -- none is created,
+        #: and Soma is not loaded -- and a physics Prop is ordinary scenery.
+        self.physics_enabled = True
         self.spatial_grid = None
         self._world_pause_lock = threading.Lock()
         self.monster_lock = threading.RLock()
         self.monster_ai_thread = None
         self.effect_store = EffectStore()
+        #: Things added to the world during Play (add_session_thing).
+        self.session_things = []
         #: The PlayerStart this play session began at (its OnPlayerSpawn and
         #: OnPlayerDeath outputs fire); None outside Play.
         self.spawn_start = None
@@ -76,14 +88,47 @@ class LogicSession:
         with self._world_pause_lock:
             return self._world_pause_owners
 
+    def _create_physics(self):
+        """The selected physics over the session's grid, or Soma.
+
+        Play always starts. A selected physics that is gone (KeyError),
+        refused by the contract checks (PhysicsContractError), or that fails
+        to start (PhysicsInitError: a missing library, an exception in its
+        constructor) is reported -- which of the three it was -- and the
+        session plays on Fio's own, DEFAULT_PHYSICS. Only DEFAULT_PHYSICS
+        failing is raised: there is nothing left to fall back to.
+        """
+        from .physics import (DEFAULT_PHYSICS, PhysicsContractError,
+                              PhysicsInitError, create_physics, selected_physics)
+        name = selected_physics()
+        try:
+            return create_physics(self.spatial_grid, name)
+        except (KeyError, PhysicsContractError, PhysicsInitError) as exc:
+            if name == DEFAULT_PHYSICS:
+                raise
+            kind = ("refused by the physics contract"
+                    if isinstance(exc, PhysicsContractError)
+                    else "failed to start" if isinstance(exc, PhysicsInitError)
+                    else "not registered")
+            print(f"[Physics] {name!r} {kind}: {exc} -- playing on {DEFAULT_PHYSICS}")
+            return create_physics(self.spatial_grid, DEFAULT_PHYSICS)
+
     def apply_play_mode(self, enabled: bool, spawn_start=None):
         """Enter or leave Play Mode under the session's tick lock.
 
         *spawn_start* is the PlayerStart the player was placed at; without one,
         the level's primary start (see :mod:`engine.player_starts`).
         """
-        with self.logic._tick_lock:
-            return self._apply_play_mode_unlocked(enabled, spawn_start)
+        logic = self.logic
+        with logic._tick_lock:
+            try:
+                return self._apply_play_mode_unlocked(enabled, spawn_start)
+            finally:
+                # Building or tearing down the session is not game time: the
+                # loop must not run it off in catch-up ticks afterwards.
+                resync = getattr(logic, 'request_clock_resync', None)
+                if resync is not None:
+                    resync()
 
     def _primary_start(self):
         if not PlayerStart:
@@ -91,6 +136,28 @@ class LogicSession:
         starts = [t for t in self.logic.editor_state.things if isinstance(t, PlayerStart)]
         position = start_rules.pick_start([t.properties for t in starts])
         return starts[position] if position is not None else None
+
+    def add_session_thing(self, thing):
+        """Add *thing* to the running world for this Play session only: a
+        LogicSpawner's spawn, a barrel's fireball. Play stopping removes it,
+        so a playtest leaves the map as it was authored."""
+        logic = self.logic
+        logic.editor_state.things.append(thing)
+        self.session_things.append(thing)
+        logic.world_runtime.build_entity_caches()
+
+    def remove_session_things(self):
+        """Take the session's Things out of the world; whether there were any."""
+        things = self.logic.editor_state.things
+        removed = False
+        for thing in getattr(self, 'session_things', ()):
+            try:
+                things.remove(thing)
+                removed = True
+            except ValueError:
+                pass
+        self.session_things = []
+        return removed
 
     def _apply_play_mode_unlocked(self, enabled: bool, spawn_start=None):
         logic = self.logic
@@ -109,6 +176,9 @@ class LogicSession:
         logic.camera.reset_camera_focus()
 
         if enabled:
+            # A Play restarted without a Stop: the old session's AI must not
+            # run through this one's setup (it is started again at the end).
+            self.stop_monster_ai()
             # A new Play session clears any previous fault marker.
             logic._tick_faulted = False
             logic._gui_fault_teardown_requested = False
@@ -117,6 +187,7 @@ class LogicSession:
             logic.mover_runtime._init_movers()
             logic.mover_runtime._init_doors()
             logic.parenting_runtime._init_parented_lights()
+            logic.light_path_runtime.start()
             logic.parenting_runtime._init_parented_portals()
 
             # Bake swept-mesh collision for angled (clipped/convex) brushes so
@@ -124,6 +195,8 @@ class LogicSession:
             # grid is populated below so the grid indexes them by true bounds.
             logic.collision_runtime.prepare_angled_brush_collision()
 
+            # Model files are read once for the session that starts here.
+            logic.collision_runtime.forget_model_files()
             logic.collision_runtime._model_collision_brushes = (
                 logic.collision_runtime.build_model_collision_brushes()
             )
@@ -132,10 +205,21 @@ class LogicSession:
                 for b in logic.collision_runtime._model_collision_brushes
                 if b.get("_physics_body")
             ]
+            # A solid model riding a group's mover, or turning (Rotate), takes
+            # its collision with it.
+            logic.collision_runtime.carry_moving_models()
             logic.collision_runtime.refresh_collision_brushes_cache()
 
             # Runtime effect state belongs to this play session, not authoring.
             self.effect_store.begin_session(logic.editor_state.things)
+            logic.explosion_runtime.start()
+            logic.shake_runtime.stop()
+            self.session_things = []
+            # Each Play counts its spawners' spawns afresh (max_spawn).
+            for thing in logic.editor_state.things:
+                props = getattr(thing, 'properties', None)
+                if isinstance(props, dict) and props.get('type') == 'logic_spawner':
+                    props.pop('_spawn_count', None)
 
             # Reset player stats.
             logic.player_runtime.player_health = 100
@@ -201,14 +285,26 @@ class LogicSession:
             # Build entity caches before constructing session-local physics.
             logic.world_runtime.build_entity_caches()
 
-            from .physics import PhysicsWorld, SpatialGrid
+            from .physics import create_physics, unload_physics
+            from .spatial_grid import SpatialGrid
 
             self.spatial_grid = SpatialGrid(cell_size=512.0)
             self.spatial_grid.populate(
                 logic.editor_state.brushes + logic.collision_runtime._model_collision_brushes
             )
-            self.physics_world = PhysicsWorld(self.spatial_grid)
-            self.physics_world.rebuild(logic.collision_runtime._physics_body_brushes)
+            # The terrain is the world's too, and the editor can replace it
+            # while the session runs: the grid asks for the current one.
+            world_runtime = logic.world_runtime
+            self.spatial_grid.set_terrain(lambda: world_runtime.terrain)
+            if self.physics_enabled:
+                # Whichever physics is selected (engine.physics.registry):
+                # the engine drives it through the contract and nothing else.
+                self.physics_world = self._create_physics()
+                self.physics_world.rebuild(logic.collision_runtime._physics_body_brushes)
+            else:
+                # Switched off: no engine, and nothing of one kept loaded.
+                self.physics_world = None
+                unload_physics()
             logic.monster_ai.set_spatial_grid(self.spatial_grid)
 
             # Reset cinematic state.
@@ -245,10 +341,24 @@ class LogicSession:
             logic.combat_runtime._gunfire_events.clear()
 
             # Spawn I/O is deliberately before timers and AI, matching the
-            # original LogicThread ordering.
+            # original LogicThread ordering. This thread holds the tick lock,
+            # so for now it is the I/O system's tick thread: spawn outputs are
+            # delivered here, in place, in every session. (Before, the first
+            # Play delivered them here and every later one queued them to the
+            # next tick -- after the timers armed below.)
+            claim = getattr(logic.io_manager, 'claim_tick_thread', None)
+            if claim is not None:
+                claim()
             self.fire_player_spawn_outputs()
             logic.timing_runtime.init_logic_timers()
-            self.start_monster_ai()
+            if claim is not None and _thread_alive(logic):
+                # Setup is done: from here on the running loop is the tick
+                # thread again, and outputs from this one are queued to it.
+                claim(logic.ident)
+            # Player events a previous session's AI queued are not this one's.
+            discard = getattr(logic.trigger_runtime, 'discard_deferred_events', None)
+            if discard is not None:
+                discard()
 
         else:
             if (
@@ -261,6 +371,19 @@ class LogicSession:
                 )
 
             self.stop_monster_ai()
+            discard = getattr(logic.trigger_runtime, 'discard_deferred_events', None)
+            if discard is not None:
+                discard()
+            # An explosion still playing goes back to its type now: a FIRE
+            # stopped mid-explosion is a FIRE in the editor, as authored.
+            self.effect_store.cancel_returns()
+            # Exploded barrels stand again; what the session added (barrels'
+            # fireballs, spawned fires and monsters) goes.
+            changed = logic.explosion_runtime.stop()
+            logic.shake_runtime.stop()
+            changed = self.remove_session_things() or changed
+            if changed:
+                logic.editor_state.mark_world_changed()
             logic.trigger_runtime._reset_trigger_state()
             logic.trigger_runtime.fired_once_triggers.clear()
             logic.player_runtime.collected_keys.clear()
@@ -268,8 +391,10 @@ class LogicSession:
             logic.mover_runtime._reset_movers()
             logic.mover_runtime._reset_doors()
             logic.parenting_runtime._reset_parented_lights()
+            logic.light_path_runtime.stop()
             logic.parenting_runtime._reset_parented_portals()
             logic.collision_runtime.clear_angled_brush_collision()
+            logic.collision_runtime.forget_model_files()
             logic.interaction_runtime.current_hud_message = ""
             logic.interaction_runtime.current_hud_key_name = None
             logic.timing_runtime.timer_states.clear()
@@ -329,6 +454,12 @@ class LogicSession:
                 )
             logic._plugin_emit("play_start" if enabled else "play_stop")
 
+        # The AI thread starts last, once the session -- plugins' play-start
+        # included -- is complete: it reads the world under the monster lock
+        # alone, not the tick lock held for the rest of this.
+        if enabled:
+            self.start_monster_ai()
+
     #: What the player intentionally carries through a level change: the
     #: weapons they have, the one in hand, and their ammunition.
     LOADOUT_FIELDS = ("active_weapon", "weapons", "player_ammo")
@@ -371,10 +502,16 @@ class LogicSession:
         try:
             from engine import savegame
 
-            session = logic.plugins.services.get("bigworld")
+            # No plugin system (FIO_NO_PLUGINS, or it failed to load) means no
+            # Big World session -- not a save that fails on None.
+            # The tick lock, then the monster lock (the engine's lock order):
+            # the MonsterAI thread inserts into monster_states, which the
+            # snapshot reads, and a load replaces it under the thread.
+            session = (logic.plugins.services.get("bigworld")
+                       if logic.plugins is not None else None)
             if (session is not None and session.logic is logic
                     and session.streaming and session._started):
-                with logic._tick_lock:
+                with logic._tick_lock, self.monster_lock:
                     session.commit_all()
                     snapshot = savegame.build_snapshot(
                         logic,
@@ -384,7 +521,7 @@ class LogicSession:
                         base_world=session.base_identity(map_name),
                     )
             else:
-                with logic._tick_lock:
+                with logic._tick_lock, self.monster_lock:
                     snapshot = savegame.build_snapshot(
                         logic,
                         map_name=map_name,
@@ -418,7 +555,11 @@ class LogicSession:
             from engine import savegame
 
             data = savegame.read(path)
-            with logic._tick_lock:
+            with logic._tick_lock, self.monster_lock:
+                # Restoring is not game time either (see apply_play_mode).
+                logic_resync = getattr(logic, 'request_clock_resync', None)
+                if logic_resync is not None:
+                    logic_resync()
                 report = savegame.restore_auto(
                     logic,
                     data,
@@ -465,6 +606,8 @@ class LogicSession:
     def start_monster_ai(self):
         logic = self.logic
         self.stop_monster_ai()
+        if not getattr(logic, "threaded_ai", True):
+            return
         self.monster_ai_thread = MonsterAIThread(
             logic,
             logic.monster_ai,

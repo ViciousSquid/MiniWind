@@ -344,6 +344,24 @@ def _capture_moving_brushes(logic) -> dict:
     return out
 
 
+def _capture_rotations(logic) -> dict:
+    """Each rotating model's progress, by UUID (engine.model_rotate)."""
+    props = getattr(logic, "prop_runtime", None)
+    try:
+        return _jsonify(props.rotation_snapshot()) if props is not None else {}
+    except Exception:
+        return {}
+
+
+def _capture_light_paths(logic) -> dict:
+    """Each path-following light's journey, by UUID (engine.light_paths)."""
+    paths = getattr(logic, "light_path_runtime", None)
+    try:
+        return _jsonify(paths.snapshot()) if paths is not None else {}
+    except Exception:
+        return {}
+
+
 def _restore_moving_brushes(logic, saved) -> None:
     """Put mover and door brushes back where :func:`_capture_moving_brushes`
     found them: into the mover table, which owns their runtime transform
@@ -385,29 +403,28 @@ def _build_full_snapshot(logic, *, map_name: str = "", with_level: bool = True) 
         logic.mover_runtime._movers().settle_parked()
     except Exception:
         pass
-    level = {}
-    if with_level:
-        try:
-            level = logic.editor_state.get_level_data()
-        except Exception:
-            level = {}
+    # Not swallowed: a level that cannot be serialised must fail the save.
+    # Carrying on with an empty level wrote a save with no world in it over
+    # the player's slot and reported success.
+    level = logic.editor_state.get_level_data() if with_level else {}
 
+    # Not swallowed either: an error here used to write a save with no
+    # monster state at all and report success. The caller holds the monster
+    # lock (LogicSession.save_session), so the AI thread is not adding to the
+    # dict while it is read.
     monster_states: Dict[str, Any] = {}
-    try:
-        raw = logic.monster_ai.monster_states or {}
-        by_obj_id = {id(t): t for t in logic.world_runtime.monster_things}
-        for obj_id, state in raw.items():
-            mon = by_obj_id.get(obj_id)
-            sid = _thing_id(mon) if mon is not None else ""
-            if sid:
-                # investigating_sound holds a transient (pos, expiry) tuple tied
-                # to wall-clock time; drop it rather than persist a stale timer.
-                # _public_state also strips any cached _-prefixed runtime fields.
-                clean = _public_state(state)
-                clean.pop("investigating_sound", None)
-                monster_states[sid] = clean
-    except Exception:
-        monster_states = {}
+    raw = logic.monster_ai.monster_states or {}
+    by_obj_id = {id(t): t for t in logic.world_runtime.monster_things}
+    for obj_id, state in raw.items():
+        mon = by_obj_id.get(obj_id)
+        sid = _thing_id(mon) if mon is not None else ""
+        if sid:
+            # investigating_sound holds a transient (pos, expiry) tuple tied
+            # to wall-clock time; drop it rather than persist a stale timer.
+            # _public_state also strips any cached _-prefixed runtime fields.
+            clean = _public_state(state)
+            clean.pop("investigating_sound", None)
+            monster_states[sid] = clean
 
     runtime = {
         "god_mode": bool(logic.player_runtime.god_mode),
@@ -438,6 +455,8 @@ def _build_full_snapshot(logic, *, map_name: str = "", with_level: bool = True) 
                          for k, s in logic.timing_runtime.timer_states.items()},
         "pending_io_events": _capture_pending_events(logic),
         "moving_brushes": _capture_moving_brushes(logic),
+        "light_paths": _capture_light_paths(logic),
+        "rotations": _capture_rotations(logic),
         "mover_path_states": {
             str(i): _jsonify(_public_state(s))
             for i, s in (logic.mover_runtime.mover_path_states or {}).items()},
@@ -498,10 +517,16 @@ def _public_props(t_data: dict) -> dict:
 
 
 def _thing_changed(base_t: dict, live_t: dict) -> bool:
-    """Whether *live_t* differs from *base_t* in what :func:`_thing_state`
-    compares (position and public properties)."""
-    return not (_same(base_t.get("pos"), live_t.get("pos"))
-                and _same(_public_props(base_t), _public_props(live_t)))
+    """``_thing_state(base_t) != _thing_state(live_t)``, without serializing
+    the records that compare equal as they are (nearly all of them): position,
+    public properties and, for a LogicState, its values."""
+    if not (_same(base_t.get("pos"), live_t.get("pos"))
+            and _same(_public_props(base_t), _public_props(live_t))):
+        return True
+    if _is_store_record(base_t) or _is_store_record(live_t):
+        return not _same(_store_values(base_t) if _is_store_record(base_t) else None,
+                         _store_values(live_t) if _is_store_record(live_t) else None)
+    return False
 
 
 def _thing_state(t_data: dict) -> dict:
@@ -516,7 +541,36 @@ def _thing_state(t_data: dict) -> dict:
         k: v for k, v in (t_data.get("properties") or {}).items()
         if not str(k).startswith("_") and k != "_io_connections"
     }
-    return {"pos": _jsonify(t_data.get("pos")), "properties": _jsonify(props)}
+    state = {"pos": _jsonify(t_data.get("pos")), "properties": _jsonify(props)}
+    if _is_store_record(t_data):
+        # A LogicState's values are not properties, and they are most of what
+        # a save is for: compared here so a changed store is in the delta.
+        state["store"] = _jsonify(_store_values(t_data))
+    return state
+
+
+def _is_store_record(t_data: dict) -> bool:
+    return (t_data.get("properties") or {}).get("type") == "logic_state"
+
+
+def _store_values(t_data: dict) -> dict:
+    """The values a serialized LogicState holds: its ``runtime_data``, or its
+    authored ``initial_data`` when the record carries none."""
+    runtime = t_data.get("runtime_data")
+    if isinstance(runtime, dict):
+        return runtime
+    initial = (t_data.get("properties") or {}).get("initial_data")
+    return initial if isinstance(initial, dict) else {}
+
+
+def _restore_store(live, t_data: dict) -> None:
+    """Put a saved LogicState's values back on the live entity and into the
+    process-wide registry the I/O handlers and plugins read."""
+    if not (_is_store_record(t_data) and hasattr(live, "_sync_to_persistent")):
+        return
+    from editor import state_values
+    live._runtime_data = state_values.load_store(_store_values(t_data))
+    live._sync_to_persistent()
 
 
 def _brush_overlay(b_data: dict) -> dict:
@@ -625,9 +679,15 @@ def normalize_base_level(raw_level: dict) -> dict:
         from editor.editor_state import EditorState
         st = EditorState()
         st.load_from_data(raw_level or {})
-        return st.get_level_data()
+        level = st.get_level_data()
     except Exception:
         return raw_level or {}
+    # A store built here reads the live registry, so its record would hold
+    # the running game's values. The base map's values are the authored ones.
+    for t_data in level.get("things", []):
+        if _is_store_record(t_data):
+            t_data.pop("runtime_data", None)
+    return level
 
 
 def build_snapshot(logic, *, map_name: str = "",
@@ -768,6 +828,7 @@ def _overlay_entities(logic, level: dict, *, complete: bool = False) -> None:
             # restore leaves visibly wrong.
             for k in _PARKABLE_KEYS:
                 _overlay_parkable(live.properties, k, props)
+            _restore_store(live, t_data)
         except Exception:
             continue
         finally:
@@ -873,6 +934,22 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     # Mover/door brush transforms first: the states below animate from them.
     try:
         _restore_moving_brushes(logic, runtime.get("moving_brushes"))
+    except Exception:
+        pass
+    # Path-following lights: their journeys, or the next tick puts each back
+    # where it had got to before the load (its pos is the level overlay's).
+    try:
+        paths = getattr(logic, "light_path_runtime", None)
+        if paths is not None:
+            paths.restore(runtime.get("light_paths"))
+    except Exception:
+        pass
+    # Rotating models: where each had turned to, or a valve opened after
+    # the save stays open -- and its solid collision with it -- after the load.
+    try:
+        props = getattr(logic, "prop_runtime", None)
+        if props is not None:
+            props.restore_rotations(runtime.get("rotations"))
     except Exception:
         pass
     if "mover_path_states" in runtime:
@@ -1257,7 +1334,11 @@ def write(path: str, snapshot: dict) -> None:
         os.makedirs(directory, exist_ok=True)
     # Atomic: a quicksave overwrites the same slot every time, and a failure
     # part-way through must not cost the player the save they already had.
-    write_json_atomic(path, snapshot, indent=2, default=_json_default)
+    # allow_nan=False: a NaN or infinity would write fine and then be refused
+    # on load (validate_snapshot), after it had replaced the good save. It
+    # raises ValueError here instead, before the old file is touched.
+    write_json_atomic(path, snapshot, indent=2, default=_json_default,
+                      allow_nan=False)
 
 
 def read(path: str) -> dict:

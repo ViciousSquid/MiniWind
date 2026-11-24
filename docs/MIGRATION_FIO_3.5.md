@@ -1,9 +1,10 @@
-# MiniWind → Fio 3.5 migration record (3.5.0.1611)
+# MiniWind → Fio 3.5 migration record (3.5.2.2411)
 
 MiniWind's engine moved from Fio 3.0.0.1010 (taken up to upstream commit
 `f445fac1`, plus later per-file backports) to **Fio 3.5.0.1111**, then to
-**Fio 3.5.0.1211** (Milestone 7), to **Fio 3.5.0.1511** (Milestone 8), and now
-to **Fio 3.5.0.1611** (Milestone 10, at the end of this record).
+**Fio 3.5.0.1211** (Milestone 7), to **Fio 3.5.0.1511** (Milestone 8), to
+**Fio 3.5.0.1611** (Milestone 10), and now to **Fio 3.5.2.2411**, Fio's
+`Canary` branch (Milestone 11, at the end of this record).
 The game
 layer (`game/`) needed four source changes: `multiplayer/replication.py` and
 `multiplayer/world.py` (a door's live position and state rows, below),
@@ -22,7 +23,8 @@ the concern.
 | Fio (then) | `3.5.0.1211_Latest` | `77387caaeba284b5467a180b1ba39e147aace86d` (40 commits past `a278e956`) |
 | Fio (then) | `3.5.0.1211_Latest` | `bcf4d297d9d78e5269428353db36d30ab3aca19e` (23 commits past `77387caa`: Play's mouse grab) |
 | Fio (then) | `3.5.0.1511_Latest` | `a11848bffd272d7d3deb180451856849cefed9f2` (73 commits past 1211) |
-| Fio (now) | `Canary_1611` | `68d052b9` (52 commits past `a11848bf`; version 3.5.0.1611) |
+| Fio (then) | `Canary_1611` | `68d052b9` (52 commits past `a11848bf`; version 3.5.0.1611) |
+| Fio (now) | `Canary` | `580e7aedaf3ff0001b51bf0b3d3d04282ea7bc29` (433 commits past `68d052b9`; version 3.5.2.2411) |
 | Common upstream ancestor | Fio `3.0.0.1010_Latest` | `f445fac1be58a1011da276a77de00ef9487add0a` |
 
 `backup_3.0.0.3010` is an ancestor of `41eeb2c` (22 commits behind it), so
@@ -128,7 +130,8 @@ MiniWind map, or load one of four Fio example maps kept as test fixtures in
 | Pointer ownership | `QtGameView._mouse_look_captured` also yields while a game menu or pointer claim holds, so Fio 3.5's per-frame cursor re-centring never takes the pointer from a game screen |
 | Terrain biomes, wheat, tundra, seasons, grass pushers | CPU generation in `engine/terrain.py` (no OpenGL); biome map, version and pushers published on `TerrainFrame`; textures, uniforms and buffers owned by `TerrainGL` |
 | GC policy | one owner, `engine/gc_policy.py` (Fio's settle/release plus MiniWind's load policy and play-time freeze); `engine/gc_control.py` is its older name |
-| Error reporting, freeze watchdog, data_copy, file_version, game input, game package, render camera | MiniWind-only modules, kept |
+| Error reporting (screen notices, `logs/miniwind.log`), freeze watchdog, data_copy, file_version, game input, render camera | MiniWind-only modules, kept. Since Milestone 11 the crash logs on disk are Fio's (`editor/crash_log.py`); `error_report` hands it every unhandled exception |
+| The game's navigation cache knowing the walls changed | `engine.spatial_grid.SpatialGrid.navigation_revision` (the grid left the old `engine/physics.py` in Milestone 11) |
 | Hidden procedural-generation action, MiniWind branding, editor UI parity work | kept (`game/integration.py`, `assets/editor.fiopak` repacked with MiniWind's icon, logo and splash) |
 
 ## Defects found and fixed during the migration
@@ -403,7 +406,8 @@ culling) High drew 336,000 heath blades at 3.8 fps and Off 40 fps.
 
 Where the per-frame Python went (paused overworld, main thread): PyOpenGL's
 argument conversion for brush-instance pointers, matrices and element draws
-(now native entry points, `engine/glraw.py`); the minimap's witness markers
+(now native entry points; since Milestone 11 Fio's own,
+`engine/renderer/core/raw_calls.py` and `gl_state.py`); the minimap's witness markers
 and the floor objects (re-derived only on change); the overhead sprites (one
 instanced draw per depth state, every image a layer of one texture array);
 function-level imports in the game (absolute, CPython's fast path); per-frame
@@ -631,3 +635,100 @@ its Python is `WorldIndex.rebuild`, which snapshots every actor each tick.
   cost that grows with the cast rather than with what moved.
 * Every GL number here is llvmpipe's. Hardware parity (M5, Adreno, a desktop
   GPU) is still unverified, as before.
+
+
+## Milestone 11 — Fio 3.5.2.2411 (`Canary`) (2026-11-24)
+
+MiniWind's engine is now Fio `Canary` at `580e7aed`: the 433 commits after
+`68d052b9` (3.5.0.1611), version 3.5.2.2411. One rule governed the merge:
+**Fio is definitive unless the code is RPG-specific.** Where MiniWind and Fio
+had each solved the same engine problem, Fio's solution was taken and
+MiniWind's removed; MiniWind keeps only what its game needs, re-applied onto
+Fio's code with the least glue.
+
+Method: a three-way merge (`git merge-tree --merge-base=68d052b9`) of `main`
+and `Canary`, 55 files resolved by hand, then every line MiniWind had added
+since the base checked against the merged tree for presence *and* for still
+sitting in the same function (an auto-merged hunk of `MonsterAI.__init__` had
+landed inside Fio's new knockback method; nothing else had moved).
+
+What it brings (Fio's own words are in its commit log; the large items):
+
+* **Physics is a package and a contract**: `engine/physics/` (Soma, Fio's
+  built-in physics, behind a registry and `PHYSICS_CONTRACT_VERSION`), the
+  world's walls in engine core (`engine/spatial_grid.py`), plugin API 2.0.
+  Model collision meshes the player walks on, steps up and stands on.
+* **Two renderers**: Classic (the default, `[Renderer] renderer = Classic`)
+  and HD_High (`engine/renderer/hd_high/`, physically based, Forward+), with
+  material companion maps beside every surface texture (`*.mat.json`,
+  `*_n.webp`, `*_m.webp`; `tools/make_material_maps.py`). Each display mode in
+  its own folder; GL state through `core/gl_state.py`, pointer calls through
+  `core/raw_calls.py`; prepared model plans.
+* **Editor**: brush and entity groups (UUIDs I/O can target), a Move / Rotate /
+  Scale gizmo, light volumes, model Rotate animation with a preview, Save As
+  Minified, toasts as Debug Console cards, `condump`, a floating Terrain
+  Editor, Fio Mono, kiosk mode on a native window (`[Kiosk] native_surface`,
+  off), the editor dormant and painting on publish in kiosk mode, a crash log
+  on disk (`fio_crash.log`, `fio_fault.log`).
+* **World**: light cookies, lights along path nodes, emissive decals, brushes
+  and water, water flow direction, lens water, explosive barrels, the Shake
+  entity, GPU particle emitters on Effects, terrain paint and stamps kept
+  beside the map in `<map>.paint`.
+* **Hardening and speed**: untrusted map/package/model data refused, faults
+  contained and logged once, the logic loop survives anything a frame raises,
+  still frames examine no rows, the property panel and hierarchy reselect
+  rather than rebuild, background autosave, export on a worker thread.
+* **Tests**: each test gets its own `settings.ini`
+  (`tests/helpers/settings_isolation.py`); golden frames of Classic
+  (`tools/hd_golden.py`).
+
+MiniWind's parallel implementations, removed in favour of Fio's:
+
+| MiniWind had | Now Fio's |
+|---|---|
+| `<map>.stamp` (format 2) holding a map's terrain paint, `paint_file: "<name>.stamp"` | `<map>.paint` (`engine/terrain_stamp.py`, `paint_file: true`). `maps/miniwind_world.stamp` was converted once to `maps/miniwind_world.paint` and checked to join to the identical `terrain_data`. `paint_path` / `load_stamp_file` also look inside mounted data packages, where MiniWind's maps may ship. |
+| `engine/glraw.py` (native GL entry points) | `engine/renderer/core/raw_calls.py` and `gl_state.py` (`has_base_instance` moved to `raw_calls`) |
+| `logs/crash.log` (faulthandler in `engine/error_report.py`) | `editor/crash_log.py`; `error_report` keeps the on-screen notices and `logs/miniwind.log`, and passes every unhandled exception to Fio's crash log |
+| A second `MainWindow.editor_dormant` that overrode Fio's | Fio's property, which now also counts MiniWind's dormant game launch; panels catch up through Fio's `_editor_ui_stale` |
+| The scene hierarchy's dormant deferral (`_refresh_deferred`) | Fio's out-of-sight deferral (`_stale`) |
+| Visible-views-only 2D repaints in Play | Fio's `update_views()`, which Fio now skips in kiosk mode |
+| `engine/game_package.py` (extract a package to play it; unused) | `editor/package_session.py` (read in place) |
+| Big World editor streaming's `data_copy` | Fio's `copy_record` |
+| Sculpt-list cache, one-pass legacy sculpt load | Fio's compressed `sculpt_tiles` and dense-grid dab patching |
+| Brush-run pointer loop, `UniformCache` overrides, framebuffer-depth cache, `render_cull.shadow_casters_in_reach` | Fio's per-run vertex arrays, `UniformCache`, `_read_framebuffer_has_depth`, `_casters_in_reach` (with MiniWind's rotated-corner bound and geometry epoch folded in) |
+
+Kept, being the game's: single-facing monster sprites and fight frames
+(`WARM_FIGHT_FRAMES = False`), the sprite warm-up bounded to the view
+distance, head spin and tint, actor reflections in water, the game sky in the
+water (night, clouds, the moon and stars), one global water quality, the
+`pre_sprites` hook (bracketed by `gl_state.end_frame()` / `begin_frame()`, as
+the game draws with plain GL), terrain-only light shadows (moved to free
+light-buffer slots, `indices.y` and `indices.w`, as Fio's cookies took
+`params.w`/`indices.z`), biomes, wheat, tundra, seasons and grass pushers
+(a stamp's grass thinning regrows wheat and tundra rather than rolling per
+blade), overhead sprites, co-op trigger filtering, gamepad movement, the
+level changer's prompt and doorway behaviour, the Play menu and game pointer,
+the dormant launch, the Big World `with_level` save, the navigation revision.
+
+Where MiniWind differs from Fio in what was merged:
+
+| Fio 3.5.2.2411 | MiniWind |
+|---|---|
+| The Android player, Deathmatch and Tidy plugins, demo maps, Android/DMG/stand-alone build workflows | Not shipped, as before. `Reel_To_Reel_Test.json` is a test fixture (`tests/fixtures/maps/`); its tests and `tools/make_reel_to_reel_test_map.py` point there. Tests that listed the absent plugins list Big World only. |
+| Fio's stock `cobblestone`, `foxhex`, `mtlgrate`, `scifipnl01` companion maps | Not taken: MiniWind does not ship those textures. Tests that used `cobblestone.jpg` use `Stone_09-512x512.png`. |
+| Companion maps for Fio's stock textures | Also baked for MiniWind's own 75 surface textures (`tools/make_material_maps.py`; 38 MB), so HD_High finds them and Fio's completeness check holds |
+| HD_High's terrain samples 16 textures | MiniWind's biome map would be the 17th: HD_High's terrain program drops it (no biome tint in HD_High). HD_High also has no game sky in water, actor reflections, `pre_sprites`, head spin/tint, global water/grass settings or terrain-only shadows; Classic remains the default |
+| The view reads `renderer.grass_enabled` / `grass_quality` | Outside Fio's renderer contract: the view now owns them (`QtGameView.grass_settings`, from `[Renderer] grass` / `grass_quality`; the pause menu sets them with `set_grass_settings`). The Play warm-up no longer counts the renderer's textures. |
+| A level change keeps only start-up sounds (`ViewAudio.begin_level`) | Also keeps every `sounds.fiopak` sound: MiniWind decodes them on first use or in the background, not at start-up |
+| Maps are written indented unless minified | The same; `miniwind_world.json` is minified, and stays so |
+| `[Renderer] shadow_map_size = 1024`, `sky_cubemap_size = 512` | Taken |
+| A failing `editor/main_window.py` load leaves the open map | The same, and a package's start map is validated before `file_path` is cleared, as before |
+
+Game layer changes: `game/ui/pause_actions.py` (grass through the view),
+`game/tools/rebake_roads.py` (the `.paint` API), `game/tools/expand_world.py`
+and `populate_world.py` (read sculpting as `sculpt_tiles` or
+`sculpt_offsets`: `sculpt_cells`), `game/tools/audit_launch.py` (buckets), and
+the tests that followed.
+
+Engine provenance is `editor/version.txt` (`Fio 3.5.2.2411`); MiniWind stays
+at `MiniWind 0.5.0`. Pillow stays at 13.0.0.

@@ -14,7 +14,10 @@ from PyQt5.QtWidgets import (QDialogButtonBox, QFileDialog, QFormLayout, QLabel,
 from editor.desktop_style import MONO_FONT, UI_FONT, keep_message_box_titles, message_box_size
 from main import dark_stylesheet
 
-pytestmark = pytest.mark.qt
+# Its message boxes are real ones: on Windows the Qt shard runner runs this
+# module on the windows platform (Qt 5.15.2's offscreen one crashes in
+# QMessageBox's show; see tools/run_qt_suite_shard.py).
+pytestmark = [pytest.mark.qt, pytest.mark.native_message_box]
 
 
 def test_tabs_stay_at_the_left_even_when_a_dialog_has_its_own_stylesheet(qt_app):
@@ -135,6 +138,40 @@ def test_message_box_keeps_content_and_buttons_in_the_shared_layout(qt_app):
         box.deleteLater()
 
 
+def test_a_message_box_is_tall_enough_for_all_of_its_text(qt_app):
+    """The one-line floor on labels replaced the label's own minimum, and a
+    message box is sized from minimums: Debug > Project Overview showed the
+    map's name and none of its counts."""
+    from editor.project_overview import OVERVIEW_ROWS, format_overview
+
+    stats = {key: 1 for row in OVERVIEW_ROWS if row for key in row[1:]}
+    stats.update(created='today', modified='today')
+    box = QMessageBox()
+    box.setTextFormat(Qt.RichText)
+    box.setText(format_overview(stats, 'map.json'))
+    box.show()
+    qt_app.processEvents()
+    try:
+        label = box.findChild(QLabel, 'qt_msgbox_label')
+        rows = sum(1 for row in OVERVIEW_ROWS if row)
+        assert label.height() >= label.sizeHint().height(), (
+            'the report is cut off: %d of %d px' % (label.height(), label.sizeHint().height()))
+        assert label.height() > rows * label.fontMetrics().height()
+    finally:
+        box.close()
+        box.deleteLater()
+
+    plain = QMessageBox(QMessageBox.Warning, 'Title', 'First line.\n\nSecond.\nThird.', QMessageBox.Ok)
+    plain.show()
+    qt_app.processEvents()
+    try:
+        label = plain.findChild(QLabel, 'qt_msgbox_label')
+        assert label.height() >= 4 * label.fontMetrics().height()
+    finally:
+        plain.close()
+        plain.deleteLater()
+
+
 def test_message_box_uses_the_windows_wrap_width_after_any_platform_sizing(qt_app):
     # Qt wraps message text at 420px on macOS and 500px elsewhere.
     box = QMessageBox(QMessageBox.Warning, 'Title', 'A long explanation of a problem. ' * 30, QMessageBox.Ok)
@@ -202,7 +239,7 @@ def test_file_picker_size_does_not_depend_on_sidebar_entries(qt_app):
 
 def test_fresh_startup_converts_points_to_windows_logical_pixels():
     result = subprocess.run([sys.executable, '-c', '''
-from editor.desktop_style import prepare_qt, install_editor_style
+from editor.desktop_style import prepare_qt, install_editor_style, set_editor_font_size
 prepare_qt()
 from PyQt5.QtWidgets import QApplication, QLabel
 from PyQt5.QtGui import QFont, QFontInfo
@@ -212,13 +249,49 @@ assert QFontInfo(QFont("Fio UI", 11)).pixelSize() == 15
 assert QFontInfo(QFont("Fio UI", 16)).pixelSize() == 21
 from main import dark_stylesheet
 app.setStyleSheet(dark_stylesheet)
-font = app.font()
-font.setPointSize(16)
-app.setFont(font)
 label = QLabel("Styled text")
-label.ensurePolished()
-assert QFontInfo(label.font()).pixelSize() == 21
-assert label.fontMetrics().height() == 28
+label.show()
+for points, pixels, height in ((16, 21, 28), (11, 15, 20)):
+    set_editor_font_size(app, points)
+    app.processEvents()
+    assert QFontInfo(label.font()).pixelSize() == pixels
+    assert label.fontMetrics().height() == height
+label.close()
 '''], cwd=Path(__file__).resolve().parents[2], env=dict(os.environ, QT_QPA_PLATFORM='offscreen'),
         capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_reapplying_the_font_size_clears_theme_fonts_restored_by_a_stylesheet(qt_app):
+    """Setting the size again replaces per-class theme fonts, size unchanged.
+
+    Qt gives QLabel, QPushButton, the item views and more their own font from
+    the platform theme, and puts those back whenever a style is installed --
+    which QApplication.setStyleSheet does. main.py and the UI audit set the
+    stylesheet after the startup font, so the following call with the same
+    size must still clear them: skipping it because the application font was
+    unchanged left macOS on .AppleSystemUIFont 13pt across the editor (the
+    native UI parity check). The planted 13pt fonts stand in for the theme's,
+    which the offscreen platform does not have.
+    """
+    from editor.desktop_style import set_editor_font_size
+    set_editor_font_size(qt_app, 11)
+    editor_font = qt_app.font()
+    assert editor_font.family() == UI_FONT and editor_font.pointSize() == 11
+    system = QFont('DejaVu Sans', 13)
+    for name in ('QLabel', 'QPushButton', 'QAbstractItemView'):
+        qt_app.setFont(system, name)
+    assert qt_app.font('QLabel') == system
+    try:
+        set_editor_font_size(qt_app, 11)
+        for name in ('QLabel', 'QPushButton', 'QAbstractItemView'):
+            assert qt_app.font(name) == editor_font, name
+        label = QLabel('Label text')
+        try:
+            assert label.font().family() == UI_FONT
+            assert label.font().pointSize() == 11
+        finally:
+            label.deleteLater()
+    finally:
+        qt_app.setFont(editor_font)
+        set_editor_font_size(qt_app, 11)

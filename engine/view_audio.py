@@ -80,6 +80,14 @@ class ViewAudio:
         #: game sound (Settings > Play Modes > Audio, and the pause menu).
         self.sound_volume = 1.0
         self.music_volume = 1.0
+        #: Keys the start-up preload put in sound_pool (the game's own
+        #: sounds): kept for good. Anything else a level loaded is let go
+        #: when the next one starts (begin_level).
+        self._core_sound_keys = frozenset()
+        #: Sound names already looked for and not found. Each miss rescanned
+        #: the .fiopak's directory on the UI thread, and a speaker or monster
+        #: naming a missing file asks every time it plays.
+        self._missing_sounds = set()
 
     def _init_sound_system(self):
         """Ready the mixer. Nothing is decoded here: a sound decodes the first
@@ -157,6 +165,7 @@ class ViewAudio:
             except (OSError, zipfile.BadZipFile) as exc:
                 print(f"[Audio] Cannot read sounds.fiopak: {exc}")
                 return
+            self._core_sound_keys = frozenset(self.sound_pool)
             return
 
         sound_dir = os.path.join(os.getcwd(), "assets", "sounds")
@@ -166,6 +175,7 @@ class ViewAudio:
         for f in os.listdir(sound_dir):
             if f.lower().endswith((".wav", ".mp3", ".ogg")) and (only is None or f in only):
                 self._load_sound_to_cache(f, os.path.join(sound_dir, f))
+        self._core_sound_keys = frozenset(self.sound_pool)
 
     def preload_combat_sounds(self):
         """Decode the sounds a fight starts with -- the player's pain cries
@@ -240,7 +250,77 @@ class ViewAudio:
         data = asset_bytes(path)
         return data is not None and self._load_sound_bytes_to_cache(names, data)
 
+    #: Most missing names remembered; past it the set starts again.
+    MISSING_SOUNDS_KEPT = 1024
+
     def _get_sound_instance(self, name):
+        """Get a pygame Sound by name, or None; a miss is remembered.
+
+        A name not found is not looked for again until the next level starts
+        (begin_level), when a file added meanwhile is picked up. Nothing is
+        remembered while the mixer is down: the lookup never got going.
+        """
+        key = str(name)
+        if key in self._missing_sounds:
+            return None
+        sound = self._lookup_sound_instance(name)
+        if sound is None and self._ensure_pygame_mixer():
+            if len(self._missing_sounds) >= self.MISSING_SOUNDS_KEPT:
+                self._missing_sounds.clear()
+            self._missing_sounds.add(key)
+        return sound
+
+    def begin_level(self, things):
+        """A level is starting: trim the cache to it and load its sounds.
+
+        sound_pool kept every sound any level had played, music included,
+        for the life of the editor. Now the game's own sounds stay, the
+        speaker sounds and music *things* name are loaded -- decoded here,
+        as Play starts, not by the frame that first plays one (a music
+        track decoded whole there stalled it) -- and the rest is dropped.
+        Returns how many of the level's sounds are loaded.
+        """
+        from engine.speaker_audio import speaker_sound_path
+
+        self._missing_sounds.clear()
+        names = set()
+        wanted = set()
+        for thing in things or ():
+            props = getattr(thing, 'properties', None)
+            if not isinstance(props, dict):
+                continue
+            value = props.get('sound_file')
+            rel = speaker_sound_path(value) if value else None
+            if rel is None:
+                continue
+            names.add(str(value))
+            # The keys _lookup_sound_instance caches it under.
+            wanted.add(rel)
+            if '/' not in str(value).replace('\\', '/'):
+                wanted.add(os.path.basename(str(value)))
+        keep = self._core_sound_keys
+        pool = self.sound_pool
+        for key in [k for k in pool
+                    if k not in keep and k not in wanted
+                    and not self._is_game_sound(k)]:
+            del pool[key]
+        loaded = 0
+        for name in sorted(names):
+            if self._get_sound_instance(name) is not None:
+                loaded += 1
+        return loaded
+
+    def _is_game_sound(self, key):
+        """MiniWind: whether *key* is one of the game's own sounds (a member
+        of ``sounds.fiopak`` or its bare alias). They decode on first use or
+        in the background, not up front, so ``_core_sound_keys`` does not
+        list them; a level change keeps them like the core sounds."""
+        key = str(key)
+        if key.startswith("assets/sounds/"):
+            return True
+        return "/" not in key and ("assets/sounds/" + key) in self.sound_pool
+
+    def _lookup_sound_instance(self, name):
         """Get a pygame Sound by name, preferring the matching .fiopak if present.
 
         Explicit assets/sounds and assets/music paths retain their archive-relative

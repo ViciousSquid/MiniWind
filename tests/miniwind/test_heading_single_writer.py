@@ -45,6 +45,7 @@ def test_only_monster_facing_writes_an_actor_heading():
 _NOT_A_HEADING = {
     'engine/mover_table.py',        # a rotating brush's spin angle
     'engine/terrain.py',            # a paint stamp's angle
+    'engine/view_gizmo.py',         # the editor's Rotate gizmo authors a placed angle
 }
 
 

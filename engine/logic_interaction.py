@@ -6,7 +6,70 @@ LogicThread remains the authoritative tick-order orchestrator.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
+
+
+#: Level changers from which the facing query runs in NumPy (a small-N
+#: crossover: tests/performance/test_small_n_invariant.py). Below it a Python
+#: loop: a map has one to three level changers, and NumPy's fixed cost a call
+#: (the offsets, einsum, two masks, flatnonzero) is paid every tick however
+#: few rows there are. Measured, microseconds a query on x86 (re-measure:
+#: python -m pytest tests/performance/test_levelchanger_crossover_benchmark.py
+#: -s --run-benchmarks):
+#:
+#:     rows    loop    NumPy
+#:       1     0.58     4.37
+#:       4     0.99     6.14
+#:      16     2.20     9.34
+#:      64     6.13    15.39
+#:     128     9.63    12.48
+#:     192    14.01    11.15
+#:     256    17.13    12.17
+#:
+#: They cross between 128 and 192 rows. Both paths give the same row (the
+#: authored order decides: the first facing changer in range wins).
+LEVELCHANGER_VECTOR_FROM = 160
+
+
+def facing_levelchanger_row(centres, radii, eligible, pos, angle):
+    """The first level changer (row) the player at *pos* facing *angle* is
+    in range of and facing, or -1. In range: within its radius (squared, no
+    sqrt). Facing: in front, within 60 degrees of straight ahead."""
+    n = len(centres)
+    if n == 0:
+        return -1
+    fx, fz = math.sin(angle), math.cos(angle)
+    if n < LEVELCHANGER_VECTOR_FROM:
+        px, py, pz = (float(v) for v in pos)
+        rows = centres.tolist()
+        radius = radii.tolist()
+        allowed = eligible.tolist()
+        for row in range(n):
+            if not allowed[row]:
+                continue
+            cx, cy, cz = rows[row]
+            ox, oy, oz = cx - px, cy - py, cz - pz
+            distance_sq = ox * ox + oy * oy + oz * oz
+            r = radius[row]
+            if distance_sq >= r * r:
+                continue
+            forward_dot = ox * fx + oz * fz
+            if forward_dot > 0.0 and forward_dot * forward_dot > 0.25 * distance_sq:
+                return row
+        return -1
+    player_pos = np.asarray(pos, dtype=np.float32)
+    offsets = centres - player_pos
+    distance_sq = np.einsum("ij,ij->i", offsets, offsets)
+    in_range = eligible & (distance_sq < radii * radii)
+    if not in_range.any():
+        return -1
+    forward = np.asarray((fx, 0.0, fz), dtype=np.float32)
+    forward_dot = offsets @ forward
+    facing = (forward_dot > 0.0) & (forward_dot * forward_dot > (0.25 * distance_sq))
+    candidates = np.flatnonzero(in_range & facing)
+    return int(candidates[0]) if candidates.size else -1
 
 
 class LogicInteraction:

@@ -60,6 +60,20 @@ try:
 except OSError:  # pragma: no cover - read-only /tmp is not a test failure
     pass
 
+# Fio's GL format as the application default, before any test builds the
+# QApplication -- as main.py does. Editor windows' own contexts take the
+# default; on macOS the 3D view's core-profile context cannot share with a
+# legacy one, and Qt then rebuilds the view's context (and Fio's renderer)
+# whenever the editor window is shown again (engine/gl_format.py). No vsync:
+# a headless display may never come round to the swap.
+try:
+    from PyQt5.QtWidgets import QApplication as _QApplication
+    if _QApplication.instance() is None:
+        from engine.gl_format import set_default_surface_format
+        set_default_surface_format(0)
+except ImportError:  # pragma: no cover - PyQt5 absent: the Qt tiers skip
+    pass
+
 #: Seed used for every test that does not ask for another.  Property/fuzz tests
 #: derive their own seeds from this so a whole run is reproducible from one
 #: number.
@@ -182,6 +196,62 @@ def _no_missed_change_record():
     del change_detection.MISSES[:]
     if misses:
         pytest.fail("missed change records (%d): %s" % (len(misses), misses[:3]))
+
+
+# ---------------------------------------------------------------------------
+# Autosaves
+# ---------------------------------------------------------------------------
+
+#: Where the editor writes its autosaves (MainWindow._write_autosave): the
+#: open level's ``maps/<name>_autosave.json`` -- on its timer, and before a
+#: level change in Play with unsaved edits.
+_AUTOSAVE_GLOB = os.path.join(_ROOT, "maps", "*_autosave.json")
+#: When this test session began (autosaves older than this predate it).
+SESSION_STARTED_NS = __import__("time").time_ns()
+
+
+def _autosaves():
+    """``{path: (mtime, size)}`` of the autosaves in the checkout's maps/."""
+    import glob
+    found = {}
+    for path in glob.glob(_AUTOSAVE_GLOB):
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        found[path] = (stat.st_mtime_ns, stat.st_size)
+    return found
+
+
+@pytest.fixture(autouse=True)
+def _no_autosaves_left_behind():
+    """Remove every autosave a test writes, as soon as the test is over.
+
+    A test that runs the editor can autosave into the checkout's maps/ (a
+    level change in Play with unsaved edits does, at once). The file stayed
+    there: git ignores it, but every later test that lists maps/ -- the
+    brush-semantics snapshot of the shipped maps -- found a map too many and
+    failed. An autosave this test created or rewrote is deleted; one that was
+    already there untouched is left alone (it may be someone's unsaved work
+    from the editor run in this checkout).
+    """
+    before = _autosaves()
+    yield
+    remove_new_autosaves(before)
+
+
+def remove_new_autosaves(before, found=None):
+    """Delete the autosaves in *found* (default: maps/ now) that are not in
+    *before* (``{path: (mtime, size)}``) as they were; return their paths."""
+    removed = []
+    for path, stamp in (_autosaves() if found is None else found).items():
+        if before.get(path) != stamp:
+            try:
+                os.remove(path)
+            except OSError:
+                continue
+            removed.append(path)
+    return removed
 
 
 # ---------------------------------------------------------------------------
@@ -614,58 +684,42 @@ def _fail_on_a_held_modifier():
 _SETTINGS_INI = os.path.join(_ROOT, "settings.ini")
 
 
-def _restore_settings_ini_snapshot(before):
-    """Restore settings atomically so other xdist workers never read a truncation."""
-    if before is None:
-        return
-    temporary = None
-    try:
-        fd, temporary = tempfile.mkstemp(
-            prefix=".settings.ini.", suffix=".tmp", dir=_ROOT)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(before)
-        os.replace(temporary, _SETTINGS_INI)
-    except OSError:  # pragma: no cover - read-only checkout
-        pass
-    finally:
-        if temporary is not None:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
-            except OSError:  # pragma: no cover - cleanup on read-only checkout
-                pass
+@pytest.fixture(scope="session")
+def _settings_dir(tmp_path_factory):
+    """Where each test's own settings.ini is kept (one file per test)."""
+    from tests.helpers import settings_isolation
+    settings_isolation.install()
+    return tmp_path_factory.mktemp("settings")
 
 
-@pytest.fixture(autouse=True, scope="session")
-def _restore_repo_settings_ini_at_exit():
-    """The same, once more when the session ends: a window deleted after its
-    test (deferred deletion, a session-scoped fixture) still saved into the
-    tracked file -- a [History] section was left behind by whole-suite runs."""
-    try:
-        with open(_SETTINGS_INI, "rb") as fh:
-            before = fh.read()
-    except OSError:
-        before = None
-    yield
-    if before is not None:
-        try:
-            with open(_SETTINGS_INI, "rb") as fh:
-                if fh.read() == before:
-                    return
-            _restore_settings_ini_snapshot(before)
-        except OSError:  # pragma: no cover - read-only checkout
-            pass
+_settings_serial = [0]
 
 
 @pytest.fixture(autouse=True)
-def _restore_repo_settings_ini(_restore_repo_settings_ini_at_exit):
-    """Put the tracked settings.ini back after a test that wrote to it.
+def _each_test_has_its_own_settings_ini(_settings_dir):
+    """Editor windows a test builds read and save a settings.ini of the
+    test's own: a fresh copy of the tracked defaults, never the tracked file
+    (tests/helpers/settings_isolation.py). No test sees another's settings,
+    and no run -- however many run at once -- writes the shipped file.
 
-    MainWindow resolves ``settings.ini`` against the working directory, and
-    closing a window saves its dock layout there. A test that builds a window
-    from the repository root therefore rewrote the shipped default settings
-    and handed its layout to every later test.
+    The redirect is installed at the source, before the editor is imported,
+    so it holds for every window whatever the test imports.
+    """
+    from tests.helpers import settings_isolation
+    _settings_serial[0] += 1
+    settings_isolation.use(settings_isolation.fresh_copy(
+        _settings_dir / ("settings-%d.ini" % _settings_serial[0])))
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _tracked_settings_ini_untouched():
+    """Fail a test that changed the tracked settings.ini.
+
+    Windows keep their settings in the test's own copy, so a change here is
+    a leak to fix. It is reported, not written back: restoring a snapshot
+    taken at the start of a test is what let concurrent runs overwrite each
+    other's restores (and once left the file empty).
     """
     try:
         with open(_SETTINGS_INI, "rb") as fh:
@@ -678,14 +732,15 @@ def _restore_repo_settings_ini(_restore_repo_settings_ini_at_exit):
     try:
         with open(_SETTINGS_INI, "rb") as fh:
             after = fh.read()
-        if after != before:
-            _restore_settings_ini_snapshot(before)
     except OSError:  # pragma: no cover - read-only checkout
-        pass
+        return
+    if after != before:
+        pytest.fail("this test changed the tracked settings.ini (an editor window "
+                    "saved there instead of its own copy)", pytrace=False)
 
 
 @pytest.fixture(autouse=True)
-def _qt_tests_get_an_application(request, _restore_repo_settings_ini):
+def _qt_tests_get_an_application(request, _each_test_has_its_own_settings_ini):
     """Give every ``qt``-marked test the session ``QApplication``.
 
     Building a QWidget with no QApplication is a hard abort in Qt, not an
@@ -873,9 +928,16 @@ def gl_availability():
 
 @pytest.fixture(autouse=True)
 def _skip_without_gl(request):
-    """Skip ``gl``-marked tests with a readable reason instead of erroring."""
+    """Skip ``gl``-marked tests with a readable reason instead of erroring.
+
+    With ``FIO_REQUIRE_GL=1`` (the CI job that exists to run this tier) a
+    missing context is a failure: skipped, the whole tier is green without
+    having run.
+    """
     if request.node.get_closest_marker("gl") is None:
         return
     ok, reason = gl_availability()
     if not ok:
+        if os.environ.get("FIO_REQUIRE_GL") == "1":
+            pytest.fail("FIO_REQUIRE_GL is set and there is no OpenGL context: %s" % reason)
         pytest.skip("OpenGL tier unavailable: %s" % reason)

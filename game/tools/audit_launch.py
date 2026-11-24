@@ -210,8 +210,8 @@ CATEGORIES = [
     ('nav / roads', ('navigation.py', 'road_nav.py', 'pathfinding', 'flour_roads.py', 'world_index.py')),
     ('AI', ('monster_ai.py', 'faction_ai.py', 'npc_', 'living/', 'schedule.py', 'combat_tactics.py')),
     ('game sim (runtime.py)', ('game/runtime.py', 'game/sim/', 'game/host.py')),
-    ('renderer (draw)', ('engine/renderer/', 'qt_game_view.py', 'logic_render.py', 'render_', 'glraw.py')),
-    ('logic (engine)', ('engine/logic_', 'engine/physics.py', 'engine/player.py', 'spatial.py')),
+    ('renderer (draw)', ('engine/renderer/', 'qt_game_view.py', 'logic_render.py', 'render_')),
+    ('logic (engine)', ('engine/logic_', 'engine/physics', 'engine/spatial_grid.py', 'engine/player.py', 'spatial.py')),
     ('Qt / other', ()),
 ]
 

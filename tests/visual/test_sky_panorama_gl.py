@@ -113,14 +113,16 @@ def test_the_sky_cube_map_is_the_size_settings_ini_asks_for(setting, size):
     glh.reset_texture_cache()
 
 
-def test_the_shipped_settings_ask_for_384():
+def test_the_shipped_settings_ask_for_512_sky_and_1024_shadows():
     import configparser
     from tests.helpers.paths import repo_path
 
     config = configparser.ConfigParser()
     config.read(repo_path('settings.ini'))
-    assert config.getint('Renderer', 'sky_cubemap_size') == 384
-    assert config.getint('Renderer', 'shadow_map_size') == 384
+    assert config.getint('Renderer', 'sky_cubemap_size') == 512
+    # Shadow cube-maps are sized only for lights casting shadows, so the
+    # sharper 1024 costs memory per shadow light, not per slot.
+    assert config.getint('Renderer', 'shadow_map_size') == 1024
 
 
 def _watch_sky(renderer):
@@ -175,7 +177,7 @@ def test_the_sky_is_drawn_first_only_where_portal_views_need_it():
     """Behind the world in the editor and in Play; first, over everything, in
     a Play frame that may draw portal views (their empty parts show the sky
     already on screen), in the line and point render modes, and in the
-    Points and Wireframe looks (the sky shows where nothing was hit)."""
+    Wireframe look (the sky shows where nothing was hit)."""
     import glm
     from editor.editor_state import EditorState
     from engine import constants as C
@@ -203,8 +205,7 @@ def test_the_sky_is_drawn_first_only_where_portal_views_need_it():
                     ('play', C.RENDER_MODE_LIT, True, 'Textured'),
                     ('line mode', C.RENDER_MODE_WIREFRAME, False, 'Textured'),
                     ('point mode', C.RENDER_MODE_VERTEX, False, 'Textured'),
-                    ('wireframe look', C.RENDER_MODE_LIT, False, 'Wireframe'),
-                    ('points look', C.RENDER_MODE_LIT, False, 'Points')):
+                    ('wireframe look', C.RENDER_MODE_LIT, False, 'Wireframe')):
                 config = glh.render_config(all_brushes=state.brushes, all_things=state.things,
                                            play_mode=play, render_mode=mode,
                                            brush_display_mode=look)
@@ -220,4 +221,4 @@ def test_the_sky_is_drawn_first_only_where_portal_views_need_it():
     assert renderer._portal_gl_ready is not None
     assert seen == {'editor': [True], 'editor unlit': [True], 'play': [False],
                     'line mode': [False], 'point mode': [False],
-                    'wireframe look': [False], 'points look': [False]}, seen
+                    'wireframe look': [False]}, seen

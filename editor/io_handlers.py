@@ -15,7 +15,10 @@ import glm
 import os
 import time
 
-from engine.effect_entity import EFFECT_FIRE_TEXTURES, EFFECT_ORB_TEXTURES, EFFECT_TYPES
+from engine.effect_entity import (
+    EFFECT_FIRE_TEXTURES, EFFECT_ORB_TEXTURES, EFFECT_TYPES, EMITTER_IDS,
+    EMITTER_NONE, PARTICLES_DEFAULT_EMITTER)
+from engine.explosions import explode_effect, is_explosive
 
 # Import debug logger - with fallback to print if not available
 try:
@@ -48,6 +51,31 @@ def _finite(param) -> float:
     if value != value or value in (float('inf'), float('-inf')):
         raise ValueError("non-finite I/O parameter %r" % (param,))
     return value
+
+
+def report_state_write(entity, logic, key, ok, changed, stored):
+    """Fire the outputs one write implies.
+
+    Refused writes fire ``OnStoreFull``: the only ways a write is refused
+    are a full store and a value that does not fit the type the parameter
+    asked for, and both mean "this value did not go in", which is what a
+    map wired to that output is reacting to.
+    """
+    mgr = logic.io_manager if logic is not None else None
+    if mgr is None:
+        return
+    if not ok:
+        mgr.fire_output(entity, 'OnStoreFull', value=key)
+        return
+    payload = "%s=%s" % (key, _sv.format_value(stored))
+    mgr.fire_output(entity, 'OnValueSet', value=payload)
+    if changed:
+        mgr.fire_output(entity, 'OnValueChanged', value=payload)
+        # And for plugins: one event for every change, whatever made it.
+        emit = getattr(logic, '_plugin_emit', None)
+        if emit is not None:
+            emit('state_changed', store=getattr(entity, 'store_name', ''),
+                 key=key, value=stored, entity=entity)
 
 
 def register_all_input_handlers(io_manager: IOManager):
@@ -158,6 +186,21 @@ def register_all_input_handlers(io_manager: IOManager):
     io_manager.register_input_handler('light', 'toggleshadows', light_toggle_shadows)
     io_manager.register_input_handler('light', 'fadein', light_fade_in)
     io_manager.register_input_handler('light', 'fadeout', light_fade_out)
+
+    # Path following (engine.light_paths): a light whose Path Start names a
+    # path node; one without a path ignores these.
+    def light_start_path(entity, param, logic):
+        logic.light_path_runtime.start_path(entity)
+
+    def light_stop_path(entity, param, logic):
+        logic.light_path_runtime.stop_path(entity)
+
+    def light_toggle_path(entity, param, logic):
+        logic.light_path_runtime.toggle_path(entity)
+
+    io_manager.register_input_handler('light', 'startpath', light_start_path)
+    io_manager.register_input_handler('light', 'stoppath', light_stop_path)
+    io_manager.register_input_handler('light', 'togglepath', light_toggle_path)
     
     # ==========================================================================
     # EFFECT INPUTS
@@ -197,6 +240,10 @@ def register_all_input_handlers(io_manager: IOManager):
         if effect_type == "ORB":
             entity.properties["width"] = 32.0
             entity.properties["height"] = 32.0
+        elif (effect_type == "PARTICLES"
+              and entity.properties.get("emitter", EMITTER_NONE) == EMITTER_NONE):
+            # PARTICLES is the emitter alone: give it something to emit.
+            entity.properties["emitter"] = PARTICLES_DEFAULT_EMITTER
         logic.session_runtime.effect_store.set_type(entity, effect_type)
         logic.io_manager.fire_output(
             entity, 'OnChanged', value=entity.properties['effect_type']
@@ -232,40 +279,29 @@ def register_all_input_handlers(io_manager: IOManager):
             entity, 'OnChanged', value=str(loop).lower()
         )
 
-    def effect_explode(entity, param, logic):
-        """Switch an Effect to EXPLOSION permanently and play it once."""
-        now = time.perf_counter()
-        entity.properties["effect_type"] = "EXPLOSION"
-        entity.properties["preview"] = False
-        logic.session_runtime.effect_store.trigger_explosion(entity, now)
+    def effect_set_emitter(entity, param, logic):
+        """Set the Effect's particle emitter preset by name (NONE turns it
+        off). An unknown name is ignored."""
+        emitter = str(param or "").strip().upper()
+        if emitter not in EMITTER_IDS:
+            return
+        if entity.properties.get("emitter") == emitter:
+            return
+        entity.properties["emitter"] = emitter
+        logic.io_manager.fire_output(entity, 'OnChanged', value=emitter)
 
-        game_state = logic.game_state
-        if not bool(entity.properties.get('silent', False)):
-            try:
-                source_position = [
-                    float(entity.pos.x),
-                    float(entity.pos.y),
-                    float(entity.pos.z),
-                ]
-            except AttributeError:
-                source_position = [
-                    float(entity.pos[0]),
-                    float(entity.pos[1]),
-                    float(entity.pos[2]),
-                ]
-            game_state.queue_sound({
-                'action': 'play',
-                'file': 'assets/sounds/explode.mp3',
-                'volume': 1.0,
-                'position': source_position,
-            })
-        logic.io_manager.fire_output(entity, 'OnChanged', value='EXPLOSION')
+    def effect_explode(entity, param, logic):
+        """Play the Effect's explosion once (engine.explosions): a FIRE (or
+        any type) goes back to itself afterwards unless its
+        ``return_after_explosion`` is off, when it stays an EXPLOSION."""
+        explode_effect(entity, logic)
 
     io_manager.register_input_handler('effect', 'settype', effect_set_type)
     io_manager.register_input_handler('effect', 'setfiretexture', effect_set_fire_texture)
     io_manager.register_input_handler('effect', 'setorbtexture', effect_set_orb_texture)
     io_manager.register_input_handler('effect', 'setcustomgif', effect_set_custom_gif)
     io_manager.register_input_handler('effect', 'setloop', effect_set_loop)
+    io_manager.register_input_handler('effect', 'setemitter', effect_set_emitter)
     io_manager.register_input_handler('effect', 'explode', effect_explode)
 
     # DOOR INPUTS
@@ -679,6 +715,22 @@ def register_all_input_handlers(io_manager: IOManager):
         # The active Prop runtime observes this one-shot request on its next tick.
         entity.properties['_drop_requested'] = True
 
+    def prop_explode(entity, param, logic):
+        """Blow an Explosive prop up now."""
+        if is_explosive(entity) and id(entity) not in logic.explosion_runtime.exploded:
+            logic.explosion_runtime.explode_prop(entity)
+
+    def prop_damage(entity, param, logic):
+        """Damage a prop (param: amount, default 10); an Explosive one goes
+        up once it has taken its Health."""
+        try:
+            amount = float(param) if str(param or '').strip() else 10.0
+        except (TypeError, ValueError):
+            return
+        logic.explosion_runtime.damage_prop(entity, amount)
+
+    io_manager.register_input_handler('prop', 'explode', prop_explode)
+    io_manager.register_input_handler('prop', 'damage', prop_damage)
     io_manager.register_input_handler('prop', 'enable', prop_enable)
     io_manager.register_input_handler('prop', 'disable', prop_disable)
     io_manager.register_input_handler('prop', 'collect', prop_collect)
@@ -686,6 +738,33 @@ def register_all_input_handlers(io_manager: IOManager):
     io_manager.register_input_handler('prop', 'setvalue', prop_set_value)
     io_manager.register_input_handler('prop', 'wake', prop_wake)
     io_manager.register_input_handler('prop', 'drop', prop_drop)
+
+    # Rotate animation (engine.model_rotate; the Prop's Animation tab). The
+    # Prop runtime owns the motion; a model without Rotate ignores these.
+    def prop_start_rotate(entity, param, logic):
+        logic.prop_runtime.start_rotate(entity)
+
+    def prop_stop_rotate(entity, param, logic):
+        logic.prop_runtime.stop_rotate(entity)
+
+    def prop_toggle_rotate(entity, param, logic):
+        logic.prop_runtime.toggle_rotate(entity)
+
+    def prop_reverse_rotate(entity, param, logic):
+        logic.prop_runtime.reverse_rotate(entity)
+
+    def prop_set_rotate_speed(entity, param, logic):
+        try:
+            speed = float(param)
+        except (TypeError, ValueError):
+            return
+        logic.prop_runtime.set_rotate_speed(entity, speed)
+
+    io_manager.register_input_handler('prop', 'startrotate', prop_start_rotate)
+    io_manager.register_input_handler('prop', 'stoprotate', prop_stop_rotate)
+    io_manager.register_input_handler('prop', 'togglerotate', prop_toggle_rotate)
+    io_manager.register_input_handler('prop', 'reverserotate', prop_reverse_rotate)
+    io_manager.register_input_handler('prop', 'setrotatespeed', prop_set_rotate_speed)
 
     # ==========================================================================
     # LOGIC_RELAY INPUTS
@@ -1128,6 +1207,12 @@ def register_all_input_handlers(io_manager: IOManager):
     # ==========================================================================
     
     def levelchanger_changelevel(entity, param, logic):
+        callback = getattr(logic, "request_level_change", None)
+        if callback is not None:
+            target, spawn = entity.destination(param)
+            if target:
+                callback(target, spawn)
+            return
         # We route to change_level() because it is more robust
         if hasattr(entity, 'change_level'):
             entity.change_level(param)
@@ -1417,19 +1502,40 @@ def register_all_input_handlers(io_manager: IOManager):
 
             debug_log("IO", f"LogicSpawner random spawn: type={chosen_type}, variant={chosen_variant}")
 
-        # ---- create the new entity ----
-        new_thing = cls(pos=spawn_pos, properties=extra_props)
-        logic.editor_state.things.append(new_thing)
-        entity.properties['_spawn_count'] = spawn_count + 1
+        # ---- create the new entities: spawn_count of them, scattered within
+        #      spawn_radius of the spawn point (across the floor, same height) ----
+        try:
+            per_spawn = max(1, int(entity.properties.get('spawn_count', 1)))
+        except (TypeError, ValueError):
+            per_spawn = 1
+        try:
+            scatter = max(0.0, float(entity.properties.get('spawn_radius', 0.0)))
+        except (TypeError, ValueError):
+            scatter = 0.0
+        if max_spawn > 0:
+            per_spawn = min(per_spawn, max_spawn - spawn_count)
+        import math
+        import random
+        for k in range(per_spawn):
+            pos = list(spawn_pos)
+            if scatter > 0.0:
+                # Evenly round the circle, each at a random distance, so a
+                # batch spreads out rather than piling up.
+                angle = (k + random.random() * 0.8) / per_spawn * 2.0 * math.pi
+                reach = scatter * math.sqrt(0.15 + 0.85 * random.random())
+                pos[0] += math.cos(angle) * reach
+                pos[2] += math.sin(angle) * reach
+            new_thing = cls(pos=pos, properties=dict(extra_props))
+            # A session Thing: it is gone again when Play stops.
+            logic.session_runtime.add_session_thing(new_thing)
+            spawn_count += 1
+            entity.properties['_spawn_count'] = spawn_count
 
-        # ---- rebuild caches so the new entity can be found by name/id ----
-        logic.world_runtime.build_entity_caches()
+            # ---- fire outputs ----
+            if logic.io_manager:
+                logic.io_manager.fire_output(entity, 'OnSpawn')
 
-        # ---- fire outputs ----
-        if logic.io_manager:
-            logic.io_manager.fire_output(entity, 'OnSpawn')
-
-        debug_log("IO", f"LogicSpawner '{entity.name}' spawned '{spawn_type}' at {spawn_pos}")
+            debug_log("IO", f"LogicSpawner '{entity.name}' spawned '{spawn_type}' at {pos}")
 
     def spawner_enable(entity, param, logic):
         set_authored_flag(entity, 'disabled', False)
@@ -1441,6 +1547,30 @@ def register_all_input_handlers(io_manager: IOManager):
         """Change spawn location to a different PathNode."""
         if param:
             entity.properties['target_node'] = param
+
+    # ==========================================================================
+    # SHAKE INPUTS (purely visual: engine.shake)
+    # ==========================================================================
+
+    def shake_shake(entity, param, logic):
+        from engine.shake import shake_settings
+        if entity.properties.get('disabled', False):
+            return
+        intensity, duration = shake_settings(entity.properties)
+        if str(param or '').strip():
+            try:
+                intensity = max(0.0, min(1.0, float(param)))
+            except (TypeError, ValueError):
+                pass
+        logic.shake_runtime.start(intensity, duration)
+        if logic.io_manager:
+            logic.io_manager.fire_output(entity, 'OnShake')
+
+    def shake_stop(entity, param, logic):
+        logic.shake_runtime.stop()
+
+    io_manager.register_input_handler('shake', 'shake', shake_shake)
+    io_manager.register_input_handler('shake', 'stop', shake_stop)
 
     io_manager.register_input_handler('logic_spawner', 'spawn',         spawner_spawn)
     io_manager.register_input_handler('logic_spawner', 'enable',        spawner_enable)
@@ -1480,24 +1610,19 @@ def register_all_input_handlers(io_manager: IOManager):
             return key.strip(), amount.strip()
         return param.strip(), default
 
-    def _state_report(entity, logic, key, ok, changed, stored):
-        """Fire the outputs one write implies.
+    _state_report = report_state_write
 
-        Refused writes fire ``OnStoreFull``: the only ways a write is refused
-        are a full store and a value that does not fit the type the parameter
-        asked for, and both mean "this value did not go in", which is what a
-        map wired to that output is reacting to.
+    def _state_unstorable(value, value_type):
+        """Whether a write of *value* must be refused as an unholdable number.
+
+        ``SetValue x=1e999`` is infinity and ``x=<fifty digits>`` is beyond the
+        integer range: neither can be saved, so neither goes in, and the write
+        is reported like any other refused one (``OnStoreFull``).  A value the
+        parameter explicitly types as a string is text, whatever it looks like.
         """
-        mgr = logic.io_manager if logic is not None else None
-        if mgr is None:
-            return
-        if not ok:
-            mgr.fire_output(entity, 'OnStoreFull', value=key)
-            return
-        payload = "%s=%s" % (key, _sv.format_value(stored))
-        mgr.fire_output(entity, 'OnValueSet', value=payload)
-        if changed:
-            mgr.fire_output(entity, 'OnValueChanged', value=payload)
+        if value_type == 'string':
+            return False
+        return _sv.out_of_range(value)
 
     def _state_branch(entity, logic, result, payload):
         """Fire the true/false pair a query implies, legacy names included."""
@@ -1517,6 +1642,9 @@ def register_all_input_handlers(io_manager: IOManager):
             return
         key, value = _state_pair(param)
         key, value_type = _sv.split_typed_key(key)
+        if _state_unstorable(value, value_type):
+            _state_report(entity, logic, key, False, False, None)
+            return
         ok, changed, stored = entity.apply_value(key, value, value_type)
         _state_report(entity, logic, key, ok, changed, stored)
 
@@ -1677,6 +1805,10 @@ def register_all_input_handlers(io_manager: IOManager):
             return
         key, value = _state_pair(param)
         key, value_type = _sv.split_typed_key(key)
+        if _state_unstorable(value, value_type):
+            _state_report(entity, logic, entity.object_key(source_id, key),
+                          False, False, None)
+            return
         ok, changed, stored = entity.set_object_value(
             source_id, key, value, value_type)
         _state_report(entity, logic, entity.object_key(source_id, key),
@@ -1843,6 +1975,13 @@ def register_all_input_handlers(io_manager: IOManager):
         from engine.decal_text import text_colour
         entity.properties['text_colour'] = text_colour(param)
 
+    def decal_set_tint(entity, param, logic):
+        """Tint the decal: ``r g b`` (0-255 or 0-1) or ``#rrggbb``; nothing,
+        or anything else, is white -- no tint."""
+        from engine.decal_table import tint_of
+        entity.properties['tint'] = list(tint_of(param))
+
+    io_manager.register_input_handler('decal', 'settint', decal_set_tint)
     io_manager.register_input_handler('decal', 'settext', decal_set_text)
     io_manager.register_input_handler('decal', 'cleartext', decal_clear_text)
     io_manager.register_input_handler('decal', 'setfont', decal_set_font)

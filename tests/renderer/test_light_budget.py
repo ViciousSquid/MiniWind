@@ -103,12 +103,15 @@ def test_light_shader_sources_are_rewritten_to_the_shared_ubo():
 
 def test_terrain_shadow_only_reads_spare_ubo_lanes_and_preserves_normal_light():
     terrain = shaders.light_ubo_source(shaders.DEFAULT_SHADERS['terrain.frag'])
+    # Fio's lanes are params.z (source size), params.w (cookie shadow floor)
+    # and indices.z (cookie layer); the terrain-only shadow uses indices.y and
+    # indices.w (strength in thousandths).
     assert 'lights[i].indices.y != 0' in terrain
-    assert 'lights[i].params.z' in terrain
+    assert '(float(lights[i].indices.w) * 0.001)' in terrain
     assert 'terrainShadowOnly' not in terrain
     assert 'terrainShadowStrength' not in terrain
     assert 'result *= terrainShadowMask;' in terrain
-    assert 'result += (1.0 - shadow) * diff * lights[i].color' in terrain
+    assert 'result += (1.0 - shadow) * diff * fioLightColor(i, FragPos)' in terrain
     assert 'calcPointShadow' in terrain
     regular = shaders.light_ubo_source(shaders.DEFAULT_SHADERS['lit.frag'])
     assert 'terrainShadowMask' not in regular

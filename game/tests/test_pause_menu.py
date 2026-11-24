@@ -475,16 +475,19 @@ def test_the_grass_slider_follows_a_click_and_a_drag(app):
     assert _grass_calls(menu) == ["off", "low", "medium"]
 
 
-def test_applying_grass_tells_the_renderer_the_view_hands_the_terrain(app):
+def test_applying_grass_sets_what_the_view_hands_the_terrain(app):
     from types import SimpleNamespace
     from ..ui.pause_actions import PauseActions
     renderer = SimpleNamespace(grass_enabled=True, grass_quality="high")
-    view = SimpleNamespace(renderer=renderer, update=lambda: None)
+    handed = []
+    view = SimpleNamespace(renderer=renderer, update=lambda: None,
+                           set_grass_settings=lambda *a: handed.append(a))
     actions = PauseActions.__new__(PauseActions)
     actions.view = view
     for grass in ("medium", "low", "off", "high"):
         actions.pause_menu_apply_grass(grass)
         # Off is a quality: grass stays enabled, so the wheat still grows.
+        assert handed[-1] == (True, grass)
         assert (renderer.grass_enabled, renderer.grass_quality) == (True, grass)
 
 

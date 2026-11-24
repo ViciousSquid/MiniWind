@@ -1,6 +1,6 @@
 """Runtime interaction domain for the unified Prop primitive.
 
-Physics simulation lives in engine.physics. PropSession owns all Prop
+Physics simulation lives behind engine.physics (the contract). PropSession owns all Prop
 interaction state: carrying, collecting, dropping, collection respawns,
 and the Prop spatial index.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 
-from .physics import PhysicsWorld, world_gravity
+from .physics import HEAVY_MASS, world_gravity
 from .change_journal import touch
 from .spatial import CellIndex, cell_of_point
 
@@ -58,6 +58,8 @@ class PropSession:
         #: Props already reported as giving an item that does not resolve.
         self._reported_items = set()
         self.respawn_fades = {}
+        #: Rotating models: id(prop) -> (prop, RotateMotion).
+        self.rotations = {}
         self._by_id = {}
         self._cells = CellIndex()
         self._filed = {}
@@ -111,6 +113,12 @@ class PropSession:
 
     def _adopt(self, prop):
         prop.properties["_prop_home_pos"] = list(prop.pos)
+        # A carried model is turned with the player and keeps that facing
+        # where it is dropped (_turn_with_player writes its rotation): the
+        # facing it was placed with is put back with its place.
+        rotation = prop.properties.get("rotation")
+        if isinstance(rotation, (list, tuple)):
+            prop.properties["_prop_home_rotation"] = list(rotation)
         prop.properties.pop("_drop_requested", None)
         self._file(prop)
         if self.physics is not None:
@@ -119,6 +127,7 @@ class PropSession:
 
     def _release(self, prop, restore_home=True):
         home = prop.properties.pop("_prop_home_pos", None)
+        home_rotation = prop.properties.pop("_prop_home_rotation", None)
         prop.properties.pop("_drop_requested", None)
         self._unfile(prop)
         if self.physics is not None:
@@ -126,6 +135,10 @@ class PropSession:
             self.physics.set_kinematic(prop, False)
         if restore_home and home is not None:
             prop.pos = home
+        if (restore_home and home_rotation is not None
+                and prop.properties.get("rotation") != home_rotation):
+            prop.properties["rotation"] = home_rotation
+            touch(prop)
 
     # -- spatial membership -----------------------------------------------
 
@@ -211,11 +224,15 @@ class PropSession:
         self.rebuild()
         for prop in self.props:
             prop._respawn_fade_alpha = 1.0
+        self._start_rotations()
 
     def stop(self):
         for prop in self.props:
             self._release(prop)
             prop._respawn_fade_alpha = 1.0
+            prop._carry_sprite_yaw = None       # one still held when Play stops
+            prop._carry_turn = None
+        self._stop_rotations()
         self.held = None
         self.props = []
         self._by_id = {}
@@ -226,6 +243,135 @@ class PropSession:
         self._cells.clear()
         self._filed.clear()
         self._max_reach = self.DEFAULT_CARRY_REACH
+
+    # -- Rotate animation (engine.model_rotate) ------------------------------
+    #
+    # A model Prop with Rotate on turns about its own axis during Play --
+    # continuously, swinging, or turning to an angle -- driven by one
+    # RotateMotion each (the same one the Animation tab's Preview runs). Only
+    # the angle reaches the Prop (``_rotate_angle``, runtime state the
+    # renderer draws); nothing is written into its properties, so Stop
+    # leaves the map as it was.
+
+    def _start_rotations(self):
+        from .model_rotate import RotateMotion, axis_index, rotates_in_play
+        self.rotations = {}
+        for prop in self.props:
+            prop._rotate_angle = 0.0
+            props = prop.properties
+            if not rotates_in_play(props):      # off, not a model, or physics
+                continue
+            bounds = None
+            if str(props.get('rotate_axis', 'auto')).lower() not in ('x', 'y', 'z'):
+                runtime = getattr(self.logic, 'collision_runtime', None)
+                try:
+                    bounds = runtime.compute_model_bounds(props['model_path']) if runtime else None
+                except Exception:
+                    bounds = None
+            prop._rotate_axis = axis_index(props.get('rotate_axis'), bounds)
+            motion = RotateMotion(props)
+            self.rotations[id(prop)] = (prop, motion)
+            prop._rotate_angle = motion.angle
+
+    def _stop_rotations(self):
+        for prop, _motion in self.rotations.values():
+            prop._rotate_angle = 0.0
+        for prop in self.props:
+            prop._rotate_angle = 0.0
+        self.rotations = {}
+
+    def update_rotations(self, delta):
+        """Step every Rotate. Called with the movers and the light paths, at
+        the head of the tick: machinery turns through a cutscene, the death
+        screen and the level-complete screen, as a mover moves through them,
+        and a solid model has turned before the player moves against it."""
+        if not self.rotations:
+            return
+        turned = False
+        for prop, motion in list(self.rotations.values()):
+            before = motion.angle
+            for event in motion.step(delta):
+                if event == 'stopped':
+                    self._fire(prop, "OnRotateStopped")
+            if motion.angle != before:
+                prop._rotate_angle = motion.angle
+                turned = True
+        if turned:
+            # A solid model's collision turns with it (engine.logic_groups.
+            # CarriedModels), before physics steps against it.
+            groups = getattr(getattr(self.logic, 'mover_runtime', None), 'groups', None)
+            if groups is not None:
+                groups.follow_models()
+
+    def _motion(self, prop):
+        entry = self.rotations.get(id(prop))
+        return None if entry is None else entry[1]
+
+    def rotation_snapshot(self):
+        """Every Rotate's progress, by its Prop's id (engine.savegame)."""
+        out = {}
+        for prop, motion in self.rotations.values():
+            pid = str(prop.properties.get('id') or '')
+            if pid:
+                out[pid] = motion.snapshot()
+        return out
+
+    def restore_rotations(self, saved):
+        """Carry each Rotate on from where :meth:`rotation_snapshot` found
+        it: a valve turned after the save is as it was when it was saved,
+        and so is the collision of a solid model that turned with it."""
+        if not isinstance(saved, dict):
+            return
+        for prop, motion in self.rotations.values():
+            entry = saved.get(str(prop.properties.get('id') or ''))
+            if isinstance(entry, dict) and motion.restore(entry):
+                prop._rotate_angle = motion.angle
+        groups = getattr(getattr(self.logic, 'mover_runtime', None), 'groups', None)
+        if groups is not None:
+            groups.follow_models()
+
+    def start_rotate(self, prop):
+        """StartRotate (Turn: turn to its Angle); fires OnRotateStarted."""
+        motion = self._motion(prop)
+        if motion is None or not motion.start():
+            return False
+        self._fire(prop, "OnRotateStarted")
+        return True
+
+    def stop_rotate(self, prop):
+        """StopRotate: Continuous coasts down, Swing eases to rest where it
+        is, Turn turns back; OnRotateStopped once it has come to rest."""
+        motion = self._motion(prop)
+        if motion is None or not motion.stop():
+            return False
+        if not motion.moving:
+            self._fire(prop, "OnRotateStopped")
+        return True
+
+    def toggle_rotate(self, prop):
+        motion = self._motion(prop)
+        if motion is None:
+            return False
+        return self.stop_rotate(prop) if motion.running else self.start_rotate(prop)
+
+    def reverse_rotate(self, prop):
+        """ReverseRotate: the other way (Turn: back, or on again)."""
+        motion = self._motion(prop)
+        if motion is None:
+            return False
+        if motion.mode == 'turn':
+            return self.toggle_rotate(prop)
+        return motion.reverse()
+
+    def set_rotate_speed(self, prop, speed):
+        """SetRotateSpeed: degrees a second, for this Play only."""
+        motion = self._motion(prop)
+        return False if motion is None else motion.set_speed(speed)
+
+    def rotate_velocity_of(self, prop):
+        """A Continuous rotation's speed now, degrees a second (0: none)."""
+        motion = self._motion(prop)
+        return 0.0 if motion is None else motion.velocity
 
     # -- I/O --------------------------------------------------------------
 
@@ -313,24 +459,26 @@ class PropSession:
                 best._carry_sprite_yaw = float(self.logic.player_runtime.player.angle)
             except (TypeError, ValueError):
                 best._carry_sprite_yaw = 0.0
+            self._falling.pop(id(best), None)
+            if self.physics is not None:
+                # Before its turn is remembered: taking a body over may turn
+                # it (a barrel on its side is stood up in the hands).
+                self.physics.set_kinematic(best, True)
             # A model turns with the player instead, so the side facing the
             # player stays facing them: without it the player's view swung
             # round a model that kept its world facing.
             if self._is_model(best):
                 best._carry_turn = (best._carry_sprite_yaw,
                                     list(best.properties.get('rotation') or (0.0, 0.0, 0.0)))
-            self._falling.pop(id(best), None)
-            if self.physics is not None:
-                self.physics.set_kinematic(best, True)
             self._fire(best, "OnCarried")
 
     @staticmethod
     def _too_heavy(properties):
         """A Prop at the heaviest mass is never picked up, whatever its Carry
         setting says: it is the mass at which the player cannot push it
-        either (PhysicsWorld.HEAVY_MASS)."""
+        either (engine.physics.HEAVY_MASS)."""
         try:
-            return float(properties.get("mass", 1.0)) >= PhysicsWorld.HEAVY_MASS
+            return float(properties.get("mass", 1.0)) >= HEAVY_MASS
         except (TypeError, ValueError):
             return False
 
@@ -656,9 +804,22 @@ class PropSession:
         )
         if raycast_down is None and physics is not None:
             raycast_down = getattr(physics, "raycast_down", None)
+        terrain_heights = getattr(
+            self.logic.session_runtime.spatial_grid, "terrain_heights", None)
 
-        # Dropped props fall by the live PhysicsWorld's gravity, as bodies do.
+        # Dropped props fall by the live physics' gravity, as bodies do.
         drop_gravity = -world_gravity(physics)
+        # Nothing under it at all: it stops falling at the level's kill
+        # height (LogicPlayer.kill_height) instead of falling for ever.
+        players = getattr(self.logic, "player_runtime", None)
+        kill_height = getattr(players, "kill_height", None)
+        try:
+            kill_y = float(kill_height()) if callable(kill_height) else None
+        except Exception:
+            kill_y = None
+        if kill_y is None:
+            from .player import Player
+            kill_y = Player.KILL_HEIGHT_DEFAULT
         finished = []
         for pid, state in tuple(self._falling.items()):
             prop = state.get("entity")
@@ -694,6 +855,13 @@ class PropSession:
                         float(prop.pos[2]),
                     )
 
+            if terrain_heights is not None:
+                # The terrain is ground too, where the map has one.
+                ground = terrain_heights([float(prop.pos[0])], [float(prop.pos[2])])
+                if ground is not None and ground[0] == ground[0] and (
+                        floor_y is None or ground[0] > floor_y):
+                    floor_y = float(ground[0])
+
             if floor_y is not None and new_y <= float(floor_y) + half_height:
                 prop.pos = [prop.pos[0], float(floor_y) + half_height, prop.pos[2]]
                 self.moved(prop)
@@ -701,6 +869,15 @@ class PropSession:
                 io = self.logic.io_manager
                 if io is not None:
                     io.fire_output(prop, "OnRest")
+                continue
+
+            if not math.isfinite(new_y) or new_y < kill_y:
+                # Out of the world: retired where it left it, no longer
+                # updated. It does not rest on anything, so no OnRest.
+                if math.isfinite(new_y):
+                    prop.pos = [prop.pos[0], kill_y, prop.pos[2]]
+                    self.moved(prop)
+                finished.append(pid)
                 continue
 
             prop.pos = [prop.pos[0], new_y, prop.pos[2]]

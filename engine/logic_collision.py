@@ -30,6 +30,48 @@ except ImportError:
         print(f"[{category}] {message}")
 
 
+def model_basis(rotation, scale):
+    """The 3x3 rotation/scale part of a model Prop's drawn transform.
+
+    ``rotation`` is ``[pitch, yaw, roll]`` in degrees and ``scale`` a 3-vector.
+    This is exactly what ``entity_table._model_transform_columns`` hands the
+    renderer -- ``Ry(yaw) @ Rx(pitch) @ Rz(roll) @ S`` with right-handed GLM
+    rotations -- so collision built from it sits where the model is drawn.
+
+    Collision used to rotate yaw the opposite way (and apply the three angles
+    in the reverse order). Yaw 0 and 180 agree either way, so most maps never
+    showed it; a model at yaw 90 or 270 drew one way and collided mirrored.
+    """
+    try:
+        pitch, yaw, roll = (math.radians(float(rotation[i])) for i in range(3))
+    except (TypeError, ValueError, IndexError):
+        pitch = yaw = roll = 0.0
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cr, sr = math.cos(roll), math.sin(roll)
+    ry = np.array(((cy, 0.0, sy), (0.0, 1.0, 0.0), (-sy, 0.0, cy)))
+    rx = np.array(((1.0, 0.0, 0.0), (0.0, cp, -sp), (0.0, sp, cp)))
+    rz = np.array(((cr, -sr, 0.0), (sr, cr, 0.0), (0.0, 0.0, 1.0)))
+    return ry @ rx @ rz @ np.diag(np.asarray(scale[:3], dtype=np.float64))
+
+
+def model_world_box(bounds, pos, rotation, scale):
+    """``(centre, size)`` of the world AABB around a model's rotated bounds.
+
+    *bounds* is the model-space ``(min, max)``; ``None`` stands for the
+    64-unit placeholder cube centred on the origin.
+    """
+    if bounds:
+        low = np.asarray(bounds[0], dtype=np.float64)
+        high = np.asarray(bounds[1], dtype=np.float64)
+    else:
+        low, high = np.full(3, -32.0), np.full(3, 32.0)
+    basis = model_basis(rotation, scale)
+    centre = np.asarray(pos[:3], dtype=np.float64) + basis @ ((low + high) * 0.5)
+    half = np.abs(basis) @ ((high - low) * 0.5)
+    return [float(v) for v in centre], [float(v) * 2.0 for v in half]
+
+
 COLLISION_KEYS = (
     "_collision_mode",
     "_mesh_triangles",
@@ -238,6 +280,7 @@ class LogicCollision:
         self._dirty = False
         self.model_collision_enabled = True
         self._model_collision_brushes = []
+        self.forget_model_files()
         self._physics_body_brushes = []
         self._collision_brushes_cache = []
         self._collision_rows = None
@@ -335,19 +378,28 @@ class LogicCollision:
     def build_model_collision_brushes(self):
         """Create collision data for model entities.
 
-        Props can explicitly choose Automatic, AABB, or Mesh collision. A
+        Props choose AABB (the default) or Mesh collision. A
         non-zero collision_size always overrides the shape choice with a
         custom AABB.
         """
         logic = self.logic
         model_collision_enabled = self.model_collision_enabled
         brushes = []
+        if not logic.session_runtime.play_mode:
+            self.forget_model_files()       # the editor: a file may have changed
 
+        physics_on = bool(getattr(logic.session_runtime, 'physics_enabled', True))
+        explosions = getattr(logic, 'explosion_runtime', None)
+        exploded = explosions.exploded if explosions is not None else {}
         for thing in logic.editor_state.things:
             props = getattr(thing, 'properties', {})
             if not props.get('model_path'):
                 continue
-            physics_enabled = bool(props.get('physics_enabled', False))
+            if exploded and id(thing) in exploded:
+                continue            # blown up this session: nothing there
+            # With physics switched off for the session nothing is a body: a
+            # physics Prop collides as the scenery it otherwise is.
+            physics_enabled = physics_on and bool(props.get('physics_enabled', False))
             if not model_collision_enabled and not physics_enabled:
                 continue
             if props.get('no_collision', False) and not physics_enabled:
@@ -364,12 +416,24 @@ class LogicCollision:
                 scale = [scale, scale, scale]
             else:
                 scale = list(scale)
+            if (len(pos) < 3 or len(scale) < 3
+                    or not all(math.isfinite(float(v)) for v in pos[:3])
+                    or not all(math.isfinite(float(v)) for v in scale[:3])):
+                debug_log("Collision", f"Skipping model with non-finite transform: {props.get('model_path', '')}")
+                continue
 
             rot = props.get('rotation', [0, 0, 0])
             is_physics_body = physics_enabled
+            # Two shapes, both taken from the model: AABB (the compatibility
+            # default for existing Prop records, and the Ball/Barrel presets)
+            # or Mesh (the model's actual triangles). Newly placed generic
+            # models are assigned Mesh by Prop.for_model(). 'auto', which older
+            # maps hold, remains AABB.
             collision_shape = str(
-                props.get('collision_shape', 'auto')
+                props.get('collision_shape', 'aabb')
             ).lower()
+            if collision_shape != 'mesh':
+                collision_shape = 'aabb'
 
             # A non-zero explicit collision_size always forces a custom AABB.
             collision_size = props.get('collision_size')
@@ -412,26 +476,15 @@ class LogicCollision:
             # scaled bounds. This is useful for barrels, bricks and other props
             # where a stable box is preferable to triangle-level collision.
             if collision_shape == 'aabb':
-                bounds = self.compute_model_bounds(model_path)
-                if bounds:
-                    min_v, max_v = bounds
-                    size = [
-                        (max_v[i] - min_v[i]) * scale[i]
-                        for i in range(3)
-                    ]
-                    local_centre = [
-                        (min_v[i] + max_v[i]) * 0.5
-                        for i in range(3)
-                    ]
-                    aabb_pos = [
-                        pos[i] + local_centre[i] * scale[i]
-                        for i in range(3)
-                    ]
-                else:
-                    base = 64.0
-                    size = [base * scale[i] for i in range(3)]
-                    aabb_pos = pos
+                # The box encloses the model as drawn, rotation included: a
+                # long model turned 90 degrees swaps its X and Z extents.
+                aabb_pos, size = model_world_box(
+                    self.compute_model_bounds(model_path), pos, rot, scale
+                )
 
+                if not all(math.isfinite(float(v)) for v in size + aabb_pos):
+                    debug_log("Collision", f"Skipping model with invalid AABB bounds: {model_path}")
+                    continue
                 brushes.append({
                     'pos': aabb_pos,
                     'size': size,
@@ -448,13 +501,11 @@ class LogicCollision:
                 })
                 continue
 
-            # Automatic uses mesh collision where supported. Explicit Mesh
-            # behaves the same today and falls back to AABB if the model cannot
-            # provide mesh collision.
-            mesh_tris = self.compute_model_collision_mesh(
-                model_path, pos, scale, rot
-            )
-            if mesh_tris and collision_shape in ('auto', 'mesh'):
+            # Mesh: the model's own triangles. A model that cannot give any
+            # (an unreadable file, an unsupported format) falls back to the
+            # box below.
+            mesh_tris = self._placed_mesh(thing, model_path, pos, scale, rot)
+            if mesh_tris and collision_shape == 'mesh':
                 brushes.append({
                     'pos': pos,
                     'size': [1, 1, 1],
@@ -471,30 +522,22 @@ class LogicCollision:
                     '_mesh_triangles': mesh_tris,
                     '_mesh_bounds': self.compute_mesh_bounds(mesh_tris),
                 })
+                built, self._built_mesh = self._built_mesh, None
+                if built is not None and built[0] is mesh_tris:
+                    # The arrays the list was made from, where
+                    # brush_placement keeps a mesh proxy's.
+                    brushes[-1]['_mesh_arrays'] = built
                 continue
 
             # Fallback for Automatic/Mesh when the model has no CPU collision
             # mesh (for example OBJ today).
-            bounds = self.compute_model_bounds(model_path)
-            if bounds:
-                min_v, max_v = bounds
-                size = [
-                    (max_v[i] - min_v[i]) * scale[i]
-                    for i in range(3)
-                ]
-                local_centre = [
-                    (min_v[i] + max_v[i]) * 0.5
-                    for i in range(3)
-                ]
-                aabb_pos = [
-                    pos[i] + local_centre[i] * scale[i]
-                    for i in range(3)
-                ]
-            else:
-                base = 64.0
-                size = [base * scale[i] for i in range(3)]
-                aabb_pos = pos
+            aabb_pos, size = model_world_box(
+                self.compute_model_bounds(model_path), pos, rot, scale
+            )
 
+            if not all(math.isfinite(float(v)) for v in size + aabb_pos):
+                debug_log("Collision", f"Skipping model with invalid AABB fallback: {model_path}")
+                continue
             brushes.append({
                 'pos': aabb_pos,
                 'size': size,
@@ -513,87 +556,158 @@ class LogicCollision:
         return brushes
 
 
-    def compute_model_collision_mesh(self, model_path, world_pos, scale, rotation):
-        """Load model and return world-space triangles for collision.
+    def forget_model_files(self):
+        """Drop what was read from model files (:meth:`_model_file_mesh`,
+        :meth:`compute_model_bounds`). They are kept for a Play session, in
+        which a model file does not change; outside one, each build reads
+        them afresh."""
+        self._model_file_meshes = {}
+        self._model_file_bounds = {}
+        self._built_mesh = None
+        self._placed_meshes = {}
 
-        Uses GLBLoader (CPU-only, no OpenGL calls) so this is safe to call from
-        any thread regardless of whether a GL context is current.  The old path
-        used GLB which called glGenVertexArrays/glGenBuffers and would silently
-        fail when the GL context was not active on this thread.
+    def _placed_mesh(self, thing, model_path, pos, scale, rot):
+        """:meth:`compute_model_collision_mesh` for *thing*, kept while it
+        stays where it is: the rebuild that follows an entity coming or going
+        (:meth:`sync_bodies` -- a barrel exploding, a plugin's spawn) makes
+        new proxies for every model, but only what moved needs new triangles.
         """
-        logic = self.logic
-        if not model_path:
-            return None
+        placed = (model_path, tuple(pos), tuple(scale), tuple(rot))
+        kept = self._placed_meshes.get(id(thing))
+        if kept is not None and kept[0] is thing and kept[1] == placed:
+            self._built_mesh = kept[3]
+            return kept[2]
+        mesh_tris = self.compute_model_collision_mesh(model_path, pos, scale, rot)
+        built = self._built_mesh
+        if built is None or built[0] is not mesh_tris:
+            built = None
+        self._placed_meshes[id(thing)] = (thing, placed, mesh_tris, built)
+        return mesh_tris
 
+    def _model_file_mesh(self, model_path):
+        """A model file's collision geometry in its own space:
+        ``(vertices (n, 3) float64, triangles (m, 3) int64)``, or None.
+
+        Read and parsed once per model file, not once per Prop that uses it:
+        forty chairs placed from the Asset Browser are one file. Uses the
+        loaders' CPU side only (no OpenGL calls), so it is safe on the logic
+        thread.
+        """
+        cache = self._model_file_meshes
+        if model_path in cache:
+            return cache[model_path]
+        mesh = cache[model_path] = self._read_model_file_mesh(model_path)
+        return mesh
+
+    def _read_model_file_mesh(self, model_path):
+        logic = self.logic
         from engine.asset_archives import asset_exists
         full_path = os.path.join('assets', 'models', model_path)
         if not asset_exists(full_path):
             full_path = model_path
-        if not asset_exists(full_path):
+        package = getattr(logic, 'package', None)
+        if not package and not asset_exists(full_path):
             return None
 
         ext = os.path.splitext(model_path)[1].lower()
-        if ext != '.glb':
-            return None  # Only GLB supports mesh collision for now
+        if ext not in ('.glb', '.obj'):
+            return None
 
-        try:
+        from .model_source import load_model
+        if ext == '.obj':
+            # CPU geometry only: the OpenGL-backed OBJ model is not made
+            # on the logic thread. The same origin repair the drawn model
+            # and its bounds get (compute_model_bounds), then each face
+            # as a fan of triangles.
+            from .obj_loader import OBJLoader
+            loader = OBJLoader()
+            if package:
+                loader = load_model(model_path, package)
+            if loader is None or (not package and not loader.load(full_path)):
+                debug_log("Collision", f"OBJLoader failed to load {model_path}")
+                return None
+            source = np.asarray(loader.vertices, dtype=np.float32)
+            if source.size == 0:
+                return None
+            source_min, source_max = source.min(axis=0), source.max(axis=0)
+            centre = (source_min + source_max) * 0.5
+            threshold = np.maximum((source_max - source_min) * 2.0, 2.0)
+            all_verts = source - np.where(np.abs(centre) > threshold, centre, 0.0)
+            all_tris = []
+            for face in loader.faces:
+                corners = [c[0] for c in face['vertices']]
+                for k in range(1, len(corners) - 1):
+                    all_tris.append((corners[0], corners[k], corners[k + 1]))
+        else:
             # GLBLoader is pure file I/O + JSON parsing — zero OpenGL calls.
             from .glb_loader import GLBLoader
 
             loader = GLBLoader()
             loader._filepath_hint = full_path
-            if not loader.load(full_path):
+            if package:
+                loader = load_model(model_path, package)
+            if loader is None or (not package and not loader.load(full_path)):
                 debug_log("Collision", f"GLBLoader failed to load {model_path}")
                 return None
 
             all_verts = loader.get_flattened_vertices()   # list of (x, y, z)
             all_tris  = loader.get_flattened_triangles()  # list of (i0, i1, i2)
 
-            if not all_verts or not all_tris:
-                debug_log("Collision", f"No geometry in {model_path}")
+        if len(all_verts) == 0 or len(all_tris) == 0:
+            debug_log("Collision", f"No geometry in {model_path}")
+            return None
+        vertices = np.asarray(all_verts, dtype=np.float64).reshape(-1, 3)
+        triangles = np.asarray(all_tris, dtype=np.int64).reshape(-1, 3)
+        # A triangle naming a vertex that is not there is no surface.
+        triangles = triangles[((triangles >= 0) & (triangles < len(vertices))).all(axis=1)]
+        return vertices, triangles
+
+    def compute_model_collision_mesh(self, model_path, world_pos, scale, rotation):
+        """A model's world-space triangles for collision:
+        ``[((v0, v1, v2), normal)]``, or None when the file gives none.
+
+        The file's geometry comes from :meth:`_model_file_mesh`; here it is
+        put where this Prop is (the renderer's own transform) and each
+        triangle is given its face normal, in bulk.
+        """
+        if not model_path:
+            return None
+        try:
+            mesh = self._model_file_mesh(model_path)
+            if mesh is None:
                 return None
+            vertices, triangles = mesh
 
-            # Build rotation matrix from euler angles (YXZ order, matching renderer)
-            yaw, pitch, roll = (math.radians(rotation[1]),
-                                math.radians(rotation[0]),
-                                math.radians(rotation[2]))
-            cy, sy = math.cos(yaw),   math.sin(yaw)
-            cp, sp = math.cos(pitch), math.sin(pitch)
-            cr, sr = math.cos(roll),  math.sin(roll)
+            # Model space to world space with the renderer's own transform.
+            basis = model_basis(rotation, scale)
+            world = vertices @ basis.T + np.asarray(world_pos[:3], dtype=np.float64)
+            corners = world[triangles]                              # (m, 3, 3)
 
-            def transform_point(x, y, z):
-                # Scale
-                x, y, z = x * scale[0], y * scale[1], z * scale[2]
-                # Rotate Y (yaw)
-                x, z = x * cy - z * sy, x * sy + z * cy
-                # Rotate X (pitch)
-                y, z = y * cp - z * sp, y * sp + z * cp
-                # Rotate Z (roll)
-                x, y = x * cr - y * sr, x * sr + y * cr
-                # Translate to world
-                return (x + world_pos[0], y + world_pos[1], z + world_pos[2])
-
-            world_tris = []
-            for i0, i1, i2 in all_tris:
-                if i0 >= len(all_verts) or i1 >= len(all_verts) or i2 >= len(all_verts):
-                    continue
-                w0 = transform_point(*all_verts[i0])
-                w1 = transform_point(*all_verts[i1])
-                w2 = transform_point(*all_verts[i2])
-
-                # Compute face normal from world-space edge vectors
-                e1 = (w1[0]-w0[0], w1[1]-w0[1], w1[2]-w0[2])
-                e2 = (w2[0]-w0[0], w2[1]-w0[1], w2[2]-w0[2])
-                nx = e1[1]*e2[2] - e1[2]*e2[1]
-                ny = e1[2]*e2[0] - e1[0]*e2[2]
-                nz = e1[0]*e2[1] - e1[1]*e2[0]
-                length = math.sqrt(nx*nx + ny*ny + nz*nz)
-                w_normal = (nx/length, ny/length, nz/length) if length > 0.001 else (0.0, 1.0, 0.0)
-
-                world_tris.append(((w0, w1, w2), w_normal))
+            # Face normals from the world-space edge vectors.
+            e1 = corners[:, 1] - corners[:, 0]
+            e2 = corners[:, 2] - corners[:, 0]
+            nx = e1[:, 1] * e2[:, 2] - e1[:, 2] * e2[:, 1]
+            ny = e1[:, 2] * e2[:, 0] - e1[:, 0] * e2[:, 2]
+            nz = e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]
+            with np.errstate(over='ignore', invalid='ignore'):
+                length = np.sqrt(nx * nx + ny * ny + nz * nz)
+                # Zero-area faces cannot define collision surfaces. Do not
+                # publish a degenerate triangle with a fake normal.
+                sound = np.isfinite(length) & (length > 1e-8)
+            if not sound.any():
+                return None
+            length = length[sound]
+            normals = np.stack((nx[sound] / length, ny[sound] / length,
+                                nz[sound] / length), axis=1)
+            corners = corners[sound]
+            # The list every collision pass walks, made in two conversions
+            # (as a turned mesh's is, brush_placement._turned_mesh), and the
+            # arrays it came from, kept for the proxy built from it.
+            world_tris = list(zip(corners.tolist(), normals.tolist()))
+            self._built_mesh = (world_tris, corners, normals)
 
             debug_log("Collision", f"Built {len(world_tris)} mesh-collision tris for {model_path}")
-            return world_tris if world_tris else None
+            return world_tris
 
         except Exception as e:
             debug_log("Collision", f"Failed to build mesh collision for {model_path}: {e}")
@@ -601,29 +715,37 @@ class LogicCollision:
 
 
     def compute_mesh_bounds(self, mesh_tris):
-        logic = self.logic
         """Compute AABB from mesh triangles for broad-phase culling."""
         if not mesh_tris:
             return None
-        all_verts = []
-        for (v0, v1, v2), _ in mesh_tris:
-            all_verts.extend([v0, v1, v2])
-        min_v = [min(v[i] for v in all_verts) for i in range(3)]
-        max_v = [max(v[i] for v in all_verts) for i in range(3)]
-        return (min_v, max_v)
+        built = self._built_mesh
+        if built is not None and built[0] is mesh_tris:
+            points = built[1].reshape(-1, 3)
+        else:
+            points = np.asarray([tri for tri, _normal in mesh_tris],
+                                dtype=np.float64).reshape(-1, 3)
+        return (points.min(axis=0).tolist(), points.max(axis=0).tolist())
 
 
     def compute_model_bounds(self, model_path):
-        logic = self.logic
-        """Compute axis-aligned bounds from a model file. Returns (min, max) or None."""
+        """Axis-aligned bounds of a model file: ``(min, max)`` or None. Read
+        once per file (:meth:`forget_model_files`)."""
         if not model_path:
             return None
+        cache = self._model_file_bounds
+        if model_path not in cache:
+            cache[model_path] = self._read_model_bounds(model_path)
+        return cache[model_path]
+
+    def _read_model_bounds(self, model_path):
+        logic = self.logic
 
         from engine.asset_archives import asset_exists
         full_path = os.path.join('assets', 'models', model_path)
         if not asset_exists(full_path):
             full_path = model_path
-        if not asset_exists(full_path):
+        package = getattr(logic, 'package', None)
+        if not package and not asset_exists(full_path):
             return None
 
         ext = os.path.splitext(model_path)[1].lower()
@@ -632,7 +754,10 @@ class LogicCollision:
                 from .glb_loader import GLBLoader
                 loader = GLBLoader()
                 loader._filepath_hint = full_path
-                if loader.load(full_path):
+                from .model_source import load_model
+                if package:
+                    loader = load_model(model_path, package)
+                if loader is not None and (package or loader.load(full_path)):
                     verts = loader.get_flattened_vertices()
                 else:
                     verts = None
@@ -641,7 +766,10 @@ class LogicCollision:
                 # OpenGL-backed OBJ model on the logic thread.
                 from .obj_loader import OBJLoader
                 loader = OBJLoader()
-                if loader.load(full_path):
+                from .model_source import load_model
+                if package:
+                    loader = load_model(model_path, package)
+                if loader is not None and (package or loader.load(full_path)):
                     source_vertices = np.asarray(loader.vertices, dtype=np.float32)
                     if source_vertices.size == 0:
                         verts = None
@@ -664,8 +792,16 @@ class LogicCollision:
                 return None
 
             if verts:
-                min_v = [min(v[i] for v in verts) for i in range(3)]
-                max_v = [max(v[i] for v in verts) for i in range(3)]
+                values = np.asarray(verts, dtype=np.float64)
+                if (values.ndim != 2 or values.shape[1] < 3
+                        or not np.isfinite(values[:, :3]).all()):
+                    debug_log("Collision", f"Non-finite model vertices in {model_path}")
+                    return None
+                min_v = values[:, :3].min(axis=0).tolist()
+                max_v = values[:, :3].max(axis=0).tolist()
+                if not all(math.isfinite(v) for v in min_v + max_v):
+                    debug_log("Collision", f"Non-finite model bounds in {model_path}")
+                    return None
                 return min_v, max_v
         except Exception as e:
             debug_log("Collision", f"Failed to compute {ext.upper()} bounds for {model_path}: {e}")
@@ -674,7 +810,19 @@ class LogicCollision:
 
     def toggle_model_collision(self, enabled: bool = None) -> bool:
         """Toggle model collision on/off. If enabled is None, flip current state.
-        Returns the new state. Works in both play mode and editor mode."""
+        Returns the new state. Works in both play mode and editor mode.
+
+        Called from the UI thread (F6, showcollision): it repopulates the
+        session's spatial grid and rebuilds its physics, which the logic tick
+        and the monster AI read, so it holds the tick lock and then the
+        monster lock -- the engine's lock order -- for the whole change.
+        """
+        logic = self.logic
+        session = logic.session_runtime
+        with logic._tick_lock, session.monster_lock:
+            return self._toggle_model_collision_locked(enabled)
+
+    def _toggle_model_collision_locked(self, enabled):
         logic = self.logic
         if enabled is None:
             self.model_collision_enabled = not self.model_collision_enabled
@@ -689,12 +837,16 @@ class LogicCollision:
                 b for b in self._model_collision_brushes
                 if b.get('_physics_body')
             ]
+            if logic.session_runtime.play_mode:
+                self.carry_moving_models()
             if logic.session_runtime.play_mode and logic.session_runtime.spatial_grid is not None:
                 logic.session_runtime.spatial_grid.populate(logic.editor_state.brushes + self._model_collision_brushes)
                 if logic.session_runtime.physics_world is not None:
                     logic.session_runtime.physics_world.rebuild(self._physics_body_brushes)
         else:
             self._model_collision_brushes = []
+            if logic.session_runtime.play_mode:
+                self.carry_moving_models()
             if logic.session_runtime.play_mode and logic.session_runtime.spatial_grid is not None:
                 logic.session_runtime.spatial_grid.populate(logic.editor_state.brushes)
                 if logic.session_runtime.physics_world is not None:
@@ -703,6 +855,58 @@ class LogicCollision:
 
         return self.model_collision_enabled
 
+
+    def sync_bodies(self):
+        """Entities came or went while the session runs (a plugin spawned or
+        despawned one): rebuild the model collision brushes, and give the
+        physics engine the bodies that are new and take away those that are
+        gone -- the rest carry on exactly as they are.
+
+        Solid scenery among them is in the spatial grid, which is repopulated
+        only if that changed; a physics Prop is a body, not a grid brush.
+        """
+        logic = self.logic
+        session = logic.session_runtime
+        if not session.play_mode:
+            return
+        before_bodies = {id(b.get('_physics_entity')): b for b in self._physics_body_brushes}
+        before_scenery = {id(b.get('_physics_entity'))
+                          for b in self._model_collision_brushes
+                          if not b.get('_physics_body')}
+        self._model_collision_brushes = (
+            self.build_model_collision_brushes() if self.model_collision_enabled else [])
+        self._physics_body_brushes = [
+            b for b in self._model_collision_brushes if b.get('_physics_body')]
+        scenery = {id(b.get('_physics_entity')) for b in self._model_collision_brushes
+                   if not b.get('_physics_body')}
+        # A carried or turning model's proxy is new too, and only the new one
+        # is carried:
+        # the grid must hold it instead of the old one.
+        carried = self.carry_moving_models()
+        if (scenery != before_scenery or carried) and session.spatial_grid is not None:
+            session.spatial_grid.populate(
+                logic.editor_state.brushes + self._model_collision_brushes)
+        physics = session.physics_world
+        if physics is not None:
+            now = {id(b.get('_physics_entity')): b for b in self._physics_body_brushes}
+            for key, brush in before_bodies.items():
+                if key not in now:
+                    physics.remove_body(brush.get('_physics_entity'))
+            for key, brush in now.items():
+                if key not in before_bodies:
+                    physics.add_body(brush)
+        self.refresh_collision_brushes_cache()
+
+    def carry_moving_models(self):
+        """Hand the model collision proxies just built to the brush groups,
+        which move those of solid models riding a group's mover or door, or
+        turning about their own axis (Rotate), where the model is drawn
+        (engine.logic_groups.CarriedModels). In play, before the spatial grid
+        is populated with them; whether any is carried (or was)."""
+        groups = getattr(getattr(self.logic, 'mover_runtime', None), 'groups', None)
+        if groups is None:
+            return False
+        return groups.carry_models(self._model_collision_brushes)
 
     def refresh_collision_brushes_cache(self):
         """Recompute the combined static+model collision brush list.

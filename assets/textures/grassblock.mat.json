@@ -1,0 +1,18 @@
+{
+  "ao_strength": 1.0,
+  "detail": 0.6,
+  "emission": 1.0,
+  "emission_mask": null,
+  "emission_threshold": null,
+  "generated": {
+    "params_sha256": "e26f85a0d5504335876a518ffd579ac4669615946be79b18cc8cf1252741929e",
+    "source_sha256": "146c68241fb351a17ac259330d5ede37e1217e859a6d823b96c3bc850ef2dcac",
+    "version": 1
+  },
+  "height_strength": 1.0,
+  "invert": false,
+  "metal": 0.0,
+  "parallax": 1.5,
+  "roughness_base": 0.7,
+  "roughness_range": 0.25
+}

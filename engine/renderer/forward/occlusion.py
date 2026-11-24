@@ -65,11 +65,13 @@ import weakref
 import glm
 import numpy as np
 import OpenGL.GL as gl
+from engine.renderer.core import gl_state
 
 from engine import cell_cull
 from engine.cell_cull import (
     PROBE_KEEP_FRACTION, OcclusionProbeBook, ProbeGovernor,
 )
+from ..core.raw_calls import uniform_matrix4
 
 # 36 vertices of a unit cube centred on the origin. Winding is irrelevant --
 # face culling is disabled for the probe pass -- so this is simply the plain
@@ -233,12 +235,12 @@ class OcclusionMixin:
             gl.glBufferData(gl.GL_ARRAY_BUFFER, _PROBE_VERTS.nbytes,
                             _PROBE_VERTS, gl.GL_STATIC_DRAW)
             vao = int(gl.glGenVertexArrays(1))
-            gl.glBindVertexArray(vao)
+            gl_state.glBindVertexArray(vao)
             gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._occlusion_vbo)
             gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 12,
                                      ctypes.c_void_p(0))
             gl.glEnableVertexAttribArray(0)
-            gl.glBindVertexArray(0)
+            gl_state.glBindVertexArray(0)
             self.vaos['occlusion_probe'] = vao
 
             # The query target is asked of the live context, not assumed:
@@ -401,16 +403,22 @@ class OcclusionMixin:
             elif len(changed):
                 index.update(table, changed.tolist())
             held[3] = table.row_change_serial
+        # Indexing wants intp; the published slots are int32, so asarray made
+        # a new writeable array every frame. Every "unchanged" return below
+        # hands back the caller's own array, and the kept result is found by
+        # it, so what follows (the classify memo) still knows a still frame
+        # by identity instead of comparing its rows (M4).
+        given = slots
         slots = np.asarray(slots, dtype=np.intp)
         visible = index.visible(slots)
         self._occlusion_cpu_index_ms = (
             time.perf_counter_ns() - t_index) * 1e-6
         if visible is None:
-            return slots
+            return given
         eligible, group_bounds, group_of_row, group_cells, counts, signatures = visible
         safe_count = int(np.count_nonzero(eligible))
         if safe_count < self._occlusion_min_rows:
-            return slots
+            return given
         self._occlusion_rows_sampled = safe_count
         groups = (group_bounds, group_of_row, group_cells)
         # A signature is built only when a cell's published rows change.
@@ -452,7 +460,7 @@ class OcclusionMixin:
         if jumped or turned:
             self._occlusion_view_epoch += 1
             book.retire(())
-            return slots
+            return given
 
         frame = self._occlusion_frame
         culled_groups = np.zeros(len(group_bounds), dtype=bool)
@@ -463,7 +471,7 @@ class OcclusionMixin:
                 culled_groups[i] = True
         if not culled_groups.any():
             self._occlusion_drawn = len(slots)
-            return slots
+            return given
 
         # The same visible set (the same immutable array), the same rows and
         # the same hidden groups: the same result, handed back as the same
@@ -472,8 +480,12 @@ class OcclusionMixin:
         if kept is None:
             kept = self._occlusion_kept = {}
         inputs = (table.generation, table.transform_version)
-        held = kept.get(self._instance_view)
-        if (held is not None and held[0] is slots and held[1] == inputs
+        # Per view and table: the two render buffers' tables take turns.
+        key = (self._instance_view, id(table))
+        held = kept.get(key)
+        if held is not None and held[5]() is not table:
+            held = None
+        if (held is not None and held[0] is given and held[1] == inputs
                 and np.array_equal(held[2], culled_groups)):
             self._occlusion_skipped, self._occlusion_drawn = held[4]
             return held[3]
@@ -485,8 +497,14 @@ class OcclusionMixin:
         # convex geometry should not bury a useful small occlusion region.
         out = slots[keep]
         out.flags.writeable = False
-        kept[self._instance_view] = (slots, inputs, culled_groups, out,
-                                     (self._occlusion_skipped, self._occlusion_drawn))
+        if key not in kept:
+            for dead in [k for k, e in kept.items() if e[5]() is None]:
+                del kept[dead]
+            while len(kept) >= 32:
+                del kept[next(iter(kept))]
+        kept[key] = (given, inputs, culled_groups, out,
+                     (self._occlusion_skipped, self._occlusion_drawn),
+                     weakref.ref(table))
         return out
 
     def _occlusion_end_of_frame(self, projection, view, camera_pos, config):
@@ -587,21 +605,20 @@ class OcclusionMixin:
             return
 
         proj_view = projection * view
-        gl.glUseProgram(self._occlusion_program)
-        gl.glUniformMatrix4fv(self._occlusion_projview_loc, 1, gl.GL_FALSE,
-                             glm.value_ptr(proj_view))
+        gl_state.glUseProgram(self._occlusion_program)
+        uniform_matrix4(self._occlusion_projview_loc, glm.value_ptr(proj_view))
         # The probes change no pixel. Colour writes, depth writes and the
         # stencil test are off; both cube faces are drawn so the cull state
         # a brush pass left behind cannot matter; the depth test -- against
         # the frame's finished opaque depth -- is the whole point.
-        gl.glDisable(gl.GL_BLEND)
-        gl.glDisable(gl.GL_STENCIL_TEST)
-        gl.glDisable(gl.GL_CULL_FACE)
-        gl.glEnable(gl.GL_DEPTH_TEST)
-        gl.glDepthFunc(gl.GL_LESS)
-        gl.glDepthMask(gl.GL_FALSE)
+        gl_state.glDisable(gl.GL_BLEND)
+        gl_state.glDisable(gl.GL_STENCIL_TEST)
+        gl_state.glDisable(gl.GL_CULL_FACE)
+        gl_state.glEnable(gl.GL_DEPTH_TEST)
+        gl_state.glDepthFunc(gl.GL_LESS)
+        gl_state.glDepthMask(gl.GL_FALSE)
         gl.glColorMask(gl.GL_FALSE, gl.GL_FALSE, gl.GL_FALSE, gl.GL_FALSE)
-        gl.glBindVertexArray(self.vaos['occlusion_probe'])
+        gl_state.glBindVertexArray(self.vaos['occlusion_probe'])
         for i in order:
             coord = (int(group_cells[i, 0]), int(group_cells[i, 1]))
             if coord in self._occlusion_probes:
@@ -613,8 +630,7 @@ class OcclusionMixin:
                      else self._query_name(gl.glGenQueries(1)))
             gl.glBeginQuery(self._occlusion_target, query)
             model = self._probe_model_matrix(group_bounds[i])
-            gl.glUniformMatrix4fv(self._occlusion_model_loc, 1, gl.GL_FALSE,
-                                 glm.value_ptr(model))
+            uniform_matrix4(self._occlusion_model_loc, glm.value_ptr(model))
             gl.glDrawArrays(gl.GL_TRIANGLES, 0, 36)
             gl.glEndQuery(self._occlusion_target)
             self._occlusion_probes[coord] = query
@@ -625,10 +641,10 @@ class OcclusionMixin:
                 self._occlusion_last_eye.copy())
         # Restore what the tail of render_scene expects to find: the very
         # next lines re-enable the depth mask and disable the depth test.
-        gl.glBindVertexArray(0)
+        gl_state.glBindVertexArray(0)
         gl.glColorMask(gl.GL_TRUE, gl.GL_TRUE, gl.GL_TRUE, gl.GL_TRUE)
-        gl.glDepthMask(gl.GL_TRUE)
-        gl.glUseProgram(0)
+        gl_state.glDepthMask(gl.GL_TRUE)
+        gl_state.glUseProgram(0)
 
     def _pick_query_target(self, gl_module=None):
         """The strongest occlusion query target this context accepts.

@@ -2,6 +2,8 @@ import os
 import posixpath
 import json
 import zipfile
+
+from engine import terrain_stamp
 from typing import Dict, List, Optional, Set
 
 from engine.fileio import atomic_output
@@ -41,6 +43,11 @@ class PackageExporter:
         self.editor_state = editor_state
         self.root_dir = os.path.abspath(root_dir)
         self.errors: List[str] = []
+        # Each map file read and parsed once an export: every step of it
+        # (dependencies, references, entity types, terrain, the player copy)
+        # used to read it again, five reads a map.
+        self._maps: Dict[str, Optional[dict]] = {}
+        self._minified: Dict[str, bool] = {}
 
     def export(self, output_path, metadata, current_map_path, parent_widget=None):
         """Export the current project as a .fiopak zip.
@@ -53,6 +60,8 @@ class PackageExporter:
         import traceback
 
         asset_sources = None
+        self._maps.clear()
+        self._minified.clear()
         try:
             root = self.root_dir
             if not os.path.isdir(root):
@@ -114,7 +123,8 @@ class PackageExporter:
                     if cutscene is not None:
                         referenced_assets |= self._cutscene_asset_references(cutscene)
 
-            from engine.package_assets import ProjectAssets, companion_assets
+            from engine.package_assets import (COMPANION_SUFFIXES, ProjectAssets,
+                                               companion_assets)
             sources = asset_sources = ProjectAssets(root)
             asset_entries = {}
             # Built-in gameplay sprites/audio are implicit references (monster
@@ -140,18 +150,46 @@ class PackageExporter:
                     continue
                 if name in asset_entries:
                     continue
-                raw = sources.read(name)
                 asset_entries[name] = sources.sources[name]
-                pending.extend(companion_assets(name, raw))
+                # Only a model or material library names other files; a
+                # texture or sound is read once, when it is written.
+                if posixpath.splitext(name)[1].lower() in COMPANION_SUFFIXES:
+                    # One odd model is reported, not the end of the export.
+                    pending.extend(companion_assets(name, sources.read(name),
+                                                    self.errors))
 
             # ---- 4. Assemble next to the destination, then swap it in ----
             with atomic_output(output_path, binary=True) as handle:
                 with zipfile.ZipFile(handle, 'w', zipfile.ZIP_DEFLATED) as zf:
                     zf.writestr('metadata.json', json.dumps(manifest, indent=2))
                     for map_file, archive_path in map_archive_paths.items():
+                        # The map's terrain paint and placed stamps go in
+                        # beside it, as their own file: the engine lays it
+                        # over the map as a delta when it loads it. A map
+                        # that still carries its paint (an unsaved copy, one
+                        # saved by an earlier build) has it taken out here.
+                        paint = self._stamp_file(map_file)
                         player_copy = self._player_layout(map_file)
+                        if paint is None:
+                            source = player_copy or self._read_map(map_file) or {}
+                            without, inline = terrain_stamp.split_level(source)
+                            if inline is not None and (inline.get("stamps")
+                                                       or inline.get("paint")):
+                                paint, player_copy = inline, without
+                            elif (source.get(terrain_stamp.TERRAIN_KEY) or {}).get(
+                                    terrain_stamp.MARKER_KEY):
+                                self.errors.append(terrain_stamp.missing_paint_message(
+                                    os.path.basename(
+                                        terrain_stamp.default_stamp_path(map_file))))
+                        if paint is not None:
+                            zf.writestr(terrain_stamp.stamp_member(archive_path),
+                                        terrain_stamp.stamp_file_text(paint))
                         if player_copy is None:
                             zf.write(map_file, archive_path)
+                        elif self._is_minified(map_file):
+                            # A map kept minified is packaged minified.
+                            zf.writestr(archive_path, json.dumps(
+                                player_copy, separators=(",", ":")))
                         else:
                             zf.writestr(archive_path, json.dumps(player_copy, indent=2))
                     for arcname, src_path in sorted(cutscene_entries.items()):
@@ -194,43 +232,58 @@ class PackageExporter:
         data = self._read_map(map_file)
         if data is None:
             return None
-        # Paint from the map's stamp file is in *data*, not the file: the
-        # file cannot be copied as it is.
-        split = self._has_paint_file(map_file)
         try:
             version = int(data.get('version') or 0)
         except (TypeError, ValueError):
-            return data if split else None
+            return None
         from engine.brush_placement import MAP_VERSION, export_world_level
         if version < MAP_VERSION:
-            return data if split else None
+            return None
         return export_world_level(data)
 
-    @staticmethod
-    def _has_paint_file(map_file) -> bool:
-        """Whether the map on disk keeps its paint in a stamp file."""
-        try:
-            with open(map_file, 'r', encoding='utf-8') as f:
-                td = json.load(f).get('terrain_data') or {}
-            return bool(td.get('paint_file'))
-        except Exception:
-            return False
-
     def _read_map(self, map_file) -> Optional[dict]:
+        """*map_file* parsed, or None (reported once). Read once an export;
+        callers share the document and do not change it."""
+        key = os.path.abspath(map_file)
+        if key in self._maps:
+            return self._maps[key]
+        data = None
         try:
-            with open(map_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            with open(map_file, 'rb') as f:
+                raw = f.read()
+            self._minified[key] = b"\n" not in raw.strip()
+            data = json.loads(raw.decode('utf-8'))
         except Exception as e:
             self.errors.append(f"Could not read {map_file}: {e}")
-            return None
-        if not isinstance(data, dict):
-            self.errors.append(f"Not a map document: {map_file}")
-            return None
-        # A map's terrain paint kept in its stamp file goes into the package
-        # inline: a package is one map document, as players read it.
-        from engine import terrain_stamp
-        terrain_stamp.merge_level_paint(data, map_file)
+        else:
+            if not isinstance(data, dict):
+                self.errors.append(f"Not a map document: {map_file}")
+                data = None
+        self._maps[key] = data
         return data
+
+    def _is_minified(self, map_file) -> bool:
+        """Whether a map file is minified JSON: all on one line."""
+        key = os.path.abspath(map_file)
+        if key not in self._minified:
+            try:
+                with open(map_file, 'rb') as f:
+                    self._minified[key] = b"\n" not in f.read().strip()
+            except OSError:
+                return False
+        return self._minified[key]
+
+    def _stamp_file(self, map_file) -> Optional[dict]:
+        """The paint file kept beside *map_file*, parsed; None when the map
+        has none (or it cannot be read, which is reported)."""
+        path = terrain_stamp.paint_path(map_file)
+        if path is None:
+            return None
+        try:
+            return terrain_stamp.load_stamp_file(path)
+        except terrain_stamp.StampError as exc:
+            self.errors.append(f"{os.path.basename(path)}: {exc}")
+            return None
 
     def _asset_references(self, data: dict) -> Set[str]:
         """Every asset name a map's brushes and things refer to."""

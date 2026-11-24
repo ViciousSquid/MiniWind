@@ -28,3 +28,7 @@ logs/
 # Temporary level pair the level-changer e2e test writes (and removes) while
 # it runs (tests/e2e/test_level_changer_spawns.py).
 maps/_e2e_*.json
+maps/*_autosave.json
+
+# Console dumps written by the debug console's `condump` command.
+logs/

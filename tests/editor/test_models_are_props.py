@@ -125,9 +125,25 @@ def test_the_asset_browser_places_a_model_as_a_prop(main_window):
     assert prop.properties["model_path"] == DRUM
     assert prop.properties["rotation"] == [0, 90, 0]
     assert prop.properties["name"] == "Oil_Drum"
-    # A Prop's defaults: neither solid nor carryable until the author says so.
-    assert prop.properties["no_collision"] is True
+    # A placed model is solid scenery: Solid on, Physics off, Gravity off.
+    assert prop.properties["no_collision"] is False
+    assert prop.properties["physics_enabled"] is False
+    assert prop.properties["gravity"] is False
     assert prop.properties["carry_enabled"] is False
+
+
+def test_the_asset_browser_places_a_model_ahead_of_the_camera(main_window):
+    """Not at the world origin: on the floor just ahead of where the user is."""
+    host = main_window
+    host.state.brushes.append({'pos': [0, -32, 0], 'size': [8192, 64, 8192],
+                               'id': 'floor'})
+    host.view_3d.set_editor_camera((640.0, 200.0, -320.0), yaw=0.0, pitch=-10.0)
+    host.add_model_to_scene(os.path.join(ROOT, DRUM), [0, 0, 0], [1, 1, 1])
+    prop = host.state.things[-1]
+    from editor.placement import PLACE_AHEAD
+    assert abs(prop.pos[0] - (640.0 + PLACE_AHEAD)) <= host.view_3d.grid_size
+    assert abs(prop.pos[2] - (-320.0)) <= host.view_3d.grid_size
+    assert prop.pos[1] == 0.0           # set down on the floor's top
 
 
 def test_prop_for_model_is_the_one_model_factory():

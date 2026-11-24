@@ -15,7 +15,10 @@ that path still wins (a development override), and a member is also found
 by a case-insensitive match, as a Windows file system would. Audio keeps
 its streaming reader (:mod:`engine.audio_archives`). Archives are opened per
 read, never held open: a repack (``tools/pack_assets.py``) can replace one
-while the editor runs, and the next read sees it.
+while the editor runs, and the next read sees it. (On Windows a file held
+open cannot be replaced at all.) A read does not parse the archive again,
+though: the index made once per version of the file locates the member, and
+:func:`read_zip_member` reads just its bytes (see there).
 
 MiniWind also mounts *every* ``*.fiopak`` in the project root and ``assets/``
 as data packages (the second half of this module: :func:`read`,
@@ -33,8 +36,10 @@ import os
 from pathlib import Path
 import io
 import stat
+import struct
 import threading
 import zipfile
+import zlib
 
 
 # Root images belong to the editor; everything else has its own directory.
@@ -149,8 +154,11 @@ def _entries(archive, category):
     total = 0
     names = set()
     for info in infos:
-        if not category_member(info.filename, category):
-            raise ValueError(f'invalid {category} asset path: {info.filename!r}')
+        # The name as the archive stores it: on Windows zipfile turns a
+        # backslash in ``filename`` into a slash, so an archive refused
+        # everywhere else was accepted there.
+        if not category_member(info.orig_filename, category):
+            raise ValueError(f'invalid {category} asset path: {info.orig_filename!r}')
         mode = info.external_attr >> 16
         if stat.S_ISLNK(mode):
             raise ValueError('asset archive contains a symbolic link')
@@ -341,8 +349,7 @@ def _is_category_archive(path) -> bool:
 def _read(found, info):
     (category, archive) = found
     if category in ('package', 'mount'):
-        with zipfile.ZipFile(archive) as handle:
-            return handle.read(info)
+        return read_zip_entry(archive, info)
     # Opened per read: never held, so a repack can replace the file. A
     # changed archive is re-indexed first (its members may have moved).
     with _lock:
@@ -354,8 +361,85 @@ def _read(found, info):
         if info is None:
             return None
         archive = current
-    with zipfile.ZipFile(archive.path) as handle:
-        return handle.read(info)
+    return read_zip_member(archive.path, info)
+
+
+#: A zip local file header: signature, versions, flags, method, time, date,
+#: CRC, sizes, then the lengths of the name and extra field that follow it.
+_LOCAL_HEADER = struct.Struct('<4s5H3L2H')
+_LOCAL_SIGNATURE = b'PK\x03\x04'
+
+
+def read_zip_member(path, info) -> bytes:
+    """The bytes of member *info* (a ``ZipInfo`` from an index of the archive
+    at *path* as it is now), read without parsing the archive again.
+
+    Opening a ``ZipFile`` reads and parses the whole central directory: 12 ms
+    a read for an archive of 5000 members, before the member's few bytes.
+    The index already holds where each member is, so this seeks to its local
+    header, reads its data and inflates it, checking size and CRC as
+    ``ZipFile.read`` does. The file is opened for the read only, never held.
+    An encrypted member or another compression method goes through
+    ``ZipFile`` as before.
+    """
+    if info.flag_bits & 0x1 or info.compress_type not in (zipfile.ZIP_STORED,
+                                                           zipfile.ZIP_DEFLATED):
+        with zipfile.ZipFile(path) as handle:
+            return handle.read(info)
+    with open(path, 'rb') as raw:
+        raw.seek(info.header_offset)
+        header = raw.read(_LOCAL_HEADER.size)
+        if len(header) != _LOCAL_HEADER.size:
+            raise zipfile.BadZipFile(f'truncated header for {info.filename!r}')
+        fields = _LOCAL_HEADER.unpack(header)
+        if fields[0] != _LOCAL_SIGNATURE:
+            raise zipfile.BadZipFile(f'bad local header for {info.filename!r}')
+        raw.seek(fields[9] + fields[10], os.SEEK_CUR)
+        data = raw.read(info.compress_size)
+    if len(data) != info.compress_size:
+        raise zipfile.BadZipFile(f'truncated data for {info.filename!r}')
+    if info.compress_type == zipfile.ZIP_DEFLATED:
+        # At most one byte past the promised size: a member that inflates
+        # further is refused, never expanded.
+        data = zlib.decompressobj(-15).decompress(data, info.file_size + 1)
+    if len(data) != info.file_size or zlib.crc32(data) != info.CRC:
+        raise zipfile.BadZipFile(f'Bad CRC-32 for file {info.filename!r}')
+    return data
+
+
+#: path -> (signature, {member name: ZipInfo}) of zips read by name (a played
+#: package): indexed once per version of the file, as the category archives
+#: are. A handful at most are ever read; the oldest goes past the limit.
+_zip_indexes: dict = {}
+_ZIP_INDEX_LIMIT = 8
+
+
+def zip_member_info(path, name):
+    """The ``ZipInfo`` of member *name* in the zip at *path* as the file is
+    now (re-indexed when it changed), or None when it has no such member."""
+    path = os.fspath(path)
+    stamp = os.stat(path)
+    signature = (stamp.st_mtime_ns, stamp.st_size)
+    with _lock:
+        held = _zip_indexes.get(path)
+    if held is None or held[0] != signature:
+        with zipfile.ZipFile(path) as archive:
+            held = (signature, {info.filename: info for info in archive.infolist()})
+        with _lock:
+            _zip_indexes.pop(path, None)
+            _zip_indexes[path] = held
+            while len(_zip_indexes) > _ZIP_INDEX_LIMIT:
+                del _zip_indexes[next(iter(_zip_indexes))]
+    return held[1].get(name)
+
+
+def read_zip_entry(path, name) -> bytes:
+    """The bytes of member *name* of the zip at *path* (``KeyError`` when it
+    has none): ``ZipFile(path).read(name)`` without parsing it each time."""
+    info = zip_member_info(path, name)
+    if info is None:
+        raise KeyError(name)
+    return read_zip_member(path, info)
 
 
 def asset_stamp(path):
@@ -374,12 +458,12 @@ def asset_stamp(path):
     if found is None:
         return None
     category, archive = found
-    if category == 'package':
+    if category in ('package', 'mount'):
         try:
             stat = os.stat(archive)
         except OSError:
             return None
-        return ('package', os.fspath(archive), stat.st_mtime_ns, stat.st_size, info)
+        return (category, os.fspath(archive), stat.st_mtime_ns, stat.st_size, info)
     return (category, archive.signature, info.filename, info.CRC, info.file_size)
 
 
@@ -415,6 +499,22 @@ def asset_exists(path) -> bool:
     """Whether *path* names an asset file, loose or archived."""
     full = os.fspath(path)
     return os.path.isfile(full) or _find(asset_member(full))[0] is not None
+
+
+def asset_archive_name(path):
+    """The file name of the ``.fiopak`` that serves *path*, or None when it is
+    a loose file (or no asset at all). A loose file wins, as it does when the
+    asset is read."""
+    full = os.fspath(path)
+    if os.path.isfile(full):
+        return None
+    found, _info = _find(asset_member(full))
+    if found is None:
+        return None
+    category, archive = found
+    source = (archive if category in ('package', 'mount')
+              else getattr(archive, 'path', None))
+    return os.path.basename(os.fspath(source)) if source else None
 
 
 def asset_isdir(path) -> bool:

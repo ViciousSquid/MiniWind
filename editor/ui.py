@@ -22,6 +22,29 @@ from editor.debug_console import DebugConsole
 
 import math
 
+def snug_width(box):
+    """Fix *box*'s width to what its content needs: a spin box's widest value
+    (its maximum) beside its arrows, a dropdown's longest option beside its
+    arrow. The bottom bar's boxes were several times wider than "16"."""
+    from PyQt5.QtWidgets import QAbstractSpinBox, QComboBox
+    metrics = box.fontMetrics()
+    if isinstance(box, QComboBox):
+        # The longest option, its padding and the drop-down arrow (Qt's own
+        # size hint reserves far more than the editor stylesheet uses).
+        box.ensurePolished()
+        widest = max((metrics.horizontalAdvance(box.itemText(i))
+                      for i in range(box.count())), default=0)
+        width = widest + 62
+    elif isinstance(box, QAbstractSpinBox):
+        text = box.textFromValue(box.maximum()) if hasattr(box, 'textFromValue') \
+            else str(box.maximum())
+        width = metrics.horizontalAdvance(text + box.suffix()) + 38   # arrows (20) + padding
+    else:
+        return
+    box.setFixedWidth(int(width))
+    box.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+
 class PowerOfTwoSpinBox(QSpinBox):
     """SpinBox that only allows power-of-2 values (2, 4, 8, 16, 32 …)."""
 
@@ -437,6 +460,12 @@ class Ui_MainWindow(object):
         MainWindow.properties_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         toggle_action = MainWindow.properties_dock.toggleViewAction()
         toggle_action.setText("Properties/Console")
+        # P shows or hides the Property editor's dock from anywhere, docks
+        # and floating windows included; a text field still takes a typed
+        # "p" (it claims printable keys first).
+        toggle_action.setShortcut('P')
+        toggle_action.setShortcutContext(Qt.ApplicationShortcut)
+        toggle_action.setToolTip('Show or hide the Property editor (P)')
         MainWindow.addDockWidget(Qt.RightDockWidgetArea, MainWindow.properties_dock)
 
         # --- 3. Layout Adjustments ---
@@ -532,6 +561,10 @@ class Ui_MainWindow(object):
         
         MainWindow.file_menu.addAction(QAction('&Save', MainWindow, shortcut='Ctrl+S', triggered=MainWindow.save_level))
         MainWindow.file_menu.addAction(QAction('Save &As...', MainWindow, shortcut='Ctrl+Shift+S', triggered=MainWindow.save_level_as))
+        minified_action = QAction('Save As &Minified...', MainWindow,
+                                  triggered=MainWindow.save_level_as_minified)
+        minified_action.setToolTip("Save the map as minified JSON: the same map, a smaller file")
+        MainWindow.file_menu.addAction(minified_action)
         MainWindow.file_menu.addSeparator()
         MainWindow.file_menu.addAction(QAction('Settings...', MainWindow, triggered=MainWindow.show_settings_dialog))
         MainWindow.file_menu.addSeparator()
@@ -645,6 +678,27 @@ class Ui_MainWindow(object):
         ])
         
         view_menu.addSeparator()
+
+        # Draw the editor's 3D view as HD_High draws Play, so the
+        # PlayerStart's HD Sky can be tuned in place. Only with HD_High.
+        MainWindow.action_hd_preview = QAction('HD preview', MainWindow)
+        MainWindow.action_hd_preview.setCheckable(True)
+        MainWindow.action_hd_preview.setChecked(True)
+        MainWindow.action_hd_preview.setToolTip(
+            'With the HD_High renderer (Settings > Display > Renderer): draw the '
+            'editor\'s 3D view in HD. Play mode is always drawn in HD.')
+        MainWindow.action_hd_preview.triggered.connect(MainWindow.set_hd_preview)
+        view_menu.addAction(MainWindow.action_hd_preview)
+
+        def sync_hd_preview():
+            renderer = getattr(MainWindow.view_3d, 'renderer', None)
+            available = bool(getattr(renderer, 'hd', False))
+            MainWindow.action_hd_preview.setEnabled(available)
+            MainWindow.action_hd_preview.setChecked(
+                available and bool(MainWindow.view_3d.hd_preview))
+        view_menu.aboutToShow.connect(sync_hd_preview)
+
+        view_menu.addSeparator()
         
         view_menu.addAction(self.action_asset_browser)
 
@@ -727,13 +781,13 @@ class Ui_MainWindow(object):
             MainWindow.toggle_system_monitor)
         MainWindow.debug_menu.addAction(MainWindow.system_monitor_action)
 
-        MainWindow.position_action = QAction('Position (P)', MainWindow)
-        MainWindow.position_action.setShortcut('P')
+        MainWindow.position_action = QAction('Position (Ctrl+P)', MainWindow)
+        MainWindow.position_action.setShortcut('Ctrl+P')
         # Anywhere in the application, docks and floating windows included; a
         # text field still takes a typed "p" (it claims printable keys first).
         MainWindow.position_action.setShortcutContext(Qt.ApplicationShortcut)
         MainWindow.position_action.setToolTip(
-            'Open the live camera-position window (P, or the console\'s pos)')
+            'Open the live camera-position window (Ctrl+P, or the console\'s pos)')
         MainWindow.position_action.triggered.connect(
             MainWindow.view_3d.show_pos_window)
         MainWindow.debug_menu.addAction(MainWindow.position_action)
@@ -788,6 +842,17 @@ class Ui_MainWindow(object):
         MainWindow.tools_menu.addAction(MainWindow.item_editor_action)
         MainWindow.tools_menu.addAction(MainWindow.logic_graph_action)
         MainWindow.tools_menu.addAction(MainWindow.logic_wizard_action)
+        # How the open map's textures get their material maps under HD_High.
+        MainWindow.hd_readiness_action = QAction('HD Readiness Report...', MainWindow)
+        MainWindow.hd_readiness_action.setToolTip(
+            'List each texture the open map uses and where its HD material maps '
+            'come from: hand-made, generated and committed, or generated at load.')
+
+        def _show_hd_readiness():
+            from editor.hd_readiness import show_report
+            show_report(MainWindow)
+        MainWindow.hd_readiness_action.triggered.connect(_show_hd_readiness)
+        MainWindow.tools_menu.addAction(MainWindow.hd_readiness_action)
         MainWindow.tools_menu.addSeparator()
         MainWindow.tools_menu.addAction(MainWindow.terrain_action)
         MainWindow.tools_menu.addAction(MainWindow.procedural_action)
@@ -1144,7 +1209,7 @@ class Ui_MainWindow(object):
         
         # 2. Mid-aligned Controls
         MainWindow.display_mode_combobox = QComboBox()
-        MainWindow.display_mode_combobox.addItems(["Wireframe", "Points", "Solid Lit", "Textured", "Overlay"])
+        MainWindow.display_mode_combobox.addItems(["Wireframe", "Solid Lit", "Textured", "Overlay"])
         MainWindow.display_mode_combobox.setCurrentText("Textured")
         MainWindow.display_mode_combobox.currentTextChanged.connect(MainWindow.set_brush_display_mode)
         
@@ -1181,6 +1246,13 @@ class Ui_MainWindow(object):
         bottom_layout.addWidget(QLabel("Camera:"))
         bottom_layout.addWidget(MainWindow.camera_mode_combobox)
  
+        # Snug: each box as wide as its widest value (a spin box) or option
+        # (a dropdown) needs, rather than whatever the layout hands it.
+        for box in (MainWindow.grid_size_spinbox, MainWindow.world_size_spinbox,
+                    MainWindow.cull_dist_spinbox, MainWindow.display_mode_combobox,
+                    MainWindow.camera_mode_combobox):
+            snug_width(box)
+
         # --- EXPANDING NOTIFICATION AREA (FAR RIGHT) ---
         # Add a small buffer spacing before the label
         bottom_layout.addSpacing(20)

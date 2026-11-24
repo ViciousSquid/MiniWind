@@ -54,7 +54,7 @@ def test_a_level_loaded_while_dormant_does_not_build_the_hierarchy(dormant_windo
     w = dormant_window
     w.state.load_from_data(_level(), save_undo=False)
     w.update_all_ui()
-    assert w.scene_hierarchy._refresh_deferred
+    assert w._editor_ui_stale
     assert w.scene_hierarchy.tree.topLevelItemCount() == 0
 
 
@@ -81,7 +81,7 @@ def test_leaving_fullscreen_wakes_every_deferred_panel(dormant_window, monkeypat
     w.scene_hierarchy_dock.setVisible(True)
     w.asset_browser_dock.setVisible(True)
     qt_app.processEvents()
-    assert not w.scene_hierarchy._refresh_deferred
+    assert not w._editor_ui_stale and not w.scene_hierarchy._stale
     assert w.scene_hierarchy.tree.topLevelItemCount() > 0
     shown = [t for t in _tabs(w) if t.isVisible()]
     assert shown and all(not t._initial_load_pending for t in shown)
@@ -103,7 +103,7 @@ def test_an_ordinary_editor_start_fills_its_panels(main_window):
 def test_a_dormant_editor_does_not_autosave(dormant_window, monkeypatch):
     w = dormant_window
     written = []
-    monkeypatch.setattr(type(w), '_write_autosave', lambda self: written.append(1))
+    monkeypatch.setattr(type(w), '_write_autosave', lambda self, **kw: written.append(1))
     w.unsaved_changes = True
     w.autosave()
     assert written == []

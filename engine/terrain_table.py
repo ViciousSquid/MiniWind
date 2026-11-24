@@ -111,14 +111,22 @@ def pack_keys(cx, cz):
     return (cx << 32) + (cz & 0xFFFFFFFF)
 
 
+#: The last bounds ensure_bounds refused, so the warning is printed once.
+_last_refused_bounds = None
+
+
 class TerrainTable:
     """Dense per-chunk terrain state. See the module docstring."""
+
+    #: Most chunks ensure_bounds makes resident (the non-streaming mode).
+    #: Generous next to Terrain.MAX_BOUNDED_CHUNKS, which a map may name.
+    MAX_ENSURED_CHUNKS = 256 * 256
 
     # Declared like RenderTable's and EntityTable's, which is also how the
     # Debug Tables instrument discovers a table's columns.
     __slots__ = tuple(name for name, *_ in _COLUMNS) + (
         'generation', 'count', 'slot_of_coord', '_free', '_next_order',
-        '_capacity')
+        '_capacity', 'grass_epoch')
 
     def __init__(self):
         #: Bumped whenever the columns are reallocated, so a reader on another
@@ -132,6 +140,10 @@ class TerrainTable:
         self._free: list = []
         self._next_order = 0
         self._capacity = 0
+        #: Moves on whenever grass is marked due for anything but a stamp
+        #: added over it (Terrain._thin_grass trusts the grass it has only
+        #: while this stands still).
+        self.grass_epoch = 0
         for name, shape, dtype, fill in _COLUMNS:
             setattr(self, name, np.full((0,) + shape, fill, dtype=dtype))
 
@@ -307,6 +319,17 @@ class TerrainTable:
         min_cx, max_cx, min_cz, max_cz = bounds
         if min_cx > max_cx or min_cz > max_cz:
             return
+        count = (int(max_cx) - int(min_cx) + 1) * (int(max_cz) - int(min_cz) + 1)
+        if count > self.MAX_ENSURED_CHUNKS:
+            # Not a terrain anyone authored (the editor's bounds and a map's
+            # are both checked): a bounding box this size is meant to be
+            # streamed. Making it all resident would exhaust memory.
+            global _last_refused_bounds
+            if tuple(bounds) != _last_refused_bounds:
+                _last_refused_bounds = tuple(bounds)
+                print(f"[Terrain] Not making {count} chunks resident; "
+                      f"bounds {tuple(bounds)} need streaming")
+            return
         gz, gx = np.meshgrid(np.arange(min_cz, max_cz + 1, dtype=np.int64),
                              np.arange(min_cx, max_cx + 1, dtype=np.int64),
                              indexing='ij')
@@ -463,11 +486,13 @@ class TerrainTable:
         self.seq[slot] += 1                         # even: consistent
 
     def mark_all_dirty(self):
+        self.grass_epoch += 1
         live = self.live[:self._capacity]
         self.dirty[:self._capacity][live] = True
         self.grass_dirty[:self._capacity][live] = True
 
     def mark_grass_dirty(self):
+        self.grass_epoch += 1
         live = self.live[:self._capacity]
         self.grass_dirty[:self._capacity][live] = True
 
@@ -483,6 +508,7 @@ class TerrainTable:
         cz = self.world[slots, 1] + size / 2
         half = size / 2 + radius
         hit = (np.abs(cx - world_x) < half) & (np.abs(cz - world_z) < half)
+        self.grass_epoch += 1
         self.dirty[slots[hit]] = True
         self.grass_dirty[slots[hit]] = True
 
@@ -532,6 +558,65 @@ class TerrainTable:
         if int(self.coord[slot, 0]) != cx or int(self.coord[slot, 1]) != cz:
             return None
         return result
+
+    def heights_at(self, cx, cz, world_x, world_z):
+        """:meth:`height_at` for many points at once: float64, NaN where it
+        is ``None``.
+
+        The same two triangles per quad and the same arithmetic, so a point
+        asked here and there gets the same height to the last bit; the Python
+        work is one pass per distinct chunk asked about, not per point. Safe
+        from any thread, by the same sequence numbers.
+        """
+        world_x = np.asarray(world_x, dtype=np.float64)
+        world_z = np.asarray(world_z, dtype=np.float64)
+        out = np.full(world_x.shape, np.nan)
+        if not out.size:
+            return out
+        cx = np.asarray(cx, dtype=np.int64)
+        cz = np.asarray(cz, dtype=np.int64)
+        coords, inverse = np.unique(np.stack((cx.ravel(), cz.ravel()), axis=1),
+                                    axis=0, return_inverse=True)
+        inverse = inverse.reshape(-1)
+        flat_x = world_x.ravel()
+        flat_z = world_z.ravel()
+        flat = out.reshape(-1)
+        slot_of = self.slot_of_coord.get
+        for at, (chunk_x, chunk_z) in enumerate(coords.tolist()):
+            slot = slot_of((chunk_x, chunk_z))
+            if slot is None:
+                continue
+            generation = self.generation
+            s1 = int(self.seq[slot])
+            if s1 & 1 or not self.built[slot]:
+                continue
+            n = int(self.grid_res[slot])
+            wx0 = float(self.world[slot, 0])
+            wz0 = float(self.world[slot, 1])
+            step = float(self.size[slot]) / n
+            points = np.flatnonzero(inverse == at) if len(coords) > 1 else slice(None)
+            lx = (flat_x[points] - wx0) / step
+            lz = (flat_z[points] - wz0) / step
+            inside = (0.0 <= lx) & (lx <= n) & (0.0 <= lz) & (lz <= n)
+            i = np.minimum(np.where(inside, lx, 0.0).astype(np.int64), n - 1)
+            k = np.minimum(np.where(inside, lz, 0.0).astype(np.int64), n - 1)
+            fx = lx - i
+            fz = lz - k
+            h = self.heights[slot, GRID_BORDER:, GRID_BORDER:]
+            h10 = h[i + 1, k].astype(np.float64)
+            h01 = h[i, k + 1].astype(np.float64)
+            h00 = h[i, k].astype(np.float64)
+            h11 = h[i + 1, k + 1].astype(np.float64)
+            result = np.where(
+                fx + fz <= 1.0,
+                h00 + fx * (h10 - h00) + fz * (h01 - h00),
+                h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11))
+            if int(self.seq[slot]) != s1 or self.generation != generation:
+                continue
+            if int(self.coord[slot, 0]) != chunk_x or int(self.coord[slot, 1]) != chunk_z:
+                continue
+            flat[points] = np.where(inside, result, np.nan)
+        return out
 
     # -- stats ----------------------------------------------------------------
 

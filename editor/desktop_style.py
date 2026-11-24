@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBo
                              QMenu, QRadioButton, QSplitter, QTabWidget, QToolTip, QWidget)
 
 UI_FONT = "Fio UI"
-MONO_FONT = "IBM Plex Mono"
+MONO_FONT = "Fio Mono"
 ICON_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'ui' / 'controls'
 
 
@@ -123,61 +123,68 @@ class EditorStyle(QProxyStyle):
         super().__init__(base)
         self.setObjectName("FioWindows")
 
+    # Built once: Qt asks for these thousands of times while laying out a
+    # page (about 7,000 calls for one property page), and rebuilding the
+    # tables on every call cost more than the rest of the lookup.
+    _STYLE_HINTS = {
+        QStyle.SH_TabBar_Alignment: int(Qt.AlignLeft),
+        QStyle.SH_FormLayoutFormAlignment: int(Qt.AlignLeft | Qt.AlignTop),
+        QStyle.SH_FormLayoutLabelAlignment: int(Qt.AlignLeft | Qt.AlignVCenter),
+        QStyle.SH_FormLayoutFieldGrowthPolicy: QFormLayout.AllNonFixedFieldsGrow,
+        QStyle.SH_FormLayoutWrapPolicy: QFormLayout.WrapLongRows,
+        QStyle.SH_DialogButtonLayout: QDialogButtonBox.WinLayout,
+        QStyle.SH_ComboBox_Popup: 0,
+        QStyle.SH_ScrollBar_Transient: 0,
+        QStyle.SH_Widget_Animate: 0,
+        QStyle.SH_UnderlineShortcut: 0,
+        QStyle.SH_TabBar_ElideMode: int(Qt.ElideRight),
+        QStyle.SH_DialogButtonBox_ButtonsHaveIcons: 0,
+    }
+
+    # Explicit geometry, including controls that are not stylesheet drawn.
+    _PIXEL_METRICS = {
+        QStyle.PM_LayoutLeftMargin: 9, QStyle.PM_LayoutRightMargin: 9,
+        QStyle.PM_LayoutTopMargin: 9, QStyle.PM_LayoutBottomMargin: 9,
+        QStyle.PM_LayoutHorizontalSpacing: 6, QStyle.PM_LayoutVerticalSpacing: 6,
+        QStyle.PM_DefaultFrameWidth: 1, QStyle.PM_SpinBoxFrameWidth: 1,
+        QStyle.PM_ComboBoxFrameWidth: 1, QStyle.PM_ButtonMargin: 6,
+        QStyle.PM_ButtonDefaultIndicator: 0, QStyle.PM_ButtonShiftHorizontal: 0,
+        QStyle.PM_ButtonShiftVertical: 0, QStyle.PM_ScrollBarExtent: 12,
+        QStyle.PM_MenuButtonIndicator: 12, QStyle.PM_ButtonIconSize: 16,
+        QStyle.PM_ScrollBarSliderMin: 24, QStyle.PM_SliderThickness: 20,
+        QStyle.PM_SliderLength: 14, QStyle.PM_SliderControlThickness: 14,
+        QStyle.PM_IndicatorWidth: 16, QStyle.PM_IndicatorHeight: 16,
+        QStyle.PM_ExclusiveIndicatorWidth: 16, QStyle.PM_ExclusiveIndicatorHeight: 16,
+        QStyle.PM_CheckBoxLabelSpacing: 6, QStyle.PM_RadioButtonLabelSpacing: 6,
+        QStyle.PM_TabBarTabHSpace: 20, QStyle.PM_TabBarTabVSpace: 10,
+        QStyle.PM_TabBarBaseHeight: 1, QStyle.PM_TabBarBaseOverlap: 1,
+        QStyle.PM_TabBarScrollButtonWidth: 16, QStyle.PM_TabBarIconSize: 16,
+        QStyle.PM_ToolBarItemMargin: 2, QStyle.PM_ToolBarItemSpacing: 4,
+        QStyle.PM_ToolBarFrameWidth: 0, QStyle.PM_ToolBarHandleExtent: 8,
+        QStyle.PM_ToolBarSeparatorExtent: 8, QStyle.PM_ToolBarExtensionExtent: 16,
+        QStyle.PM_DockWidgetFrameWidth: 1, QStyle.PM_DockWidgetTitleMargin: 4,
+        QStyle.PM_DockWidgetSeparatorExtent: 4, QStyle.PM_SplitterWidth: 4,
+        # Qt scales this from 72 dpi on macOS and 96 elsewhere, which made
+        # dock title buttons 21px there and 20px everywhere else.
+        QStyle.PM_DockWidgetTitleBarButtonMargin: 4,
+        QStyle.PM_HeaderMargin: 4, QStyle.PM_HeaderMarkSize: 12,
+        QStyle.PM_SmallIconSize: 16, QStyle.PM_LargeIconSize: 32,
+        QStyle.PM_MenuPanelWidth: 1, QStyle.PM_MenuHMargin: 0,
+        QStyle.PM_MenuVMargin: 2, QStyle.PM_MenuBarPanelWidth: 0,
+        QStyle.PM_MenuBarHMargin: 0, QStyle.PM_MenuBarVMargin: 0,
+        QStyle.PM_MenuBarItemSpacing: 0,
+    }
+
     def styleHint(self, hint, option=None, widget=None, returnData=None):
-        rules = {
-            QStyle.SH_TabBar_Alignment: int(Qt.AlignLeft),
-            QStyle.SH_FormLayoutFormAlignment: int(Qt.AlignLeft | Qt.AlignTop),
-            QStyle.SH_FormLayoutLabelAlignment: int(Qt.AlignLeft | Qt.AlignVCenter),
-            QStyle.SH_FormLayoutFieldGrowthPolicy: QFormLayout.AllNonFixedFieldsGrow,
-            QStyle.SH_FormLayoutWrapPolicy: QFormLayout.WrapLongRows,
-            QStyle.SH_DialogButtonLayout: QDialogButtonBox.WinLayout,
-            QStyle.SH_ComboBox_Popup: 0,
-            QStyle.SH_ScrollBar_Transient: 0,
-            QStyle.SH_Widget_Animate: 0,
-            QStyle.SH_UnderlineShortcut: 0,
-            QStyle.SH_TabBar_ElideMode: int(Qt.ElideRight),
-            QStyle.SH_DialogButtonBox_ButtonsHaveIcons: 0,
-        }
-        if hint in rules:
-            return rules[hint]
+        value = self._STYLE_HINTS.get(hint)
+        if value is not None:
+            return value
         return super().styleHint(hint, option, widget, returnData)
 
     def pixelMetric(self, metric, option=None, widget=None):
-        # Explicit geometry, including controls that are not stylesheet drawn.
-        metrics = {
-            QStyle.PM_LayoutLeftMargin: 9, QStyle.PM_LayoutRightMargin: 9,
-            QStyle.PM_LayoutTopMargin: 9, QStyle.PM_LayoutBottomMargin: 9,
-            QStyle.PM_LayoutHorizontalSpacing: 6, QStyle.PM_LayoutVerticalSpacing: 6,
-            QStyle.PM_DefaultFrameWidth: 1, QStyle.PM_SpinBoxFrameWidth: 1,
-            QStyle.PM_ComboBoxFrameWidth: 1, QStyle.PM_ButtonMargin: 6,
-            QStyle.PM_ButtonDefaultIndicator: 0, QStyle.PM_ButtonShiftHorizontal: 0,
-            QStyle.PM_ButtonShiftVertical: 0, QStyle.PM_ScrollBarExtent: 12,
-            QStyle.PM_MenuButtonIndicator: 12, QStyle.PM_ButtonIconSize: 16,
-            QStyle.PM_ScrollBarSliderMin: 24, QStyle.PM_SliderThickness: 20,
-            QStyle.PM_SliderLength: 14, QStyle.PM_SliderControlThickness: 14,
-            QStyle.PM_IndicatorWidth: 16, QStyle.PM_IndicatorHeight: 16,
-            QStyle.PM_ExclusiveIndicatorWidth: 16, QStyle.PM_ExclusiveIndicatorHeight: 16,
-            QStyle.PM_CheckBoxLabelSpacing: 6, QStyle.PM_RadioButtonLabelSpacing: 6,
-            QStyle.PM_TabBarTabHSpace: 20, QStyle.PM_TabBarTabVSpace: 10,
-            QStyle.PM_TabBarBaseHeight: 1, QStyle.PM_TabBarBaseOverlap: 1,
-            QStyle.PM_TabBarScrollButtonWidth: 16, QStyle.PM_TabBarIconSize: 16,
-            QStyle.PM_ToolBarItemMargin: 2, QStyle.PM_ToolBarItemSpacing: 4,
-            QStyle.PM_ToolBarFrameWidth: 0, QStyle.PM_ToolBarHandleExtent: 8,
-            QStyle.PM_ToolBarSeparatorExtent: 8, QStyle.PM_ToolBarExtensionExtent: 16,
-            QStyle.PM_DockWidgetFrameWidth: 1, QStyle.PM_DockWidgetTitleMargin: 4,
-            QStyle.PM_DockWidgetSeparatorExtent: 4, QStyle.PM_SplitterWidth: 4,
-            # Qt scales this from 72 dpi on macOS and 96 elsewhere, which made
-            # dock title buttons 21px there and 20px everywhere else.
-            QStyle.PM_DockWidgetTitleBarButtonMargin: 4,
-            QStyle.PM_HeaderMargin: 4, QStyle.PM_HeaderMarkSize: 12,
-            QStyle.PM_SmallIconSize: 16, QStyle.PM_LargeIconSize: 32,
-            QStyle.PM_MenuPanelWidth: 1, QStyle.PM_MenuHMargin: 0,
-            QStyle.PM_MenuVMargin: 2, QStyle.PM_MenuBarPanelWidth: 0,
-            QStyle.PM_MenuBarHMargin: 0, QStyle.PM_MenuBarVMargin: 0,
-            QStyle.PM_MenuBarItemSpacing: 0,
-        }
-        if metric in metrics:
-            return metrics[metric]
+        value = self._PIXEL_METRICS.get(metric)
+        if value is not None:
+            return value
         return super().pixelMetric(metric, option, widget)
 
     def standardIcon(self, icon, option=None, widget=None):
@@ -244,7 +251,14 @@ class EditorLayoutRules(QObject):
                 if previous is None or obj.minimumHeight() != previous:
                     floor = obj.minimumHeight()
                 padding = 1 if isinstance(obj, (QCheckBox, QRadioButton)) else 0
-                height = max(floor or 0, obj.fontMetrics().height() + padding)
+                line = obj.fontMetrics().height() + padding
+                height = max(floor or 0, line)
+                if isinstance(obj, QLabel) and obj.minimumSizeHint().height() > height + line // 2:
+                    # More than one line (a paragraph, a rich-text table): an
+                    # explicit minimum replaces the label's own, so a one-line
+                    # floor let a layout sized from minimums -- a message box
+                    # -- cut the text off after its first line.
+                    height = floor or 0
                 obj.setProperty('_fio_label_floor', floor or 0)
                 obj.setProperty('_fio_label_height', height)
                 obj.setMinimumHeight(height)
@@ -369,11 +383,40 @@ def install_editor_style(app):
     app._fio_editor_style_installed = True
 
 
+#: Widget classes Qt gives their own font from the platform theme
+#: (QApplicationPrivate::initializeWidgetFontHash). Qt refills these whenever
+#: a style is installed -- and QApplication.setStyleSheet installs one -- so on
+#: macOS QLabel, QPushButton, the item views and the rest go back to the 13pt
+#: system font until QApplication.setFont(font) clears them again.
+_THEME_FONT_CLASSES = (
+    'QMenu', 'QMenuBar', 'QMenuItem', 'QMessageBox', 'QLabel', 'QTipLabel',
+    'QTitleBar', 'QStatusBar', 'QMdiSubWindowTitleBar', 'QDockWidgetTitle',
+    'QPushButton', 'QCheckBox', 'QRadioButton', 'QToolButton',
+    'QAbstractItemView', 'QListView', 'QHeaderView', 'QListBox',
+    'QComboMenuItem', 'QComboLineEdit', 'QSmallFont', 'QMiniFont',
+)
+
+
 def set_editor_font_size(app, size):
     font = QFont(UI_FONT, int(size))
     font.setHintingPreference(QFont.PreferNoHinting)
-    app.setFont(font)
+    # QApplication.setFont synchronously sends FontChange events through the
+    # entire widget tree. MainWindow applies the saved setting after building
+    # its UI; repeating the startup value there needlessly re-enters every
+    # widget (including a live QOpenGLWidget) during construction -- so it is
+    # skipped when nothing would change. But "nothing" includes the theme's
+    # per-class fonts: the application stylesheet is set after the startup
+    # font, Qt refills those fonts when it installs the stylesheet's style, and
+    # skipping on the application font alone left every themed class on the
+    # platform font (on macOS, .AppleSystemUIFont at 13pt in place of the
+    # editor font at its size).
+    if (app.font() != font
+            or any(app.font(name) != font for name in _THEME_FONT_CLASSES)):
+        app.setFont(font)
     # QMdiSubWindowTitleBar is the font QMessageBox measures its title with.
     for widget_class in ('QMenu', 'QMenuBar', 'QMessageBox', 'QMdiSubWindowTitleBar'):
-        app.setFont(font, widget_class)
-    QToolTip.setFont(font)
+        if app.font(widget_class) != font:
+            app.setFont(font, widget_class)
+    if QToolTip.font() != font:
+        QToolTip.setFont(font)
+

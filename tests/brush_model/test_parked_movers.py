@@ -42,7 +42,7 @@ from engine import mover_table as mt                               # noqa: E402
 from engine.change_journal import VISIBILITY, touch                 # noqa: E402
 from engine.constants import brush_aabb_bounds                     # noqa: E402
 from engine.logic_thread import LogicThread                        # noqa: E402
-from engine.physics import SpatialGrid                             # noqa: E402
+from engine.spatial_grid import SpatialGrid                             # noqa: E402
 from engine.spatial import PARKED_HIDDEN_KEY                       # noqa: E402
 from engine.threaded_game_state import ThreadedGameState            # noqa: E402
 from tests.helpers.worlds import box_brush                          # noqa: E402
@@ -474,7 +474,7 @@ def test_readers_see_a_parked_row_where_it_is_now(worlds):
                 assert runtime[:3] == pytest.approx(expected[:3], abs=1e-6)
             assert bp.world_bounds(mine) == pytest.approx(bp.world_bounds(theirs), abs=1e-4)
             assert brush_aabb_bounds(mine) == pytest.approx(brush_aabb_bounds(theirs), abs=1e-3)
-            assert bp.collision_shape(mine) is None or True
+            assert (bp.collision_shape(mine) is None) == (bp.collision_shape(theirs) is None)
         # The grid's queries, one at a time and batched.
         lift = bp.world_bounds(w.brushes["lift"])
         cx, cz = (lift[0] + lift[3]) / 2, (lift[2] + lift[5]) / 2

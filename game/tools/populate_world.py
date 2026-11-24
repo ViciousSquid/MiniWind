@@ -39,7 +39,8 @@ import os
 import numpy as np
 
 from .expand_world import (MAP, Expander, _heights, _load_heightmap, _props,
-                           _smoothstep, _terrain, _uid, dump, preview)
+                           _smoothstep, _terrain, _uid, dump, preview,
+                           sculpt_cells)
 
 #: (place name, kind), nearest first. Placed on open lowland, apart from
 #: everything already there and from each other.
@@ -147,7 +148,7 @@ class Populator(Expander):
         td = world["terrain_data"]
         self.heightmap = _load_heightmap(td)
         self.res = float(td.get("sculpt_grid_resolution", 16.0))
-        self.sculpt = {(int(a), int(b)): float(v) for a, b, v in td.get("sculpt_offsets", ())}
+        self.sculpt = sculpt_cells(td)
         self._stored_sculpt = dict(self.sculpt)
         self.new_terrain = _terrain(td, heightmap=self.heightmap)
         self.new_base = _terrain(td, heightmap=self.heightmap, sculpt=False)
