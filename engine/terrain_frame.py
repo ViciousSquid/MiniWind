@@ -113,12 +113,18 @@ class TerrainFrame:
         # Actors parting the grass this frame: read-only float32 (n, 4) rows
         # of (x, z, radius, strength), n <= MAX_GRASS_PUSHERS, or None.
         'grass_pushers',
+        # The world's edge, where the terrain's sides are drawn as a cliff
+        # of rock strata: (min x, max x, min z, max z, floor y, low y, high y,
+        # layers) -- the terrain's world rectangle, the wall's foot, the
+        # surface's height range and the beds the wall shows -- or None for
+        # no sides (engine/terrain.py, TerrainGL._draw_skirts).
+        'skirt',
         '_sealed',
     )
 
     #: Fields a frame may leave out (a renderer reads them as None).
     _OPTIONAL = ('biome_map', 'biome_version', 'biome_bounds', 'grass_pushers',
-                 'paint_chains', 'paint_chains_pending')
+                 'paint_chains', 'paint_chains_pending', 'skirt')
 
     def __init__(self, **fields):
         for name in self._OPTIONAL:
