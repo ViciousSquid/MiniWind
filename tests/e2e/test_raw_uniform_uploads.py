@@ -363,12 +363,12 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
 
 def _stats(session):
     """The renderer's per-frame counters after a paint (flattened)."""
-    try:
-        stats = session.view.renderer.render_stats() or {}
-    except Exception as exc:      # diagnostic only
-        return {'error': repr(exc)}
+    stats = getattr(session.view.renderer, 'render_stats', None)
+    names = getattr(type(stats), '__slots__', ()) if stats is not None else ()
+    items = {name: getattr(stats, name, None) for name in names
+             if name not in ('details', 'pass_ms')}      # (timings always differ)
     flat = {}
-    for key, value in dict(stats).items():
+    for key, value in items.items():
         if isinstance(value, dict):
             for inner, item in value.items():
                 flat['%s.%s' % (key, inner)] = item
