@@ -158,6 +158,7 @@ uniform vec4 lens[8];        // xy centre (uv), z radius (uv height), w strength
 uniform vec4 ring[8];        // x progress, yzw rim colour
 uniform float shimmer[8];    // a ward's ripple through the glass (0: none)
 uniform float fill[8];       // a tinted bubble: inside tint and thin rim (0: none)
+uniform float grey;          // Slow Time: the world outside the tinted bubbles in greyscale
 uniform int count;
 uniform float aspect;
 uniform float time;
@@ -167,6 +168,7 @@ void main() {
     vec3 glow = vec3(0.0);
     vec3 tintCol = vec3(0.0);
     float tintMix = 0.0;
+    float keep = 0.0;            // how much of the colour a tinted bubble keeps here
     for (int i = 0; i < 8; i++) {
         if (i >= count) break;
         vec2 c = lens[i].xy;
@@ -175,6 +177,7 @@ void main() {
         vec2 d = uv - c;
         d.x *= aspect;
         float r = length(d) / R;
+        if (fill[i] > 0.0) keep = max(keep, 1.0 - smoothstep(0.97, 1.03, r));
         if (r >= 1.0) continue;
         // Fisheye: the middle magnified, squeezed toward the rim.
         float k = s * (1.0 - r * r) * (1.0 - r * r);
@@ -213,6 +216,10 @@ void main() {
         frag.rgb = mix(frag.rgb, tintCol * (0.30 + 1.05 * lum), tintMix);
     }
     frag.rgb += glow;
+    if (grey > 0.0) {
+        float g = dot(frag.rgb, vec3(0.299, 0.587, 0.114));
+        frag.rgb = mix(frag.rgb, vec3(g), grey * (1.0 - keep));
+    }
 }"""
 
 #: Rain on the lens (game/lens_water.py): each drop on the glass is a little
@@ -357,7 +364,7 @@ def _init(gl) -> bool:
 
         _S.lens_prog = _compile(gl, _LENS_VERT, _LENS_FRAG)
         _S.lens_loc = {n: gl.glGetUniformLocation(_S.lens_prog, n)
-                       for n in ("scene", "lens", "ring", "shimmer", "fill", "count",
+                       for n in ("scene", "lens", "ring", "shimmer", "fill", "grey", "count",
                                  "aspect", "time")}
         _S.lens_vao = gl.glGenVertexArrays(1)
         _S.wet_prog = _compile(gl, _LENS_VERT, _WET_FRAG)
@@ -495,8 +502,10 @@ def _grab_frame(gl, x0, y0, w, h) -> None:
     gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, prev_read)
 
 
-def draw_lenses(projection, view, lenses) -> int:
-    """The fisheye pass over the finished frame (see the module doc)."""
+def draw_lenses(projection, view, lenses, grey=0.0) -> int:
+    """The fisheye pass over the finished frame (see the module doc). With
+    *grey* (0..1), everything outside the tinted bubbles (Slow Time's) is
+    drained toward greyscale."""
     if not lenses:
         return 0
     import OpenGL.GL as gl
@@ -532,6 +541,7 @@ def draw_lenses(projection, view, lenses) -> int:
         gl.glUniform4fv(loc["ring"], 8, ring)
         gl.glUniform1fv(loc["shimmer"], 8, shimmer)
         gl.glUniform1fv(loc["fill"], 8, fill)
+        gl.glUniform1f(loc["grey"], max(0.0, min(1.0, float(grey))))
         gl.glUniform1f(loc["time"], float(time.perf_counter() % 1000.0))
         gl.glUniform1i(loc["count"], len(screen))
         gl.glUniform1f(loc["aspect"], w / float(h))

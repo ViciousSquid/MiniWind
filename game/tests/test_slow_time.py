@@ -341,7 +341,9 @@ def test_the_host_draws_the_bubble_only_while_it_lasts(clock, monkeypatch):
     import game.host as host
     from ..ui import magic_gl
     drawn = []
-    monkeypatch.setattr(magic_gl, "draw_lenses", lambda p, v, lenses: drawn.append(list(lenses)))
+    greys = []
+    monkeypatch.setattr(magic_gl, "draw_lenses", lambda p, v, lenses, grey=0.0: (
+        drawn.append(list(lenses)), greys.append(grey)))
     monkeypatch.setattr(magic_gl, "draw_sprites", lambda *a, **k: 0)
     s = _session()
     s.magic_fx = None
@@ -354,6 +356,7 @@ def test_the_host_draws_the_bubble_only_while_it_lasts(clock, monkeypatch):
     clock[0] += 1.0
     game._on_post_scene(ev)
     assert len(drawn) == 1 and len(drawn[0]) == 1 and drawn[0][0][8] > 0.0
+    assert greys == [pytest.approx(1.0)]          # the world outside it in greyscale
     clock[0] += 5.0
     s._update_slow_time()
     game._on_post_scene(ev)
@@ -462,6 +465,35 @@ def test_the_bubble_bends_and_tints_the_frame_in_gl():
     # A bright rim at the edge.
     rim = after[mid, int(mid + r_px * 0.965) - 1:int(mid + r_px * 0.965) + 2]
     assert rim[:, 2].max() > 200
+
+
+@pytest.mark.gl
+def test_the_world_outside_the_bubble_turns_greyscale_in_gl():
+    """With grey on, a coloured frame is drained to greyscale outside the
+    bubble and keeps its colour inside it."""
+    import numpy as np
+    import OpenGL.GL as gl
+    import glm
+    from tests.helpers import gl as glh
+    from ..ui import magic_gl
+    size = 160
+    with glh.GLTestContext(size, size) as ctx:
+        ctx.bind()
+        gl.glClearColor(0.9, 0.2, 0.1, 1.0)            # a red world
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        proj = glm.ortho(-200.0, 200.0, -200.0, 200.0, 1.0, 2000.0)
+        view = glm.lookAt(glm.vec3(0, 0, 500), glm.vec3(0, 0, 0), glm.vec3(0, 1, 0))
+        lens = (0.0, 0.0, 0.0, 0.6, 100.0, 0.94, (0.65, 0.51, 0.92), 0.0, 0.55)
+        assert magic_gl.draw_lenses(proj, view, [lens], grey=1.0) == 1
+        after = ctx.read_pixels().astype(int)
+        magic_gl._S.ok = None
+        magic_gl._S.tex_size = (0, 0)
+        magic_gl._S.fbo = magic_gl._S.tex = 0
+    corner = after[5, 5]
+    assert corner.max() - corner.min() <= 3             # grey outside
+    mid = size // 2
+    centre = after[mid, mid]
+    assert centre[0] - centre[1] > 40                   # still coloured inside
 
 
 def test_the_bubble_tint_and_light_are_the_spell_icons_colour():
