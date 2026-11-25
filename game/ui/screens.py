@@ -2543,7 +2543,7 @@ def _draw_container(painter, session, w, h):
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, session.container_name(),
                    f"{c.gold} gold    ·    {controls.label('click')} to {taking} / store   ·   "
-                   f"right click splits a stack   ·   {controls.label('back')} close")
+                   f"{controls.label('right_click')} splits a stack   ·   {controls.label('back')} close")
 
     st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
     st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))
