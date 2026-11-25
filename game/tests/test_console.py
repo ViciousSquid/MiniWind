@@ -104,21 +104,24 @@ def test_pause_toggles_a_world_freeze_without_a_menu():
 
 
 @pytest.mark.qt
-def test_storyteller_dispatch_opens_the_live_view(monkeypatch):
+def test_storyteller_dispatch_opens_the_now_window_and_studio(monkeypatch):
     from types import SimpleNamespace
-    # Patch the real module's opener: replacing the module on the package
+    # Patch the real modules' openers: replacing a module on the package
     # only works if something imported it first (the command imports it).
-    from ..ui import storyteller_window
+    from ..ui import storyteller_now, storyteller_window
 
     opened = []
+    monkeypatch.setattr(storyteller_now, "open_now",
+                        lambda view: opened.append(("now", view)) or object())
     monkeypatch.setattr(storyteller_window, "open_storyteller",
-                        lambda view: opened.append(view) or object())
+                        lambda view: opened.append(("studio", view)) or object())
     view = object()
     logic = SimpleNamespace(_miniwind=SimpleNamespace(storyteller=object()))
-    handled, _ = _manager().dispatch_console_command(
-        "storyteller", "", logic, main_window=SimpleNamespace(view_3d=view), play_mode=True)
-    assert handled
-    assert opened == [view]
+    for args in ("", "studio"):
+        handled, _ = _manager().dispatch_console_command(
+            "storyteller", args, logic, main_window=SimpleNamespace(view_3d=view), play_mode=True)
+        assert handled
+    assert opened == [("now", view), ("studio", view)]
 
 
 @pytest.mark.qt
@@ -132,10 +135,15 @@ def test_storyteller_reports_missing_play_session_and_view(monkeypatch):
     assert "Play Mode only" in messages[-1]
     console.cmd_storyteller(console.ConsoleContext(play_mode=True), "")
     assert "no active MiniWind storyteller" in messages[-1]
+    from ..ui import storyteller_now
+    monkeypatch.setattr(storyteller_now, "open_now", lambda view: None)
     monkeypatch.setattr(storyteller_window, "open_storyteller", lambda view: None)
     logic = SimpleNamespace(_miniwind=SimpleNamespace(storyteller=object()))
-    console.cmd_storyteller(console.ConsoleContext(logic_thread=logic, play_mode=True), "")
-    assert "no game view" in messages[-1]
+    for args in ("", "studio"):
+        console.cmd_storyteller(console.ConsoleContext(logic_thread=logic, play_mode=True), args)
+        assert "no game view" in messages[-1]
+    console.cmd_storyteller(console.ConsoleContext(logic_thread=logic, play_mode=True), "bogus")
+    assert "report" in messages[-1] and "studio" in messages[-1]
 
 
 def test_weather_rain_makes_it_rain_and_weather_sunny_makes_it_sunny():

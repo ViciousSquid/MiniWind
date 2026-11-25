@@ -14,7 +14,7 @@ storyteller parts).
 - [Phase 2 — the full day/night cycle](#phase-2--the-full-daynight-cycle)
 - [Phase 3 — seasons in the world](#phase-3--seasons-in-the-world)
 - [Phase 4 — weather the storyteller can steer](#phase-4--weather-the-storyteller-can-steer)
-- [Phase 5 — the `storyteller` console command](#phase-5--the-storyteller-console-command)
+- [Phase 5 — what the storyteller is doing (window and console)](#phase-5--what-the-storyteller-is-doing-window-and-console)
 - [Order of work](#order-of-work)
 - [Open questions](#open-questions)
 
@@ -285,75 +285,17 @@ clients too.
 - A version 3 save loads into version 4 with its state kept.
 - A co-op client shows the host's weather.
 
-## Phase 5 — the `storyteller` console command
+## Phase 5 — what the storyteller is doing (window and console)
 
-**Goal:** see what the storyteller is doing from the debug console, clearly
-labelled.
-
-### Output
-
-Every line is logged with `debug_log("Storyteller", …)`, so it shows under the
-**Storyteller** category in the debug console and can be clicked to filter.
-Reading it never ticks the storyteller, never appraises an actor and uses no
-random numbers; it works while the world is paused.
-
-```
-[Storyteller] ═══ STORYTELLER ═══  pacing ON · Day 9 14:30 · Autumn · sunset 18:10
-[Storyteller] State     RISING for 1.6 h (min 1.0, max 4.0) → next PEAK
-[Storyteller] Why       Holding: wait for enough quiet time and a healthy player…
-[Storyteller] Sensing   health 82% · tension 0.41 · 2 attacks · 3 hostiles in sight · 1 vendetta
-[Storyteller] Roads     population 34 · bandits 3 · wolves 2 · greenskins 1 · hunters at 150g
-[Storyteller] Weather   wants overcast ×1.5, rain ×1.5 · now RAIN, 2.1 h left (nudged at 13:05)
-[Storyteller] Recent    14:15 RISING · 13:45 RISING · 13:05 CALM→RISING
-```
-
-Before Phases 1 and 4 land, the season, sunset and Weather lines show what
-exists (the current weather, with no storyteller influence) and say so.
-
-With pacing off, the header says `pacing OFF (pristine ecology)` and the
-report shows the last sample, as the Studio does.
-
-### Subcommands
-
-| Command | Shows |
-| --- | --- |
-| `storyteller` | The summary above. |
-| `storyteller sensors` | Every sensor from the last sample. |
-| `storyteller levers` | All effective levers, marking Studio edits and feedback caps. |
-| `storyteller weather` | The weather lever, current weather and recent weather receipts (Phase 4). |
-| `storyteller history [n]` | The last *n* observations (default 10), newest first. |
-| `storyteller why` | Every current decision reason (`inspector_rows`). |
-| `storyteller watch on\|off` | Logs each state change, and each weather decision, live as it happens, under the same label. Off by default; not saved. |
-| `storyteller studio` | Opens Storyteller Studio (today's behaviour). |
-
-### Changing today's behaviour
-
-`storyteller` currently opens the Studio. This moves the window to
-`storyteller studio`, so update:
-
-- `cmd_storyteller` and its `COMMANDS` help line in `game/console.py`;
-- `game/tests/test_console.py` (`test_storyteller_dispatch_opens_the_live_view`
-  and `test_storyteller_reports_missing_play_session_and_view`);
-- `docs/storyteller.md` ("type `storyteller` to open Storyteller Studio").
-
-The World Simulation window's **Open Storyteller Studio** button is unchanged.
-
-### Implementation notes
-
-- Build the report from public read-only parts of `Storyteller`:
-  `state`, `entered_at`, `sensors`, `levers`, `observations`,
-  `inspector_rows()`, `world_view()`, plus `TUNING["states"]` for min/max
-  hours. Add a small `Storyteller.summary()` that returns plain data, so the
-  console and tests share it and the formatting stays in `console.py`.
-- `watch` registers a listener the storyteller calls after a state decision or
-  weather receipt; the listener only logs.
-
-### Tests
-
-- The report's lines all carry the `Storyteller` category and include state,
-  reason and sensors from a stub storyteller.
-- Running the report does not change the storyteller's persisted state or RNG.
-- Each subcommand, `watch on/off`, `studio`, and errors outside Play Mode.
+**Done.** `storyteller` opens the **Storyteller — what it's doing** window;
+`storyteller report [section]` prints the same report in the debug console
+under the **Storyteller** category; `storyteller watch on|off` logs each
+activity entry live; `storyteller studio` opens the Studio. See
+[storyteller.md](storyteller.md#what-the-storyteller-is-doing). Code:
+`game/storyteller_report.py`, `game/ui/storyteller_now.py`,
+`Storyteller.summary()` / `activity` / `listeners`, tests in
+`game/tests/test_storyteller_now.py`. Phase 4 adds weather decisions to the
+activity feed and the Weather row.
 
 ## Order of work
 

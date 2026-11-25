@@ -124,9 +124,39 @@ Every decision updates a plain-English explanation shown in the existing
 mental-state inspector's **Storyteller decisions** section beside ranked
 intents. Explanations are bounded, with current pacing information retained.
 
-In Play Mode, type `storyteller` to open **Storyteller Studio**, or use **Open
-Storyteller Studio** in the World Simulation window's history panel. The Studio
-has three tabs:
+### What the storyteller is doing
+
+In Play Mode, type `storyteller` to open **Storyteller — what it's doing**
+(`game/ui/storyteller_now.py`): a badge with the pacing state, then labelled
+rows: **Time**, **State** (how long it has held, its minimum and maximum, and
+what comes next), **Purpose**, **Why** (the latest state decision), **Arrivals**,
+**Sensing**, **Roads** (the effective levers, marking a population cap),
+**Weather**, **Recent** samples, and the **Activity** feed, newest first. The
+feed lists what the storyteller has done: state changes, population caps set
+and lifted, Studio edits (one line per drag), the pacing switch, and journeys
+it biased. It holds the last `activity_cap` (default 40) entries and is saved
+with the storyteller. **Open Studio** opens the Studio. The window is live,
+resizable from its corner and scrolls with the wheel or Up/Down.
+
+The same report prints in the debug console, every line under the
+**Storyteller** category (click it to filter):
+
+| Command | Does |
+| --- | --- |
+| `storyteller` | Opens the window. |
+| `storyteller report` | Prints the whole report in the console. |
+| `storyteller report <section>` | One section: `time`, `state`, `why`, `sensors`, `roads`, `weather`, `recent` or `activity` (the last two print longer lists). |
+| `storyteller watch on\|off` | Logs each new activity entry in the console as it happens. Not saved. |
+| `storyteller studio` | Opens Storyteller Studio. |
+
+Both read `Storyteller.summary()` through `game/storyteller_report.py`; reading
+never samples the storyteller, appraises an actor or draws a random number.
+
+### Storyteller Studio
+
+Type `storyteller studio`, press **Open Studio** in the window above, or use
+**Open Storyteller Studio** in the World Simulation window's history panel. The
+Studio has three tabs:
 
 - **Live** shows the current state, latest sensor readouts, effective levers,
   decision reasons and the last ten accepted observations, newest first.
@@ -174,7 +204,7 @@ last sample and edit dormant tables. A same-seed day matches the ordinary
 `WorldHooks` board byte for byte and leaves its RNG in the same state.
 
 State, timing, discharge records, sampled thread evidence, observations,
-reasons, base and effective levers, Studio edits, writ ages, arrival-window
+the activity feed, reasons, base and effective levers, Studio edits, writ ages, arrival-window
 samples, population caps and diagnostic receipts persist under
 `storyteller.state` in the normal KV store. This is schema version 3; other
 versions reset to CALM instead of guessing at missing feedback state. Board
@@ -219,7 +249,7 @@ Run the mechanism tests with:
 
 ```sh
 python -m pytest game/tests/test_storyteller.py game/tests/test_storyteller_window.py \
-  game/tests/test_sim_systems.py -q
+  game/tests/test_storyteller_now.py game/tests/test_sim_systems.py -q
 FIO_HEADLESS_TIER=1 python -m pytest -m 'not qt and not gl and not benchmark'
 ```
 
