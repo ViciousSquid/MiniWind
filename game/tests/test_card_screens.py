@@ -1,7 +1,8 @@
 """The spell tutor, the journal, the quest window, character creation, the
 level-up page and the save slots show their choices as cards
-(game/ui/cards.py). Each has a detail pane for the selected card, so the
-cards carry no tooltip.
+(game/ui/cards.py): a list of wide row cards, one per line -- but for the
+save slots, three portrait cards side by side. Each has a detail pane for
+the selected card, so the cards carry no tooltip.
 
 Run:  python -m pytest game/tests/test_card_screens.py -q
 """
@@ -75,14 +76,23 @@ def _targets(prefix):
     return [(r, label) for r, label in hits.targets() if str(label).startswith(prefix)]
 
 
-def _laid_out(rects, panel, portrait=True):
+def _laid_out(rects, panel, portrait=False, min_h=60):
+    """Inside *panel* without overlap: portrait cards, or (by default) a
+    list -- one wide row card per line, all at one x and width, each under
+    the last."""
     assert rects
     for i, a in enumerate(rects):
         assert panel.contains(a), (a, panel)
         if portrait:
             assert a.height() > a.width()
+        else:
+            assert a.width() > 2.5 * a.height() and a.height() >= min_h
         for b in rects[i + 1:]:
             assert not a.intersects(b)
+    if not portrait:
+        assert len({(r.x(), r.width()) for r in rects}) == 1            # one column
+        ys = [r.y() for r in rects]
+        assert ys == sorted(ys)
 
 
 @pytest.fixture
@@ -111,21 +121,35 @@ def test_tutor_cards_fit_without_overlap(session, w, h, full):
     _tutor(session)
     _paint(session, w, h, full)
     rects = [r for r, _l in _targets("tutor:")]
-    assert len(rects) == len(TUTOR["teaches_spells"])
-    _laid_out(rects, _panel(w, h, full))
+    st = screens._sel(session)["tutor"]
+    assert st["cols"] == 1 and len(rects) == min(st["page_size"], 8) >= 3
+    _laid_out(rects, _panel(w, h, full), min_h=70)
     leave = next(r for r, label in hits.targets() if label == "Leave")
     assert all(not r.intersects(leave) for r in rects)
+    # The rest are on the next pages.
+    seen = {label for _r, label in _targets("tutor:")}
+    while st["row"] + st["page_size"] < 8:
+        screens.handle_key(session, "pagedown")
+        _paint(session, w, h, full)
+        seen |= {label for _r, label in _targets("tutor:")}
+    assert seen == {f"tutor:{sid}" for sid in TUTOR["teaches_spells"]}
 
 
 def test_tutor_cards_show_price_known_and_no_tooltip(session, drawn, monkeypatch):
     _tutor(session)
+    _paint(session, 820, 600)
+    screens._sel(session)["tutor"]["row"] = 3           # Flare, maybe on page 2
     _paint(session, 820, 600)
     by = {card.title: (r, card) for r, card in drawn.cards}
     flare = by["Flare"][1]
     assert flare.greyed and "known" in flare.badges
     frost = by["Frostbite"][1]
     assert not frost.greyed and any(b.endswith(" g") for b in frost.badges)
-    assert frost.icon is not None
+    assert frost.icon is not None and frost.desc
+    screens._sel(session)["tutor"]["row"] = 2
+    drawn.cards.clear()
+    _paint(session, 820, 600)
+    by = {card.title: (r, card) for r, card in drawn.cards}
     # A click selects the card; Enter learns it. The detail pane says the rest.
     r = by["Frostbite"][0]
     monkeypatch.setattr(hits, "pointer", (r.center().x(), r.center().y()))
@@ -138,19 +162,25 @@ def test_tutor_cards_show_price_known_and_no_tooltip(session, drawn, monkeypatch
     assert "frostbite" in session.game.character.known_spells
 
 
-def test_tutor_arrows_move_in_two_dimensions(session):
+def test_tutor_arrows_move_up_and_down(session):
     _tutor(session)
     _paint(session, 820, 600)
     st = screens._sel(session)["tutor"]
-    cols = st["cols"]
-    assert cols >= 2
+    assert st["cols"] == 1
     st["row"] = 0
-    screens.handle_key(session, "right")
+    screens.handle_key(session, "down")
     assert st["row"] == 1
     screens.handle_key(session, "down")
-    assert st["row"] == 1 + cols
+    assert st["row"] == 2
+    screens.handle_key(session, "up")
+    assert st["row"] == 1
+    screens.handle_key(session, "right")
+    assert st["row"] == 2
     screens.handle_key(session, "left")
-    assert st["row"] == cols
+    assert st["row"] == 1
+    st["row"] = 0
+    screens.handle_key(session, "up")                   # wraps
+    assert st["row"] == len(TUTOR["teaches_spells"]) - 1
 
 
 # ------------------------------------------------------------ journal / quest
@@ -173,19 +203,24 @@ def test_quest_cards_fit_without_overlap(session, screen, prefix, w, h, full):
     _paint(session, w, h, full)
     rects = ([r for r, _l in _targets(prefix)] if prefix
              else [r for r, _i in screens._QUEST_HITS["rows"]])
-    assert len(rects) >= 4
+    assert len(rects) >= 3
     _laid_out(rects, _panel(w, h, full))
-    assert len({r.x() for r in rects}) >= 2                  # columns
+    assert screens._sel(session)[screen]["cols"] == 1
 
 
 def test_quest_cards_mark_tracked_and_completed(session, drawn):
     ids = _quests(session, n=5, done=2)
     session.open_screen = "journal"
     _paint(session, 1280, 720, True)
+    st = screens._sel(session)["journal"]
+    while st["row"] + st["page_size"] < 5:              # every page of the list
+        screens.handle_key(session, "pagedown")
+        _paint(session, 1280, 720, True)
     by = {card.title: card for _r, card in drawn.cards}
     tracked = by[rq.get(ids[1]).name]
     assert tracked.active and tracked.mark == "▸" and not tracked.greyed
     assert tracked.summary == session.game.quests.current_objective(ids[1])
+    assert tracked.desc.startswith(tracked.summary.rstrip("."))
     done = by[rq.get(ids[-1]).name]
     assert done.greyed and done.glyph == "✓" and done.summary == "Completed"
     assert by[rq.get(ids[0]).name].glyph == "◈"
@@ -200,12 +235,14 @@ def test_quest_window_cards_are_click_targets_and_navigate(session):
     rect, idx = screens._QUEST_HITS["rows"][2]
     assert screens.handle_click(session, rect.center().x(), rect.center().y())
     assert st["row"] == idx == 2
-    cols = st["cols"]
+    assert st["cols"] == 1
     st["row"] = 0
-    screens.handle_key(session, "right")
+    screens.handle_key(session, "down")
     assert st["row"] == 1
     screens.handle_key(session, "down")
-    assert st["row"] == 1 + cols
+    assert st["row"] == 2
+    screens.handle_key(session, "up")
+    assert st["row"] == 1
     # Enter still makes the highlighted (active) quest the tracked one.
     st["row"] = 0
     screens.handle_key(session, "enter")
@@ -240,19 +277,23 @@ def test_creation_choices_are_cards(session, drawn, step, field, w, h, full):
     names = {label(i) for i in ids}
     rects = [r for r, lab in hits.targets() if lab in names]
     assert len(rects) == len(ids)                        # all on one page
-    _laid_out(rects, _panel(w, h, full))
+    panel = QtCore.QRect(*screens._panel_rect(w, h, 0.82, 0.86)) if full else _panel(w, h, full)
+    _laid_out(rects, panel)
     back = next(r for r, lab in hits.targets() if lab == "Back")
     assert all(not r.intersects(back) for r in rects)
     shown = [card for _r, card in drawn.cards]
-    assert all(card.icon is not None and card.summary and not card.tooltip
+    assert all(card.icon is not None and card.summary and card.desc and not card.tooltip
                for card in shown)
-    # Arrows move by card and row; a click picks.
+    # Arrows move up and down the list; a click picks.
     cc = screens._cc(session)
+    assert cc[f"cols_{field}"] == 1
     cc[field] = 0
-    screens.handle_key(session, "right")
+    screens.handle_key(session, "down")
     assert cc[field] == 1
     screens.handle_key(session, "down")
-    assert cc[field] == cards.navigate(1, "down", len(ids), cc[f"cols_{field}"]) != 1
+    assert cc[field] == 2
+    screens.handle_key(session, "up")
+    assert cc[field] == 1
     r = rects[-1]
     hits.click(r.center().x(), r.center().y())
     hits.run_clicks(session)
@@ -271,13 +312,14 @@ def test_level_up_choices_are_cards(session, drawn, w, h, full):
     assert len(targets) == len(screens._level_rows(c)) == 4
     rects = [r for r, _l in targets]
     _laid_out(rects, _panel(w, h, full))
-    assert len({r.y() for r in rects}) == 1                # one row
+    assert len({r.y() for r in rects}) == 4                # four rows
     confirm = next(r for r, lab in hits.targets() if str(lab).startswith("Increase "))
     assert all(not r.intersects(confirm) for r in rects)
     cards_ = [card for _r, card in drawn.cards]
     assert [card.title for card in cards_] == [r[1] for r in screens._level_rows(c)]
     assert all(card.icon is not None and card.badges[1] == "+5" and not card.tooltip
                for card in cards_)
+    assert [card.desc for card in cards_] == [r[2] for r in screens._level_rows(c)]
     # Click the third card, then confirm with the button.
     r = next(r for r, lab in targets if lab == "levelup:charisma")
     hits.click(r.center().x(), r.center().y())
@@ -311,7 +353,8 @@ def test_save_slots_are_cards(qt_app, monkeypatch, page, w, h):
     painter.end()
     assert [card.title for _r, card in shown] == [f"Slot {i}" for i in (1, 2, 3)]
     rects = [r for r, _c in shown]
-    _laid_out(rects, QtCore.QRect(0, 0, w, h))
+    _laid_out(rects, QtCore.QRect(0, 0, w, h), portrait=True)    # three across, as approved
+    assert len({r.y() for r in rects}) == 1
     first, empty = shown[0][1], shown[1][1]
     assert first.subtitle == "Ada, level 3" and "2026-09-07 11:02" in first.summary
     assert empty.subtitle == "Empty" and empty.greyed == (page == "load")

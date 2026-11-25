@@ -1,4 +1,6 @@
-"""The spellbook shows its spells as a grid of cards (game/ui/cards.py)."""
+"""The spellbook shows its spells as cards (game/ui/cards.py): a list of
+wide row cards, one per line (cards.LAYOUT "list", the default), or a grid
+of portrait cards (cards.LAYOUT "grid")."""
 
 from types import SimpleNamespace
 
@@ -70,8 +72,32 @@ def _panel(w, h, full):
 SIZES = [(1280, 720, True), (1920, 1080, True), (1100, 578, False)]
 
 
+def _list_area():
+    return next(r for r, t in screens._SPELL_HITS["targets"] if t == ("spells", None))
+
+
 @pytest.mark.parametrize("w,h,full", SIZES)
-def test_cards_are_a_grid_inside_the_panel_without_overlap(session, w, h, full):
+def test_cards_are_a_list_inside_the_panel_without_overlap(session, w, h, full):
+    _paint(session, w, h, full)
+    cells = [rect for rect, _src in screens._SPELL_HITS["cells"]]
+    assert len(cells) >= 3
+    panel, area = _panel(w, h, full), _list_area()
+    for i, a in enumerate(cells):
+        assert panel.contains(a) and area.contains(a)
+        # One wide card per row, the full width of the list.
+        assert (a.x(), a.width()) == (area.x(), area.width())
+        assert a.width() > 3 * a.height() and a.height() >= 80
+        for b in cells[i + 1:]:
+            assert not a.intersects(b) and b.y() > a.bottom()
+    st = screens._sel(session)["spells"]
+    assert st["cols"] == 1 and st["page_size"] == len(cells) < len(TWELVE)
+    close = next(r for r, label in hits.targets() if label == "Close")
+    assert all(not r.intersects(close) for r in cells)
+
+
+@pytest.mark.parametrize("w,h,full", SIZES)
+def test_the_grid_style_comes_back_with_one_switch(session, monkeypatch, w, h, full):
+    monkeypatch.setattr(cards, "LAYOUT", "grid")
     _paint(session, w, h, full)
     cells = [rect for rect, _src in screens._SPELL_HITS["cells"]]
     assert len(cells) >= 4
@@ -103,7 +129,43 @@ def test_every_card_is_a_drag_source_and_a_click_target(session):
         assert any(r == rect and label == f"spell:{src[2]}" for r, label in hits.targets())
 
 
-def test_arrows_move_by_card_and_by_row_across_pages(session):
+def test_arrows_move_up_and_down_the_list_across_pages(session):
+    _paint(session, 1100, 578)
+    st = screens._sel(session)["spells"]
+    size = st["page_size"]
+    assert st["cols"] == 1 and 2 <= size < len(TWELVE)
+    st["row"] = 0
+    screens.handle_key(session, "down")
+    assert st["row"] == 1
+    screens.handle_key(session, "s")
+    assert st["row"] == 2
+    screens.handle_key(session, "up")
+    assert st["row"] == 1
+    screens.handle_key(session, "left")                 # left / right step too
+    assert st["row"] == 0
+    screens.handle_key(session, "right")
+    assert st["row"] == 1
+    st["row"] = 0
+    screens.handle_key(session, "up")                   # wraps to the last card
+    assert st["row"] == len(TWELVE) - 1
+    screens.handle_key(session, "down")                 # and back to the first
+    assert st["row"] == 0
+    st["row"] = size - 1                                # the page's last row
+    screens.handle_key(session, "down")                 # onto the next page
+    assert st["row"] == size and st["row"] // size == 1
+    _paint(session, 1100, 578)
+    assert screens._SPELL_HITS["cells"][0][1][2] == TWELVE[size]
+    screens.handle_key(session, "pageup")
+    assert st["row"] == 0
+    screens.handle_key(session, "pagedown")
+    assert st["row"] == size
+    st["row"] = 0
+    screens.handle_key(session, "enter")
+    assert session.game.character.active_spell == "flare"
+
+
+def test_arrows_move_by_card_and_by_row_in_the_grid_style(session, monkeypatch):
+    monkeypatch.setattr(cards, "LAYOUT", "grid")
     _paint(session, 1100, 578)
     st = screens._sel(session)["spells"]
     cols, size = st["cols"], st["page_size"]
@@ -138,6 +200,11 @@ def test_navigate_helper():
     assert nav(1, "pagedown", 10, 4, 8) == 8
     assert nav(9, "pageup", 10, 4, 8) == 0
     assert nav(0, "left", 0, 4) == 0
+    # A list is one column: up / down step and wrap, pages turn.
+    assert nav(0, "down", 10, 1) == 1 and nav(9, "down", 10, 1) == 0
+    assert nav(0, "up", 10, 1) == 9 and nav(5, "up", 10, 1) == 4
+    assert nav(3, "pagedown", 10, 1, 4) == 4 and nav(9, "pageup", 10, 1, 4) == 4
+    assert nav(8, "pagedown", 10, 1, 4) == 8                # the last page
 
 
 def test_layout_grid_and_compact_size():
@@ -151,6 +218,43 @@ def test_layout_grid_and_compact_size():
     # Too short for two rows: the cards shrink so two fit.
     short = cards.layout_grid(QtCore.QRect(0, 0, 700, 380), 20)
     assert short.rows == 2 and short.card_size[1] < cards.SIZE[1]
+
+
+def test_layout_list_rows():
+    area = QtCore.QRect(10, 20, 600, 460)
+    lst = cards.layout_list(area, 20)
+    assert lst.cols == 1 and lst.page_size == lst.rows == len(lst.slots) >= 4
+    for i, r in enumerate(lst.slots):
+        assert area.contains(r) and (r.x(), r.width()) == (area.x(), area.width())
+        assert r.height() == lst.card_size[1] >= cards.ROW_H * cards.ROW_FILL_SCALE
+        if i:
+            assert r.y() == lst.slots[i - 1].bottom() + 1 + cards.ROW_GAP
+    # Room for most of one more row: the rows give a little to fit it.
+    roomy = cards.layout_list(QtCore.QRect(0, 0, 600, 4 * 114 + 80), 20)
+    assert roomy.rows == 5 and roomy.card_size[1] < cards.ROW_H
+    # Few enough: rows keep their height; fit_all squeezes a long list onto
+    # one page only as far as ROW_MIN_SCALE.
+    few = cards.layout_list(area, 2)
+    assert few.card_size[1] == cards.ROW_H and few.rows >= 2
+    six = cards.layout_list(QtCore.QRect(0, 0, 600, 500), 6, fit_all=True)
+    assert six.rows == 6 and six.bounds().height() <= 500
+    many = cards.layout_list(QtCore.QRect(0, 0, 600, 500), 30, fit_all=True)
+    assert many.rows < 30 and many.card_size[1] >= cards.ROW_H * cards.ROW_FILL_SCALE
+    # Too short for one row: one row that fits.
+    tiny = cards.layout_list(QtCore.QRect(0, 0, 300, 50), 3)
+    assert tiny.rows == 1 and tiny.slots[0].height() == 50
+    # cards.layout follows the switch; compact rows are shorter.
+    assert cards.layout(area, 20).cols == 1
+    assert cards.layout(area, 20, compact=True).card_size[1] < cards.ROW_H
+    same = cards.layout(area, 20, compact=True, size=(1, 70))
+    assert same.card_size[1] == 70
+
+
+def test_layout_switch_restores_the_grid(monkeypatch):
+    monkeypatch.setattr(cards, "LAYOUT", "grid")
+    area = QtCore.QRect(0, 0, 700, 450)
+    grid = cards.layout(area, 20)
+    assert grid.cols >= 3 and grid.card_size == cards.SIZE
 
 
 def test_locked_cards_are_greyed_and_say_why(session, monkeypatch):
@@ -221,6 +325,77 @@ def test_draw_card_paints_every_variant(qt_app, size):
         painter.end()
     # Something was painted inside the card.
     assert QtGui.QColor(image.pixel(20 + size[0] // 2, 20 + size[1] // 2)).alpha() > 0
+
+
+STATES = [{}, {"selected": True}, {"hovered": True}, {"active": True},
+          {"selected": True, "active": True}, {"locked": True},
+          {"greyed": True, "hovered": True}]
+
+
+@pytest.mark.parametrize("height", [cards.ROW_H, cards.COMPACT_ROW_H, 64, 44])
+@pytest.mark.parametrize("flags", STATES)
+def test_draw_row_card_paints_every_state(qt_app, height, flags):
+    w = 560
+    image = QtGui.QImage(w + 40, height + 40, QtGui.QImage.Format_ARGB32)
+    image.fill(0)
+    painter = QtGui.QPainter(image)
+    pm = QtGui.QPixmap(64, 64)
+    pm.fill(QtGui.QColor(200, 40, 40))
+    accent = QtGui.QColor(60, 200, 90)
+    try:
+        card = cards.Card(title="An Exceedingly Long Spell Name Indeed", icon=pm,
+                          subtitle="Occult · Target", summary="17 damage for 3s",
+                          desc="A long description that has to wrap onto more than one "
+                               "line beside the picture, and then some more words after.",
+                          accent=accent, frame=QtGui.QColor(245, 165, 70),
+                          badges=("sold out", "12 mp"), quantity=3, price="25 g",
+                          pips=(2, 5) if height > 60 else None, tooltip="Tip", **flags)
+        cards.draw_row_card(painter, QtCore.QRect(20, 20, w, height), card)
+    finally:
+        painter.end()
+    mid = 20 + height // 2
+    grey = flags.get("locked") or flags.get("greyed")
+    # The accent strip down the left edge (grey when locked / greyed).
+    strip = QtGui.QColor(image.pixel(23, mid))
+    assert strip.alpha() > 0
+    if not grey:
+        assert strip.green() > strip.red() and strip.green() > strip.blue()
+    # The icon well, left, holds the picture (red, or grey when locked).
+    well = QtGui.QColor(image.pixel(20 + 7 + height // 2, 20 + height // 3))
+    assert (well.red() > 120 and well.green() < 90) != bool(grey)
+    # The text runs across the middle; the right edge is painted body.
+    assert QtGui.QColor(image.pixel(20 + w - 6, mid)).alpha() > 0
+
+
+def test_row_card_title_is_never_cut_short(qt_app, monkeypatch):
+    """The title shrinks to fit; it is never elided."""
+    drawn = []
+    real = QtGui.QPainter.drawText
+
+    def spy(self, *args):
+        drawn.append(args[-1] if isinstance(args[-1], str) else None)
+        return real(self, *args)
+
+    monkeypatch.setattr(QtGui.QPainter, "drawText", spy)
+    image = QtGui.QImage(420, 120, QtGui.QImage.Format_ARGB32)
+    painter = QtGui.QPainter(image)
+    title = "The Duellist's Companion, Revised and Enlarged"
+    try:
+        cards.draw_row_card(painter, QtCore.QRect(0, 0, 400, 80),
+                            cards.Card(title=title, desc="Words.", price="250 g"))
+    finally:
+        painter.end()
+    assert title in drawn
+
+
+def test_draw_card_picks_the_style_by_the_rect(qt_app, monkeypatch):
+    seen = []
+    monkeypatch.setattr(cards, "draw_row_card", lambda p, r, c: seen.append("row"))
+    monkeypatch.setattr(cards, "draw_portrait_card", lambda p, r, c: seen.append("portrait"))
+    card = cards.Card(title="x")
+    cards.draw_card(None, QtCore.QRect(0, 0, 500, 100), card)
+    cards.draw_card(None, QtCore.QRect(0, 0, 150, 210), card)
+    assert seen == ["row", "portrait"]
 
 
 def test_every_known_spell_paints_at_both_screen_sizes(session):

@@ -533,7 +533,7 @@ def _cc_card(painter, field, item, rect, selected):
     specialisation and the gist in a line; the detail beside the cards says
     the rest (so no tooltip)."""
     kind, pic = _CC_ICONS.get(field, {}).get(item, ("item", ""))
-    px = max(32, int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter)))
+    px = cards.icon_px(painter, rect)
     icon = None
     try:
         import game.item_icons as item_icons
@@ -545,24 +545,28 @@ def _cc_card(painter, field, item, rect, selected):
         k = classes.get(item)
         title, spec = k.label, k.specialisation
         summary = re.split(r"[:;,.]", k.desc, maxsplit=1)[0].strip()
+        desc = k.desc
         sub = spec + ("" if k.magic else " · no magic")
     else:
         b = birthsigns.get(item)
         title = b.label
         rest = b.desc[len(b.flavour):].strip() if b.desc.startswith(b.flavour) else b.desc
         summary = rest.split(". ")[0].rstrip(".")
+        desc = rest
         spec = {"warrior": "Combat", "mage": "Magic", "thief": "Stealth"}.get(item, "Magic")
         sub = ""
-    return cards.Card(title=title, icon=icon, subtitle=sub, summary=summary,
+    return cards.Card(title=title, icon=icon, subtitle=sub, summary=summary, desc=desc,
                       accent=_SPEC_ACCENT.get(spec), selected=selected,
                       hovered=hits.hovered(rect), glyph=title[:1])
 
 
 def _cc_list(painter, x, y, w, ids, sel, labeller, field=None, h=420, state=None):
-    """The class or birthsign choices as cards in (x, y, w, h); the grid's
-    shape is kept in *state* (``cols_<field>``) for the arrow keys."""
+    """The class or birthsign choices as cards in (x, y, w, h), a row each
+    (game/ui/cards.py); the list's shape is kept in *state*
+    (``cols_<field>``) for the arrow keys."""
     area = QRect(x, y + 6, w, max(1, int(h) - 6))
-    grid = cards.layout_grid(area, len(ids), min_scale=0.6, fit_all=True)
+    grid = cards.layout(area, len(ids), grid_min_scale=0.6, fit_all=True,
+                        row_min_scale=0.6)
     if state is not None and field:
         state[f"cols_{field}"], state[f"size_{field}"] = grid.cols, grid.page_size
     first = (sel // max(1, grid.page_size)) * grid.page_size
@@ -1094,20 +1098,25 @@ def _quest_card(session, q, rect, *, selected, tracked):
            if q.chapter else
            str(q.giver).replace("_", " ").title() if q.giver else "")
     summary = "Completed" if complete else str(log.current_objective(q.id) or q.desc or "")
+    desc = summary if not q.desc or summary == q.desc else \
+        summary.rstrip(".") + ". " + str(q.desc)
     return cards.Card(
         title=q.name, glyph="✓" if complete else "◈", subtitle=sub, summary=summary,
+        desc=desc,
         accent=_QUEST_DONE if complete else _QUEST_TRACKED if tracked else _QUEST_ACTIVE,
         selected=selected, hovered=hits.hovered(rect), active=tracked and not complete,
         mark="▸", greyed=complete)
 
 
 def _quest_grid(area, count):
+    if cards.LAYOUT == "list":
+        return cards.layout(area, count)
     return cards.layout_grid(area, count, _QUEST_CARD, cards.GAP,
                              min_scale=_QUEST_MIN_SCALE, fit_all=True)
 
 
 def _quest_turn(key):
-    """A quest grid's page arrows (the journal's or the quest window's)."""
+    """A quest list's page arrows (the journal's or the quest window's)."""
     def turn(session, step):
         log = session.game.quests
         n = len(log.active_quests()) + len(log.completed_quests())
@@ -1118,7 +1127,7 @@ def _quest_turn(key):
 
 
 def _quest_move(st, key, n):
-    """Arrow keys in a grid of quest cards; True when it was one."""
+    """Arrow keys in a list (or grid) of quest cards; True when it was one."""
     move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
             "a": "left", "right": "right", "d": "right", "pageup": "pageup",
             "pagedown": "pagedown"}.get(key)
@@ -1461,8 +1470,8 @@ def _spell_card_icon(spell, px):
 
 
 def _spell_card(painter, session, spell, *, selected, locked, rect, **overrides):
-    """The :class:`cards.Card` for *spell* in the spellbook grid: its school
-    tints the header, its rarity the frame; the level is a row of pips and
+    """The :class:`cards.Card` for *spell* in the spellbook: its school
+    tints the accent, its rarity the frame; the level is a row of pips and
     the magicka cost the one badge. The rest is in the detail column beside
     the cards. *overrides* replace any of the card's fields (a tutor's card
     shows its price instead of the cost)."""
@@ -1479,12 +1488,12 @@ def _spell_card(painter, session, spell, *, selected, locked, rect, **overrides)
         nxt_power = _spell_power(nxt).rstrip(", ")
         tip.append(f"Level {level + 1}: " + (nxt_power or "stronger") +
                    f" · {int(rpg_magic.cast_cost(c, nxt))} magicka")
-    px = int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter))
     fields = dict(
         title=spell.name,
-        icon=_spell_card_icon(spell, max(32, px)),
+        icon=_spell_card_icon(spell, cards.icon_px(painter, rect)),
         subtitle=f"{sk.label(spell.school)} · {str(spell.delivery).title()}",
         summary=power[:1].upper() + power[1:] if power else spell.desc,
+        desc=(power[:1].upper() + power[1:] + ". " if power else "") + str(spell.desc or ""),
         accent=_school_accent(spell.school),
         frame=_rarity_color(spell.rarity),
         badges=("", f"{cost} mp"),
@@ -1500,7 +1509,7 @@ def _spell_card(painter, session, spell, *, selected, locked, rect, **overrides)
 
 
 def _spellbook_layout(inner, ty, count):
-    """(grid area, cards.Grid, detail column rect, nav_y) for the spellbook."""
+    """(list area, cards.Grid, detail column rect, nav_y) for the spellbook."""
     top = ty + 10
     nav_y = inner.bottom() - 52
     if inner.width() >= 760:
@@ -1509,7 +1518,7 @@ def _spellbook_layout(inner, ty, count):
         detail_w = max(200, int(inner.width() * 0.42))
     area = QRect(inner.x(), top, max(1, inner.width() - detail_w - 20),
                  max(1, nav_y - top - 8))
-    grid = cards.layout_grid(area, count, min_scale=0.68)
+    grid = cards.layout(area, count, grid_min_scale=0.68)
     detail = QRect(area.right() + 21, top - 2, detail_w - 1, max(1, nav_y - top - 6))
     return area, grid, detail, nav_y
 
@@ -1748,8 +1757,8 @@ def _handle_spells(session, key):
 
     spells = _spellbook_spells(session)
     st = _spellbook_selection(session, spells)
-    # The cards are a grid: arrows (or WASD) move by card and by row, onto
-    # the next page past the edge; Page Up / Down turn a whole page.
+    # The cards are a list (or a grid): arrows (or WASD) move by card and
+    # by row, onto the next page past the edge; Page Up / Down turn a page.
     move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
             "a": "left", "right": "right", "d": "right", "pageup": "pageup",
             "pagedown": "pagedown"}.get(key)
@@ -1797,6 +1806,30 @@ def _item_card_icon(item_id, stack, px):
         return None
 
 
+def _item_stat(d):
+    """An item's headline numbers in a line ("Melee · Blade · 8 damage"),
+    or ""."""
+    if d is None:
+        return ""
+    if d.category == rpg_items.WEAPON:
+        return (f"{str(d.get('kind', 'melee')).title()} · "
+                f"{sk.label(d.get('skill', 'blade'))} · {d.get('damage', 0)} damage")
+    if d.category == rpg_items.ARMOUR:
+        return (f"{str(d.get('armor_class', 'light')).title()} armour · "
+                f"{d.get('armor_rating', 0)} rating")
+    if d.category == rpg_items.AMMO:
+        return f"Ammunition · +{d.get('damage', 0)} damage"
+    return ""
+
+
+def _item_desc(stack):
+    """A row card's description of an item: its numbers, then its words."""
+    d = rpg_items.get(stack.get("id"))
+    words = str(stack.get("description") or (d.desc if d else "") or "").strip()
+    stat = _item_stat(d)
+    return " — ".join(t for t in (stat, words) if t)
+
+
 def _item_tip(stack, qty=None, extra=()):
     """The tooltip lines for an item stack: name, kind and rarity, what it
     does, value and weight, the count, and whether it is stolen."""
@@ -1807,15 +1840,9 @@ def _item_tip(stack, qty=None, extra=()):
     cat = _item_category(stack)
     rarity = rpg_items.rarity_of(stack)
     lines = [name, cat.title() + ("" if rarity == rpg_items.COMMON else f" · {rarity.title()}")]
-    if d is not None:
-        if d.category == rpg_items.WEAPON:
-            lines.append(f"{str(d.get('kind', 'melee')).title()} · "
-                         f"{sk.label(d.get('skill', 'blade'))} · {d.get('damage', 0)} damage")
-        elif d.category == rpg_items.ARMOUR:
-            lines.append(f"{str(d.get('armor_class', 'light')).title()} armour · "
-                         f"{d.get('armor_rating', 0)} rating")
-        elif d.category == rpg_items.AMMO:
-            lines.append(f"Ammunition · +{d.get('damage', 0)} damage")
+    stat = _item_stat(d)
+    if stat:
+        lines.append(stat)
     desc = str(stack.get("description") or (d.desc if d else "") or "").strip()
     if desc:
         first = desc.split(". ")[0].rstrip(".") + "."
@@ -1839,13 +1866,13 @@ def _item_card(painter, stack, rect, *, selected=False, qty=None, active=False,
     iid = stack.get("id")
     d = rpg_items.get(iid)
     qty = int(stack.get("qty", 1) or 1) if qty is None else int(qty)
-    px = int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter))
     cat = _item_category(stack)
     rarity = rpg_items.rarity_of(stack)
     return cards.Card(
         title=str(stack.get("name") or (d.name if d else iid)),
-        icon=_item_card_icon(iid, stack, max(32, px)),
+        icon=_item_card_icon(iid, stack, cards.icon_px(painter, rect)),
         subtitle=cat.title(),
+        desc=_item_desc(stack),
         accent=_CATEGORY_ACCENT.get(cat, _CATEGORY_ACCENT[rpg_items.MISC]),
         frame=(QColor(*rpg_items.rarity_rgb(stack)) if rarity != rpg_items.COMMON
                else None),
@@ -1926,17 +1953,16 @@ def _draw_trade(painter, session, w, h):
 
     left_x, right_x = inner.x(), inner.x() + col_w + 24
     # Both sides' cards at one size: the smaller of the two that fit.
-    size = min((cards.layout_grid(_area(cx), len(lst), cards.COMPACT, cards.COMPACT_GAP,
-                                  min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
-                for cx, lst in ((left_x, stock), (right_x, sell))),
-               key=lambda wh: wh[0])
+    size = cards.smaller(*(cards.layout(_area(cx), len(lst), compact=True,
+                                        grid_min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
+                           for cx, lst in ((left_x, stock), (right_x, sell))))
     for side, (title, lst, buying) in enumerate([("Buy", stock, True), ("Sell", sell, False)]):
         cx = left_x if side == 0 else right_x
         active = st["side"] == side
         T.text_in(painter, QRect(cx + 6, head_y, col_w - 140, 24), title, size=13,
                   color=T.GOLD_BRIGHT if active else T.DIM, bold=True,
                   align=T.ALIGN_LEFT)
-        grid = cards.layout_grid(_area(cx), len(lst), size, cards.COMPACT_GAP, min_scale=1.0)
+        grid = cards.layout(_area(cx), len(lst), compact=True, size=size)
         st.setdefault("cols", [1, 1])[side] = grid.cols
         st.setdefault("sizes", [1, 1])[side] = grid.page_size
         rows = st.setdefault("rows", [0, 0])
@@ -2079,8 +2105,8 @@ def _merchant_stock(npc):
 
 
 def _trade_move(st, move, stock, sell):
-    """An arrow key in the trade's two card grids: within one, and across to
-    the other off its inner edge (Tab also switches)."""
+    """An arrow key in the trade's two card lists (or grids): within one,
+    and across to the other off its inner edge (Tab also switches)."""
     side = st["side"]
     lst, other = (stock, sell) if side == 0 else (sell, stock)
     cols = max(1, st.get("cols", [1, 1])[side])
@@ -2369,31 +2395,50 @@ def _draw_levelup(painter, session, w, h):
               bold=True, family="Segoe UI")
     top += 28
 
-    # The choices, as cards across the page (game/ui/cards.py); the one
-    # highlighted in full below them -- so the cards carry no tooltip.
+    # The choices as cards (game/ui/cards.py): a row each down the left,
+    # the highlighted one in full beside them (or, as a grid, across the
+    # page with it below) -- so the cards carry no tooltip.
     foot_top = inner.bottom() - 60
-    detail_h = 150
-    area = QRect(inner.x(), top, inner.width(), max(1, foot_top - detail_h - top))
-    grid = cards.layout_grid(area, len(rows), min_scale=0.55, fit_all=True)
-    for i, (choice, label, _desc) in enumerate(rows):
+    if cards.LAYOUT == "list":
+        list_w = int(inner.width() * 0.56)
+        area = QRect(inner.x(), top, list_w, max(1, foot_top - 8 - top))
+        grid = cards.layout(area, len(rows), fit_all=True)
+    else:
+        detail_h = 150
+        area = QRect(inner.x(), top, inner.width(), max(1, foot_top - detail_h - top))
+        grid = cards.layout(area, len(rows), grid_min_scale=0.55, fit_all=True)
+    for i, (choice, label, desc) in enumerate(rows):
         rect = grid.slots[i]
         cards.draw_card(painter, rect, _level_card(painter, c, choice, label, rect,
-                                                   st["row"] == i))
+                                                   st["row"] == i, desc))
         hits.add(QRect(rect), _levelup_pick(i), f"levelup:{choice}")
 
     # The highlighted choice: what it does, and what it would change.
     choice, label, desc = rows[st["row"]]
-    right = QRect(inner.x(), grid.bounds().bottom() + 14, inner.width(),
-                  max(1, foot_top - grid.bounds().bottom() - 18))
-    half = (right.width() - 24) // 2
-    painter.save()
-    painter.setFont(T.font(10, bold=True, family="Segoe UI"))
-    painter.setPen(_INK)
-    drect = QRect(right.x(), right.y(), half, right.height())
-    painter.drawText(drect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
-    painter.restore()
-    ex = right.x() + half + 24
-    ey = right.y()
+    if cards.LAYOUT == "list":
+        dx = area.right() + 24
+        right = QRect(dx, top, max(1, inner.right() - dx), max(1, foot_top - 8 - top))
+        painter.save()
+        painter.setFont(T.font(10, bold=True, family="Segoe UI"))
+        painter.setPen(_INK)
+        used = painter.fontMetrics().boundingRect(
+            right, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc).height()
+        painter.drawText(right, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
+        painter.restore()
+        half = right.width()
+        ex, ey = right.x(), right.y() + min(used, right.height() // 2) + 16
+    else:
+        right = QRect(inner.x(), grid.bounds().bottom() + 14, inner.width(),
+                      max(1, foot_top - grid.bounds().bottom() - 18))
+        half = (right.width() - 24) // 2
+        painter.save()
+        painter.setFont(T.font(10, bold=True, family="Segoe UI"))
+        painter.setPen(_INK)
+        drect = QRect(right.x(), right.y(), half, right.height())
+        painter.drawText(drect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
+        painter.restore()
+        ex = right.x() + half + 24
+        ey = right.y()
     for name, before, after in _level_preview(c, choice):
         if ey > right.bottom() - 16:
             break
@@ -2444,18 +2489,18 @@ def _level_icon(choice, px):
     return _LEVEL_ICONS[key]
 
 
-def _level_card(painter, c, choice, label, rect, selected):
+def _level_card(painter, c, choice, label, rect, selected, desc=""):
     """The :class:`cards.Card` for a level-up choice: its glyph, where it
-    stands now and where the level takes it."""
+    stands now and where the level takes it, and (on a row card) *desc*."""
     from ..rpg.character import LEVEL_ATTR_GAIN, LEVEL_CHOICES
     a = LEVEL_CHOICES[choice]
     now = int(c.attrs[a])
     shown = attr.label(a) if choice != "magicka" else "Intelligence"
-    px = max(32, int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter)))
     return cards.Card(
-        title=label, icon=_level_icon(choice, px),
+        title=label, icon=_level_icon(choice, cards.icon_px(painter, rect)),
         subtitle=f"{shown} {now}",
         summary=f"{now} → {attr.clamp(now + LEVEL_ATTR_GAIN)}",
+        desc=desc,
         accent=_LEVEL_ACCENT.get(choice), badges=("", f"+{LEVEL_ATTR_GAIN}"),
         badge_colors=(None, T.GOLD_BRIGHT), selected=selected,
         hovered=hits.hovered(rect))
@@ -2561,10 +2606,9 @@ def _draw_container(painter, session, w, h):
 
     # Both columns' cards at one size: the smaller of the two that fit.
     left_x, right_x = inner.x(), inner.x() + col_w + 24
-    size = min((cards.layout_grid(_area(cx), len(lst), cards.COMPACT, cards.COMPACT_GAP,
-                                  min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
-                for cx, lst in ((left_x, citems), (right_x, pitems))),
-               key=lambda wh: wh[0])
+    size = cards.smaller(*(cards.layout(_area(cx), len(lst), compact=True,
+                                        grid_min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
+                           for cx, lst in ((left_x, citems), (right_x, pitems))))
 
     def _column(cx, title, items, side):
         kind = "container" if side == 0 else "pack"
@@ -2582,8 +2626,7 @@ def _draw_container(painter, session, w, h):
         T.text_in(painter, QRect(cx + 6, head_y, col_w - 140, 24), title, size=12,
                   color=T.GOLD_BRIGHT if active else T.DIM, bold=True,
                   align=T.ALIGN_LEFT, family="Segoe UI")
-        grid = cards.layout_grid(_area(cx), len(items), size, cards.COMPACT_GAP,
-                                 min_scale=1.0)
+        grid = cards.layout(_area(cx), len(items), compact=True, size=size)
         st["cols_c" if side == 0 else "cols_p"] = grid.cols
         st["size_c" if side == 0 else "size_p"] = grid.page_size
         page, first, pages = _card_page(st[key], grid.page_size, len(items))
@@ -2650,7 +2693,7 @@ def _cont_click(side, index):
 
 
 def _cont_move(st, move, citems, pitems):
-    """An arrow key in the container's two card grids: within a grid, and
+    """An arrow key in the container's two card lists (or grids): within one, and
     across to the other one off its inner edge (Tab also switches)."""
     side = st["side"]
     key, other_key = ("row_c", "row_p") if side == 0 else ("row_p", "row_c")
@@ -2666,7 +2709,7 @@ def _cont_move(st, move, citems, pitems):
         inner_edge = last_col if side == 0 else first_col
         toward_other = (move == "right") == (side == 0)
         if toward_other and inner_edge:
-            # Across to the other grid, on the same row of cards.
+            # Across to the other list, on the same row.
             line = (row % size) // cols
             ofirst = (st[other_key] // osize) * osize
             col = 0 if side == 0 else ocols - 1

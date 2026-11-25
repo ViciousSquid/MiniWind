@@ -1,5 +1,6 @@
 """Chests, bodies and merchants show their things as cards (game/ui/cards.py),
-and a right click splits a stack.
+a list of compact row cards down each side, and a right click splits a
+stack.
 
 Run:  python -m pytest game/tests/test_item_cards.py -q
 """
@@ -90,9 +91,24 @@ def _panel(w, h, full):
 def _no_overlap(rects, panel):
     for i, a in enumerate(rects):
         assert panel.contains(a), (a, panel)
-        assert a.height() > a.width()                       # portrait cards
+        assert a.width() > 2.5 * a.height() >= 2.5 * 60    # wide, chunky rows
         for b in rects[i + 1:]:
             assert not a.intersects(b)
+
+
+def _one_column_per_side(rects):
+    """Two lists side by side: every row of a side at one x and width, the
+    rows one under another."""
+    sides = {}
+    for r in rects:
+        sides.setdefault(r.x(), []).append(r)
+    assert len(sides) == 2
+    left, right = (sides[x] for x in sorted(sides))
+    for side in (left, right):
+        assert len({r.width() for r in side}) == 1
+        ys = [r.y() for r in side]
+        assert ys == sorted(ys) and len(set(ys)) == len(ys)
+    assert left[0].right() < right[0].left()
 
 
 SIZES = [(1280, 720, True), (1920, 1080, True), (900, 560, False)]
@@ -107,10 +123,17 @@ def test_container_cards_fit_the_panel_without_overlap(session, w, h, full):
     close = next(r for r, label in hits.targets() if label == "Close")
     assert all(not r.intersects(close) for r in rects)
     contents = [src for _r, src in screens.CONTAINER_DRAG["cells"] if src[0] == "container"]
-    assert len(contents) == len(CHEST)                  # ten things: one page
-    # Both columns' cards are one size, in rows and columns.
+    st = screens._cont_state(session)
+    assert st["cols_c"] == st["cols_p"] == 1
+    assert len(contents) == min(len(CHEST), st["size_c"]) >= 3
+    # Both lists' rows are one size, one per line down each side, each the
+    # full width of its column.
     assert len({(r.width(), r.height()) for r in rects}) == 1
-    assert len({r.y() for r in rects}) >= 2 and len({r.x() for r in rects}) >= 4
+    _one_column_per_side(rects)
+    zones = [z for z, t in screens.CONTAINER_DRAG["zones"] if t[1] is None]
+    for r in rects:
+        zone = next(z for z in zones if z.contains(r))
+        assert r.width() >= zone.width() - 16
 
 
 def test_every_container_card_is_a_click_target_and_a_drag_source(session):
@@ -133,26 +156,32 @@ def test_every_container_card_is_a_click_target_and_a_drag_source(session):
     assert inv.has_item(session.game.character.inventory, "iron_helmet")
 
 
-def test_container_arrows_move_in_two_dimensions_and_across(session):
+def test_container_arrows_move_up_and_down_and_across(session):
     _paint(session, 900, 560)
     st = screens._cont_state(session)
-    cols = st["cols_c"]
-    assert cols >= 3
+    assert st["cols_c"] == st["cols_p"] == 1
     st.update(side=0, row_c=0)
-    screens.handle_key(session, "right")
-    assert (st["side"], st["row_c"]) == (0, 1)
     screens.handle_key(session, "down")
-    assert st["row_c"] == 1 + cols
+    assert (st["side"], st["row_c"]) == (0, 1)
+    screens.handle_key(session, "s")
+    assert st["row_c"] == 2
     screens.handle_key(session, "up")
     assert st["row_c"] == 1
-    st["row_c"] = cols - 1                               # the row's last card
-    screens.handle_key(session, "right")                 # across to your side
-    assert st["side"] == 1 and st["row_p"] == 0
+    screens.handle_key(session, "right")                 # across to your side,
+    assert st["side"] == 1 and st["row_p"] == 1          # on the same row
+    screens.handle_key(session, "right")                 # the outer edge: stays
+    assert (st["side"], st["row_p"]) == (1, 1)
+    screens.handle_key(session, "down")
+    assert st["row_p"] == 2
     screens.handle_key(session, "left")                  # and back
-    assert st["side"] == 0 and st["row_c"] == cols - 1
+    assert st["side"] == 0 and st["row_c"] == 2
+    st["row_c"] = 0
+    screens.handle_key(session, "up")                    # wraps to the last
+    assert st["row_c"] == len(CHEST) - 1
     st["row_c"] = 0
     screens.handle_key(session, "left")                  # the outer edge: stays
     assert (st["side"], st["row_c"]) == (0, 0)
+    st["row_p"] = 0
     screens.handle_key(session, "tab")
     assert st["side"] == 1
     screens.handle_key(session, "enter")                 # stores your first thing
@@ -176,6 +205,12 @@ def test_container_cards_show_the_stack_count(session, monkeypatch):
     real = cards.draw_card
     monkeypatch.setattr(cards, "draw_card",
                         lambda p, r, card: drawn.append(card) or real(p, r, card))
+    _paint(session, 900, 560)
+    bread = next(card for card in drawn if card.title == "Bread")
+    assert bread.quantity == 5 and bread.icon is not None
+    # The arrows are further down the list: on the next page.
+    screens._cont_state(session)["row_c"] = CHEST.index(("iron_arrow", 18))
+    drawn.clear()
     _paint(session, 900, 560)
     arrows = next(card for card in drawn if card.title == "Iron Arrow")
     assert arrows.quantity == 18 and arrows.icon is not None
@@ -225,6 +260,8 @@ def test_trade_cards_fit_the_panel_without_overlap(trading, w, h, full):
     assert any(str(l).startswith("buy:") for _r, l in _trade_cards())
     assert any(str(l).startswith("sell:") for _r, l in _trade_cards())
     _no_overlap(rects, _panel(w, h, full))
+    _one_column_per_side(rects)
+    assert screens._sel(trading)["trade"]["cols"] == [1, 1]
     leave = next(r for r, label in hits.targets() if label == "Leave")
     assert all(not r.intersects(leave) for r in rects)
 
@@ -252,21 +289,21 @@ def test_the_price_shows_on_the_card_in_its_tip_and_on_the_button(trading, monke
     assert f"Buy {d.name} for {price}g" in {label for _r, label in hits.targets()}
 
 
-def test_trade_arrows_move_in_two_dimensions_and_across(trading):
+def test_trade_arrows_move_up_and_down_and_across(trading):
     _paint(trading, 960, 600)
     st = screens._sel(trading)["trade"]
-    cols = st["cols"][0]
-    assert cols >= 3
+    assert st["cols"] == [1, 1]
     st.update(side=0, row=0)
-    screens.handle_key(trading, "right")
-    assert (st["side"], st["row"]) == (0, 1)
     screens.handle_key(trading, "down")
-    assert st["row"] == 1 + cols
-    st["row"] = cols - 1
-    screens.handle_key(trading, "right")
-    assert (st["side"], st["row"]) == (1, 0)
+    assert (st["side"], st["row"]) == (0, 1)
+    screens.handle_key(trading, "left")                  # the outer edge: stays
+    assert (st["side"], st["row"]) == (0, 1)
+    screens.handle_key(trading, "right")                 # across, same row
+    assert (st["side"], st["row"]) == (1, 1)
+    screens.handle_key(trading, "up")
+    assert st["row"] == 0
     screens.handle_key(trading, "left")
-    assert (st["side"], st["row"]) == (0, cols - 1)
+    assert (st["side"], st["row"]) == (0, 0)
     screens.handle_key(trading, "tab")
     assert st["side"] == 1
 
@@ -282,13 +319,19 @@ def test_a_bought_item_flies_as_a_card(trading, monkeypatch):
     titles = []
     real = cards.draw_card
     monkeypatch.setattr(cards, "draw_card",
-                        lambda p, r, card: titles.append((card.title, card.badges))
+                        lambda p, r, card: titles.append((card.title, card.badges,
+                                                          QtCore.QRect(r)))
                         or real(p, r, card))
     clock[0] += trade_anim.FLIGHT_SECONDS / 2
     _paint(trading, 960, 600)
     first = screens._merchant_stock(trading.merchant_npc)[0]["id"]
     name = items.get(first).name
-    assert sum(1 for t, _b in titles if t == name) >= 2      # its card, and the flight
+    drawn = [(b, r) for t, b, r in titles if t == name]
+    assert len(drawn) >= 2                                  # its card, and the flight
+    # The flight is the row card, lifted (a little larger) between the lists.
+    flight_badges, flight = drawn[-1]
+    assert flight.width() > 2.5 * flight.height()
+    assert any(str(b).endswith("g") for b in flight_badges)
 
 
 # -------------------------------------------------------------------- splitting
@@ -375,7 +418,7 @@ def test_a_split_put_down_on_empty_space_is_a_new_stack(session):
 
 
 def test_a_split_put_down_on_the_same_thing_joins_it(session):
-    session.container_inventory().append(items.make("bread", 1))
+    session.container_inventory().insert(3, items.make("bread", 1))   # on the same page
     win = _window(session)
     _draw(win)
     first, last = [r for r, src in screens.CONTAINER_DRAG["cells"]
@@ -387,6 +430,7 @@ def test_a_split_put_down_on_the_same_thing_joins_it(session):
 
 
 def test_a_split_taken_to_your_side_goes_in_the_pack(session):
+    screens._cont_state(session)["row_c"] = CHEST.index(("iron_arrow", 18))   # its page
     win = _window(session)
     _draw(win)
     win.handle_mouse_press(_Ev(_card("container", "iron_arrow").center(), Qt.RightButton))
