@@ -411,6 +411,9 @@ class PassesMixin:
             shadow_filter=self._shadow_filter_array(),
             shadow_unit_base=self.SHADOW_TEXTURE_UNIT_BASE,
             env_uniforms=self.env_uniform_values(),
+            # Settled snow (0..1): a game sets ``snow_cover`` as it sets
+            # ``sky_state``; none otherwise.
+            snow_cover=float(getattr(self, 'snow_cover', 0.0) or 0.0),
         )
         # The terrain binds its own cube-maps (or placeholders) on the shadow
         # units: the next lit pass binds the renderer's again.

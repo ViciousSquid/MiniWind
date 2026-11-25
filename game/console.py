@@ -369,9 +369,10 @@ def cmd_pause(ctx, args):
 
 
 def cmd_weather(ctx, args):
-    """weather [sunny|overcast|rain|storm] [hours] -- what the sky is doing
-    (game/weather.py); with a kind, the sky turns to it -- fading in as
-    weather does -- for a spell or *hours*. ``sunny`` is clear sky."""
+    """weather [sunny|overcast|rain|storm|snow] [hours] -- what the sky is
+    doing (game/weather.py); with a kind, the sky turns to it -- fading in as
+    weather does -- for a spell or *hours*. ``sunny`` is clear sky; ``snow``
+    snows in any season (a storm in winter is a blizzard by itself)."""
     session = getattr(ctx.logic_thread, "_miniwind", None)
     weather = getattr(session, "weather", None)
     if weather is None:
@@ -380,8 +381,10 @@ def cmd_weather(ctx, args):
     parts = str(args or "").split()
     if not parts:
         snap = weather.snapshot()
-        debug_log("Info", f"weather: {snap['kind']} for {snap['left']:.1f} h more; rain "
-                          f"{snap['rain']:.2f}, ground wet {snap['wet']:.2f}.")
+        kind = "blizzard" if weather.blizzard() else snap["kind"]
+        debug_log("Info", f"weather: {kind} for {snap['left']:.1f} h more; rain "
+                          f"{snap['rain']:.2f}, snowfall {snap['snowfall']:.2f}, snow lying "
+                          f"{snap['snow']:.2f}, ground wet {snap['wet']:.2f}, cold {snap['cold']:.2f}.")
         return None
     hours = None
     if len(parts) > 1:
@@ -390,7 +393,7 @@ def cmd_weather(ctx, args):
         except ValueError:
             hours = None
     if not weather.set(parts[0].lower(), hours):
-        debug_log("Error", "weather: sunny, overcast, rain or storm.")
+        debug_log("Error", "weather: sunny, overcast, rain, storm or snow.")
         return None
     msg = f"Weather: {parts[0].lower()}."
     debug_log("Info", msg)
@@ -816,7 +819,7 @@ COMMANDS = (
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("weather",), cmd_weather,
-     "[sunny|overcast|rain|storm] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
+     "[sunny|overcast|rain|storm|snow] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
     (("worldmap",), cmd_worldmap,
      "— (Editor) The world map in a window, with the editor camera on it (10 Hz)"),
     (("viewcone", "viewcones"), cmd_viewcone,

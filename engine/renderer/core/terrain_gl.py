@@ -157,7 +157,7 @@ class TerrainGL:
         'terrainPaintMap', 'uPaintLayer', 'uPaintEnabled',
         'uHeights', 'uChunkI', 'uChunkX', 'uChunkY', 'uTiling', 'uFlatMode',
         'uGradCount', 'uGradH', 'uGradC', 'uGradW', 'uGradD',
-        'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds',
+        'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds', 'uSnowCover',
     )
     #: Texture unit of the regional biome map (``uBiomeMap``). Above the
     #: shadow cube-maps (4..11), the height and paint pages (12, 13) and the
@@ -1344,7 +1344,7 @@ class TerrainGL:
     def render(self, frame, projection, view, camera_pos, frustum_planes=None,
                active_lights_count=0, shadow_cubemaps=None, shadow_unit_base=4,
                env_uniforms=None, draw_grass=True, grass_wind=None,
-               shadow_filter=None):
+               shadow_filter=None, snow_cover=0.0):
         """Draw the published *frame* with the current GL context.
 
         ``draw_grass=False`` leaves the grass pass out whatever the frame
@@ -1352,7 +1352,9 @@ class TerrainGL:
         *grass_wind* is ``(dir x, dir z, strength)`` for the grass to sway
         in (core/grass_wind.py), or None for the default breeze.
         *shadow_filter* is each shadow slot's ``(softness, bias)`` row from
-        the Light that owns it (0: the shader's default)."""
+        the Light that owns it (0: the shader's default).
+        *snow_cover* (0..1) lays settled snow over the ground: patchy at
+        first, a full white blanket from about 0.8, thin on steep slopes."""
         self.visible_chunks = 0
         self.culled_chunks = 0
         self.total_triangles = 0
@@ -1360,6 +1362,7 @@ class TerrainGL:
             return
         self.frame = frame
         self.grass_wind = grass_wind
+        self.snow_cover = max(0.0, min(1.0, float(snow_cover or 0.0)))
         try:
             self._render(projection, view, camera_pos, frustum_planes,
                          active_lights_count, shadow_cubemaps, shadow_unit_base,
@@ -1445,6 +1448,10 @@ class TerrainGL:
                    or getattr(self, 'untextured', False)
                    else (1 if frame.use_textures else 0))
         gl_state.glUniform1i(u['use_textures'], use_tex)
+        snow_loc = u.get('uSnowCover', -1)
+        if snow_loc is not None and snow_loc != -1:
+            gl_state.glUniform1f(snow_loc, 0.0 if frame.flat_mode else
+                                 float(getattr(self, 'snow_cover', 0.0)))
 
         # Distance fog + global ambient (engine.shaders.FOG_GLSL): this
         # program has its own uniform table, so the renderer hands the

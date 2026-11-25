@@ -158,6 +158,32 @@ def season_blend(clock, ease_days: float = 1.5):
     return d.season, nxt, t * t * (3.0 - 2.0 * t)
 
 
+# -- the cold ------------------------------------------------------------------
+#: Days over which the cold comes in at the end of autumn, and goes at the end
+#: of the year (Leap Day, in a leap year, falls inside the thaw).
+COLD_RAMP = 1.5
+
+
+def coldness(clock) -> float:
+    """How cold the Vale is (0..1): 0 from spring to late autumn, rising over
+    autumn's last :data:`COLD_RAMP` days to 1 for winter, easing back to 0
+    over the year's last :data:`COLD_RAMP` days. Snow falls instead of rain
+    when it is cold (:mod:`game.weather`)."""
+    year, rest = _locate(position(clock))
+    winter = (len(SEASONS) - 1) * SEASON_DAYS
+    end = year_length(year)
+    if rest < winter - COLD_RAMP:
+        return 0.0
+    if rest < winter:
+        t = (rest - (winter - COLD_RAMP)) / COLD_RAMP
+    elif rest < end - COLD_RAMP:
+        return 1.0
+    else:
+        t = (end - rest) / COLD_RAMP
+    t = max(0.0, min(1.0, t))
+    return t * t * (3.0 - 2.0 * t)
+
+
 # -- the sun -------------------------------------------------------------------
 def _summer(fraction: float) -> float:
     """1 at midsummer, -1 at midwinter, 0 at the equinoxes."""

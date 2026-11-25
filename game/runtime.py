@@ -1263,15 +1263,17 @@ class MiniwindSession(SettlementLaw):
         """Advance the wind and any grass fire; set alight whoever stands in
         it; blacken the ground behind it."""
         hours = float(delta) * float(getattr(self.clock, "hours_per_second", 1 / 60.0))
-        self.weather.update(hours)
-        # A storm blows a gale in gusts and throws lightning; with the
-        # weather off there is none.
+        from . import calendar
+        # Snow for rain, blizzards for storms, when it is cold (game/weather.py).
+        self.weather.update(hours, cold=calendar.coldness(self.clock))
+        # A storm blows a gale in gusts and throws lightning (rarely in a
+        # blizzard); with the weather off there is none.
         weather_on = self.weather_enabled()
         storm = self.weather.storm if weather_on else 0.0
         self.wind.update(hours, delta, storm)
         self.lens_water.update(delta, self.weather.rain if weather_on else 0.0,
                                self._lens_motion(delta))
-        self._update_lightning(delta, storm)
+        self._update_lightning(delta, self.weather.lightning() if weather_on else 0.0)
         self._update_storm_howl(delta, storm)
         self._check_tutorial_tips(delta)
         self._update_player_noise(delta)

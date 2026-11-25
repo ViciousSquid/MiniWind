@@ -569,13 +569,32 @@ Graphics; on by default):
 * Burns are kept with the save, per map.
 
 **Weather** (Settings › Game › *Weather*, on by default; in the console,
-`weather sunny`, `weather overcast`, `weather rain` or `weather storm` turns
-the sky, fading in as weather does):
+`weather sunny`, `weather overcast`, `weather rain`, `weather storm` or
+`weather snow` turns the sky, fading in as weather does):
 
 * The sky turns by itself: spells of clear sky (6–20 hours), cloud (2–6),
   rain (1–5) and now and then a storm (½–2), each easing into the next. Rain
   soaks the ground; it dries over hours after, twice as fast under clear sky.
   The weather is kept with the save.
+* *Snow* (`game/weather.py`, the cold from `game/calendar.py`). It is cold
+  from the last day and a half of autumn, through winter, until the last day
+  and a half of the year (Leap Day falls in that thaw). In the cold the sky
+  turns snow where it would rain: cloud is followed by snow (55%), clear sky
+  (35%) or a storm (10%); a snowfall lasts 2–7 hours. A storm in the cold is
+  a **blizzard**: snow, not rain, on the same gale, with a third of a storm's
+  lightning, and no one travels in it. Out of the cold snow never falls by
+  itself (`weather snow` makes it snow in any season, and it soon thaws).
+  * *It settles.* Falling snow lies on the ground, deep after about two
+    hours of steady snow (a blizzard faster): first in patches, then a white
+    blanket, thinner on steep slopes. It lies through the cold, thawing only
+    1% an hour, and barely at all while snow falls; out of the cold it thaws
+    35% an hour, and rain washes away up to a further 60% an hour. Its meltwater
+    wets the ground. Snow lying and falling is kept with the save.
+  * *It smothers fire.* Grass under deep snow catches one twentieth as
+    readily, and falling snow fights a fire half as hard as rain.
+  * *How it looks.* Flakes drift down past the camera, big and soft near it,
+    small and bright near the ground, swaying as they fall and carried far
+    on the wind; a pale haze lies over everything while it snows.
 * *Rain fights fire.* Burning grass burns out up to six times faster in a
   storm and spreads slower in any rain — heavy rain stops it spreading at
   all. Wet ground barely catches (a soaked field one tenth as readily).

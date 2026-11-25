@@ -2075,6 +2075,9 @@ uniform sampler2D uBiomeMap;
 uniform int uBiomeEnabled;
 uniform highp vec4 uBiomeBounds;     // min x, min z, 1 / range x, 1 / range z
 
+// Settled snow over everything (a game's weather): 0 none .. 1 deep.
+uniform float uSnowCover;
+
 // Height texture layers. uHeightRange is the terrain's world-space height
 // range; uLayerHeights are the sand->grass, grass->rock and rock->snow
 // boundaries as fractions of it.
@@ -2292,6 +2295,19 @@ void main() {
             terrainPaintMap, vec3(clamp(PaintCoords.yx, 0.0, 1.0),
                                   float(uPaintLayer)));
         texColor = mix(texColor, paint.rgb * 1.1, paint.a);
+    }
+
+    // ---- Settled snow ------------------------------------------------
+    // Lies first in patches (where broad noise is highest), then joins up
+    // into a white blanket from about 0.8 cover; steep ground stays darker.
+    if (uSnowCover > 0.001) {
+        float drift = fbm2(FragPos.xz * 0.003);
+        float sgrain = noise(FragPos.xz * 0.3);
+        float edge = 1.0 - uSnowCover * 1.25;
+        float lie = smoothstep(edge, edge + 0.15, drift + (sgrain - 0.5) * 0.12);
+        lie *= 1.0 - 0.75 * smoothstep(0.4, 0.7, faceSlope);
+        vec3 snowLie = vec3(0.90, 0.93, 0.98) * mix(0.94, 1.03, sgrain);
+        texColor = mix(texColor, snowLie, lie * 0.92);
     }
 
 // ---- Surface details ---------------------------------------------

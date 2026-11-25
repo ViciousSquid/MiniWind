@@ -184,6 +184,14 @@ switch.
 
 ### Snow
 
+**Done** (brought forward on request). See RULES.md §9 *Weather › Snow*;
+`game/weather.py` (`SNOW`, `NEXT_COLD`, blizzards, `snow` cover),
+`calendar.coldness`, flakes in `game/ui/rain.py`, the terrain shader's
+`uSnowCover` (renderer `snow_cover`, set by `game/host.py`). Tests:
+`game/tests/test_snow.py`, `tests/renderer/test_snow_cover.py`. The rest of
+Phase 3 (per-season weather tables in data, grass colour, trees) is still to
+do. Original notes:
+
 - New weather kind `SNOW` (alias `snowy`), allowed only when the season allows
   it.
 - `game/ui/rain.py` draws drifting flakes instead of streaks for snow.

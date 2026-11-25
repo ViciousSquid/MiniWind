@@ -909,6 +909,7 @@ class MiniwindGame:
             # in the last storm played.
             if getattr(renderer, "grass_wind", None) is not None:
                 renderer.grass_wind = None
+            renderer.snow_cover = 0.0
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
@@ -918,6 +919,10 @@ class MiniwindGame:
         import game.wind as wind
         renderer.sky_state, renderer.sky_drift = sky.state(session)
         renderer.grass_wind = wind.grass_sway(getattr(session, "wind", None))
+        # Settled snow on the ground (game/weather.py); none with the weather off.
+        weather = getattr(session, "weather", None)
+        renderer.snow_cover = (float(getattr(weather, "snow", 0.0))
+                               if weather is not None and session.weather_enabled() else 0.0)
 
     def _on_pre_sprites(self, ev):
         """Draw what lies on the floor, before Fio's effects and actors so they

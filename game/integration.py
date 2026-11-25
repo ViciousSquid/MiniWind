@@ -617,8 +617,9 @@ GAME_SETTINGS = (
      "scorched, setting alight anyone caught in it. Off: a fire on the ground "
      "burns where it falls and goes no further.", True),
     ("weather", "Weather",
-     "Cloud, rain and storms come and go; rain puts fires out and wet grass "
-     "barely burns. Off: the sky stays clear.", True),
+     "Cloud, rain and storms come and go, and snow and blizzards in winter; "
+     "rain puts fires out, and wet or snowy grass barely burns. Off: the sky "
+     "stays clear.", True),
     ("torch_shadows", "Torch shadows",
      "Carried torches near you (the NEAR simulation distance) are dynamic "
      "lights that cast shadows. Costs some frame time; the renderer's shadow "

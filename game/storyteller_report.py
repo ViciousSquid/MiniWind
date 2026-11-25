@@ -52,8 +52,12 @@ def weather_line(session) -> str:
     if callable(on) and not on():
         return "Weather is off in Settings: clear sky, never wet."
     snap = weather.snapshot()
+    blizzard = getattr(weather, "blizzard", lambda: False)()
+    kind = "BLIZZARD" if blizzard else snap["kind"].upper()
     forced = " (forced from the console)" if getattr(weather, "forced", False) else ""
-    return (f"{snap['kind'].upper()}{forced}, {snap['left']:.1f} h left · rain {snap['rain']:.2f} · "
+    snow = (f" · snowfall {snap['snowfall']:.2f} · snow lying {snap['snow']:.2f}"
+            if snap.get("snowfall", 0) > 0.01 or snap.get("snow", 0) > 0.01 else "")
+    return (f"{kind}{forced}, {snap['left']:.1f} h left · rain {snap['rain']:.2f}{snow} · "
             f"ground wet {snap['wet']:.2f}. The storyteller does not steer the weather yet.")
 
 

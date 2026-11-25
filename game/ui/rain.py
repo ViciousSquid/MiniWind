@@ -1,5 +1,5 @@
 """
-Rain, seen from above (the look of :mod:`game.weather`).
+Rain and snow, seen from above (the look of :mod:`game.weather`).
 
 The camera looks down on the Vale, so a falling drop is seen end-on: near
 the camera it is big, soft and out of focus, far out toward the edge of the
@@ -9,6 +9,11 @@ streaks (hard in a storm's gale). Under it the scene is washed cooler and
 darker as the cloud thickens, and a storm's lightning (game/lightning.py)
 lights everything white -- a strike close enough to see drawn as a jagged
 bolt down to where it hits, glowing on the ground there.
+
+Snow drifts down slower: soft white flakes, big and blurred near the
+camera, small and bright near the ground, each swaying as it falls and
+carried far on the wind (a blizzard's gale drives them almost flat), with a
+pale haze over everything while it falls.
 
 Drawn over the world and under the HUD, as flat 2D. Nothing is kept between
 frames: every drop is placed from its index and the clock, so it costs one
@@ -22,7 +27,7 @@ from __future__ import annotations
 import math
 
 from PyQt5.QtCore import QLineF, QPointF, QRect, QRectF, Qt
-from PyQt5.QtGui import QColor, QPen
+from PyQt5.QtGui import QColor, QPen, QPolygonF
 
 from ..lightning import BOLT_SECONDS, flicker
 
@@ -44,6 +49,20 @@ SPLASH_RADIUS = 7.0
 #: How far the wind leans a drop (pixels across its fall at full wind; a
 #: storm's gale blows past full).
 WIND_LEAN = 40.0
+#: Flakes on screen at full snowfall (at 1280 x 720), how long one takes to
+#: fall, how far out it starts near the camera, how far it sways side to
+#: side (px, near the camera) and how far the wind carries it.
+FLAKES = 900
+FLAKE_SECONDS = 2.6
+FLAKE_SPREAD = 1.8
+FLAKE_SWAY = 18.0
+FLAKE_LEAN = 140.0
+#: Each band's flake (diameter px, alpha 0..255): near the camera big, soft
+#: and faint; far below small and bright.
+FLAKE_LOOK = ((15.0, 105), (7.5, 200), (4.0, 255))
+FLAKE_RGB = (244, 247, 252)
+#: The pale haze while snow falls (alpha at full snowfall).
+SNOW_HAZE = (225, 232, 242, 46)
 #: A bolt: how far up the screen it starts (share of the height), how many
 #: times its path is split and jogged, how far a jog goes (share of the
 #: segment), and its glow and core (width px, colour).
@@ -69,13 +88,19 @@ def draw(painter, weather, wind, width, height, now, lightning=None, to_screen=N
         return
     gloom = float(getattr(weather, "gloom", 0.0))
     rain = float(getattr(weather, "rain", 0.0))
-    if gloom <= 0.01 and rain <= 0.02:
+    snowfall = float(getattr(weather, "snowfall", 0.0))
+    if gloom <= 0.01 and rain <= 0.02 and snowfall <= 0.02:
         return
     painter.save()
     if gloom > 0.01:
         painter.fillRect(QRect(0, 0, width, height), QColor(22, 30, 44, int(150 * gloom)))
+    if snowfall > 0.02:
+        r, g, b, a = SNOW_HAZE
+        painter.fillRect(QRect(0, 0, width, height), QColor(r, g, b, int(a * min(1.0, snowfall))))
     if rain > 0.02:
         _drops(painter, rain, wind, width, height, now)
+    if snowfall > 0.02:
+        _flakes(painter, snowfall, wind, width, height, now)
     if lightning is not None:
         flash = lightning.flash()
     else:
@@ -139,6 +164,44 @@ def _drops(painter, rain, wind, width, height, now) -> None:
         r = 1.5 + SPLASH_RADIUS * s
         painter.setPen(QPen(QColor(215, 228, 245, int(150 * (1.0 - s) * alpha)), 1.0))
         painter.drawEllipse(QRectF(px - r, py - r * 0.6, r * 2, r * 1.2))
+
+
+def flake_bands(snowfall, wind, width, height, now):
+    """Where each flake is this instant, in three bands by nearness: lists
+    of ``(x, y)`` (near the camera, middle, near the ground). Placed from the
+    flake's index and the clock alone, as the drops are."""
+    n = int(FLAKES * min(1.0, snowfall) * (width * height) / (1280.0 * 720.0))
+    cx, cy = width * 0.5, height * 0.5
+    wx, wz = (wind or (0.0, 0.0))
+    bands = ([], [], [])
+    for i in range(n):
+        t = now / (FLAKE_SECONDS * (0.8 + 0.4 * _hash(i, 5))) + _hash(i, 0)
+        cycle = math.floor(t)
+        phase = t - cycle
+        gx = _hash(i, cycle * 3.1 + 11.0) * width
+        gy = _hash(i, cycle * 3.1 + 12.0) * height
+        near = 1.0 - phase
+        k = 1.0 + FLAKE_SPREAD * near * near
+        sway = math.sin(now * (1.1 + _hash(i, 6)) + i) * FLAKE_SWAY * (0.3 + near)
+        x = cx + (gx - cx) * k - wx * FLAKE_LEAN * near + sway
+        y = cy + (gy - cy) * k - wz * FLAKE_LEAN * near + sway * 0.3
+        if not (-20 <= x <= width + 20 and -20 <= y <= height + 20):
+            continue
+        bands[0 if phase < 0.4 else (1 if phase < 0.8 else 2)].append((x, y))
+    return bands
+
+
+def _flakes(painter, snowfall, wind, width, height, now) -> None:
+    """The falling snow: each band one batched draw of round points."""
+    alpha = 0.6 + 0.4 * min(1.0, snowfall)
+    painter.setRenderHint(painter.Antialiasing, True)
+    for points, (size, a) in zip(flake_bands(snowfall, wind, width, height, now), FLAKE_LOOK):
+        if not points:
+            continue
+        pen = QPen(QColor(*FLAKE_RGB, int(a * alpha)), size)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawPoints(QPolygonF([QPointF(x, y) for x, y in points]))
 
 
 def bolt_path(seed, end, width, height):
