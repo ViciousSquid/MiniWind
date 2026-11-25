@@ -836,6 +836,9 @@ class MiniwindGame:
         host.on("cutscene.line", self._on_cutscene_line)
         host.on("cutscene.tick", self._on_cutscene_tick)
         host.on("cutscene.played", self._on_cutscene_played)
+        host.on("cutscene.cast", self._on_cutscene_cast)
+        host.on("cutscene.order", self._on_cutscene_order)
+        host.on("cutscene.spawned", self._on_cutscene_spawned)
 
     @staticmethod
     def _cutscene_session(ev):
@@ -854,6 +857,30 @@ class MiniwindGame:
         session = self._cutscene_session(ev)
         if session is not None:
             session.remember_cutscene(ev.get("id"))
+
+    def _on_cutscene_cast(self, ev):
+        """A cutscene CAST: the actor casts the spell; whoever it raises
+        fights on its side in its battle."""
+        session = self._cutscene_session(ev)
+        caster = ev.get("actor")
+        if session is None or caster is None:
+            return
+        raised = session.cutscene_cast(caster, ev.get("spell"), ev.get("target"))
+        runtime = getattr(ev.logic, "cutscene_runtime", None)
+        for newcomer in raised or ():
+            if runtime is not None:
+                runtime.join_side(newcomer, caster)
+
+    def _on_cutscene_order(self, ev):
+        """A cutscene rule's order the game carries out (FLEE)."""
+        session = self._cutscene_session(ev)
+        if session is not None and ev.get("order") == "flee" and ev.get("actor") is not None:
+            session.cutscene_flee(ev.get("actor"), ev.get("threat"))
+
+    def _on_cutscene_spawned(self, ev):
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.prepare_cutscene_actors(ev.get("actors") or [])
 
     def _on_cutscene_tick(self, ev):
         """A cutscene battle is on: run the game's combat for it."""
@@ -1435,6 +1462,7 @@ class MiniwindGame:
                 self._sync_hud_window(session, viewport, w, h, cutscene=True)
                 # What the cutscene's actors say and think, and its battle's
                 # drawn bows and floating words -- the story, not the HUD.
+                hud.draw_slow_time(painter, session, w, h)
                 hud.draw_npc_bow_charges(painter, session, viewport, w, h)
                 hud.draw_barks(painter, session, viewport, w, h)
                 hud.draw_thoughts(painter, session, viewport, w, h)
@@ -1485,6 +1513,8 @@ class MiniwindGame:
                 if now - getattr(session, "_worldmap_checked_at", -1e9) >= 1.0:
                     session._worldmap_checked_at = now
                     worldmap.ensure_for(logic, viewport)
+                # Slow Time tints the world icy blue, under the HUD.
+                hud.draw_slow_time(painter, session, w, h)
                 # The HUD takes HUD_SHAKE of a screen shake (none, by default).
                 jolt = _hud_jolt(session, h)
                 painter.translate(*jolt)

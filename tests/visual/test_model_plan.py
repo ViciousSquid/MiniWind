@@ -23,7 +23,7 @@ from tests.helpers import gl as glh
 pytestmark = [pytest.mark.gl]
 
 REEL = 'assets/models/tape_reel_blue.glb'
-DRUM = 'assets/models/Oil_Drum.obj'
+DRUM = 'assets/models/Oak_Barrel.obj'
 
 
 @pytest.fixture
@@ -166,7 +166,7 @@ def test_a_model_loaded_again_is_drawn_from_a_new_plan(context):
         config = _config()
         first = _draw(renderer, context, config)
         (plan,) = _plans(renderer)
-        path = next(key for key in renderer.loaded_models if 'Oil_Drum' in key)
+        path = next(key for key in renderer.loaded_models if 'Oak_Barrel' in key)
         old = renderer.loaded_models.pop(path)
         after = _draw(renderer, context, config)              # loads it afresh
         assert renderer.loaded_models[path] is not old
@@ -184,7 +184,7 @@ def test_a_model_not_loaded_yet_is_asked_for_again(context, monkeypatch):
         config = _config()
         real = renderer.load_model
         monkeypatch.setattr(renderer, 'load_model',
-                            lambda name: None if 'Oil_Drum' in name else real(name))
+                            lambda name: None if 'Oak_Barrel' in name else real(name))
         without = _draw(renderer, context, config)
         assert _plans(renderer) == [None]
         monkeypatch.setattr(renderer, 'load_model', real)

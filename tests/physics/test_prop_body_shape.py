@@ -10,7 +10,7 @@ import pytest
 
 pytestmark = pytest.mark.qt
 
-BARREL = "assets/models/Oil_Drum.obj"
+BARREL = "assets/models/Oak_Barrel.obj"
 
 
 def _prop(ident, pos, **props):

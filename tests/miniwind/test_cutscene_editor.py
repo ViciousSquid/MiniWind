@@ -368,3 +368,39 @@ def test_miniwind_camera_shots_look_straight_down(wizard, main_window):
     (shot,) = wizard.camera_keys
     assert shot["pitch"] == cutscene_wizard.TOP_DOWN_PITCH and shot["yaw"] == 0.0
     assert wizard._build_cutscene_data()["settings"]["camera"] == "top_down"
+
+
+def test_cast_is_offered_only_for_an_actor_with_spells_and_lists_its_own(wizard):
+    plain = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    plain.properties["spells"] = []
+    mage = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    mage.properties["spells"] = [{"id": "resurrection"}, {"id": "firebolt"}]
+    assert wizard._spells_of(plain) == []
+    names = dict(wizard._spells_of(mage))
+    assert set(names) == {"resurrection", "firebolt"}
+    other = wizard._create_temporary_actor(_kind(wizard, "+ Creature"))
+    wizard._arm_pick("cast", [mage.properties["id"]], spell="resurrection")
+    wizard.pick_click(other, None)
+    (cast,) = [e for e in wizard.events if e["type"] == "cast"]
+    assert cast["spell"] == "resurrection" and cast["target"] == other.properties["id"]
+
+
+def test_a_rule_is_recorded_and_reads_plainly(wizard):
+    hero = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    hero.properties["name"] = hero.properties["display_name"] = "Aldric"
+    wizard.actors_changed([hero])
+    rule = wizard._rule_event(hero.properties["id"], "health_below", 40, "", "flee")
+    assert rule == {"time": 0.0, "type": "rule", "actor": hero.properties["id"],
+                    "if": "health_below", "value": 40.0, "then": "flee"}
+    assert wizard._describe(rule) == "Aldric: when its health falls below 40 → FLEE"
+
+
+def test_selecting_any_npc_in_the_map_casts_it(wizard, main_window):
+    from game.entities import NPC
+    villager = NPC(pos=[300.0, 0.0, 300.0], properties={"npc_role": "villager", "name": "Tam"})
+    main_window.state.things.append(villager)
+    main_window.set_selected_objects([villager])
+    wizard.sync_selection_from_editor()
+    aid = villager.properties["id"]
+    assert aid in wizard.actor_meta and not wizard.actor_meta[aid]["spawn"]   # a real map actor
+    assert wizard._current_actor_ids() == [aid]

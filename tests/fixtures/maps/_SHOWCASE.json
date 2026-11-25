@@ -4675,7 +4675,7 @@
                 "io_enabled": true,
                 "name": "Prop_1",
                 "id": "e5bb4ffb-5797-4131-bac9-dfbf6fd7b24e",
-                "model_path": "assets/models/Oil_Drum.obj",
+                "model_path": "assets/models/Oak_Barrel.obj",
                 "rotation": [
                     0,
                     104,
@@ -4746,7 +4746,7 @@
                 "io_enabled": true,
                 "name": "Prop_1 (copy)",
                 "id": "28e24ffd-fa27-4cfd-af11-ce5dcc75ab9c",
-                "model_path": "assets/models/Oil_Drum.obj",
+                "model_path": "assets/models/Oak_Barrel.obj",
                 "rotation": [
                     0,
                     90,
@@ -4817,7 +4817,7 @@
                 "io_enabled": true,
                 "name": "Prop_1 (copy 2)",
                 "id": "000eeb97-b892-4216-862c-7c16f070d306",
-                "model_path": "assets/models/Oil_Drum.obj",
+                "model_path": "assets/models/Oak_Barrel.obj",
                 "rotation": [
                     0,
                     200,

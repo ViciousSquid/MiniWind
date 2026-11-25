@@ -32,7 +32,10 @@ ATTACK = (238, 104, 88)
 MOVE = (120, 214, 130)
 SAY = (110, 170, 255)
 THINK = (196, 146, 255)
-COLOURS = {"attack": ATTACK, "move": MOVE, "say": SAY, "think": THINK}
+CAST = (255, 170, 60)
+RULE = (240, 220, 120)
+COLOURS = {"attack": ATTACK, "move": MOVE, "say": SAY, "think": THINK, "cast": CAST,
+           "rule": RULE}
 #: More pairs than this in one battle and it is drawn company to company.
 PAIRS_DRAWN = 6
 LINE_W = 3.0
@@ -152,6 +155,31 @@ def intents(wizard):
             else:
                 here = _pos(actor)
                 out.append(Intent(kind, here, here, label, [aid], head=False))
+        elif kind == "cast":
+            aid = str(event.get("actor", ""))
+            actor = objects.get(aid)
+            if actor is None:
+                continue
+            spell = str(event.get("spell", "")).replace("_", " ").title()
+            label = f"CAST {spell} · {_t(event.get('time', 0.0))}"
+            target = objects.get(str(event.get("target", "") or ""))
+            if target is not None:
+                out.append(Intent("cast", _pos(actor), _pos(target), label, [aid, str(event["target"])]))
+            else:
+                here = _pos(actor)
+                out.append(Intent("cast", here, here, label, [aid], head=False))
+        elif kind == "rule":
+            aid = str(event.get("actor", ""))
+            actor = objects.get(aid)
+            if actor is None:
+                continue
+            describe = getattr(wizard, "_describe", None)
+            text = describe(event) if describe is not None else "RULE"
+            text = text.split(": ", 1)[-1]
+            here = _pos(actor)
+            intent = Intent("rule", here, here, f"⚑ {text}", [aid], head=False)
+            intent.below = True
+            out.append(intent)
         elif kind == "fight":
             attackers = [a for a in map(str, event.get("attackers", [])) if a in objects]
             defenders = [d for d in map(str, event.get("defenders", [])) if d in objects]
@@ -436,9 +464,11 @@ def paint(painter, wizard, project, selected=()):
             if a is None or b is None:
                 continue
             if not intent.head:
-                # A line said or thought to no one: over the actor's head.
+                # A line said or thought to no one: over the actor's head (a
+                # rule's badge: under its feet).
                 if labelled:
-                    _label(painter, a[0], a[1] - 34, intent.label, rgb, alpha)
+                    dy = 38 if getattr(intent, "below", False) else -34
+                    _label(painter, a[0], a[1] + dy, intent.label, rgb, alpha)
                 continue
             leader(painter, a, b, rgb, alpha=alpha, start_gap=intent.src_gap,
                    end_gap=intent.dst_gap, both=intent.both, dash=intent.kind == "think",

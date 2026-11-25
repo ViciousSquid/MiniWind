@@ -94,8 +94,8 @@ def test_a_symlink_leading_out_of_the_root_is_refused(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("path", [
-    "assets/models/Oil_Drum.obj",
-    "assets\\models/Oil_Drum_Grey.obj",          # as a shipped map spells it
+    "assets/models/Oak_Barrel.obj",
+    "assets\\models/Oak_Barrel.obj",          # as a shipped map spells it
     "plugins/tidy/assets/book.obj",
     "plugins/bigworld/assets/bigworldsettings.png",
     "assets/textures/effects/fire01.gif",

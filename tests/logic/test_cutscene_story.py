@@ -302,3 +302,57 @@ def test_a_top_down_cutscene_follows_its_actor_from_above(logic):
     up = glm.vec3(view[0][1], view[1][1], view[2][1])
     assert up.x == pytest.approx(math.sin(heading), abs=1e-4)
     assert up.z == pytest.approx(math.cos(heading), abs=1e-4)
+
+
+# -- rules and casts ----------------------------------------------------------
+def test_a_rule_sends_a_badly_hurt_fighter_fleeing_on_the_games_legs(logic):
+    a1, d1 = _actor("a1", 0.0, max_health=100), _actor("d1", 100.0)
+    tracks = {"a1": [{"time": 0.0, "pos": [0, 0, 0], "yaw": 0.0},
+                     {"time": 9.0, "pos": [900, 0, 0], "yaw": 0.0}]}
+    runtime, emitted = _play(logic, [a1, d1], tracks=tracks, events=[
+        {"time": 0.0, "type": "fight", "duration": 20.0, "attackers": ["a1"], "defenders": ["d1"]},
+        {"time": 0.0, "type": "rule", "actor": "a1", "if": "health_below", "value": 40, "then": "flee"}])
+    _step(runtime, 0.3)
+    assert not [e for e in emitted if e[0] == "cutscene.order"]
+    a1.properties["health"] = 30
+    _step(runtime, 0.3)
+    (order,) = [d for n, d in emitted if n == "cutscene.order"]
+    assert order["order"] == "flee" and order["actor"] is a1 and order["threat"] is d1
+    assert id(a1) not in runtime.fighting_ids() and runtime.simulating()
+    a1.pos = [55.0, 0.0, 66.0]
+    _step(runtime, 0.3)
+    assert list(a1.pos) == [55.0, 0.0, 66.0]          # its track no longer has it
+    a1.properties["health"] = 10
+    _step(runtime, 0.3)
+    assert len([e for e in emitted if e[0] == "cutscene.order"]) == 1   # once
+
+
+def test_a_rule_on_a_death_and_one_on_being_outnumbered(logic):
+    a1, a2, d1 = _actor("a1", 0.0), _actor("a2", 0.0, 200.0), _actor("d1", 100.0)
+    runtime, emitted = _play(logic, [a1, a2, d1], events=[
+        {"time": 0.0, "type": "fight", "duration": 20.0, "attackers": ["a1", "a2"], "defenders": ["d1"]},
+        {"time": 0.0, "type": "rule", "actor": "a1", "if": "dies", "of": "a2",
+         "then": "say", "text": "Brother!"},
+        {"time": 0.0, "type": "rule", "actor": "d1", "if": "allies_below", "value": 2,
+         "then": "stand_down"}])
+    _step(runtime, 0.3)
+    a2.properties.update(dead=True, health=0)
+    _step(runtime, 0.3)
+    lines = [d for n, d in emitted if n == "cutscene.line"]
+    assert [(l["actor"], l["text"]) for l in lines] == [(a1, "Brother!")]
+    assert id(d1) not in runtime.fighting_ids()        # alone from the start: stood down
+
+
+def test_a_cast_goes_to_the_game_at_its_time_and_the_raised_join_its_side(logic):
+    caster, foe, body = _actor("caster", 0.0), _actor("foe", 100.0), _actor("body", 50.0, dead=True)
+    runtime, emitted = _play(logic, [caster, foe, body], events=[
+        {"time": 0.0, "type": "fight", "duration": 20.0, "attackers": ["caster"], "defenders": ["foe"]},
+        {"time": 0.5, "type": "cast", "actor": "caster", "spell": "resurrection", "target": "body"}])
+    _step(runtime, 0.6)
+    (cast,) = [d for n, d in emitted if n == "cutscene.cast"]
+    assert cast["actor"] is caster and cast["spell"] == "resurrection" and cast["target"] is body
+    body.properties.update(dead=False, health=40)       # the game raised it
+    assert runtime.join_side(body, caster)
+    _step(runtime, 0.3)
+    assert body.properties["_aggro_target"] == id(foe)
+    assert id(body) in runtime.fighting_ids()

@@ -31,7 +31,7 @@ TICK = 1.0 / 60.0
 
 
 def _barrel(name, x, z, **props):
-    settings = {"model_path": "Oil_Drum.obj", "explosive": True,
+    settings = {"model_path": "Oak_Barrel.obj", "explosive": True,
                 "explosive_health": 20, "explosion_damage": 40,
                 "explosion_radius": 200.0, "explosion_force": 400.0}
     settings.update(props)
@@ -210,7 +210,7 @@ def test_the_damage_and_explode_inputs(fio_session, clock):
 def test_physics_props_are_pushed(fio_session, clock):
     session = _play(fio_session, clock, [
         _barrel("b1", 0.0, 0.0),
-        make_thing(Prop, "crate", (90.0, 0.0, 0.0), model_path="Oil_Drum.obj",
+        make_thing(Prop, "crate", (90.0, 0.0, 0.0), model_path="Oak_Barrel.obj",
                    physics_enabled=True)])
     crate = _named(session, "crate")
     if session.logic.session_runtime.physics_world is None:
@@ -250,7 +250,7 @@ def test_a_pushed_monster_stops_at_a_wall(fio_session, clock):
 def test_a_prop_with_physics_off_is_never_moved(fio_session, clock):
     session = _play(fio_session, clock, [
         _barrel("b1", 0.0, 0.0),
-        make_thing(Prop, "statue", (90.0, 0.0, 0.0), model_path="Oil_Drum.obj",
+        make_thing(Prop, "statue", (90.0, 0.0, 0.0), model_path="Oak_Barrel.obj",
                    physics_enabled=False)])
     statue = _named(session, "statue")
     session.logic.explosion_runtime.explode_prop(_named(session, "b1"))
@@ -263,7 +263,7 @@ def test_with_physics_off_in_settings_nothing_is_pushed(fio_session, clock):
     level = level_data(brushes=room(size=1600.0), things=[
         make_thing(PlayerStart, "spawn", (500.0, 40.0, 500.0)),
         _barrel("b1", 0.0, 0.0),
-        make_thing(Prop, "crate", (90.0, 0.0, 0.0), model_path="Oil_Drum.obj",
+        make_thing(Prop, "crate", (90.0, 0.0, 0.0), model_path="Oak_Barrel.obj",
                    physics_enabled=True)])
     session = fio_session(level)
     session.clock = clock

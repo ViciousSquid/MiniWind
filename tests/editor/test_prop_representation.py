@@ -115,7 +115,7 @@ def test_the_presets_list_shows_the_default(panel):
 
     presets = panel._widgets['prop_model_preset_combo']
     assert prop.properties['model_path'] == Prop.DEFAULT_MODEL_PATH
-    assert presets.currentText() == 'Oil Barrel'
+    assert presets.currentText() == 'Oak Barrel'
 
 
 def _choose_preset(panel, prop, name):
@@ -135,9 +135,9 @@ def test_choosing_the_ball_preset_applies_the_ball_settings(panel):
     assert p['collision_shape'] == 'aabb' and p['bounciness'] > 0.0
 
 
-def test_choosing_the_oil_barrel_takes_back_the_ball_settings(panel):
+def test_choosing_the_oak_barrel_takes_back_the_ball_settings(panel):
     prop = Prop.for_model('assets/models/ball.obj', pos=[0, 0, 0])
-    _choose_preset(panel, prop, 'Oil Barrel')
+    _choose_preset(panel, prop, 'Oak Barrel')
 
     p = prop.properties
     assert p['model_path'] == Prop.DEFAULT_MODEL_PATH

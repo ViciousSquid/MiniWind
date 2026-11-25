@@ -194,6 +194,9 @@ class NpcArchery:
                     return True
                 if magic.try_heal(thing):
                     return True
+                # A necromancer raises the fallen to fight beside it.
+                if magic.try_raise(thing):
+                    return True
                 if style == combat_loadout.MAGIC:
                     if magic.cast_attack(thing, target):
                         return True

@@ -10,7 +10,7 @@ from engine import brush_placement
 
 pytestmark = pytest.mark.qt
 
-DRUM = "assets/models/Oil_Drum.obj"
+DRUM = "assets/models/Oak_Barrel.obj"
 #: The drum squashed into a slab like a door: 182 wide (X), 65 high, 11 deep.
 SLAB = [4.0, 1.0, 0.25]
 

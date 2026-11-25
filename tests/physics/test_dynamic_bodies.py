@@ -12,7 +12,7 @@ from engine.player import Player
 from engine.prop_entity import Prop
 from engine.spatial import set_authored_flag, set_live_flag
 
-# Oil_Drum_Grey bounds: local Y starts at zero, so the entity origin is the
+# Oak_Barrel bounds (the old drum's): local Y starts at zero, so the entity origin is the
 # point touching the floor and the collision box centre sits half a height up.
 DRUM_SIZE = (45.64271, 65.181947, 45.64271)
 DRUM_HALF_Y = DRUM_SIZE[1] * 0.5

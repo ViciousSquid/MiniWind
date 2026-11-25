@@ -139,7 +139,7 @@ def test_a_new_prop_is_neither_carryable_nor_solid():
     assert prop.properties['no_collision'] is True
 
 
-@pytest.mark.parametrize("path", ['assets/models/Oil_Drum.obj',
+@pytest.mark.parametrize("path", ['assets/models/Oak_Barrel.obj',
                                   'assets/models/catwalk_corner_right_160.obj',
                                   'models/anything_else.obj'])
 def test_a_placed_model_is_solid_scenery(path):

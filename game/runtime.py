@@ -461,6 +461,26 @@ AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is at
 #: the push, as fractions of the full blast.
 BLAST_BLOCK_DAMAGE = 0.95
 BLAST_BLOCK_PUSH = 0.80
+#: Slow Time (game.rpg.magic "slow_time"): how fast the world runs while it
+#: lasts, for how long (real seconds), and a second more per level past this.
+SLOW_TIME_SCALE = 0.5
+SLOW_TIME_SECONDS = 5.0
+SLOW_TIME_PER_LEVEL = 1.0
+SLOW_TIME_FROM_LEVEL = 5
+#: The tint fades in and out over this long (seconds).
+SLOW_TIME_FADE = 0.35
+
+
+def slow_time_seconds(level) -> float:
+    """How long Slow Time lasts cast at *level*: five seconds, a second more
+    for each level past the fifth."""
+    try:
+        level = int(level)
+    except (TypeError, ValueError):
+        level = 1
+    return SLOW_TIME_SECONDS + max(0, level - SLOW_TIME_FROM_LEVEL) * SLOW_TIME_PER_LEVEL
+
+
 #: A fall of more than this many world units kills outright (the backstop
 #: for a map's hurt trigger at the edge of the world).
 FATAL_FALL = 2000.0
@@ -2085,6 +2105,7 @@ class MiniwindSession(SettlementLaw):
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        self.end_slow_time()        # the next map runs at the world's own speed
         self.nav.invalidate()
         self.windmills.clear()
         if self.living is not None:
@@ -2968,6 +2989,7 @@ class MiniwindSession(SettlementLaw):
             party.arrive(self)
         self.memory.update(delta)
         self._watch_fall(delta)
+        self._update_slow_time()
         self._check_pack()
         self.autosave.tick(delta)
         self.rewind.tick(delta)
@@ -4858,6 +4880,7 @@ class MiniwindSession(SettlementLaw):
         self._run_reveals()
         self._age_lists(delta)
         self._check_pack()          # a satchel sold over the counter
+        self._update_slow_time()
 
     def _update_encumbrance(self) -> None:
         """Your pace: Speed sets it (Character.move_speed_factor), and
@@ -4922,6 +4945,54 @@ class MiniwindSession(SettlementLaw):
         elif not c.can_level_up:
             self._level_up_announced = False
 
+    # -- Slow Time --------------------------------------------------------------
+    def slow_time(self, level) -> float:
+        """The world runs at :data:`SLOW_TIME_SCALE` for
+        :func:`slow_time_seconds` (real seconds) -- cast again, it lasts the
+        longer. Returns how long it now lasts."""
+        import time as _time
+        now = _time.monotonic()
+        seconds = slow_time_seconds(level)
+        logic = self.logic
+        if self.__dict__.get("_slow_time_until") is None:
+            # What the world ran at before (the debug tools may have set it).
+            self._slow_time_prior = float(getattr(logic, "time_scale", 1.0) or 1.0)
+            self._slow_time_from = now
+        self._slow_time_until = max(float(self.__dict__.get("_slow_time_until") or 0.0),
+                                    now + seconds)
+        logic.time_scale = SLOW_TIME_SCALE * self._slow_time_prior
+        self.notify("Time slows…", 2.0)
+        return self._slow_time_until - now
+
+    def slow_time_left(self) -> float:
+        """Real seconds of Slow Time left (0: none)."""
+        import time as _time
+        until = self.__dict__.get("_slow_time_until")
+        return max(0.0, until - _time.monotonic()) if until is not None else 0.0
+
+    def slow_time_tint(self) -> float:
+        """How strong the icy tint is now (0..1): fading in, held, fading out."""
+        import time as _time
+        until = self.__dict__.get("_slow_time_until")
+        if until is None:
+            return 0.0
+        now = _time.monotonic()
+        since = now - float(self.__dict__.get("_slow_time_from", now))
+        left = until - now
+        return max(0.0, min(1.0, since / SLOW_TIME_FADE, left / SLOW_TIME_FADE))
+
+    def _update_slow_time(self) -> None:
+        """End Slow Time when its seconds are up: the world runs as before."""
+        until = self.__dict__.get("_slow_time_until")
+        if until is not None and self.slow_time_left() <= 0.0:
+            self.end_slow_time()
+
+    def end_slow_time(self) -> None:
+        if self.__dict__.get("_slow_time_until") is None:
+            return
+        self.logic.time_scale = float(self.__dict__.get("_slow_time_prior", 1.0) or 1.0)
+        self._slow_time_until = None
+
     def played_cutscenes(self):
         """The ids of the "play once" cutscenes this save has seen play."""
         try:
@@ -4945,6 +5016,7 @@ class MiniwindSession(SettlementLaw):
         player, all held while the cutscene plays."""
         self._run_reveals()
         self._age_lists(delta)
+        self._update_slow_time()
         self.archery.update(delta)
         self.held.update()
         self.burning.update(delta)
@@ -4952,6 +5024,12 @@ class MiniwindSession(SettlementLaw):
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             self.arrows_in_flight = ()
             self._arrow_tags.clear()
+        # Those a rule sent fleeing run for refuge on the game's own legs.
+        for actor in list((self.__dict__.get("_cutscene_fleeing") or {}).values()):
+            if actor.properties.get("dead"):
+                self._cutscene_fleeing.pop(id(actor), None)
+                continue
+            self._move(actor, delta)
 
     def _age_lists(self, delta):
         for n in self.notifications:
@@ -9193,6 +9271,10 @@ class MiniwindSession(SettlementLaw):
             self._magic_cast_fx(spell)
             self._spawn_wisp(spell)
             return True
+        if any(e.get("kind") == "slow_time" for e in (spell.effects or [])):
+            self._magic_cast_fx(spell)
+            self.slow_time(c.level)
+            return True
         if spell.delivery == rpg_magic.SELF:
             self._magic_cast_fx(spell)
         if aim is not None and aim != "facing":
@@ -9330,6 +9412,83 @@ class MiniwindSession(SettlementLaw):
         self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
+
+    # -- NPC resurrection: a necromancer's raised dead fight for it --------
+    def raisable_body(self, caster, reach):
+        """The nearest fallen NPC or creature *caster* could raise within
+        *reach*: not blown apart, never raised before, not a player."""
+        best, best_d = None, float(reach)
+        for t in fio.things(self.logic):
+            tp = t.properties
+            if t is caster or not tp.get("dead") or tp.get("gibbed") or tp.get("resurrection_used"):
+                continue
+            if tp.get("multiplayer_player"):
+                continue
+            if str(tp.get("type", "")).replace("_", "").lower() not in ("npc", "creature", "monster"):
+                continue
+            d = self._dist2d(caster.pos, t.pos)
+            if d <= best_d:
+                best, best_d = t, d
+        return best
+
+    def raise_for(self, caster, body) -> bool:
+        """Raise *body* as *caster*'s: alive, red-tinted, on *caster*'s team
+        and fighting its foe -- the player's resurrection, cast by an NPC."""
+        p = body.properties
+        if p.get("gibbed") or p.get("resurrection_used") or not self._revive_actor(body):
+            return False
+        self._restore_living_kit(p)
+        cp = caster.properties
+        team = str(cp.get("team") or cp.get("faction") or "")
+        p.update(resurrection_used=True, resurrected_by=str(cp.get("id") or ""),
+                 sprite_tint=[1.0, 0.30, 0.30], combatant=True, aggression="hostile",
+                 team=team, faction=str(cp.get("faction") or team), triggered=False,
+                 awake=True, follow_player=False, away_on_journey=False,
+                 _ward_rolled=True, _second_weapon_rolled=True, _caster_sidearm_rolled=True)
+        for key in ("_aggro_target", "_base_aggression", "_flee", "_dest",
+                    "_arrest_state", "_journey", "_death_noted"):
+            p.pop(key, None)
+        if cp.get("_aggro_target"):
+            p["_aggro_target"] = cp["_aggro_target"]       # straight at its master's foe
+        self._deaths_seen.discard(str(p.get("name", "")))
+        if p.get("name"):
+            self.store.set("dead." + str(p["name"]), "false")
+        _journal(body)
+        self._rebuild_entity_caches()
+        self.magic_fx.resurrection(_feet(body))
+        self._spell_sound(caster, RESURRECTION_SOUND)
+        self.float_text(body, "RAISED")
+        return True
+
+    # -- what a cutscene asks of the game (Fio's cutscene.* events) ----------
+    def cutscene_cast(self, caster, spell_id, target=None):
+        """A cutscene's CAST (or a rule's): *caster* casts *spell_id*. The
+        actors it raised."""
+        return self.npc_magic.cast_spell(caster, spell_id, target)
+
+    def cutscene_flee(self, actor, threat=None) -> None:
+        """A cutscene rule's FLEE: *actor* runs for refuge from *threat*, as a
+        frightened villager does (the schedule mover walks it there)."""
+        p = actor.properties
+        p["triggered"] = True
+        p["awake"] = False
+        p.pop("_aggro_target", None)
+        p.pop("_pursuit_range", None)
+        p["sched_state"] = sched.FLEE
+        p["_flee"] = True
+        if threat is not None:
+            p["_dest"] = self._refuge_point(actor, threat)
+        else:
+            p["_dest"] = list(p.get("home") or actor.pos)
+        self.__dict__.setdefault("_cutscene_fleeing", {})[id(actor)] = actor
+
+    def prepare_cutscene_actors(self, actors) -> None:
+        """Actors a cutscene spawned, readied as a map's are at its start: a
+        handedness, their core stats, and a blade for an archer's close
+        quarters (game/held_weapons.py)."""
+        self._assign_npc_handedness()
+        self._assign_npc_stats()
+        self._arm_fighters()
 
     def leave_map(self) -> None:
         """The player leaves this map (play stops for a level change): its

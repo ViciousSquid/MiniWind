@@ -1620,8 +1620,8 @@ class AssetBrowserTab(QWidget):
             items = [AssetItem(f, os.path.join(path, f), is_model=self.is_model_tab,
                                is_audio=self.is_audio_tab)
                      for f in files if os.path.splitext(f)[1].lower() in extensions
-                     # The Oil Barrel's models come through its preset and
-                     # Variant in the Prop panel, not from here.
+                     # The Oak Barrel comes through its preset in the Prop
+                     # panel, not from here.
                      and not (self.is_model_tab and is_preset_only_model(
                          os.path.join(path, f).replace('\\', '/')))]
             self.items = items

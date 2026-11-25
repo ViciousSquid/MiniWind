@@ -322,6 +322,20 @@ def draw_bubbles(painter, session, viewport, width, height):
             _draw_bubble(painter, int(sp[0]), int(sp[1]), kind)
 
 
+#: Slow Time's tint over the whole screen, at its strongest: a light icy blue.
+SLOW_TIME_TINT = (120, 190, 255, 52)
+
+
+def draw_slow_time(painter, session, width, height):
+    """The icy tint while Slow Time lasts (fading in and out)."""
+    tint = getattr(session, "slow_time_tint", None)
+    strength = tint() if tint is not None else 0.0
+    if strength <= 0.0:
+        return
+    r, g, b, a = SLOW_TIME_TINT
+    painter.fillRect(0, 0, int(width), int(height), QColor(r, g, b, int(a * strength)))
+
+
 def draw_barks(painter, session, viewport, width, height):
     """What people are saying aloud, in a small plate over their heads: a
     guard's "Halt!", a traveller's greeting, a brigand's threat."""

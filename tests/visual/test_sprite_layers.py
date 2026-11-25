@@ -299,7 +299,7 @@ def test_model_rows_are_culled_by_their_measured_mesh_radius(renderer, context):
 
     def drum(name, pos, scale):
         return make_thing(Prop, name, pos, render_mode="model",
-                          model_path="assets/models/Oil_Drum.obj",
+                          model_path="assets/models/Oak_Barrel.obj",
                           scale=[scale, scale, scale])
 
     things = [drum("seen", (0.0, 60.0, 0.0), 1.0),

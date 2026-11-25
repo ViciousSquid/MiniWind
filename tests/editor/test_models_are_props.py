@@ -19,7 +19,7 @@ from editor.things import ENTITY_CATEGORIES, ENTITY_TYPES, Prop, Thing  # noqa: 
 pytestmark = pytest.mark.qt
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DRUM = "assets/models/Oil_Drum.obj"
+DRUM = "assets/models/Oak_Barrel.obj"
 
 
 def _legacy_record(**props):
@@ -124,7 +124,7 @@ def test_the_asset_browser_places_a_model_as_a_prop(main_window):
     assert prop.properties["render_mode"] == "model"
     assert prop.properties["model_path"] == DRUM
     assert prop.properties["rotation"] == [0, 90, 0]
-    assert prop.properties["name"] == "Oil_Drum"
+    assert prop.properties["name"] == "Oak_Barrel"
     # A placed model is solid scenery: Solid on, Physics off, Gravity off.
     assert prop.properties["no_collision"] is False
     assert prop.properties["physics_enabled"] is False

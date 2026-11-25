@@ -31,8 +31,11 @@ except ImportError:
 LINE_KINDS = ("say", "think")
 LINE_SECONDS = 3.0
 #: How often (cutscene seconds) a fighter in a cutscene battle looks again for
-#: the nearest living foe.
+#: the nearest living foe, and the cutscene's rules are weighed.
 FIGHT_RETARGET_SECONDS = 0.25
+#: What a cutscene rule can watch for (``if``) and do about it (``then``).
+RULE_CONDITIONS = ("health_below", "dies", "allies_below", "foes_below")
+RULE_ACTIONS = ("flee", "cast", "say", "think", "attack", "stand_down")
 
 
 def _alive(thing):
@@ -430,6 +433,9 @@ class CutsceneRuntime:
 
         if spawned:
             self.logic.world_runtime.build_entity_caches()
+            # A game readies its new actors as it does a map's (MiniWind arms
+            # an archer with a blade for close quarters, rolls handedness...).
+            self.logic._plugin_emit("cutscene.spawned", actors=list(spawned))
 
         # The editor Camera stores yaw/pitch in degrees, while the play-mode
         # camera math below uses radians.  Keep the authored JSON human-readable
@@ -530,6 +536,12 @@ class CutsceneRuntime:
             "active_fights": {},
             "line_events": [event for event in events if event.get("type") in LINE_KINDS],
             "next_line_event": 0,
+            "cast_events": [event for event in events if event.get("type") == "cast"],
+            "next_cast_event": 0,
+            "rules": [dict(event) for event in events if event.get("type") == "rule"],
+            # Actors given over to the game's own orders (fleeing): neither a
+            # battle nor their MOVE track has them.
+            "detached": {},
             # Actors a battle let go of: their MOVE track carries on from where
             # the fight left them (a key at the moment it ended).
             "fight_retarget_at": 0.0,
@@ -589,7 +601,7 @@ class CutsceneRuntime:
         cs = self.state
         if not cs or not cs.get("active") or cs.get("paused"):
             return False
-        if cs.get("active_fights"):
+        if cs.get("active_fights") or cs.get("detached"):
             return True
         if not cs.get("fought"):
             return False
@@ -622,6 +634,71 @@ class CutsceneRuntime:
             target = self._nearest_living(actor, foes)
             props["_aggro_target"] = id(target) if target is not None else None
 
+    def _begin_fight(self, cs, index, attackers, defenders, mutual=True):
+        """Hand *attackers* (and, *mutual*, *defenders*) to the game's combat
+        AI, each at its nearest living foe."""
+        sides = [(a, defenders) for a in attackers]
+        if mutual:
+            sides += [(d, attackers) for d in defenders]
+        fighters, seen = [], {}
+        for actor, foes in sides:
+            if MonsterThing is None or not isinstance(actor, MonsterThing):
+                continue          # only actors with combat AI fight
+            if id(actor) in seen:
+                # On both sides: everyone else is its foe.
+                entry = fighters[seen[id(actor)]]
+                merged = [f for f in entry[2] + foes if f is not actor]
+                fighters[seen[id(actor)]] = (entry[0], entry[1], merged)
+                continue
+            props = actor.properties
+            snapshot = {
+                "had_disabled": "disabled" in props,
+                "disabled": props.get("disabled", False),
+                "had_awake": "awake" in props,
+                "awake": props.get("awake", False),
+                "had_aggro": "_aggro_target" in props,
+                "aggro": props.get("_aggro_target"),
+                "had_target_name": "target_name" in props,
+                "target_name": props.get("target_name"),
+                # A parked actor (a scripted ambush, a peaceful townsman)
+                # fights in full -- bow drawn, spells cast -- for the battle,
+                # and is parked again after.
+                "had_triggered": "triggered" in props,
+                "triggered": props.get("triggered", False),
+            }
+            seen[id(actor)] = len(fighters)
+            fighters.append((actor, snapshot, [f for f in foes if f is not actor]))
+            set_live_flag(actor, "disabled", False)
+            props["awake"] = True
+            props["triggered"] = False
+            props.pop("target_name", None)
+            props.pop("_aggro_target", None)
+            (cs.get("detached") or {}).pop(id(actor), None)
+        fight = {"fighters": fighters}
+        self._aim_fighters(fight)
+        cs.setdefault("active_fights", {})[index] = fight
+        cs["fought"] = True
+        self.logic._plugin_emit("cutscene.fight", started=True, index=index,
+                                fighters=[f[0] for f in fighters])
+
+    def _end_fight(self, cs, index, active, elapsed):
+        """The battle is over: its fighters' flags back; a survivor's MOVE
+        track carries on from where the battle left it."""
+        actors_of = cs.get("actors") or {}
+        for actor, snapshot, _foes in active["fighters"]:
+            self._release_fighter(actor, snapshot)
+            aid = next((key for key, value in actors_of.items() if value is actor), None)
+            if aid is not None and _alive(actor) and aid in (cs.get("actor_tracks") or {}):
+                cs["actor_tracks"][aid].append({
+                    "time": float(elapsed),
+                    "pos": self._cutscene_vec3(actor.pos),
+                    "yaw": self._cutscene_yaw(actor),
+                })
+        cs["active_fights"].pop(index, None)
+        cs.setdefault("fights_done", set()).add(index)
+        self.logic._plugin_emit("cutscene.fight", started=False, index=index,
+                                fighters=[f[0] for f in active["fighters"]])
+
     def _update_json_fights(self, cs, elapsed):
         """Battles: hand every fighter to the game's own combat AI against the
         other side -- each at its nearest living foe -- for the event's
@@ -634,77 +711,193 @@ class CutsceneRuntime:
             active = cs.setdefault("active_fights", {}).get(index)
 
             if start <= elapsed < end and active is None and index not in cs.setdefault("fights_done", set()):
-                attackers = [self._fight_actor(cs, aid) for aid in event.get("attackers", []) or []]
-                defenders = [self._fight_actor(cs, aid) for aid in event.get("defenders", []) or []]
+                if "_actors" in event:
+                    attackers, defenders = event["_actors"]
+                else:
+                    attackers = [self._fight_actor(cs, aid) for aid in event.get("attackers", []) or []]
+                    defenders = [self._fight_actor(cs, aid) for aid in event.get("defenders", []) or []]
                 attackers = [a for a in attackers if a is not None]
                 defenders = [d for d in defenders if d is not None]
                 if not attackers or not defenders:
                     cs["fights_done"].add(index)
                     continue
-                sides = [(a, defenders) for a in attackers]
-                if event.get("mutual", True):
-                    sides += [(d, attackers) for d in defenders]
-                fighters, seen = [], {}
-                for actor, foes in sides:
-                    if MonsterThing is None or not isinstance(actor, MonsterThing):
-                        continue          # only actors with combat AI fight
-                    if id(actor) in seen:
-                        # On both sides: everyone else is its foe.
-                        entry = fighters[seen[id(actor)]]
-                        merged = [f for f in entry[2] + foes if f is not actor]
-                        fighters[seen[id(actor)]] = (entry[0], entry[1], merged)
-                        continue
-                    props = actor.properties
-                    snapshot = {
-                        "had_disabled": "disabled" in props,
-                        "disabled": props.get("disabled", False),
-                        "had_awake": "awake" in props,
-                        "awake": props.get("awake", False),
-                        "had_aggro": "_aggro_target" in props,
-                        "aggro": props.get("_aggro_target"),
-                        "had_target_name": "target_name" in props,
-                        "target_name": props.get("target_name"),
-                        # A parked actor (a scripted ambush, a peaceful
-                        # townsman) fights in full -- bow drawn, spells cast --
-                        # for the battle, and is parked again after.
-                        "had_triggered": "triggered" in props,
-                        "triggered": props.get("triggered", False),
-                    }
-                    seen[id(actor)] = len(fighters)
-                    fighters.append((actor, snapshot, [f for f in foes if f is not actor]))
-                    set_live_flag(actor, "disabled", False)
-                    props["awake"] = True
-                    props["triggered"] = False
-                    props.pop("target_name", None)
-                    props.pop("_aggro_target", None)
-                fight = {"fighters": fighters}
-                self._aim_fighters(fight)
-                cs["active_fights"][index] = fight
-                cs["fought"] = True
-                self.logic._plugin_emit("cutscene.fight", started=True, index=index,
-                                        fighters=[f[0] for f in fighters])
+                self._begin_fight(cs, index, attackers, defenders, event.get("mutual", True))
 
             elif active is not None and elapsed >= end:
-                for actor, snapshot, _foes in active["fighters"]:
-                    self._release_fighter(actor, snapshot)
-                    # A cutscene actor's MOVE track carries on from where the
-                    # battle left it, not from where the track last had it.
-                    aid = next((key for key, value in actors_of.items() if value is actor), None)
-                    if aid is not None and _alive(actor) and aid in (cs.get("actor_tracks") or {}):
-                        cs["actor_tracks"][aid].append({
-                            "time": float(elapsed),
-                            "pos": self._cutscene_vec3(actor.pos),
-                            "yaw": self._cutscene_yaw(actor),
-                        })
-                cs["active_fights"].pop(index, None)
-                cs.setdefault("fights_done", set()).add(index)
-                self.logic._plugin_emit("cutscene.fight", started=False, index=index,
-                                        fighters=[f[0] for f in active["fighters"]])
+                self._end_fight(cs, index, active, elapsed)
 
-        if cs.get("active_fights") and elapsed >= float(cs.get("fight_retarget_at", 0.0)):
+        if ((cs.get("active_fights") or cs.get("rules"))
+                and elapsed >= float(cs.get("fight_retarget_at", 0.0))):
             cs["fight_retarget_at"] = elapsed + FIGHT_RETARGET_SECONDS
-            for fight in cs["active_fights"].values():
+            self._weigh_rules(cs, elapsed)
+            for fight in cs.get("active_fights", {}).values():
                 self._aim_fighters(fight)
+
+    # ------------------------------------------------------------------
+    # Rules: "if this actor's health falls below 40%, flee" -- weighed four
+    # times a second, each firing once; the game's own AI does the deed.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _health_pct(thing):
+        props = thing.properties
+        try:
+            health = float(props.get("health", 0) or 0)
+            top = float(props.get("max_health") or props.get("_max_health") or health or 1)
+        except (TypeError, ValueError):
+            return 100.0
+        return 100.0 * health / max(1e-6, top)
+
+    def _sides(self, cs, actor):
+        """``(allies, foes)`` of *actor* in the battles it is in (itself
+        among its allies)."""
+        allies, foes = {id(actor): actor}, {}
+        for fight in (cs.get("active_fights") or {}).values():
+            rows = {id(a): f for a, _s, f in fight["fighters"]}
+            if id(actor) not in rows:
+                continue
+            mine = rows[id(actor)]
+            for other, _snap, their_foes in fight["fighters"]:
+                if other is actor:
+                    continue
+                if any(f is actor for f in their_foes):
+                    foes[id(other)] = other
+                elif not any(f is other for f in mine):
+                    allies[id(other)] = other
+            for f in mine:
+                foes[id(f)] = f
+        return list(allies.values()), list(foes.values())
+
+    def _rule_holds(self, cs, rule, actor):
+        cond = str(rule.get("if", ""))
+        value = self._cutscene_number(rule.get("value", 0.0))
+        other = self._fight_actor(cs, rule["of"]) if rule.get("of") else actor
+        if other is None:
+            return False
+        if cond == "health_below":
+            return _alive(other) and self._health_pct(other) < value
+        if cond == "dies":
+            return not _alive(other)
+        if cond in ("allies_below", "foes_below"):
+            allies, foes = self._sides(cs, actor)
+            group = allies if cond == "allies_below" else foes
+            return sum(1 for a in group if _alive(a)) < value
+        return False
+
+    def _weigh_rules(self, cs, elapsed):
+        for rule in cs.get("rules") or []:
+            if rule.get("_fired") or elapsed + 1e-9 < self._cutscene_number(rule.get("time", 0.0)):
+                continue
+            actor = self._fight_actor(cs, rule.get("actor", ""))
+            if actor is None or not _alive(actor):
+                continue
+            if self._rule_holds(cs, rule, actor):
+                rule["_fired"] = True
+                self._order(cs, actor, rule, elapsed)
+                if self.state is not cs:
+                    return
+
+    def _order(self, cs, actor, rule, elapsed):
+        """Carry out a rule's ``then`` for *actor*."""
+        action = str(rule.get("then", ""))
+        if action in LINE_KINDS:
+            text = str(rule.get("text", "") or "").strip()
+            if text:
+                self.logic._plugin_emit("cutscene.line", kind=action, actor=actor, text=text,
+                                        seconds=self._line_seconds(rule))
+        elif action == "stand_down":
+            self._leave_fights(cs, actor)
+        elif action == "attack":
+            targets = [self._fight_actor(cs, t) for t in (rule.get("targets") or [rule.get("target")])
+                       if t]
+            targets = [t for t in targets if t is not None and t is not actor]
+            if targets:
+                self.start_fight(cs, [actor], targets, mutual=bool(rule.get("mutual", True)),
+                                 until=float(cs.get("duration", elapsed)))
+        elif action == "flee":
+            # From its nearest living foe -- found before it leaves the fight.
+            foes = [f for f in self._sides(cs, actor)[1] if _alive(f)]
+            threat = self._nearest_living(actor, foes) if foes else None
+            self._leave_fights(cs, actor)
+            cs.setdefault("detached", {})[id(actor)] = actor
+            self.logic._plugin_emit("cutscene.order", order="flee", actor=actor, threat=threat)
+        elif action == "cast":
+            self._cast(cs, actor, str(rule.get("spell", "")),
+                       self._fight_actor(cs, rule["target"]) if rule.get("target") else None)
+
+    def _leave_fights(self, cs, actor):
+        """*actor* out of every battle, its flags given back."""
+        for fight in (cs.get("active_fights") or {}).values():
+            kept = []
+            for row in fight["fighters"]:
+                if row[0] is actor:
+                    self._release_fighter(actor, row[1])
+                else:
+                    kept.append(row)
+            fight["fighters"] = kept
+            for _a, _s, foes in fight["fighters"]:
+                foes[:] = [f for f in foes if f is not actor]
+
+    def start_fight(self, cs, attackers, defenders, mutual=True, until=None):
+        """A battle begun mid-cutscene (by a rule), as an ATTACK keyframe's."""
+        index = f"rule-{len(cs.get('fight_events') or [])}-{len(cs.get('active_fights') or {})}"
+        event = {"time": cs["elapsed"], "duration": max(0.0, float(until or cs["duration"]) - cs["elapsed"]),
+                 "attackers": [], "defenders": [], "mutual": mutual,
+                 "_actors": (list(attackers), list(defenders))}
+        cs.setdefault("fight_events", []).append(event)
+        self._begin_fight(cs, len(cs["fight_events"]) - 1, list(attackers), list(defenders), mutual)
+        return index
+
+    def join_side(self, newcomer, ally):
+        """*newcomer* (raised or summoned by *ally*) fights on *ally*'s side
+        in every battle *ally* is in."""
+        cs = self.state
+        if not cs:
+            return False
+        joined = False
+        for fight in (cs.get("active_fights") or {}).values():
+            row = next((r for r in fight["fighters"] if r[0] is ally), None)
+            if row is None or any(r[0] is newcomer for r in fight["fighters"]):
+                continue
+            props = newcomer.properties
+            snapshot = {"had_disabled": "disabled" in props, "disabled": props.get("disabled", False),
+                        "had_awake": "awake" in props, "awake": props.get("awake", False),
+                        "had_aggro": False, "aggro": None, "had_target_name": False,
+                        "target_name": None, "had_triggered": "triggered" in props,
+                        "triggered": props.get("triggered", False)}
+            set_live_flag(newcomer, "disabled", False)
+            props["awake"] = True
+            props["triggered"] = False
+            foes = list(row[2])
+            fight["fighters"].append((newcomer, snapshot, foes))
+            for other, _s, their in fight["fighters"]:
+                if any(f is ally for f in their) and not any(f is newcomer for f in their):
+                    their.append(newcomer)
+            joined = True
+            self._aim_fighters(fight)
+        return joined
+
+    def _cast(self, cs, actor, spell, target):
+        if spell:
+            self.logic._plugin_emit("cutscene.cast", actor=actor, spell=spell, target=target)
+
+    def _fire_cast_events(self, cs, elapsed):
+        events = cs.get("cast_events") or []
+        index = int(cs.get("next_cast_event", 0))
+        while index < len(events) and self._cutscene_number(events[index].get("time", 0.0)) <= elapsed + 1e-9:
+            event = events[index]
+            index += 1
+            cs["next_cast_event"] = index
+            actor = self._fight_actor(cs, event.get("actor", ""))
+            if actor is None or not _alive(actor):
+                continue
+            target = self._fight_actor(cs, event["target"]) if event.get("target") else None
+            self._cast(cs, actor, str(event.get("spell", "")), target)
+
+    def release(self, actor):
+        """The game is done with *actor*'s orders (it stopped fleeing)."""
+        cs = self.state
+        if cs:
+            (cs.get("detached") or {}).pop(id(actor), None)
 
     @classmethod
     def _line_seconds(cls, event):
@@ -797,8 +990,9 @@ class CutsceneRuntime:
         fighting = self.fighting_ids(cs)
         for aid, rows in (cs.get("actor_tracks") or {}).items():
             actor = (cs.get("actors") or {}).get(aid)
-            if actor is None or id(actor) in fighting or not _alive(actor):
-                continue                  # the battle (or death) has it now
+            if (actor is None or id(actor) in fighting or not _alive(actor)
+                    or id(actor) in (cs.get("detached") or {})):
+                continue                  # the battle, the game or death has it now
             snapshot = (cs.get("actor_initial") or {}).get(aid, {})
             frame = self._cutscene_sample(
                 rows,
@@ -832,6 +1026,7 @@ class CutsceneRuntime:
                 self._message_queue.put((line, text))
 
         self._fire_line_events(cs, elapsed)
+        self._fire_cast_events(cs, elapsed)
 
         if not self._fire_cinematic_io_events():
             return

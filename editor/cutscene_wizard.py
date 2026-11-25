@@ -210,7 +210,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.once = QtWidgets.QCheckBox("Play once per game session")
         self.once.setChecked(True)
         self.restore = QtWidgets.QCheckBox("Restore existing actors after cutscene")
-        self.restore.setChecked(True)
+        # What a cutscene does to the world is real: actors stay where it
+        # leaves them (and the dead stay dead) unless this is ticked.
+        self.restore.setChecked(False)
         self.stop_escape = QtWidgets.QCheckBox("Escape stops the cutscene")
         self.stop_escape.setChecked(True)
         checkbox_style = (
@@ -637,8 +639,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         return bool(self._preview_rate)
 
     def is_cast(self, obj):
-        aid = str(getattr(obj, "properties", {}).get("id", "") or "")
-        return bool(aid) and aid in self.actor_meta
+        """Whether *obj* is (or, being an NPC or creature, now becomes) one
+        of the cast: any actor clicked while the editor is open joins it."""
+        return obj is not None and self.cast_actor(obj)
 
     def _aid(self, obj):
         return str(getattr(obj, "properties", {}).get("id", "") or "")
@@ -664,7 +667,10 @@ class CutsceneWizard(QtWidgets.QDialog):
         return True
 
     def sync_selection_from_editor(self):
-        """Whatever the editor selected among the cast is the cast selection."""
+        """Whatever NPC or creature the editor has selected is cast (if not
+        already) and is the cast selection."""
+        for obj in self.main_window.state.selected_objects:
+            self.cast_actor(obj)
         chosen = [self._aid(o) for o in self.main_window.state.selected_objects]
         chosen = [a for a in chosen if a in self.actor_meta]
         if chosen and set(chosen) != set(self._current_actor_ids()):
@@ -698,6 +704,16 @@ class CutsceneWizard(QtWidgets.QDialog):
         think = menu.addAction("THINK…")
         face = menu.addAction("FACE…")
         face.setToolTip("Then click an actor or a spot: they turn to face it")
+        # CAST: only for an actor with spells, and only its own.
+        spells = self._spells_of(obj)
+        cast_actions = {}
+        if spells:
+            cast_menu = menu.addMenu("CAST…")
+            for sid, name in spells:
+                cast_actions[cast_menu.addAction(name)] = sid
+        rule = menu.addAction("RULE…")
+        rule.setToolTip("When something happens in the fight, do something: "
+                        "e.g. below 40% health, flee")
         menu.addSeparator()
         when = menu.addAction("Set the time…")
         edit = menu.addAction("Edit actor")
@@ -711,6 +727,10 @@ class CutsceneWizard(QtWidgets.QDialog):
             self._arm_pick("move", aids)
         elif chosen is face:
             self._arm_pick("face", aids)
+        elif chosen in cast_actions:
+            self._arm_pick("cast", aids, spell=cast_actions[chosen])
+        elif chosen is rule:
+            self._ask_rule(aids, who)
         elif chosen in (say, think):
             kind = "say" if chosen is say else "think"
             line = self._ask_line(kind, who)
@@ -732,6 +752,128 @@ class CutsceneWizard(QtWidgets.QDialog):
         elif chosen is remove:
             self._remove_selected_actors()
         self._repaint_views()
+        return True
+
+    def _spells_of(self, obj):
+        """``[(spell id, name)]`` the actor knows, or [] (CAST is not offered)."""
+        spells = (getattr(obj, "properties", {}) or {}).get("spells")
+        out = []
+        for entry in spells if isinstance(spells, list) else ():
+            sid = entry.get("id") if isinstance(entry, dict) else entry
+            if not sid:
+                continue
+            name = str(sid).replace("_", " ").title()
+            try:
+                import game.rpg.magic as magic      # the game's names, where it has them
+                spell = magic.get(sid)
+                if spell is not None:
+                    name = spell.name
+            except Exception:
+                pass
+            out.append((str(sid), name))
+        return out
+
+    #: A rule's choices: ``(value, label)``.
+    RULE_IF = (("health_below", "health falls below (%)"),
+               ("dies", "dies"),
+               ("allies_below", "fewer allies than … standing"),
+               ("foes_below", "fewer foes than … standing"))
+    RULE_THEN = (("flee", "FLEE"), ("cast", "CAST a spell"), ("say", "SAY"),
+                 ("think", "THINK"), ("attack", "ATTACK"), ("stand_down", "STAND DOWN"))
+
+    def _ask_rule(self, aids, who):
+        """A fight rule for *aids*: when <something> then <do something>. The
+        game's own AI carries it out when it holds (once)."""
+        dialog = QtWidgets.QDialog(self.main_window)
+        dialog.setWindowTitle(f"Rule for {who}")
+        form = QtWidgets.QFormLayout(dialog)
+        whose = QtWidgets.QComboBox()
+        whose.addItem("its own", "")
+        for aid, meta in self.actor_meta.items():
+            whose.addItem(f"{meta['name']}'s", aid)
+        cond = QtWidgets.QComboBox()
+        for value, label in self.RULE_IF:
+            cond.addItem(label, value)
+        value = QtWidgets.QSpinBox()
+        value.setRange(0, 1000)
+        value.setValue(40)
+        when_row = QtWidgets.QHBoxLayout()
+        when_row.addWidget(whose)
+        when_row.addWidget(cond, 1)
+        when_row.addWidget(value)
+        form.addRow("When", when_row)
+        action = QtWidgets.QComboBox()
+        for v, label in self.RULE_THEN:
+            action.addItem(label, v)
+        form.addRow("Then", action)
+        spell = QtWidgets.QComboBox()
+        for sid, name in self._spells_of(self.actor_objects.get(aids[0])) if aids else ():
+            spell.addItem(name, sid)
+        form.addRow("Spell", spell)
+        text = QtWidgets.QLineEdit()
+        text.setPlaceholderText("What they say or think")
+        form.addRow("Line", text)
+        target = QtWidgets.QComboBox()
+        target.addItem("(nobody in particular)", "")
+        for aid, meta in self.actor_meta.items():
+            target.addItem(meta["name"], aid)
+        form.addRow("Target", target)
+
+        def refresh(_i=0):
+            kind = action.currentData()
+            spell.setEnabled(kind == "cast" and spell.count() > 0)
+            text.setEnabled(kind in ("say", "think"))
+            target.setEnabled(kind in ("attack", "cast"))
+            value.setEnabled(cond.currentData() != "dies")
+            value.setSuffix(" %" if cond.currentData() == "health_below" else "")
+        action.currentIndexChanged.connect(refresh)
+        cond.currentIndexChanged.connect(refresh)
+        refresh()
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                             | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        for aid in aids:
+            self.events.append(self._rule_event(
+                aid, cond.currentData(), value.value(), whose.currentData() or "",
+                action.currentData(), spell=spell.currentData() or "",
+                text=text.text().strip(), target=target.currentData() or ""))
+        self._refresh_event_list()
+        self._refresh_key_list()
+        self._refresh_summary()
+        self._repaint_views()
+
+    def _rule_event(self, aid, cond, value, of, then, spell="", text="", target=""):
+        event = {"time": float(self.key_time.value()), "type": "rule", "actor": aid,
+                 "if": cond, "value": float(value), "then": then}
+        if of:
+            event["of"] = of
+        if then == "cast" and spell:
+            event["spell"] = spell
+        if then in ("say", "think") and text:
+            event["text"] = text
+        if then in ("attack", "cast") and target:
+            event["target"] = target
+        return event
+
+    def cast_actor(self, obj):
+        """Make *obj* (any NPC or creature in the map) a cast member, if it is
+        not already. True when it is one."""
+        if not _is_actor(obj):
+            return False
+        aid = self._aid(obj)
+        if not aid:
+            aid = str(uuid.uuid4())
+            obj.properties["id"] = aid
+        if aid not in self.actor_meta:
+            props = obj.properties
+            self.actor_objects[aid] = obj
+            self.actor_meta[aid] = {"id": aid, "spawn": aid in self.temporary_actor_ids,
+                                    "name": str(props.get("display_name") or props.get("name") or aid)}
+            self._refresh_actor_lists()
         return True
 
     def _ask_line(self, kind, who):
@@ -765,13 +907,15 @@ class CutsceneWizard(QtWidgets.QDialog):
             return None
         return text.text().strip(), float(seconds.value())
 
-    def _arm_pick(self, kind, aids, text=""):
-        self._pick = {"kind": kind, "aids": list(aids), "text": text}
+    def _arm_pick(self, kind, aids, text="", spell=""):
+        self._pick = {"kind": kind, "aids": list(aids), "text": text, "spell": spell}
         prompt = {
             "attack": "Click who to ATTACK — anyone in a group takes the group; "
                       "Ctrl-click one actor. Right-click cancels.",
             "move": "Click where to MOVE to — the ground, or an actor. Right-click cancels.",
             "face": "Click what to FACE — an actor or a spot on the ground. Right-click cancels.",
+            "cast": "Click who to CAST it on (for Resurrection: who to raise once fallen), "
+                    "or empty ground to leave it to them.",
             "say": "Click who they SAY it to, or empty ground for no one.",
             "think": "Click who they THINK about, or empty ground for no one.",
         }[kind]
@@ -822,6 +966,12 @@ class CutsceneWizard(QtWidgets.QDialog):
                                 "duration": float(self.attack_duration.value()),
                                 "attackers": aids, "defenders": targets,
                                 "mutual": self.attack_mutual.isChecked()})
+        elif kind == "cast":
+            for aid in aids:
+                event = {"time": when, "type": "cast", "actor": aid, "spell": pick["spell"]}
+                if target and target != aid:
+                    event["target"] = target
+                self.events.append(event)
         elif kind == "face":
             import math
             self._refresh_actor_objects_from_state()
@@ -1916,6 +2066,8 @@ class CutsceneWizard(QtWidgets.QDialog):
         for event in self.events:
             kind = event.get("type")
             t = float(event.get("time", 0.0))
+            if kind in ("cast", "rule") and str(event.get("actor", "")) in wanted:
+                out.append((t, self._describe(event), ("event", event)))
             if kind in ("say", "think") and str(event.get("actor", "")) in wanted:
                 who = f"{names.get(str(event.get('actor')), '')}  " if many else ""
                 out.append((t, f"{who}{kind.upper()} “{event.get('text', '')}” "
@@ -1936,6 +2088,23 @@ class CutsceneWizard(QtWidgets.QDialog):
                             ("event", event)))
         out.sort(key=lambda entry: entry[0])
         return out
+
+    def _describe(self, event):
+        """One line for a CAST or a RULE."""
+        name = lambda aid: self.actor_meta.get(str(aid), {}).get("name", "?")
+        if event.get("type") == "cast":
+            on = f" on {name(event['target'])}" if event.get("target") else ""
+            return f"{name(event.get('actor'))} CASTS {str(event.get('spell', '')).replace('_', ' ')}{on}"
+        cond = dict(self.RULE_IF).get(event.get("if"), event.get("if"))
+        whose = f"{name(event['of'])}'s" if event.get("of") else "its"
+        value = "" if event.get("if") == "dies" else f" {float(event.get('value', 0)):g}"
+        then = dict(self.RULE_THEN).get(event.get("then"), event.get("then"))
+        extra = (f" {str(event.get('spell', '')).replace('_', ' ')}" if event.get("then") == "cast"
+                 else f" “{event.get('text', '')}”" if event.get("text") else "")
+        if event.get("if") == "dies":
+            subject = name(event["of"]) if event.get("of") else name(event.get("actor"))
+            return f"{name(event.get('actor'))}: when {subject} dies → {then}{extra}"
+        return f"{name(event.get('actor'))}: when {whose} {cond.split(' (')[0]}{value} → {then}{extra}"
 
     def _refresh_key_list(self):
         self.key_list.clear()
@@ -2291,6 +2460,8 @@ class CutsceneWizard(QtWidgets.QDialog):
             elif kind in ("say", "think"):
                 who = self.actor_meta.get(str(event.get("actor", "")), {}).get("name", "?")
                 label += f" — {who}: {str(event.get('text', ''))[:45]}"
+            elif kind in ("cast", "rule"):
+                label += " — " + self._describe(event)
             elif kind == "io":
                 label += f" — {event.get('target_name', event.get('target_id', ''))}.{event.get('input', event.get('output', ''))}"
             self.event_list.addItem(label)

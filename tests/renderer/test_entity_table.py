@@ -497,7 +497,7 @@ def test_prop_model_representation_has_a_model_recipe_even_when_collection_is_we
 def test_model_prop_enters_the_dense_model_pass_with_its_recipe():
     prop = make_thing(
         Prop, 'oil-drum',
-        model_path='assets/models/Oil_Drum.obj',
+        model_path='assets/models/Oak_Barrel.obj',
         render_mode='model',
         rotation=[0.0, 45.0, 0.0],
         scale=1.5,
@@ -513,14 +513,14 @@ def test_model_prop_enters_the_dense_model_pass_with_its_recipe():
     assert sprite_slots.tolist() == []
     recipe_id = int(table.model_recipe_id[0])
     assert recipe_id >= 0
-    assert table.model_recipes()[recipe_id][0] == 'assets/models/Oil_Drum.obj'
+    assert table.model_recipes()[recipe_id][0] == 'assets/models/Oak_Barrel.obj'
     assert not np.allclose(table.model_base_matrix[0], 0.0)
 
 
 def test_prop_switching_model_to_billboard_refreshes_dense_sprite_columns():
     prop = make_thing(
         Prop, 'oil-drum',
-        model_path='assets/models/Oil_Drum.obj',
+        model_path='assets/models/Oak_Barrel.obj',
         render_mode='model',
         sprite_path='assets/sprites/pickup.png',
     )

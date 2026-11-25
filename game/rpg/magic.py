@@ -367,6 +367,14 @@ register(Spell("resurrection", "Resurrection", sk.OCCULT, 100, TARGET,
                "and can be worked only once each day. Each body can be raised "
                "only once; it keeps a red tint and follows you until killed again.",
                element="magic", color=[120, 255, 170]))
+# Slow Time -- the world (everyone and everything, the caster too) runs at
+# half speed for five seconds, a second more for each level past the fifth
+# (game.runtime.slow_time_seconds); the screen takes an icy tint meanwhile.
+register(Spell("slow_time", "Slow Time", sk.OCCULT, 45, SELF,
+               [{"kind": "slow_time", "magnitude": 0.5, "duration": 5}],
+               "The world slows to half speed for five seconds, and a second "
+               "longer for every level past the fifth.",
+               element="magic", color=[150, 210, 255]))
 register(Spell("sp_detect", "Detect Life", sk.OCCULT, 16, SELF,
                [{"kind": "detect_life", "magnitude": 1, "duration": 30}],
                "Sense living things nearby.", element="magic"))

@@ -293,7 +293,7 @@ def test_a_barrel_lying_in_a_saved_game_is_still_lying_when_it_is_loaded():
 
 def test_the_oil_barrels_topple_by_default_and_a_ball_does_not():
     assert topples_by_default(DEFAULT_MODEL_PATH)
-    assert topples_by_default('assets/models/Oil_Drum_Grey.obj')
+    assert topples_by_default('assets/models/Oak_Barrel.obj')
     assert not topples_by_default(BALL_MODEL_PATH)
     assert model_settings(DEFAULT_MODEL_PATH)['topples'] is True
     assert model_settings(BALL_MODEL_PATH)['topples'] is False

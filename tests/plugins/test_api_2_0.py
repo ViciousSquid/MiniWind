@@ -325,7 +325,7 @@ def test_a_physics_prop_spawned_in_play_gets_a_body_and_despawned_loses_it(sessi
     runtime._plugin = type('P', (), {'name': 'test'})()
     spawned = runtime.spawn(Prop, pos=[0.0, 300.0, 300.0], properties={
         'physics_enabled': True, 'no_collision': False, 'collision_shape': 'aabb',
-        'model_path': 'assets/models/Oil_Drum.obj'})
+        'model_path': 'assets/models/Oak_Barrel.obj'})
     assert spawned is not None
     body = runtime.body(spawned)
     assert body is not None                             # it is simulated
