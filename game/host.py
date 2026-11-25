@@ -973,16 +973,16 @@ class MiniwindGame:
             import game.ui.arrows as arrow_art
             arrow_art.draw_stuck(projection, view, stuck)
         grey = 0.0
-        if getattr(session, "_slow_time_until", None) is not None:
-            # The Slow Time caster's fisheye bubble, first among the lenses;
-            # the world outside it drained to greyscale while it lasts.
-            bubble = session.slow_time_lenses()
-            if bubble:
-                grey = float(session.slow_time_tint())
-            if bubble:
-                lenses = list(bubble) + list(lenses or ())
-                if fx is None:
-                    import game.ui.magic_gl as magic_gl
+        slow = getattr(session, "slow_time_lenses", None)
+        bubbles = slow() if slow is not None else ()
+        if bubbles:
+            # Every Slow Time caster's fisheye bubble (game/slow_time.py),
+            # first among the lenses; the world outside all of them drained
+            # to greyscale while any lasts.
+            grey = float(session.slow_time_tint())
+            lenses = list(bubbles) + list(lenses or ())
+            if fx is None:
+                import game.ui.magic_gl as magic_gl
         if lenses:
             magic_gl.draw_lenses(projection, view, lenses, grey=grey)
         # Rain on the camera's glass, over everything in the world

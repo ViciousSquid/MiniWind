@@ -463,52 +463,16 @@ AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is at
 #: the push, as fractions of the full blast.
 BLAST_BLOCK_DAMAGE = 0.95
 BLAST_BLOCK_PUSH = 0.80
-#: Slow Time (game.rpg.magic "slow_time"): how fast the world runs while it
-#: lasts, for how long (real seconds), and a second more per level past this.
-#: The caster is not slowed: their own clock runs at 1 / SLOW_TIME_SCALE of the
-#: world's (engine/actor_time.py), so they move at their normal speed -- twice
-#: as fast as everyone else.
-SLOW_TIME_SCALE = 0.5
-SLOW_TIME_SECONDS = 5.0
-SLOW_TIME_PER_LEVEL = 1.0
-SLOW_TIME_FROM_LEVEL = 5
-#: The tint, the caster's bubble and light fade in and out over this long (s).
-SLOW_TIME_FADE = 0.35
-#: The spell icon's violet (its colour in game/rpg/magic.py): the caster's
-#: light, the bubble's glass and rim, and the screen's tint (RGB 0-255).
-SLOW_TIME_COLOUR = (166, 130, 234)
-#: The flickering light the caster gives off while it lasts: its reach, its
-#: brightness at the top of a flicker, how high above the feet it hangs, and
-#: the least share of that brightness a flicker dips to (never fully out).
-SLOW_TIME_LIGHT_RADIUS = 350.0
-SLOW_TIME_LIGHT_INTENSITY = 8.0
-SLOW_TIME_LIGHT_HEIGHT = 90.0
-SLOW_TIME_FLICKER_FLOOR = 0.45
-#: The fisheye bubble round the caster: its radius as a share of the caster's
-#: height, how hard it magnifies, where its violet rim glows (as a share of the
-#: radius), the ripple through its glass, and how blue it tints the inside.
-SLOW_TIME_BUBBLE_SCALE = 1.5
-#: 0.6: the middle seen about 2.5x larger, squeezed toward the rim (fisheye).
-SLOW_TIME_BUBBLE_LENS = 0.6
-#: The bubble gently pulses larger and smaller: by this share of its radius,
-#: this many times a second (and its fisheye a little with it).
-SLOW_TIME_BUBBLE_PULSE = 0.10
-SLOW_TIME_BUBBLE_PULSE_HZ = 0.45
-SLOW_TIME_BUBBLE_RIM = 0.94
-SLOW_TIME_BUBBLE_SHIMMER = 0.35
-SLOW_TIME_BUBBLE_FILL = 0.55
-#: A caster's height when nothing says otherwise (world units).
-SLOW_TIME_CASTER_HEIGHT = 112.0
-
-
-def slow_time_seconds(level) -> float:
-    """How long Slow Time lasts cast at *level*: five seconds, a second more
-    for each level past the fifth."""
-    try:
-        level = int(level)
-    except (TypeError, ValueError):
-        level = 1
-    return SLOW_TIME_SECONDS + max(0, level - SLOW_TIME_FROM_LEVEL) * SLOW_TIME_PER_LEVEL
+# Slow Time (game.rpg.magic "slow_time"): its rule and its numbers live in
+# game/slow_time.py, one record per world; the session draws it.
+from .slow_time import (  # noqa: F401,E402
+    SLOW_TIME_SCALE, SLOW_TIME_SECONDS, SLOW_TIME_PER_LEVEL, SLOW_TIME_FROM_LEVEL,
+    SLOW_TIME_FADE, SLOW_TIME_COLOUR, SLOW_TIME_LIGHT_RADIUS, SLOW_TIME_LIGHT_INTENSITY,
+    SLOW_TIME_LIGHT_HEIGHT, SLOW_TIME_FLICKER_FLOOR, SLOW_TIME_BUBBLE_SCALE,
+    SLOW_TIME_BUBBLE_LENS, SLOW_TIME_BUBBLE_PULSE, SLOW_TIME_BUBBLE_PULSE_HZ,
+    SLOW_TIME_BUBBLE_RIM, SLOW_TIME_BUBBLE_SHIMMER, SLOW_TIME_BUBBLE_FILL,
+    SLOW_TIME_CASTER_HEIGHT, slow_time_seconds, slow_time_flicker)
+from . import slow_time as slow_time_mod
 
 
 def cast_icon_alpha(age):
@@ -525,20 +489,6 @@ def cast_icon_alpha(age):
     if age < CAST_ICON_FADE_OUT:
         return 1.0 - age / CAST_ICON_FADE_OUT
     return None
-
-
-def slow_time_flicker(t: float) -> float:
-    """How bright the Slow Time caster's light is at real time *t*, as a share
-    of :data:`SLOW_TIME_LIGHT_INTENSITY`: four incommensurate waves between 6
-    and 17 Hz, so it jitters irregularly, never settling into a rhythm and
-    never dipping below :data:`SLOW_TIME_FLICKER_FLOOR`."""
-    tau = math.tau
-    a = math.sin(t * tau * 7.1)
-    b = math.sin(t * tau * 10.7 + 1.9)
-    c = math.sin(t * tau * 6.3 + 0.7)
-    d = math.sin(t * tau * 16.9 + 2.6)
-    wave = 0.38 * a + 0.30 * b + 0.20 * c + 0.12 * d            # -1..1
-    return max(SLOW_TIME_FLICKER_FLOOR, min(1.0, 0.75 + 0.25 * wave))
 
 
 #: A fall of more than this many world units kills outright (the backstop
@@ -5048,213 +4998,194 @@ class MiniwindSession(SettlementLaw):
             self._level_up_announced = False
 
     # -- Slow Time --------------------------------------------------------------
-    def slow_time(self, level, caster=None) -> float:
-        """Slow Time cast by *caster* (the player when None) at *level*: for
-        :func:`slow_time_seconds` (real seconds) the world runs at
-        :data:`SLOW_TIME_SCALE` -- everyone and everything but the caster,
-        whose own clock is left at the speed it ran before, so they move twice
-        as fast as the world round them. The caster wears an icy fisheye
-        bubble (:meth:`slow_time_lenses`) and gives off a flickering blue light
-        meanwhile, and the screen takes an icy tint.
+    def slow_time_record(self):
+        """This world's one Slow Time record (game/slow_time.py), shared by
+        every session on the world: the root's and each co-op player's."""
+        return slow_time_mod.registry(self.logic)
 
-        Only one Slow Time runs at a time. Cast again it lasts the longer of
-        the two; cast again by someone else, the newer caster takes it over --
-        the bubble, the light and the freedom from the slowed world pass to
-        them, and the first caster is slowed with everyone else. Returns how
-        long it now lasts."""
+    def slow_time(self, level, caster=None) -> float:
+        """Slow Time cast by *caster* (this session's own player when None)
+        at *level* (game/slow_time.py has the rule): for
+        :func:`slow_time_seconds` (real seconds) the world runs at
+        :data:`SLOW_TIME_SCALE` -- once, however many cast it -- and the
+        caster's own clock at the speed it ran before, so they move twice as
+        fast as the world round them until their own spell ends. Each caster
+        wears a violet fisheye bubble (:meth:`slow_time_lenses`) and gives off
+        a flickering violet light meanwhile, and the screen's edges take a
+        violet tint while any lasts.
+
+        Cast again by the same caster it lasts the longer of the two; cast by
+        someone else meanwhile, both are exempt, each for their own spell, and
+        the world stays slow until the last one ends. Returns how long the
+        caster's own spell now lasts."""
         import time as _time
         now = _time.monotonic()
-        seconds = slow_time_seconds(level)
-        logic = self.logic
+        record = self.slow_time_record()
+        me = fio.player(self.logic)
         if caster is None:
-            caster = fio.player(logic)
-        if self.__dict__.get("_slow_time_until") is None:
-            # What the world ran at before (the debug tools may have set it).
-            self._slow_time_prior = float(getattr(logic, "time_scale", 1.0) or 1.0)
-            self._slow_time_from = now
-            self._slow_time_scale = None
-        self._slow_time_until = max(float(self.__dict__.get("_slow_time_until") or 0.0),
-                                    now + seconds)
-        previous = self.__dict__.get("_slow_time_caster")
-        if previous is not None and previous is not caster:
-            fio.clear_actor_time_rate(logic, previous)
-        self._slow_time_caster = caster
-        self._hold_slow_time()
+            caster = me
+        if record.remote:
+            # A network client's record is the host's: the host casts it.
+            return record.left(caster, now)
+        mine = caster is me
+        cast = record.cast(caster, level, owner=self if mine else None, player=mine, now=now)
         self.play_ui_sound(SLOW_TIME_SOUND)
         self.notify("Time slows…", 2.0)
-        self._update_slow_time_light()
-        return self._slow_time_until - now
-
-    def _hold_slow_time(self) -> None:
-        """Keep the world at :data:`SLOW_TIME_SCALE` of its speed before and
-        the caster's clock at that speed. Asked every tick while it lasts: a
-        world speed changed meanwhile (the debug tools) becomes the speed it
-        slows from, and one put back by anything else is slowed again, so
-        nothing but its end lets it lapse."""
-        logic = self.logic
-        held = self.__dict__.get("_slow_time_scale")
-        current = getattr(logic, "time_scale", None)
-        if held is not None and current is not None and abs(float(current) - held) > 1e-9:
-            self._slow_time_prior = float(current) or 1.0
-        held = SLOW_TIME_SCALE * float(self.__dict__.get("_slow_time_prior", 1.0) or 1.0)
-        logic.time_scale = held
-        self._slow_time_scale = held
-        caster = self.__dict__.get("_slow_time_caster")
-        if caster is not None:
-            fio.set_actor_time_rate(logic, caster, 1.0 / SLOW_TIME_SCALE)
+        self._update_slow_time_lights()
+        return cast.until - now
 
     def slow_time_caster(self):
-        """Who cast the Slow Time running now (the player's actor, or an NPC
-        or creature), or None."""
-        if self.__dict__.get("_slow_time_until") is None:
-            return None
-        return self.__dict__.get("_slow_time_caster")
+        """Who cast the newest Slow Time running now (a player's body, or an
+        NPC or creature), or None."""
+        casters = self.slow_time_record().casters()
+        return casters[-1] if casters else None
 
-    def slow_time_left(self) -> float:
-        """Real seconds of Slow Time left (0: none)."""
-        import time as _time
-        until = self.__dict__.get("_slow_time_until")
-        return max(0.0, until - _time.monotonic()) if until is not None else 0.0
+    def slow_time_casters(self) -> list:
+        """Everyone whose Slow Time is running now, oldest cast first."""
+        return self.slow_time_record().casters()
+
+    def slow_time_left(self, caster=None) -> float:
+        """Real seconds of Slow Time left: until the last spell ends, or
+        (given) of *caster*'s own (0: none)."""
+        return self.slow_time_record().left(caster)
 
     def slow_time_tint(self) -> float:
-        """How strong the icy tint is now (0..1): fading in, held, fading out.
-        The caster's bubble and light fade with it."""
-        import time as _time
-        until = self.__dict__.get("_slow_time_until")
-        if until is None:
-            return 0.0
-        now = _time.monotonic()
-        since = now - float(self.__dict__.get("_slow_time_from", now))
-        left = until - now
-        return max(0.0, min(1.0, since / SLOW_TIME_FADE, left / SLOW_TIME_FADE))
-
-    def _slow_time_caster_gone(self, caster) -> bool:
-        """Whether the caster has fallen: Slow Time ends with them."""
-        if caster is None:
-            return True
-        if caster is fio.player(self.logic):
-            return bool(self.game.character.is_dead)
-        props = getattr(caster, "properties", None)
-        return isinstance(props, dict) and bool(props.get("dead"))
+        """How strong the screen's violet edge and the greyscale are now
+        (0..1): fading in from the first cast, held, fading out to the end of
+        the last. Each caster's bubble and light fade with their own spell."""
+        return self.slow_time_record().tint()
 
     def _update_slow_time(self) -> None:
-        """While Slow Time lasts: hold the world slowed and the caster not,
-        and carry the caster's light with them. End it when its seconds are
-        up, or its caster falls: the world runs as before."""
-        until = self.__dict__.get("_slow_time_until")
-        if until is None:
+        """While any Slow Time lasts: hold the world slowed and each caster
+        not, and carry each caster's light with them. A spell ends when its
+        seconds are up, or its caster falls; when the last ends the world runs
+        as before."""
+        record = self.slow_time_record()
+        if not record.casts:
             return
-        caster = self.__dict__.get("_slow_time_caster")
-        if self.slow_time_left() <= 0.0 or self._slow_time_caster_gone(caster):
-            self.end_slow_time()
-            return
-        self._hold_slow_time()
-        self._update_slow_time_light()
+        ended = record.update()
+        self._put_out_slow_time_lights(ended)
+        self._update_slow_time_lights()
 
     def end_slow_time(self) -> None:
-        """Slow Time is over (or the map is left): the world runs at its own
-        speed, the caster's clock is back in step, and their light goes out."""
-        if self.__dict__.get("_slow_time_until") is None:
-            return
-        logic = self.logic
-        logic.time_scale = float(self.__dict__.get("_slow_time_prior", 1.0) or 1.0)
-        caster = self.__dict__.get("_slow_time_caster")
-        if caster is not None:
-            fio.clear_actor_time_rate(logic, caster)
-        self._slow_time_until = None
-        self._slow_time_caster = None
-        self._slow_time_scale = None
-        light = self.__dict__.get("_slow_time_light")
-        self._slow_time_light = None
-        if light is not None:
-            self._drop_light(light)
+        """Every Slow Time is over (the map is left): the world runs at its
+        own speed, every caster's clock is back in step, and their lights go
+        out."""
+        self._put_out_slow_time_lights(self.slow_time_record().end_all())
+
+    def _put_out_slow_time_lights(self, casts) -> None:
+        dropped = False
+        for cast in casts:
+            light, cast.light = cast.light, None
+            if light is not None:
+                self._drop_light(light)
+                dropped = True
+        if dropped:
             self._rebuild_entity_caches()
 
-    def _slow_time_centre(self, caster):
+    def _slow_time_centre(self, cast):
         """The middle of the caster's body (world units), or None."""
-        pos = getattr(caster, "pos", None)
+        pos = getattr(cast.caster, "pos", None)
         if pos is None:
             return None
         x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
-        if caster is fio.player(self.logic):
-            return (x, y + SLOW_TIME_CASTER_HEIGHT * 0.5, z)   # the player's origin: its feet
+        if cast.player:
+            return (x, y + SLOW_TIME_CASTER_HEIGHT * 0.5, z)   # a player's origin: its feet
         return (x, y, z)                                       # an actor's: mid-sprite
 
-    def _slow_time_height(self, caster) -> float:
-        props = getattr(caster, "properties", None)
-        if isinstance(props, dict) and caster is not fio.player(self.logic):
+    @staticmethod
+    def _slow_time_height(cast) -> float:
+        props = getattr(cast.caster, "properties", None)
+        if isinstance(props, dict) and not cast.player:
             try:
                 return float(props.get("sprite_height") or SLOW_TIME_CASTER_HEIGHT)
             except (TypeError, ValueError):
                 pass
         return SLOW_TIME_CASTER_HEIGHT
 
-    def _update_slow_time_light(self) -> None:
-        """The caster's icy light: it hangs over them wherever they go,
-        flickers (:func:`slow_time_flicker`) and fades in and out with the
-        spell."""
+    def _update_slow_time_lights(self) -> None:
+        """Each caster's violet light: it hangs over them wherever they go,
+        flickers (:func:`slow_time_flicker`) and fades in and out with their
+        own spell. The authority's lights are world entities, so a network
+        client sees them as it sees every other light; its replica record
+        makes none of its own."""
+        record = self.slow_time_record()
+        if record.remote:
+            return
         import time as _time
-        caster = self.__dict__.get("_slow_time_caster")
-        centre = self._slow_time_centre(caster) if caster is not None else None
-        if centre is None:
-            return
-        feet_y = centre[1] - self._slow_time_height(caster) * 0.5
-        at = (centre[0], feet_y + SLOW_TIME_LIGHT_HEIGHT, centre[2])
-        flicker = slow_time_flicker(_time.monotonic())
-        intensity = SLOW_TIME_LIGHT_INTENSITY * self.slow_time_tint() * flicker
-        radius = SLOW_TIME_LIGHT_RADIUS * (0.94 + 0.06 * flicker)
-        light = self.__dict__.get("_slow_time_light")
-        if light is None:
-            light = self._make_light(at, {
-                "colour": list(SLOW_TIME_COLOUR), "intensity": intensity,
-                "radius": radius, "state": "on", "casts_shadows": False,
-                "hidden_in_game": False, "_slow_time": True})
+        now = _time.monotonic()
+        flicker = slow_time_flicker(now)
+        added = False
+        for cast in record.casts:
+            centre = self._slow_time_centre(cast)
+            if centre is None:
+                continue
+            feet_y = centre[1] - self._slow_time_height(cast) * 0.5
+            at = (centre[0], feet_y + SLOW_TIME_LIGHT_HEIGHT, centre[2])
+            intensity = SLOW_TIME_LIGHT_INTENSITY * cast.envelope(now) * flicker
+            radius = SLOW_TIME_LIGHT_RADIUS * (0.94 + 0.06 * flicker)
+            light = cast.light
             if light is None:
-                return
-            try:
-                fio.things(self.logic).append(light)
-            except Exception:
-                return
-            self._slow_time_light = light
+                light = self._make_light(at, {
+                    "colour": list(SLOW_TIME_COLOUR), "intensity": intensity,
+                    "radius": radius, "state": "on", "casts_shadows": False,
+                    "hidden_in_game": False, "_slow_time": True})
+                if light is None:
+                    continue
+                try:
+                    fio.things(self.logic).append(light)
+                except Exception:
+                    continue
+                cast.light = light
+                added = True
+                continue
+            lp = light.pos
+            if (lp[0], lp[1], lp[2]) != at:
+                light.pos = list(at)          # assigned, so the renderer hears of it
+            light.properties["intensity"] = intensity
+            light.properties["radius"] = radius
+            _journal(light)
+        if added:
             self._rebuild_entity_caches()
-            return
-        lp = light.pos
-        if (lp[0], lp[1], lp[2]) != at:
-            light.pos = list(at)          # assigned, so the renderer hears of it
-        light.properties["intensity"] = intensity
-        light.properties["radius"] = radius
-        _journal(light)
 
     def slow_time_light(self):
-        """The caster's light while Slow Time lasts, or None."""
-        return self.__dict__.get("_slow_time_light")
+        """The newest caster's light while Slow Time lasts, or None."""
+        lights = self.slow_time_lights()
+        return lights[-1] if lights else None
+
+    def slow_time_lights(self) -> list:
+        """Every caster's light while their Slow Time lasts."""
+        return [c.light for c in self.slow_time_record().casts if c.light is not None]
 
     def slow_time_lenses(self):
-        """The caster's fisheye bubble as a lens for the GL pass
+        """Every caster's fisheye bubble as a lens for the GL pass
         (:func:`game.ui.magic_gl.draw_lenses`): ``[(x, y, z, strength,
-        radius, rim, colour, shimmer, fill)]``, or ``[]`` when no Slow Time
-        runs. Its radius is the caster's height times
-        :data:`SLOW_TIME_BUBBLE_SCALE`, gently pulsing larger and smaller
-        (:data:`SLOW_TIME_BUBBLE_PULSE`); it swells in and out with the spell."""
-        if self.__dict__.get("_slow_time_until") is None:
-            return []
-        caster = self.__dict__.get("_slow_time_caster")
-        centre = self._slow_time_centre(caster) if caster is not None else None
-        if centre is None:
+        radius, rim, colour, shimmer, fill)]``, one per caster whose spell is
+        running, or ``[]`` when none is. Everyone sees every bubble. Each
+        radius is its caster's height times :data:`SLOW_TIME_BUBBLE_SCALE`,
+        gently pulsing larger and smaller (:data:`SLOW_TIME_BUBBLE_PULSE`);
+        each swells in and out with its caster's own spell."""
+        record = self.slow_time_record()
+        if not record.casts:
             return []
         import time as _time
-        env = self.slow_time_tint()
-        if env <= 0.0:
-            return []
-        wave = math.sin(_time.monotonic() * math.tau * SLOW_TIME_BUBBLE_PULSE_HZ)
+        now = _time.monotonic()
+        wave = math.sin(now * math.tau * SLOW_TIME_BUBBLE_PULSE_HZ)
         breathe = 1.0 + SLOW_TIME_BUBBLE_PULSE * wave        # gently larger, smaller
-        radius = self._slow_time_height(caster) * SLOW_TIME_BUBBLE_SCALE * breathe
-        radius *= 0.6 + 0.4 * env                  # it swells out as it fades in
         lens = SLOW_TIME_BUBBLE_LENS * (1.0 + 0.5 * SLOW_TIME_BUBBLE_PULSE * wave)
         colour = tuple(c / 255.0 for c in SLOW_TIME_COLOUR)
-        return [(centre[0], centre[1], centre[2], lens * env, radius,
-                 SLOW_TIME_BUBBLE_RIM, colour, SLOW_TIME_BUBBLE_SHIMMER,
-                 SLOW_TIME_BUBBLE_FILL * env)]
+        out = []
+        for cast in record.casts:
+            env = cast.envelope(now)
+            centre = self._slow_time_centre(cast) if env > 0.0 else None
+            if centre is None:
+                continue
+            radius = self._slow_time_height(cast) * SLOW_TIME_BUBBLE_SCALE * breathe
+            radius *= 0.6 + 0.4 * env                  # it swells out as it fades in
+            out.append((centre[0], centre[1], centre[2], lens * env, radius,
+                        SLOW_TIME_BUBBLE_RIM, colour, SLOW_TIME_BUBBLE_SHIMMER,
+                        SLOW_TIME_BUBBLE_FILL * env))
+        return out
 
     def played_cutscenes(self):
         """The ids of the "play once" cutscenes this save has seen play."""
