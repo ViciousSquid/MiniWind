@@ -68,8 +68,8 @@ def _read(rel):
 
 def _iter_source():
     for p in ROOT.rglob("*.py"):
-        if ".git" in p.parts:
-            continue
+        if ".git" in p.parts or ".claude" in p.parts:
+            continue          # tool state (agent worktrees), not the source
         yield p
 
 

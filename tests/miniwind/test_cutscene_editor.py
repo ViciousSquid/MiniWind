@@ -2,6 +2,7 @@
 creatures, equip them, and give them MOVE / SAY / THINK / ATTACK keyframes --
 through the real CutsceneWizard on the real editor window."""
 
+import importlib
 import json
 from pathlib import Path
 
@@ -14,7 +15,7 @@ pytestmark = pytest.mark.qt
 
 @pytest.fixture
 def wizard(main_window, qt_app, tmp_path, monkeypatch):
-    import game.cutscene_editor as cutscene_editor
+    cutscene_editor = importlib.import_module("game.cutscene_editor")
     from editor import cutscene_wizard
     monkeypatch.setattr(cutscene_wizard, "ACTOR_KINDS", list(cutscene_wizard.ACTOR_KINDS))
     monkeypatch.setattr(cutscene_wizard, "ACTOR_PANELS", list(cutscene_wizard.ACTOR_PANELS))
@@ -45,7 +46,8 @@ def _panel_widget(wizard, cls, nth=0):
 
 
 def test_the_cast_buttons_make_miniwind_npcs_and_creatures(wizard):
-    from game.entities import Creature, NPC
+    entities = importlib.import_module("game.entities")
+    Creature, NPC = entities.Creature, entities.NPC
     assert [b.text() for b in wizard.kind_buttons] == ["+ NPC", "+ Creature"]
     npc = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
     beast = wizard._create_temporary_actor(_kind(wizard, "+ Creature"))
@@ -156,7 +158,8 @@ def test_move_say_think_and_attack_keyframes_for_many_actors(wizard):
 
 
 def test_a_cutscene_saves_and_loads_its_equipped_cast_and_keyframes(wizard, main_window):
-    from game.entities import Creature, NPC
+    entities = importlib.import_module("game.entities")
+    Creature, NPC = entities.Creature, entities.NPC
     npc = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
     beast = wizard._create_temporary_actor(_kind(wizard, "+ Creature"))
     npc.properties["inventory"] = [{"id": "potion_heal_minor", "qty": 3}]
@@ -396,7 +399,7 @@ def test_a_rule_is_recorded_and_reads_plainly(wizard):
 
 
 def test_selecting_any_npc_in_the_map_casts_it(wizard, main_window):
-    from game.entities import NPC
+    NPC = importlib.import_module("game.entities").NPC
     villager = NPC(pos=[300.0, 0.0, 300.0], properties={"npc_role": "villager", "name": "Tam"})
     main_window.state.things.append(villager)
     main_window.set_selected_objects([villager])
