@@ -302,20 +302,49 @@ class NetworkService:
                 if time.monotonic() - v["seen_at"] < 8
             ]
 
+    #: Tries at an OS-chosen port (``port=0``) for one free on UDP as well.
+    EPHEMERAL_PORT_TRIES = 20
+
+    @classmethod
+    def _listen(cls, address, port):
+        """The host's TCP listener on *port*. Friend codes use the same port
+        number on UDP, so with ``port=0`` a port the OS picks is kept only
+        if UDP can bind it too: Windows reserves port ranges for one protocol
+        and not the other (Hyper-V / WinNAT exclusions), and a TCP port
+        inside a UDP-only reservation left the party without UDP at all."""
+        tries = cls.EPHEMERAL_PORT_TRIES if int(port) == 0 else 1
+        for attempt in range(tries):
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                listener.bind((address, int(port)))
+                listener.listen(8)
+                listener.settimeout(0.2)
+            except (OSError, ValueError):
+                listener.close()
+                raise
+            if tries == 1 or cls._udp_port_free(address, listener.getsockname()[1]):
+                return listener
+            listener.close()
+        raise OSError("no port free on both TCP and UDP")
+
+    @staticmethod
+    def _udp_port_free(address, port):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.bind((address, int(port)))
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
+
     def host(self, port=GAME_PORT, address=""):
         if self._stop.is_set():
             raise ValueError("This multiplayer section has closed.")
         if self.listener is not None:
             raise ValueError("Already hosting a party.")
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            listener.bind((address, int(port)))
-            listener.listen(8)
-            listener.settimeout(0.2)
-        except (OSError, ValueError):
-            listener.close()
-            raise
+        listener = self._listen(address, port)
         self.listener = listener
         self.port = listener.getsockname()[1]
         self.is_host = True

@@ -513,3 +513,32 @@ def test_every_packet_carries_a_crc():
     damaged[9] ^= 0x10
     assert udp._unseal(bytes(damaged)) is None
     assert udp._unseal(sealed[:-1]) is None
+
+
+def test_an_os_chosen_port_taken_on_udp_is_passed_over(monkeypatch):
+    """Friend codes need the host's port on UDP as well as TCP. Windows can
+    reserve a port for one protocol only (Hyper-V / WinNAT exclusions): an
+    OS-chosen TCP port that UDP may not bind is given back for another."""
+    import socket
+    held = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    held.bind(("127.0.0.1", 0))
+    taken = held.getsockname()[1]
+    real_bind = socket.socket.bind
+    first = {"done": False}
+
+    def bind(self, addr):
+        # The first TCP port the "OS" offers is the one UDP cannot have.
+        if self.type == socket.SOCK_STREAM and addr[1] == 0 and not first["done"]:
+            first["done"] = True
+            return real_bind(self, (addr[0], taken))
+        return real_bind(self, addr)
+
+    monkeypatch.setattr(socket.socket, "bind", bind)
+    network = NetworkService()
+    try:
+        network.host(port=0, address="127.0.0.1")
+        assert first["done"] and network.port != taken, "the UDP-taken port was kept"
+        assert network.udp is not None and network.udp.port == network.port
+    finally:
+        network.close()
+        held.close()
