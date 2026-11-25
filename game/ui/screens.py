@@ -241,7 +241,8 @@ def _draw_charcreate(painter, session, w, h):
         hint = "Type a name    ←/→ head    ↑/↓ switch hand    Enter next"
     elif step == "fortune":
         _draw_fortune(painter, inner, ty, s)
-        hint = "R or Space re-roll    Enter next    Esc back"
+        hint = ("R or Space re-roll    Enter next    Esc back" if _rerolls_left(s)
+                else "Enter next    Esc back")
     elif step == "class":
         ids = classes.CREATION_CLASS_IDS
         k = classes.get(ids[s["class"]])
@@ -309,11 +310,26 @@ def _cc_bio(s):
     return bios.bio_from_rolls(s.get("rolls") or {})
 
 
+#: How many times the player may re-roll their fortune at character creation;
+#: the stats of the last re-roll are theirs.
+MAX_REROLLS = 5
+
+
+def _rerolls_left(s) -> int:
+    """Re-rolls still allowed (none before the first roll is made)."""
+    if not s.get("rolls"):
+        return MAX_REROLLS
+    return max(0, MAX_REROLLS - int(s.get("rerolls", 0) or 0))
+
+
 def _cc_roll(session):
     """Roll (or re-roll) 3d6 for STRENGTH, ENDURANCE and CHARISMA. The dice
-    tumble on screen for a moment before they settle (see _draw_fortune)."""
+    tumble on screen for a moment before they settle (see _draw_fortune).
+    After :data:`MAX_REROLLS` re-rolls the stats are set: nothing happens."""
     import time
     s = _cc(session)
+    if s.get("rolls") and _rerolls_left(s) <= 0:
+        return
     rng = getattr(session, "rng", None)
     s["rolls"] = {a: _cha.roll_3d6(rng) for a, _label in _cha.ROLLED}
     s["roll_t"] = time.monotonic()
@@ -406,12 +422,15 @@ def _draw_fortune(painter, inner, ty, s):
     else:
         T.text_in(painter, box, "The dice are rolling…", size=12, color=T.DIM,
                   align=T.ALIGN_CENTER)
-    n = int(s.get("rerolls", 0) or 0)
+    left = _rerolls_left(s)
     button(painter, QRect(inner.x() + inner.width() // 2 - 90, inner.bottom() - 60, 180, 32),
-           "Re-roll" if rolls else "Roll", _cc_roll, enabled=all_settled)
-    if n:
+           ("Re-roll" if rolls else "Roll") if left or not rolls else "Fate is set",
+           _cc_roll, enabled=all_settled and (left > 0 or not rolls))
+    if rolls:
+        note = (f"{left} re-roll{'s' if left != 1 else ''} left" if left
+                else "No re-rolls left: these are yours")
         T.text_in(painter, QRect(inner.x(), inner.bottom() - 60, inner.width() // 2 - 100, 32),
-                  f"re-rolled {n}×", size=9, color=T.DIM, align=T.ALIGN_RIGHT)
+                  note, size=9, color=T.DIM, align=T.ALIGN_RIGHT)
 
 
 def _cc_next(session):

@@ -2,7 +2,8 @@
 Rolling a character's body and face, and what the face does to the world.
 
 At character creation the player rolls **3d6** three times — for STRENGTH,
-ENDURANCE and CHARISMA — and may roll again as often as they like. Each total
+ENDURANCE and CHARISMA — and may re-roll up to five times
+(game/ui/screens.py MAX_REROLLS), after which the last roll stands. Each total
 (3..18) moves that attribute up or down from the class/race baseline by
 :func:`delta_for`, so an 18 is a gift and a 3 a curse.
 
