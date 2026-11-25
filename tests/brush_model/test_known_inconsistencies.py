@@ -37,10 +37,6 @@ from tests.helpers.worlds import angled_brush, box_brush
 
 MAPS = bs.shipped_maps(REPO_ROOT)
 
-#: ``miniwind_world``'s one convex brush whose stored ``pos`` is not where its
-#: planes are (see test_shipped_convex_bounds_drift_but_contain_what_is_drawn).
-STALE_COPY = 'e23ac095'
-
 STAGE_2 = "Stage 2 (unambiguous position) delivers this"
 
 
@@ -230,32 +226,24 @@ def test_every_loaded_shipped_convex_face_has_one_material_record():
 # ---------------------------------------------------------------------------
 
 def test_shipped_convex_bounds_drift_but_contain_what_is_drawn():
-    """MiniWind's shipped maps: seven convex brushes of ``miniwind_world``
-    *store* ``pos``/``size`` that are not their planes' AABB bit for bit. Six
-    differ by float noise, and within 1e-4 of a unit their stored bound
-    contains the drawn geometry. The seventh (``e23ac095``, a roof) stores a
-    stale ``pos``: the right size, 4928 units from where its planes draw it.
-    Since Stage 2a nothing reads that copy for a bound (``brush_placement``
-    derives it from the planes) and loading re-derives it; the files
-    themselves are not modified. (Fio's own maps, which this test was
-    written against, are not shipped with MiniWind.)"""
-    drifted = stale = 0
+    """MiniWind's shipped maps: no convex brush stores a ``pos``/``size``
+    that drifts from its planes' AABB beyond solver noise. ``miniwind_world``
+    once held seven (six by float noise, and a roof, ``e23ac095``, 4928 units
+    off); re-saved as a version-5 map (local planes, ``pos`` at their centre,
+    ``size`` their extent) it holds none. Any that drifted would still have to
+    contain what is drawn, within 1e-4 of a unit."""
+    drifted = 0
     for name, brushes in MAPS.items():
         for brush in brushes:
             found = bs.inconsistencies(brush)
-            if 'bound_drift' not in found:
+            if found.get('bound_drift', 0.0) <= bs.DRIFT_NOISE:
                 continue
             drifted += 1
             centre, size = (np.asarray(v) for v in bs.stored_bound(brush))
             g_centre, g_size = (np.asarray(v) for v in bs.geometry_bound(brush))
-            if str(brush.get('id')).startswith(STALE_COPY):
-                stale += 1
-                assert np.allclose(size, g_size, atol=1e-9), name
-                assert np.abs(centre - g_centre).max() == pytest.approx(4928.0)
-                continue
             assert (g_centre - g_size / 2 >= centre - size / 2 - 1e-4).all(), name
             assert (g_centre + g_size / 2 <= centre + size / 2 + 1e-4).all(), name
-    assert (drifted, stale) == (7, 1)   # 1 pinned by the snapshot, 6 noise
+    assert drifted == 0
 
 
 def test_shipped_convex_bounds_are_derived_from_the_planes():

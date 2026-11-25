@@ -61,45 +61,19 @@ def test_a_shipped_map_draws_what_was_recorded(name):
 def test_the_recorded_inventory_is_the_known_one():
     """The inventory in words, so a reader need not decode the fixture.
 
-    All of it is in ``miniwind_world``, on seven of its twelve convex brushes:
-
-    * Bounds: one roof brush whose ``pos`` is not its planes' centre, by
-      4928 units (six more are within 1e-6 and not pinned).
-    * Material (Stage 1), drawn: four brushes whose authored per-tag
-      ``uv_scale`` or ``uv_angle`` -- what the Surface Inspector showed -- is
-      not on their planes. By the precedence rule it is their one record and
-      is now drawn (``test_stage1_changes`` names the faces that change).
-    * Material, discarded: three brushes whose per-tag ``texture`` differs
-      from the texture on their planes, which is what was and is drawn.
-    * Runtime keys: none; no MiniWind map was saved with a mover mid-motion.
+    None. ``miniwind_world`` held all of it (a roof whose ``pos`` was 4928
+    units off its planes, four brushes whose per-tag ``uv_scale``/``uv_angle``
+    was not on their planes, three whose per-tag ``texture`` was discarded)
+    until it was re-saved as a version-5 map: one material record a face,
+    ``pos`` at the planes' centre. The caves are box brushes, which carry
+    none of these. No MiniWind map was saved with a mover mid-motion.
     """
     kinds = {}
     for name, entry in RECORDED.items():
         for found in entry['inconsistencies'].values():
             for kind in found:
                 kinds.setdefault(kind, set()).add(name)
-    assert kinds == {
-        'bound_drift': {WORLD},
-        'resolved_from_tag': {WORLD},
-        'discarded_tag_value': {WORLD},
-    }
-    world = RECORDED[WORLD]['inconsistencies']
-    resolved = {bid: f['resolved_from_tag'] for bid, f in world.items()
-                if 'resolved_from_tag' in f}
-    every_scale = ['down.uv_scale', 'east.uv_scale', 'north.uv_scale',
-                   'south.uv_scale', 'top.uv_scale', 'west.uv_scale']
-    assert resolved == {
-        WALL_SCALED: every_scale,
-        SLAB_SCALED: ['top.uv_scale'],
-        WALL_TURNED: ['east.uv_angle'],
-        TABLE_TURNED: ['top.uv_angle'],
-    }
-    discarded = {bid for bid, f in world.items() if 'discarded_tag_value' in f}
-    assert discarded == {'327f41c5-e697-43b0-90da-895d31f99deb', TABLE_TURNED,
-                         'd3a40da8-565b-4e00-9fed-e390dcd4d98a'}
-    drifts = {bid: f['bound_drift'] for bid, f in world.items() if 'bound_drift' in f}
-    assert drifts == {ROOF_STALE: RECORDED[WORLD]['inconsistencies'][ROOF_STALE]['bound_drift']}
-    assert drifts[ROOF_STALE] == pytest.approx(4928.0, abs=2.5)
+    assert kinds == {}
 
 
 def test_the_digest_sees_a_visible_change_and_not_float_noise():

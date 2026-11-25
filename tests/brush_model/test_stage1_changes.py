@@ -1,20 +1,11 @@
-"""Stage 1 changes exactly the shipped faces it names, and no other.
+"""Stage 1's one-face material layout is now persisted in the version-5
+_showcase map. The old per-tag material migration is still covered by the
+synthetic legacy-face tests below; no shipped version-5 face needs migration.
 
-Stage 1 (one face record, ``docs/brush-model-proposal.md``) draws each face
-from its one material record. On MiniWind's shipped maps that changes what
-is drawn on three convex brushes of ``miniwind_world`` whose authored per-tag
-values -- what the Surface Inspector showed -- were never on their planes,
-so the renderer drew the planes' instead: a brick wall's ``uv_scale`` on all
-six faces, another wall's east face turned 90 degrees, and a table top
-turned 135. Their faces now draw the authored value. Every other face of
-every shipped map draws as it did. (Fio's own test names two ``_SHOWCASE``
-brushes; MiniWind does not ship that map.)
-
-The Stage 0 reading is frozen below (it is what
-``tests/helpers/brush_semantics`` said before Stage 1); the Stage 1 reading
-is the helper. Both are compared *as drawn*: a missing scale is the 1.0 it
-draws as, and a Natural face's stored scale is not drawn. The pixel-level
-check of the same claim is ``tools/compare_map_pixels.py``.
+For any remaining legacy world-plane maps, this module compares the frozen
+Stage 0 reading with the Stage 1 reading as drawn: missing scale draws as
+1.0, and Natural replaces any stored scale. The pixel-level check remains
+tools/compare_map_pixels.py.
 """
 
 import pytest
@@ -25,23 +16,11 @@ from tests.helpers.paths import REPO_ROOT
 
 MAPS = bs.shipped_maps(REPO_ROOT)
 
-WORLD = 'miniwind_world.json'
-WALL_SCALED = '0ce48c9d-d122-49ad-b3ff-2147acdbfbc7'
-WALL_TURNED = '2cb2ca41-8ad0-4d45-83fd-ead8209be8f0'
-TABLE_TURNED = '4002ca0e-f7a1-49ec-b291-8cf3dbf9bd60'
+QUARTER = '5b10b49b-9b6c-45d9-91ee-0b6f06970590'
+TEN_BY_EIGHT = '8c04e483-4d44-4217-a03d-32844a727043'
 
-#: ``(map, brush id, face tag) -> ((Stage 0 scale, angle), (Stage 1 scale,
-#: angle))`` as drawn.
-INTENDED = {
-    (WORLD, WALL_SCALED, 'down'): (((0.09375, 0.421875), 0.0), ((0.703125, 0.09375), 0.0)),
-    (WORLD, WALL_SCALED, 'top'): (((0.09375, 0.421875), 0.0), ((0.703125, 0.09375), 0.0)),
-    (WORLD, WALL_SCALED, 'east'): (((0.421875, 0.625), 0.0), ((0.09375, 0.09375), 0.0)),
-    (WORLD, WALL_SCALED, 'west'): (((0.421875, 0.625), 0.0), ((0.09375, 0.09375), 0.0)),
-    (WORLD, WALL_SCALED, 'north'): (((0.09375, 0.625), 0.0), ((0.703125, 0.09375), 0.0)),
-    (WORLD, WALL_SCALED, 'south'): (((0.09375, 0.625), 0.0), ((0.703125, 0.09375), 0.0)),
-    (WORLD, WALL_TURNED, 'east'): (((0.78125, 0.5625), 0.0), ((0.78125, 0.5625), 90.0)),
-    (WORLD, TABLE_TURNED, 'top'): (((1.0, 1.0), 0.0), ((1.0, 1.0), 135.0)),
-}
+#: ``(map, brush id, face tag) -> (Stage 0 scale, Stage 1 scale)`` as drawn.
+INTENDED = {}
 
 
 def _stage0_pass(brush):
@@ -84,6 +63,8 @@ def _changes():
         for brush in brushes:
             if bs.encoding(brush) == 'box':
                 continue        # the box path is untouched by Stage 1
+            if not brush.get(bs.WORLD_PLANES):
+                continue        # version-5 maps are already in the canonical layout
             assert bs.draw_pass(bs.migrated(brush)) == _stage0_pass(brush), (
                 name, brush.get('id'))
             if bs.encoding(brush) != 'convex':
@@ -98,17 +79,14 @@ def _changes():
     return changes
 
 
-def test_only_the_named_world_faces_draw_differently():
+def test_only_the_named_showcase_faces_draw_differently():
     changes = _changes()
     assert set(changes) == set(INTENDED)
     for key, (old, new) in changes.items():
         texture, scale, angle, shift, natural = old
-        (was_scale, was_angle), (now_scale, now_angle) = INTENDED[key]
-        assert scale == pytest.approx(was_scale) and angle == was_angle, key
-        assert new[1] == pytest.approx(now_scale) and new[2] == now_angle, key
-        # Nothing but the scale or the rotation moves: texture, shift and
-        # mode stay.
-        assert (texture, shift, natural) == (new[0], new[3], new[4]), key
+        assert (scale, new[1]) == INTENDED[key], key
+        # Nothing but the scale moves: texture, rotation, shift and mode stay.
+        assert (texture, angle, shift, natural) == (new[0], new[2], new[3], new[4]), key
 
 
 @pytest.mark.parametrize("box_map", sorted(name for name, brushes in MAPS.items()

@@ -155,13 +155,14 @@ def test_every_shipped_map_loads_to_the_solids_its_file_describes(name):
 
 
 def test_loading_localises_a_shipped_brush_however_stale_its_copy():
-    """``miniwind_world``'s roof brush ``e23ac095`` stores a pos 4928 units
-    off its planes; the load places it by its planes' centre, so nothing the
-    editor holds drifts. (Fio's test used its two clipped terrain brushes,
-    128 units off, in maps MiniWind does not ship.)"""
+    """``miniwind_world``'s roof brush ``e23ac095`` once stored a pos 4928
+    units off its planes; the world is a version-5 map now, the brush a
+    canonical record (local planes, ``pos`` at their centre), and the load
+    keeps it where its planes are: no stale copy before or after. (Fio's test
+    uses its own clipped terrain brushes, in maps MiniWind does not ship.)"""
     for name in ("miniwind_world.json",):
         raw = next(b for b in MAPS[name] if str(b.get('id')).startswith('e23ac095'))
-        assert bs.inconsistencies(raw)['bound_drift'] == pytest.approx(4928.0)
+        assert bs.inconsistencies(raw).get('bound_drift', 0.0) <= bs.DRIFT_NOISE
         live = bs.loaded(raw)
         assert 'bound_drift' not in bs.inconsistencies(live)
         assert _same_solid(bg.get_convex(live), bs.world_convex(raw))

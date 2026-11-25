@@ -86,8 +86,8 @@ taking the upstream fixes in the same owning modules:
 
 The migration carries the upstream I/O, physics, decal, SysMon, editor and
 view tests that apply to MiniWind, plus the test-tool adaptation for the
-current per-map brush-semantics API. MiniWind's shipped maps remain version 3;
-Fio's refreshed version-5 demo maps and `_SHOWCASE` assets are not copied over.
+current per-map brush-semantics API. The overworld (`miniwind_world.json`) is
+saved as version 5 since 691ef32; the other shipped maps remain version 3. Fio's refreshed version-5 demo maps and `_SHOWCASE` assets are not copied over.
 The existing loader migration and MiniWind map fixtures remain authoritative.
 
 `editor/version.txt` now records `Fio 3.5.0.1511`; MiniWind remains at
@@ -287,8 +287,11 @@ runs it as its own job (`tests/README.md`).
 ## Map and save compatibility
 
 * **Maps.** Fio 3.5 writes map version 5 (convex planes in the brush's own
-  frame). MiniWind's shipped maps are version 3 and are converted on load;
-  they are not rewritten on disk. All 12 angled brushes of the overworld keep
+  frame). The overworld was re-saved from the editor as version 5 (691ef32);
+  the brush-model pins (stage-1/2a intended changes, the drift inventory and
+  the semantics snapshot) were re-recorded for it, since its stored bounds now
+  match what is drawn. The other shipped maps are version 3 and are converted
+  on load; they are not rewritten on disk. All 12 angled brushes of the overworld keep
   their world bounds exactly (worst error 1.5e-11). Exported `.fiopak`
   packages still carry version 4.
 * **Saves.** MiniWind's schema is kept: co-op campaign saves version 4, solo

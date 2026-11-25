@@ -168,68 +168,12 @@
   "inconsistencies": {}
  },
  "miniwind_world.json": {
-  "brushes": 16158,
-  "digest": "7205e0ab0f9980234533e8b0281c12a39e1025d843371cb77b6f25be3859cba1",
+  "brushes": 16159,
+  "digest": "331a52d93358504e6835bd05a21180ebb7d2fd8e0564028843c64d427e64f08a",
   "encodings": {
-   "box": 16146,
+   "box": 16147,
    "convex": 12
   },
-  "inconsistencies": {
-   "0ce48c9d-d122-49ad-b3ff-2147acdbfbc7": {
-    "resolved_from_tag": [
-     "down.uv_scale",
-     "east.uv_scale",
-     "north.uv_scale",
-     "south.uv_scale",
-     "top.uv_scale",
-     "west.uv_scale"
-    ]
-   },
-   "213d70aa-31b4-4205-afab-22736d34007a": {
-    "resolved_from_tag": [
-     "top.uv_scale"
-    ]
-   },
-   "2cb2ca41-8ad0-4d45-83fd-ead8209be8f0": {
-    "resolved_from_tag": [
-     "east.uv_angle"
-    ]
-   },
-   "327f41c5-e697-43b0-90da-895d31f99deb": {
-    "discarded_tag_value": [
-     "down.texture",
-     "east.texture",
-     "north.texture",
-     "south.texture",
-     "top.texture",
-     "west.texture"
-    ]
-   },
-   "4002ca0e-f7a1-49ec-b291-8cf3dbf9bd60": {
-    "discarded_tag_value": [
-     "down.texture",
-     "east.texture",
-     "north.texture",
-     "south.texture",
-     "west.texture"
-    ],
-    "resolved_from_tag": [
-     "top.uv_angle"
-    ]
-   },
-   "d3a40da8-565b-4e00-9fed-e390dcd4d98a": {
-    "discarded_tag_value": [
-     "down.texture",
-     "east.texture",
-     "north.texture",
-     "south.texture",
-     "top.texture",
-     "west.texture"
-    ]
-   },
-   "e23ac095-195e-4d67-9770-ab3c33fb3e1b": {
-    "bound_drift": 4930
-   }
-  }
+  "inconsistencies": {}
  }
 }

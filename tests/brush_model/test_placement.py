@@ -497,9 +497,10 @@ def test_the_editor_pickers_ignore_a_stale_copy(main_window, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The shipped brush with a stale copy (MiniWind's world: a roof whose stored
-# pos is 2032 units along X and 4928 along Z from its planes; Fio's test used
-# two clipped terrain brushes of maps MiniWind does not ship)
+# A shipped brush once stored with a stale copy (MiniWind's world: a roof whose
+# pos was 2032 units along X and 4928 along Z from its planes, until the world
+# was re-saved as a version-5 map; Fio's test used two clipped terrain brushes
+# of maps MiniWind does not ship)
 # ---------------------------------------------------------------------------
 
 CLIPPED_TERRAIN = 'e23ac095'
@@ -517,7 +518,8 @@ def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
     stored_lo_x = raw['pos'][0] - raw['size'][0] / 2
     planes = bg.get_convex(brush)
     lo, hi = planes.bounds
-    assert lo[0] - stored_lo_x == pytest.approx(-2032.0)
+    # A version-5 record: the stored bound is on its planes.
+    assert lo[0] - stored_lo_x == pytest.approx(0.0, abs=1e-6)
     assert np.allclose(lo, bs.world_convex(raw).bounds[0], atol=1e-9)
     assert np.allclose(hi, bs.world_convex(raw).bounds[1], atol=1e-9)
     # Loading either representation leaves the brush's world bound on its planes.
@@ -543,12 +545,12 @@ def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
     assert np.allclose(brush_aabb_bounds(brush), want, rtol=1e-6)
     assert set(brush_cells(brush, 512.0)) == _expected_cells(want, 512.0)
 
-    # The phantom box the copy claimed collides with nothing; the solid
-    # still does, where it is drawn.
+    # The solid collides where it is drawn -- and the stored pos, the
+    # planes' centre in a version-5 record, is inside it.
     alone = SpatialGrid()
     alone.populate([brush])
     y, z = (lo[1] + hi[1]) / 2.0, (lo[2] + hi[2]) / 2.0
-    assert not alone.overlaps_wall(raw['pos'][0], raw['pos'][1], raw['pos'][2], 1.0)
+    assert alone.overlaps_wall(raw['pos'][0], raw['pos'][1], raw['pos'][2], 1.0)
     assert alone.overlaps_wall(lo[0] + 8.0, y, z, 1.0)
 
 

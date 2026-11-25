@@ -3,15 +3,14 @@
 Stage 2a (derived bounds, ``docs/brush-model-stage2.md``) makes every
 bound-reader -- culling, collision rows, the physics grid, Big World,
 picking -- take a convex brush's bound from its planes instead of the
-``pos``/``size`` copy the map stores. On MiniWind's shipped maps that copy
-is right everywhere except one brush: ``miniwind_world``'s roof ``e23ac095``
-stores the right size at a stale ``pos``, 2032 units along X and 4928 along
-Z from where its planes are (and were always drawn). Its bound -- what
-culling, collision rows, the physics grid and Big World's cells read -- is
-now where the solid is. Nothing any shipped brush *draws* changes: the faces
-(rings and materials) are identical, and so is every other bound beyond the
-solver's last bits (``DRIFT_NOISE``). (Fio's own test names brushes of maps
-MiniWind does not ship.)
+``pos``/``size`` copy the map stores. MiniWind's shipped maps no longer
+hold a legacy world-plane brush: ``miniwind_world``'s roof ``e23ac095``,
+whose copy was 2032 units along X and 4928 along Z from its planes, was the
+one, until the world was re-saved as a version-5 map (``pos`` at the
+planes' centre). So no bound moves, and nothing any shipped brush *draws*
+changes: the faces (rings and materials) are identical, and so is every
+bound beyond the solver's last bits (``DRIFT_NOISE``). (Fio's own test
+names brushes of maps MiniWind does not ship.)
 
 The pre-Stage-2a reading of a bound is frozen below (``pos``/``size``);
 the current reading is the helper. The pixel-level check of "nothing drawn
@@ -30,10 +29,7 @@ STALE_ROOF = 'e23ac095'
 
 #: ``(map, brush id prefix) -> (stored centre, derived centre)``; the size
 #: is the same in both.
-INTENDED = {
-    ('miniwind_world.json', STALE_ROOF): ((3632.0, 192.0, -8784.0),
-                                          (1600.0, 192.0, -3856.0)),
-}
+INTENDED = {}
 SIZE = (944.0, 96.0, 928.0)
 
 
