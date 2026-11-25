@@ -166,6 +166,11 @@ class EditorState:
         #: ends). Lets Play start reuse work derived from the file alone,
         #: such as Big World's pristine base world.
         self.play_source = None
+        #: Callables handed every level dict :meth:`get_level_data` builds,
+        #: last, to amend it in place: a game putting back into the saved
+        #: map what it keeps out of the editor's view (MiniWind's inked
+        #: district borders). Every save, autosave and savegame sees them.
+        self.level_data_hooks = []
         self.brushes = []
         self.things = []
         #: Big World maps keep only the cells near the editor camera live
@@ -639,6 +644,8 @@ class EditorState:
         for key, value in getattr(self, 'tool_metadata', {}).items():
             data.setdefault(key, value)
 
+        for hook in list(getattr(self, 'level_data_hooks', ())):
+            hook(data)
         return data
 
     def stream_editor_camera(self, position, *, force=False):

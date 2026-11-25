@@ -1031,6 +1031,8 @@ Reach** and **Cairnmoor** (desert; Cairnmoor takes in Whisperdeep),
   paint -- every texel put back exactly -- and `districts on` lays them in
   again; when Play stops the map's paint is as its file has it. The record
   is also how they could be moved one day (lift the old, bake the new).
+  In the editor they are kept out of view (lifted while the map is open)
+  yet put back into every save, autosave and savegame, and into Play.
   `districts` alone says which district you are in.
 * *Seeing them.* `python -m game.tools.district_map` draws the world map
   with every border, seat and name (`docs/images/districts_map.png`).

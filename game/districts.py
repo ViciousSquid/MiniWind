@@ -564,30 +564,81 @@ class Drawing:
         self.key = str(key)
         #: chunk -> (flat texel index, rgba before the ink): set by lay().
         self.under = {}
+        #: chunk -> (its array without the ink, its array with it), while
+        #: neither has been replaced: lay and lift then just swap them.
+        self._arrays = {}
         #: Whether the ink is in the paint now.
         self.laid = False
 
+    #: How many inked texels :meth:`is_laid` looks at, from how many chunks.
+    PROBES = 24
+    PROBE_CHUNKS = 3
+
+    def is_laid(self, terrain) -> bool:
+        """Whether the ink is in *terrain*'s paint now: a few strongly inked
+        texels are compared with what they were before the ink. So laying
+        or lifting twice -- or after an undo brought the ink back -- never
+        inks a texel twice or loses one."""
+        if not self.under:
+            return False
+        differ = same = 0
+        for coord in sorted(self.under)[:: max(1, len(self.under) // self.PROBE_CHUNKS)][:self.PROBE_CHUNKS]:
+            index, before = self.under[coord]
+            strength = self.alphas[coord].reshape(-1)[index]
+            pick = np.argsort(strength)[::-1][: max(1, self.PROBES // self.PROBE_CHUNKS)]
+            paint = terrain.texture_paint_maps.get(coord)
+            now = (np.zeros((len(pick), 4), np.uint8) if paint is None
+                   else paint.reshape(-1, 4)[index[pick]])
+            hit = np.any(now != before[pick], axis=1)
+            differ += int(hit.sum())
+            same += int((~hit).sum())
+        return differ > same
+
     def lay(self, terrain):
-        """Paint the ink, recording what each inked texel was."""
+        """Paint the ink (if it is not in already), recording what each inked
+        texel was. A chunk laid and lifted before, and untouched since, gets
+        back the very array it had -- so the paint serialiser's cache holds."""
         res = int(terrain.TERRAIN_PAINT_RESOLUTION)
+        if self.is_laid(terrain):
+            self.laid = True
+            return
+        maps = terrain.texture_paint_maps
         for coord, alpha in self.alphas.items():
             if alpha.shape != (res, res):
                 raise ValueError(f"drawn for {alpha.shape[0]}-texel paint, terrain has {res}")
+            current = maps.get(coord)
+            cached = self._arrays.get(coord)
+            if cached is not None and cached[0] is current and current is not None:
+                terrain.restore_paint(coord, cached[1])
+                continue
             index = np.flatnonzero(alpha.reshape(-1))
             if not len(index):
                 continue
-            paint = terrain.texture_paint_maps.get(coord)
-            before = (np.zeros((len(index), 4), np.uint8) if paint is None
-                      else paint.reshape(-1, 4)[index].copy())
-            if coord not in self.under:
-                self.under[coord] = (index, before)
+            before = (np.zeros((len(index), 4), np.uint8) if current is None
+                      else current.reshape(-1, 4)[index].copy())
+            self.under[coord] = (index, before)
             terrain.blend_paint(coord, 0, 0, alpha.astype(np.float32) / 255.0, self.colour)
+            if current is not None:
+                self._arrays[coord] = (current, maps.get(coord))
         self.laid = True
 
     def lift(self, terrain):
-        """Put back every texel the ink covered, exactly as it was."""
+        """Put back every texel the ink covered, exactly as it was (if the
+        ink is in at all)."""
+        if not self.is_laid(terrain):
+            self.laid = False
+            return
+        maps = terrain.texture_paint_maps
         for coord, (index, before) in self.under.items():
+            current = maps.get(coord)
+            cached = self._arrays.get(coord)
+            if cached is not None and cached[1] is current and current is not None:
+                terrain.restore_paint(coord, cached[0])
+                continue
             terrain.set_paint_texels(coord, index, before)
+            lifted = maps.get(coord)
+            if current is not None and lifted is not None:
+                self._arrays[coord] = (lifted, current)
         self.laid = False
 
     # -- kept beside the map -----------------------------------------------------

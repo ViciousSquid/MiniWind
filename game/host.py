@@ -831,6 +831,8 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
         host.on("render.pre_sprites", self._on_pre_sprites)
         host.on("render.pre_scene", self._on_pre_scene)
+        # The inked district borders, out of the editor's view (game/district_editor.py).
+        host.on("editor.level_loaded", self._on_level_loaded)
         # Fio's cutscenes: lines said and thought on a keyframe, and the combat
         # of a cutscene battle while the cutscene holds the game's own tick.
         host.on("cutscene.line", self._on_cutscene_line)
@@ -1005,8 +1007,15 @@ class MiniwindGame:
                 import game.ui.magic_gl as magic_gl
             magic_gl.draw_wet_lens(water.frame())
 
+    def _on_level_loaded(self, ev):
+        from .district_editor import EDITOR
+        EDITOR.level_loaded(ev.get("state"), ev.get("terrain"), bool(ev.get("play_mode")))
+
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
+        # The district borders back in the paint, as the map file has them.
+        from .district_editor import EDITOR
+        EDITOR.play_start()
         # The water's sky clouds bake on their own thread while the game
         # loads and the character is made (engine/sky_clouds.py).
         from engine import sky_clouds
@@ -1092,6 +1101,8 @@ class MiniwindGame:
             session.uninstall()
             logic._miniwind = None
             logic.game_session = None
+        from .district_editor import EDITOR
+        EDITOR.play_stop()                 # out of the editor's view again
         host = getattr(self, "_host", None)
         if host is not None:
             try:

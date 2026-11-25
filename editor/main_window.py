@@ -6108,6 +6108,22 @@ class MainWindow(QMainWindow):
 
             if self.view_3d is not None and self.view_3d.logic_thread:
                 self.view_3d.logic_thread.world_runtime.terrain = self.terrain
+        self._emit_level_loaded()
+
+    def _emit_level_loaded(self):
+        """Tell plugins a map is now the scene (``editor.level_loaded``):
+        ``state``, ``terrain`` (or None) and ``play_mode`` (a level change
+        inside Play, rather than the editor opening a map)."""
+        view = getattr(self, 'view_3d', None)
+        manager = getattr(getattr(view, 'logic_thread', None), 'plugins', None)
+        if manager is None or not manager.has_listeners("editor.level_loaded"):
+            return
+        try:
+            manager.emit("editor.level_loaded", state=self.state,
+                         terrain=getattr(self, 'terrain', None),
+                         play_mode=bool(getattr(view, 'play_mode', False)))
+        except Exception as exc:                   # a plugin never breaks a load
+            print(f"[Editor] editor.level_loaded listener failed: {exc}")
 
     def _on_level_change_requested(self, filePath, destination_spawn=''):
         """A LevelChanger asked for *filePath*: the game, not the user."""

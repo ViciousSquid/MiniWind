@@ -286,3 +286,32 @@ def test_the_console_reports_districts_and_toggles_borders(monkeypatch):
     assert toggled == [False]
     console.cmd_districts(console.ConsoleContext(), "")
     assert "Play Mode only" in lines[-1]
+
+
+def test_the_editor_keeps_the_ink_out_of_view_but_in_every_save(tmp_path, monkeypatch):
+    from .. import district_editor
+    grid = PaintGrid()
+    grid._serialize_texture_paint = lambda: {k: v.copy() for k, v in grid.texture_paint_maps.items()}
+    found = small()
+    found.map = str(tmp_path / "world.json")
+    drawing = found.bake(grid)                     # the map as its file has it: inked
+    drawing.save(dd.record_path(found.map))
+    inked = {k: v.copy() for k, v in grid.texture_paint_maps.items()}
+    monkeypatch.setattr(dd, "load", lambda *a, **k: found)
+    state = SimpleNamespace(terrain_data={"seed": 1, "texture_paint": inked}, level_data_hooks=[])
+    editor = district_editor.EditorBorders()
+    editor.level_loaded(state, grid, play_mode=False)
+    assert not editor.drawing.is_laid(grid) and grid.texture_paint_maps == {}
+    assert state.terrain_data["seed"] == 1 and "texture_paint" not in state.terrain_data
+    level = {"terrain_data": dict(state.terrain_data)}
+    for hook in state.level_data_hooks:
+        hook(level)                                 # a save: the ink is in what is written
+    saved = level["terrain_data"]["texture_paint"]
+    assert set(saved) == set(inked) and all(np.array_equal(saved[k], inked[k]) for k in inked)
+    assert grid.texture_paint_maps == {}            # and still out of view
+    editor.play_start()
+    assert editor.drawing.is_laid(grid)
+    editor.play_start()                             # twice: inked once
+    assert all(np.array_equal(grid.texture_paint_maps[k], inked[k]) for k in inked)
+    editor.play_stop()
+    assert grid.texture_paint_maps == {}
