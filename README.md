@@ -153,10 +153,10 @@ scenario-free:
   inherit the producer's owner.
 
 Everything here is pure Python — no Qt, no engine imports — and headlessly
-tested. The **director** owns the bus and drives the chain; parked, distant
-actors are simulated coarsely (gossip, reports, production in hour-long
-catch-up passes), and truly dormant ones not at all. It also owns the
-simulation's long-lived subsystems — the [storyteller](docs/storyteller.md)'s
+tested. The [**Director**](docs/director.md) owns the bus and drives the chain;
+parked, distant actors are simulated coarsely (gossip, reports, production in
+hour-long catch-up passes), and truly dormant ones not at all. It also owns the
+simulation's long-lived subsystems — the [**Storyteller**](docs/storyteller.md)'s
 pacing and the [faction actors](docs/factions.md) — which tick after each pass
 on world time and reset, save and load with the event history.
 
