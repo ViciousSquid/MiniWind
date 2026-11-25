@@ -10,6 +10,7 @@ remote executable content is accepted.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import select
 import socket
@@ -312,21 +313,48 @@ class NetworkService:
         if UDP can bind it too: Windows reserves port ranges for one protocol
         and not the other (Hyper-V / WinNAT exclusions), and a TCP port
         inside a UDP-only reservation left the party without UDP at all."""
-        tries = cls.EPHEMERAL_PORT_TRIES if int(port) == 0 else 1
-        for attempt in range(tries):
-            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                listener.bind((address, int(port)))
-                listener.listen(8)
-                listener.settimeout(0.2)
-            except (OSError, ValueError):
+        if int(port) != 0:
+            return cls._tcp_listener(address, int(port))
+        # Alternate who picks: TCP's choice checked on UDP, then UDP's choice
+        # (one UDP may bind, by construction) taken on TCP. A UDP-only
+        # reservation can cover the whole stretch of ports TCP hands out, so
+        # asking TCP alone can fail every time; asking UDP alone would meet
+        # the same with a TCP-only one.
+        for attempt in range(cls.EPHEMERAL_PORT_TRIES):
+            if attempt % 2 == 0:
+                listener = cls._tcp_listener(address, 0)
+                if cls._udp_port_free(address, listener.getsockname()[1]):
+                    return listener
                 listener.close()
-                raise
-            if tries == 1 or cls._udp_port_free(address, listener.getsockname()[1]):
-                return listener
-            listener.close()
+                continue
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                probe.bind((address, 0))
+                chosen = probe.getsockname()[1]
+                try:
+                    # Not SO_REUSEADDR on Windows: there it would let this
+                    # bind take a port another program's TCP socket holds.
+                    return cls._tcp_listener(address, chosen,
+                                             reuse=os.name != "nt")
+                except OSError:
+                    continue            # taken on TCP: try again
+            finally:
+                probe.close()
         raise OSError("no port free on both TCP and UDP")
+
+    @staticmethod
+    def _tcp_listener(address, port, reuse=True):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if reuse:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((address, int(port)))
+            listener.listen(8)
+            listener.settimeout(0.2)
+        except (OSError, ValueError):
+            listener.close()
+            raise
+        return listener
 
     @staticmethod
     def _udp_port_free(address, port):

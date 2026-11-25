@@ -542,3 +542,31 @@ def test_an_os_chosen_port_taken_on_udp_is_passed_over(monkeypatch):
     finally:
         network.close()
         held.close()
+
+
+def test_a_udp_reservation_over_every_tcp_choice_still_hosts(monkeypatch):
+    """A Windows x64 CI host refused UDP on every port its TCP stack offered,
+    20 in a row (a UDP-only exclusion over TCP's whole ephemeral stretch):
+    hosting on ``port=0`` failed outright. With UDP choosing a port on
+    alternate tries, the party still gets one port on both protocols."""
+    import errno
+    import socket
+    tcp_choices = set()
+    real_bind = socket.socket.bind
+
+    def bind(self, addr):
+        if self.type == socket.SOCK_DGRAM and addr[1] in tcp_choices:
+            raise OSError(errno.EACCES, "excluded for UDP")
+        result = real_bind(self, addr)
+        if self.type == socket.SOCK_STREAM and addr[1] == 0:
+            tcp_choices.add(self.getsockname()[1])
+        return result
+
+    monkeypatch.setattr(socket.socket, "bind", bind)
+    network = NetworkService()
+    try:
+        network.host(port=0, address="127.0.0.1")
+        assert tcp_choices and network.port not in tcp_choices
+        assert network.udp is not None and network.udp.port == network.port
+    finally:
+        network.close()
