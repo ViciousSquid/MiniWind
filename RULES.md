@@ -940,6 +940,46 @@ It does nothing for anything else you do, and hearing is unchanged.
   * news of a lawful killing or fight (bandits cut down on the road) is met
     with "Good riddance", never "the watch had better hear of this".
 
+
+## 19. Time and the calendar
+
+Everything below is `game/calendar.py`; the night, the sky, torches, the
+wheat and the clock all read it, so they always agree.
+
+* **The clock.** A game day takes 24 real minutes (one game hour a real
+  minute; a map can change it). Saved with the game; in co-op the host's
+  clock is everyone's.
+* **The year** is 28 days: four seasons of seven, spring first — about 11
+  real hours. A new game opens on the last day of summer in Year 1.
+* **Leap years.** Every fourth year (Year 4, 8, 12 …) has a 29th day,
+  **Leap Day**, after the last day of winter and before the next spring.
+  Leap Day belongs to no week (the weekdays carry on around it, and the
+  clock reads "Leap Day") and no season.
+* **The Leap Festival.** The Vale keeps Leap Day as its great festival, once
+  in four years. On the eve ("Tomorrow is Leap Day…") and on the day itself
+  ("LEAP DAY! …") the news shows in the message log and as a toast; the
+  Leap Day toast stays up 10 seconds. All day the townsfolk talk of nothing
+  else when they pass the time of day — lanterns, the Leap fire, no work.
+* **New years and seasons.** The first day of a year ("A new year begins:
+  Year 5.", saying when it is a leap year) and of each season ("Summer has
+  come to the Vale.") are announced the same way.
+* **Day length follows the year.** Solar noon is 12:24. Days are 12.2 hours
+  at the equinoxes (sunrise 06:18, sunset 18:30), up to 15.8 at midsummer
+  (about 04:30–20:18) and down to 8.6 at midwinter (about 08:06–16:42).
+* **Dawn and dusk stretch with the day.** The night's darkness, dusk's
+  colour and the reflected sky are drawn by *solar hours*: the clock's hour
+  stretched so sunrise always reads 06:18 and sunset 18:30 (day and night
+  each stretched evenly). At the equinoxes they are the clock's own hours.
+* **Torches** are lit from solar 20:00 to 06:00 — 1.5 equinox hours after
+  sunset until just before sunrise: about 21:30 in high summer, 18:45 in
+  midwinter.
+* **NPC routines keep the clock's hours** (up at 6, work 9 to 17, bed at
+  22) whatever the season.
+* **The moon** goes from new to full and back every 8 days.
+* **The wheat** grows by the year (sprouting in spring, tall and gold in
+  summer, cut in late autumn, bare in winter); on Leap Day it stays as at
+  winter's end.
+
 ## Known gaps
 
 Places where the code does not yet do what something in the game describes:

@@ -30,7 +30,9 @@ import numpy as np
 from PyQt5.QtCore import QPointF, QRect, Qt
 from PyQt5.QtGui import QColor, QImage, QPainter, QRadialGradient
 
-#: Key moments of the day: (hour, darkness colour, darkness 0..1).
+#: Key moments of the day: (hour, darkness colour, darkness 0..1). The hours
+#: are *solar* hours (game/calendar.py): sunrise is always 6.3 and sunset 18.5
+#: here, and the season stretches them onto the clock.
 SKY = (
     (0.0, (8, 12, 38), 0.74),
     (4.5, (8, 12, 38), 0.74),
@@ -78,6 +80,16 @@ def sky_at(hour: float):
             colour = tuple(int(round(c0[i] + (c1[i] - c0[i]) * t)) for i in range(3))
             return colour, a0 + (a1 - a0) * t
     return SKY[0][1], SKY[0][2]
+
+
+def solar_hour(clock) -> float:
+    """*clock*'s hour in solar hours (:func:`game.calendar.solar_hour`): the
+    hours :data:`SKY` is keyed to, so dawn and dusk follow the season. A
+    clock without a day (a bare hour holder) reads its hour as is."""
+    if getattr(clock, "day", None) is None:
+        return float(getattr(clock, "hour", 12.0))
+    from .. import calendar
+    return calendar.solar_hour(clock)
 
 
 def night_amount(hour: float) -> float:
@@ -263,11 +275,12 @@ def draw(painter, session, viewport, width, height) -> None:
     clock = getattr(session, "clock", None)
     if clock is None or width <= 0 or height <= 0:
         return
-    colour, darkness = sky_at(clock.hour)
+    hour = solar_hour(clock)
+    colour, darkness = sky_at(hour)
     if darkness <= 0.004:
         return
     lifted = holes(session, viewport, width, height) if viewport is not None else []
-    img = paint_mask(width, height, colour, darkness, lifted, night_amount(clock.hour))
+    img = paint_mask(width, height, colour, darkness, lifted, night_amount(hour))
     painter.save()
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
     painter.drawImage(QRect(0, 0, int(width), int(height)), img)
@@ -286,11 +299,14 @@ def map_night(session):
     """What the maps need to show the night: ``{"hour", "lights": [(x, z,
     radius, intensity, rgb)]}``, or None by day."""
     clock = getattr(session, "clock", None)
-    if clock is None or sky_at(clock.hour)[1] <= 0.004:
+    if clock is None:
+        return None
+    hour = solar_hour(clock)
+    if sky_at(hour)[1] <= 0.004:
         return None
     lights = [(float(pos[0]), float(pos[2]), radius, intensity, rgb)
               for pos, radius, intensity, rgb in _local_lights(session)]
-    return {"hour": float(clock.hour), "lights": lights}
+    return {"hour": hour, "lights": lights}
 
 
 def draw_map_night(painter, rect, night, to_screen, scale, player=None,

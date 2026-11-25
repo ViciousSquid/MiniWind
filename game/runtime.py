@@ -440,9 +440,6 @@ VOLUNTEER_COOLDOWN = 90.0
 PLAYER_GRASS_RADIUS = 46.0
 GRASS_PUSH_REACH = 1400.0
 GRASS_PUSHERS = 20
-#: Where in the farming year (0 = first day of spring) day 0 falls: a new
-#: game opens in late summer, the wheat standing tall and turning gold.
-YEAR_START = 0.42
 #: The routines in which somebody has time to chat.
 CHAT_STATES = frozenset(("", "IDLE", "WANDER", "WORKING", "GOING_TO_WORK",
                          "GOING_HOME", "PATROL"))
@@ -5678,6 +5675,17 @@ class MiniwindSession(SettlementLaw):
             self.game.message(line)
         if events:
             self.notify(events[-1], 5.0)
+        self._announce_calendar()
+
+    def _announce_calendar(self) -> None:
+        """Tell the player what today is: a new year, a new season, Leap Day
+        and its eve (game/calendar.py) -- in the message log, and the big
+        ones as a toast. Leap Day's toast stays up longest."""
+        from . import calendar
+        for text, toast in calendar.announcements(self.clock):
+            self.game.message(text)
+            if toast:
+                self.notify(text, 10.0 if calendar.festival(self.clock) else 6.0)
 
     def _is_arrest_guard(self, thing) -> bool:
         """Return whether *thing* is a living, non-hostile guard available for arrest duty."""
@@ -7154,7 +7162,9 @@ class MiniwindSession(SettlementLaw):
                     continue
                 names = [str(t.properties.get("display_name")
                              or t.properties.get("name") or "friend") for t in (a, b)]
-                opener, reply = chatter.small_talk(names[0], names[1], self.clock.hour)
+                from . import calendar
+                opener, reply = chatter.small_talk(names[0], names[1], self.clock.hour,
+                                                   festival=calendar.festival(self.clock))
                 self.bark(a, opener)
                 if id(a) not in self.__dict__.get("barks", {}):
                     return                  # too far from the player to be heard
@@ -7349,9 +7359,8 @@ class MiniwindSession(SettlementLaw):
         ter = ter if ter is not None else fio.terrain(self.logic)
         if ter is None or not hasattr(ter, "set_season"):
             return
-        from engine import terrain_biomes
-        days = float(self.clock.day) + float(self.clock.hour) / 24.0
-        ter.set_season(YEAR_START + days / terrain_biomes.YEAR_DAYS)
+        from . import calendar
+        ter.set_season(calendar.year_fraction(self.clock))
 
     # -------------------------------------------------------------- thoughts
     def _npc_thoughts_enabled(self) -> bool:

@@ -60,7 +60,10 @@ class GameClock:
 
     @property
     def is_daytime(self) -> bool:
-        return 6.0 <= self.hour < 20.0
+        """Whether it is light out: from just before sunrise until after
+        sunset, as the season has them (game/calendar.py)."""
+        from .. import calendar
+        return calendar.is_daytime(self)
 
     @property
     def time_text(self) -> str:
@@ -76,8 +79,10 @@ class GameClock:
 
     @property
     def day_name(self) -> str:
-        """The name of the current day of the week."""
-        return WEEKDAYS[self.weekday_index]
+        """The name of the current day of the week -- or "Leap Day", which
+        belongs to no week (game/calendar.py)."""
+        from .. import calendar
+        return calendar.day_name(self, WEEKDAYS)
 
     @property
     def clock_text(self) -> str:

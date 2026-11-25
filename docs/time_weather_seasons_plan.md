@@ -51,8 +51,26 @@ storyteller parts).
 
 ## Phase 1 — one source of truth for time and season
 
-**Goal:** everything that asks "is it day?", "how dark is it?" or "what season
-is it?" gets the same answer.
+**Done** (with leap years and the Leap Festival, added on request). See
+[RULES.md §19](../RULES.md#19-time-and-the-calendar) and `game/calendar.py`;
+tests in `game/tests/test_calendar.py`. As built:
+
+- Years are counted. Every fourth year (4, 8, 12 …) is a leap year with a 29th
+  day, **Leap Day**, after winter: no weekday, no season, the clock reads
+  "Leap Day". The Vale keeps it as the **Leap Festival**: announced the day
+  before and on the day (message log and a long toast), and townsfolk small
+  talk is all about it. New years and seasons are announced too.
+- Day 1 is the last day of year 1's summer (`YEAR_START_DAYS = 12`, a whole
+  number so dates turn over at the clock's midnight; the old `YEAR_START` was
+  0.42 of a year, 11.76 days).
+- Day length: 12.2 h at the equinoxes, 15.8 h midsummer, 8.6 h midwinter,
+  centred on 12:24. Solar hours keep today's look exactly at the equinoxes.
+- Torches keep their old rule in solar hours (lit from solar 20:00 to 06:00).
+- The moon's cycle is 8 days.
+- `coldness()` for snow lives here too (see Phase 3).
+
+Original goal: everything that asks "is it day?", "how dark is it?" or "what
+season is it?" gets the same answer.
 
 ### New module: `game/calendar.py`
 
