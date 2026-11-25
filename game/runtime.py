@@ -4922,6 +4922,37 @@ class MiniwindSession(SettlementLaw):
         elif not c.can_level_up:
             self._level_up_announced = False
 
+    def played_cutscenes(self):
+        """The ids of the "play once" cutscenes this save has seen play."""
+        try:
+            played = json.loads(self.store.get("cutscenes_played", "") or "[]")
+        except (TypeError, ValueError):
+            return set()
+        return {str(cid) for cid in played} if isinstance(played, list) else set()
+
+    def remember_cutscene(self, cutscene_id) -> None:
+        """A "play once" cutscene played: remembered with the save."""
+        if not cutscene_id:
+            return
+        played = self.played_cutscenes()
+        played.add(str(cutscene_id))
+        self.store.set("cutscenes_played", json.dumps(sorted(played)))
+
+    def cutscene_tick(self, delta) -> None:
+        """A cutscene battle's tick (Fio's ``cutscene.tick``): the game's
+        combat runs -- bows draw and loose, spells and fires burn, blood
+        lands, words float -- but not its world: no clock, schedules or
+        player, all held while the cutscene plays."""
+        self._run_reveals()
+        self._age_lists(delta)
+        self.archery.update(delta)
+        self.held.update()
+        self.burning.update(delta)
+        self._update_bolt_lights(delta)
+        if self.arrows_in_flight and not fio.projectile_count(self.logic):
+            self.arrows_in_flight = ()
+            self._arrow_tags.clear()
+
     def _age_lists(self, delta):
         for n in self.notifications:
             n["t"] -= delta
@@ -6457,6 +6488,34 @@ class MiniwindSession(SettlementLaw):
                 if make_noise is not None:
                     make_noise(list(thing.pos), YELL_NOISE, "yell")
 
+    def cutscene_line(self, kind, thing, text, seconds=None) -> None:
+        """A cutscene's SAY or THINK keyframe (Fio's ``cutscene.line``): the
+        line over *thing*'s head wherever it stands -- the camera, not the
+        player, is what is watching -- and ahead of anyone's own chatter."""
+        if thing is None or not text:
+            return
+        import time as _time
+        think = str(kind or "").lower() == "think"
+        default = THOUGHT_SECONDS if think else BARK_SECONDS
+        try:
+            seconds = float(seconds) if seconds is not None else default
+        except (TypeError, ValueError):
+            seconds = default
+        store = self.__dict__.setdefault("thoughts" if think else "barks", {})
+        store[id(thing)] = (thing, str(text), _time.monotonic() + max(0.1, seconds))
+        self.__dict__.setdefault("_scripted_lines", set()).add(id(thing))
+
+    def _scripted_first(self, lines):
+        """*lines* (``[(thing, text, left)]``) with a cutscene's own first, so
+        the HUD's cap on how many it shows never drops one. An actor is
+        forgotten as scripted once it has nothing said or thought left up."""
+        scripted = self.__dict__.get("_scripted_lines")
+        if not scripted:
+            return lines
+        up = set(self.__dict__.get("barks") or ()) | set(self.__dict__.get("thoughts") or ())
+        scripted &= up
+        return sorted(lines, key=lambda line: id(line[0]) not in scripted)
+
     def bark_later(self, thing, text, delay: float) -> None:
         """Have *thing* say *text* after *delay* seconds -- the reply in an
         exchange, so the two lines are not said at once."""
@@ -6482,7 +6541,7 @@ class MiniwindSession(SettlementLaw):
                 barks.pop(key, None)
                 continue
             out.append((thing, text, until - now))
-        return out
+        return self._scripted_first(out)
 
     # -------------------------------------------------------------- floats
     def float_item_gain(self, thing, item_id, qty=1) -> None:
@@ -7020,7 +7079,7 @@ class MiniwindSession(SettlementLaw):
                 thoughts.pop(key, None)
                 continue
             out.append((thing, text, until - now))
-        return out
+        return self._scripted_first(out)
 
     def _update_thoughts(self) -> None:
         """Give each actor near the player a thought whenever its reason for

@@ -41,6 +41,7 @@ def apply():
         return
     _applied = True
     _register_wizards()
+    _register_cutscene_actors()
     _patch_editor_menu()
     _patch_window_title()
     _patch_map_loading()
@@ -63,6 +64,15 @@ def _register_wizards():
         mgr.register_entity_wizard("creature", editor_wizards.creature_wizard)
     except Exception as exc:
         _log(f"wizard registration skipped ({exc})")
+
+
+def _register_cutscene_actors():
+    """Cutscenes cast MiniWind's NPCs and creatures (game/cutscene_editor.py)."""
+    try:
+        import game.cutscene_editor as cutscene_editor
+        cutscene_editor.register()
+    except Exception as exc:
+        _log(f"cutscene actors skipped ({exc})")
 
 
 # ---------------------------------------------------------------------------

@@ -810,6 +810,10 @@ class LogicThread(threading.Thread):
         self.camera.update_camera_transition(delta)
 
         # ---- Cinematic camera: suppress player input while active ----
+        # A cutscene whose trigger has come (Play began, the player walked
+        # into its radius) starts first.
+        if not self.player_runtime.player_dead:
+            self.cutscene_runtime.check_triggers()
         self.cutscene_runtime._update_cinematic_camera(delta)
         if self.cutscene_runtime.state:
             self.game_state.consume_mouse_delta()
@@ -817,6 +821,13 @@ class LogicThread(threading.Thread):
             self.game_state.consume_shot()
             self.game_state.consume_secondary_shot()
             self.game_state.consume_weapon_slots()
+            if self.cutscene_runtime.simulating():
+                # A cutscene battle: what its fighters loose flies and lands,
+                # barrels go up, and the game runs its combat (not its world)
+                # -- the player's input and the rest of the tick stay held.
+                self.combat_runtime._update_monster_projectiles(delta)
+                self.explosion_runtime.update()
+                self._plugin_emit('cutscene.tick', delta=delta)
             return
 
         # ---- Player dead: freeze all gameplay input ----

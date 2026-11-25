@@ -23,6 +23,65 @@ from pathlib import Path
 
 CUTSCENE_DIR = "cutscenes"
 
+#: What a cutscene actor can do on a keyframe. MOVE lives on the actor's track;
+#: SAY and THINK are line events; ATTACK is a battle (a ``fight`` event).
+KEYFRAME_KINDS = (("MOVE", "move"), ("SAY", "say"), ("THINK", "think"),
+                  ("ATTACK", "attack"))
+LINE_SECONDS = 3.0
+
+# ---------------------------------------------------------------------------
+# Extension points: a game casts its own actors and edits them its own way.
+# ---------------------------------------------------------------------------
+#: The kinds of actor the wizard's "+" buttons make, in order:
+#: ``(button label, entity class name in ENTITY_TYPES, default properties)``.
+ACTOR_KINDS = [("+ Actor", "Monster", {"monster_type": "human", "triggered": True})]
+#: Panels editing the actors selected in the wizard, each
+#: ``factory(wizard, actors) -> QWidget or None`` (None: nothing for these).
+#: A panel edits the actors' properties in place and calls
+#: ``wizard.actors_changed(actors)`` after any change.
+ACTOR_PANELS = []
+#: Entity types the wizard accepts as actors ("+ Selected", loading).
+ACTOR_TYPES = {"monster"}
+#: Entity type -> the class that makes it, for kinds registered with a class
+#: (found before the editor's ENTITY_TYPES, which may not list it yet).
+ACTOR_CLASSES = {}
+
+
+def register_actor_kind(label, cls, properties=None, *, replace_default=False,
+                        entity_type=None):
+    """Add a "+" button making a *cls* actor (a class, or a class name in
+    ENTITY_TYPES) with *properties*. *entity_type* is the ``type`` such an
+    actor carries, accepted from then on. *replace_default* drops the
+    engine's plain "+ Actor"."""
+    global ACTOR_KINDS
+    if replace_default:
+        ACTOR_KINDS = [k for k in ACTOR_KINDS if k[1] != "Monster"]
+    ACTOR_KINDS = [k for k in ACTOR_KINDS if k[0] != label]
+    ACTOR_KINDS.append((str(label), cls, dict(properties or {})))
+    if entity_type:
+        ACTOR_TYPES.add(str(entity_type))
+        if isinstance(cls, type):
+            ACTOR_CLASSES[str(entity_type).lower()] = cls
+
+
+def register_actor_panel(factory):
+    """Add an actor-editing panel (see :data:`ACTOR_PANELS`)."""
+    if factory not in ACTOR_PANELS:
+        ACTOR_PANELS.append(factory)
+
+
+def _entity_class(type_name):
+    """The editor entity class for *type_name* (a class, a class name or a
+    type id)."""
+    from .things import ENTITY_TYPES, Monster
+    if isinstance(type_name, type):
+        return type_name
+    cls = ACTOR_CLASSES.get(str(type_name).lower()) or ENTITY_TYPES.get(str(type_name))
+    if cls is None:
+        cls = next((value for key, value in ENTITY_TYPES.items()
+                    if str(key).lower() == str(type_name).lower()), None)
+    return cls or Monster
+
 
 def _v3(value):
     if hasattr(value, "x"):
@@ -31,12 +90,12 @@ def _v3(value):
     return [float(values[0]), float(values[1]), float(values[2])]
 
 
+def _is_actor(obj):
+    return str(getattr(obj, "properties", {}).get("type", "")) in ACTOR_TYPES
+
+
 def _selected_actors(main_window):
-    out = []
-    for obj in main_window.state.selected_objects:
-        if getattr(obj, "properties", {}).get("type") == "monster":
-            out.append(obj)
-    return out
+    return [obj for obj in main_window.state.selected_objects if _is_actor(obj)]
 
 
 class CutsceneWizard(QtWidgets.QDialog):
@@ -145,8 +204,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         form.addRow("", self.stop_escape)
         setup_layout.addWidget(header)
         setup_help = QtWidgets.QLabel(
-            "<b>Simple workflow:</b> add temporary actors, place them in the 3D view, "
-            "capture their movement as waypoints, then set the camera. Message and I/O events are optional. "
+            "<b>Workflow:</b> cast actors and equip them (Actors &amp; Keyframes), place them "
+            "in the 3D view, give them MOVE, SAY, THINK and ATTACK keyframes, then set the "
+            "camera shots. Message and I/O events are optional. "
             "The temporary actors are removed after the cutscene finishes."
         )
         setup_help.setWordWrap(True)
@@ -156,100 +216,162 @@ class CutsceneWizard(QtWidgets.QDialog):
         tabs.addTab(self._scroll_page(setup_page), "Setup")
 
         # -----------------------------------------------------------------
-        # Actors + waypoints — the main authoring workflow.
+        # Actors + keyframes — the main authoring workflow.
         # -----------------------------------------------------------------
         actors_page = QtWidgets.QWidget()
-        actors_layout = QtWidgets.QVBoxLayout(actors_page)
+        actors_layout = QtWidgets.QHBoxLayout(actors_page)
+        actors_layout.setContentsMargins(0, 0, 0, 0)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        actors_layout.addWidget(splitter)
 
-        actors_box = QtWidgets.QGroupBox("Actors")
+        actors_box = QtWidgets.QGroupBox("Cast")
         av = QtWidgets.QVBoxLayout(actors_box)
         help_label = QtWidgets.QLabel(
-            "<b>Step 1:</b> Add an actor. <b>Step 2:</b> select it, "
-            "then move it directly in the 3D view. <b>Step 3:</b> capture its "
-            "current position below. Repeat for each point in the performance."
+            "Add actors, then place them in the 3D view. Select one to edit it, "
+            "or many (Ctrl/Shift-click, or a group below) to give them all the "
+            "same keyframe."
         )
         help_label.setWordWrap(True)
         av.addWidget(help_label)
 
+        kind_row = QtWidgets.QHBoxLayout()
+        self.kind_buttons = []
+        for kind in ACTOR_KINDS:
+            button = QtWidgets.QPushButton(kind[0])
+            button.clicked.connect(lambda _c=False, k=kind: self._create_temporary_actor(k))
+            kind_row.addWidget(button)
+            self.kind_buttons.append(button)
+        # The engine's plain "+ Actor", kept for code that asks for it.
+        self.add_actor_button = self.kind_buttons[0] if self.kind_buttons else QtWidgets.QPushButton()
+        av.addLayout(kind_row)
+
         actor_buttons = QtWidgets.QHBoxLayout()
-        self.add_actor_button = QtWidgets.QPushButton("+ Actor")
         self.capture_button = QtWidgets.QPushButton("+ Selected")
+        self.capture_button.setToolTip("Cast the actors selected in the map")
+        self.duplicate_actor_button = QtWidgets.QPushButton("Duplicate")
         self.remove_actor_button = QtWidgets.QPushButton("Remove")
         self.focus_actor_button = QtWidgets.QPushButton("Focus")
-        for button in (self.add_actor_button,
-                       self.capture_button, self.remove_actor_button,
-                       self.focus_actor_button):
+        for button in (self.capture_button, self.duplicate_actor_button,
+                       self.remove_actor_button, self.focus_actor_button):
             actor_buttons.addWidget(button)
         av.addLayout(actor_buttons)
 
+        self.select_group = QtWidgets.QComboBox()
+        self.select_group.setToolTip("Select every actor of a team or role")
+        av.addWidget(self.select_group)
+
         self.actor_list = QtWidgets.QListWidget()
-        self.actor_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.actor_list.setMinimumHeight(90)
-        av.addWidget(self.actor_list)
+        self.actor_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.actor_list.setMinimumHeight(160)
+        av.addWidget(self.actor_list, 1)
         self.selected_actor_label = QtWidgets.QLabel("No actor selected")
         self.selected_actor_label.setStyleSheet("font-weight: bold;")
         av.addWidget(self.selected_actor_label)
-        actors_layout.addWidget(actors_box)
+        splitter.addWidget(actors_box)
 
-        waypoint_box = QtWidgets.QGroupBox("Waypoints — record where the selected actor should go")
-        wv = QtWidgets.QVBoxLayout(waypoint_box)
+        right_tabs = QtWidgets.QTabWidget()
+        self.actor_tabs = right_tabs
 
-        waypoint_help = QtWidgets.QLabel(
-            "<b>How it works:</b> select an actor above → move that actor in the 3D view "
-            "→ press <b>Capture waypoint</b>. Each press records the actor's current "
-            "position at the displayed time. The next time is advanced automatically."
+        # The selected actors themselves: the game's panels (inventory, attack
+        # style, spells...) or, with none, their name.
+        self.actor_panel_host = QtWidgets.QWidget()
+        self.actor_panel_layout = QtWidgets.QVBoxLayout(self.actor_panel_host)
+        self.actor_panel_layout.setContentsMargins(4, 4, 4, 4)
+        right_tabs.addTab(self._scroll_page(self.actor_panel_host), "Actor")
+
+        keys_page = QtWidgets.QWidget()
+        kv = QtWidgets.QVBoxLayout(keys_page)
+        keys_help = QtWidgets.QLabel(
+            "Give the selected actors something to do at a moment in the cutscene: "
+            "<b>MOVE</b> to where they stand in the 3D view, <b>SAY</b> or "
+            "<b>THINK</b> a line, or <b>ATTACK</b> — fight other actors with the "
+            "game's own combat (melee, bow or magic, as each is equipped)."
         )
-        waypoint_help.setWordWrap(True)
-        waypoint_help.setStyleSheet("padding: 4px;")
-        wv.addWidget(waypoint_help)
+        keys_help.setWordWrap(True)
+        kv.addWidget(keys_help)
 
         time_row = QtWidgets.QHBoxLayout()
-        time_row.addWidget(QtWidgets.QLabel("<b>At time</b>"))
-        self.waypoint_time = QtWidgets.QDoubleSpinBox()
-        self.waypoint_time.setRange(0, 3600)
-        self.waypoint_time.setDecimals(2)
-        self.waypoint_time.setValue(0)
-        self.waypoint_time.setSuffix(" s")
-        time_row.addWidget(self.waypoint_time)
+        time_row.addWidget(QtWidgets.QLabel("<b>At</b>"))
+        self.key_time = QtWidgets.QDoubleSpinBox()
+        self.key_time.setRange(0, 3600)
+        self.key_time.setDecimals(2)
+        self.key_time.setSuffix(" s")
+        time_row.addWidget(self.key_time)
+        time_row.addWidget(QtWidgets.QLabel("<b>do</b>"))
+        self.key_kind = QtWidgets.QComboBox()
+        for label, value in KEYFRAME_KINDS:
+            self.key_kind.addItem(label, value)
+        time_row.addWidget(self.key_kind)
         time_row.addStretch(1)
-        self.waypoint_action = QtWidgets.QComboBox()
-        self.waypoint_action.addItem("MOVE", "move")
-        self.waypoint_action.addItem("ATTACK", "attack")
-        time_row.addWidget(QtWidgets.QLabel("Action"))
-        time_row.addWidget(self.waypoint_action)
-        wv.addLayout(time_row)
+        kv.addLayout(time_row)
 
-        target_row = QtWidgets.QHBoxLayout()
-        self.waypoint_target_label = QtWidgets.QLabel("Target")
-        target_row.addWidget(self.waypoint_target_label)
-        self.waypoint_target = QtWidgets.QComboBox()
-        self.waypoint_target.setMinimumWidth(240)
-        target_row.addWidget(self.waypoint_target, 1)
-        target_row.addWidget(QtWidgets.QLabel("Attack for"))
-        self.waypoint_attack_duration = QtWidgets.QDoubleSpinBox()
-        self.waypoint_attack_duration.setRange(0.05, 300)
-        self.waypoint_attack_duration.setDecimals(2)
-        self.waypoint_attack_duration.setValue(5)
-        self.waypoint_attack_duration.setSuffix(" s")
-        target_row.addWidget(self.waypoint_attack_duration)
-        wv.addLayout(target_row)
+        self.key_stack = QtWidgets.QStackedWidget()
+        # MOVE
+        move_page = QtWidgets.QWidget()
+        mf = QtWidgets.QFormLayout(move_page)
+        self.move_to = QtWidgets.QComboBox()
+        mf.addRow("To", self.move_to)
+        self.move_teleport = QtWidgets.QCheckBox("Teleport (cut there at this moment)")
+        mf.addRow("", self.move_teleport)
+        self.key_stack.addWidget(move_page)
+        # SAY / THINK
+        line_page = QtWidgets.QWidget()
+        lf = QtWidgets.QFormLayout(line_page)
+        self.line_text = QtWidgets.QLineEdit()
+        self.line_text.setPlaceholderText("What they say or think")
+        lf.addRow("Line", self.line_text)
+        self.line_duration = QtWidgets.QDoubleSpinBox()
+        self.line_duration.setRange(0.5, 60)
+        self.line_duration.setDecimals(1)
+        self.line_duration.setValue(LINE_SECONDS)
+        self.line_duration.setSuffix(" s")
+        lf.addRow("Shown for", self.line_duration)
+        self.key_stack.addWidget(line_page)
+        # ATTACK
+        attack_page = QtWidgets.QWidget()
+        af = QtWidgets.QFormLayout(attack_page)
+        self.attack_group = QtWidgets.QComboBox()
+        self.attack_group.setToolTip("Tick every actor of a team or role as a target")
+        af.addRow("Targets", self.attack_group)
+        self.attack_targets = QtWidgets.QListWidget()
+        self.attack_targets.setMinimumHeight(110)
+        af.addRow("", self.attack_targets)
+        self.attack_duration = QtWidgets.QDoubleSpinBox()
+        self.attack_duration.setRange(0.5, 600)
+        self.attack_duration.setDecimals(1)
+        self.attack_duration.setValue(10.0)
+        self.attack_duration.setSuffix(" s")
+        af.addRow("Fight for", self.attack_duration)
+        self.attack_mutual = QtWidgets.QCheckBox("Targets fight back")
+        self.attack_mutual.setChecked(True)
+        af.addRow("", self.attack_mutual)
+        self.key_stack.addWidget(attack_page)
+        kv.addWidget(self.key_stack)
 
-        waypoint_buttons = QtWidgets.QHBoxLayout()
-        self.add_waypoint_button = QtWidgets.QPushButton("Capture")
-        self.add_waypoint_button.setDefault(True)
-        self.capture_now_button = QtWidgets.QPushButton("Position")
-        self.remove_waypoint_button = QtWidgets.QPushButton("Remove")
-        waypoint_buttons.addWidget(self.add_waypoint_button)
-        waypoint_buttons.addWidget(self.capture_now_button)
-        waypoint_buttons.addWidget(self.remove_waypoint_button)
-        wv.addLayout(waypoint_buttons)
+        self.add_key_button = QtWidgets.QPushButton("Add keyframe")
+        self.add_key_button.setStyleSheet(
+            "QPushButton { background: #e67e22; color: white; font-weight: bold; padding: 6px 12px; }"
+            "QPushButton:hover { background: #f39c12; }"
+        )
+        kv.addWidget(self.add_key_button)
 
-        self.waypoint_list = QtWidgets.QListWidget()
-        self.waypoint_list.setMinimumHeight(130)
-        wv.addWidget(self.waypoint_list)
-        actors_layout.addWidget(waypoint_box, 1)
+        self.key_list = QtWidgets.QListWidget()
+        self.key_list.setMinimumHeight(140)
+        self.key_list.setToolTip("Double-click to edit")
+        kv.addWidget(self.key_list, 1)
+        key_buttons = QtWidgets.QHBoxLayout()
+        self.edit_key_button = QtWidgets.QPushButton("Edit")
+        self.remove_key_button = QtWidgets.QPushButton("Remove")
+        key_buttons.addWidget(self.edit_key_button)
+        key_buttons.addWidget(self.remove_key_button)
+        key_buttons.addStretch(1)
+        kv.addLayout(key_buttons)
+        right_tabs.addTab(keys_page, "Keyframes")
+        splitter.addWidget(right_tabs)
+        splitter.setStretchFactor(1, 2)
 
-        tabs.addTab(self._scroll_page(actors_page), "Actors && Waypoints")
+        tabs.addTab(actors_page, "Actors && Keyframes")
+        self._key_refs = []
 
         # -----------------------------------------------------------------
         # Camera
@@ -310,7 +432,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         cv.addLayout(camera_buttons)
         self.camera_keys_list.currentRowChanged.connect(self._camera_keyframe_selected)
         camera_layout.addWidget(camera_box, 1)
-        tabs.addTab(self._scroll_page(camera_page), "Keyframes")
+        tabs.addTab(self._scroll_page(camera_page), "Camera")
 
         # -----------------------------------------------------------------
         # Events. Advanced functionality remains available, but it no
@@ -419,7 +541,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         playback.addWidget(self.rewind_button)
         playback.addWidget(self.play_button)
         playback.addWidget(self.fast_forward_button)
-        playback.addStretch(1)
+        self.preview_lines_label = QtWidgets.QLabel("")
+        self.preview_lines_label.setStyleSheet("color: #e6c27a;")
+        playback.addWidget(self.preview_lines_label, 1)
         playback.addWidget(self.preview_time_label)
         root.insertWidget(root.count() - 1, playback_box)
 
@@ -427,31 +551,29 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.play_button.clicked.connect(self._preview_play)
         self.fast_forward_button.clicked.connect(self._preview_fast_forward)
 
-        self.add_actor_button.clicked.connect(lambda: self._create_temporary_actor("monster"))
         self.capture_button.clicked.connect(self._capture_selected_actors)
+        self.duplicate_actor_button.clicked.connect(self._duplicate_selected_actors)
         self.remove_actor_button.clicked.connect(self._remove_selected_actors)
         self.focus_actor_button.clicked.connect(self._focus_selected_actor)
         self.actor_list.itemSelectionChanged.connect(self._actor_selection_changed)
         self.actor_list.itemDoubleClicked.connect(
             lambda _item: self._focus_selected_actor()
         )
-        self.add_waypoint_button.clicked.connect(
-            lambda: self._add_waypoint(from_current=True)
-        )
-        self.capture_now_button.clicked.connect(
-            lambda: self._add_waypoint(from_current=True)
-        )
-        self.remove_waypoint_button.clicked.connect(self._remove_selected_waypoint)
-        self.waypoint_action.currentIndexChanged.connect(
-            lambda _index: self._update_waypoint_controls()
-        )
+        self.select_group.activated.connect(self._select_group)
+        self.attack_group.activated.connect(self._check_group)
+        self.key_kind.currentIndexChanged.connect(lambda _i: self._update_key_controls())
+        self.add_key_button.clicked.connect(self._add_keyframe)
+        self.key_list.itemDoubleClicked.connect(lambda _item: self._edit_selected_keyframe())
+        self.edit_key_button.clicked.connect(self._edit_selected_keyframe)
+        self.remove_key_button.clicked.connect(self._remove_selected_keyframe)
         self.load_button.clicked.connect(lambda _checked=False: self._load_cutscene())
         self.save_button.clicked.connect(self._save_and_close)
         self.apply_button.clicked.connect(self._apply_to_map)
         self.cancel_button.clicked.connect(self.reject)
 
         self._refresh_actor_lists()
-        self._update_waypoint_controls()
+        self._update_key_controls()
+        self._rebuild_actor_panel()
         self._refresh_summary()
         self._load_current_map_cutscene()
         if self._saved_signature is None:
@@ -516,8 +638,28 @@ class CutsceneWizard(QtWidgets.QDialog):
     def _preview_end_time(self):
         times = [float(row.get("time", 0.0)) for rows in self.actor_tracks.values() for row in rows]
         times += [float(row.get("time", 0.0)) for row in self.camera_keys]
-        times += [float(row.get("time", 0.0)) for row in self.events]
+        times += [float(row.get("time", 0.0))
+                  + (float(row.get("duration", LINE_SECONDS if row.get("type") in ("say", "think") else 0.0))
+                     if row.get("type") in ("say", "think", "fight") else 0.0)
+                  for row in self.events]
         return max(times, default=0.0)
+
+    def _preview_lines(self, elapsed):
+        """What is being said and thought at *elapsed*, for the preview."""
+        out = []
+        for event in sorted(self.events, key=lambda e: float(e.get("time", 0.0))):
+            kind = event.get("type")
+            start = float(event.get("time", 0.0))
+            if kind in ("say", "think"):
+                if start <= elapsed < start + float(event.get("duration", LINE_SECONDS)):
+                    who = self.actor_meta.get(str(event.get("actor", "")), {}).get("name", "?")
+                    mark = "💭 " if kind == "think" else ""
+                    out.append(f"{mark}{who}: {event.get('text', '')}")
+            elif kind == "fight":
+                if start <= elapsed < start + float(event.get("duration", 0.0)):
+                    out.append(f"⚔ battle: {len(event.get('attackers', []))} vs "
+                               f"{len(event.get('defenders', []))} (simulated in play)")
+        return out
 
     @staticmethod
     def _preview_pose(frames, elapsed):
@@ -617,6 +759,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             )
 
         self.preview_time_label.setText(f"{self._preview_time:.2f}s / {self._preview_duration:.2f}s")
+        self.preview_lines_label.setText("   ".join(self._preview_lines(self._preview_time)))
         try:
             self.main_window.update_all_ui()
         except Exception:
@@ -685,6 +828,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._preview_time = 0.0
         self._preview_duration = 0.0
         self.preview_time_label.setText("0.00s / 0.00s")
+        self.preview_lines_label.setText("")
         try:
             self.main_window.update_all_ui()
         except Exception:
@@ -808,51 +952,92 @@ class CutsceneWizard(QtWidgets.QDialog):
     # ------------------------------------------------------------------
     # Live actor authoring.
     # ------------------------------------------------------------------
-    def _create_temporary_actor(self, entity_type):
-        try:
-            from .things import Monster
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Actor", f"Could not create a Fio actor: {exc}")
-            return
-
+    def _spawn_point(self):
         camera = self.main_window.view_3d.camera
-        if camera is None:
-            return
         try:
             front = camera.get_front_vector()
-            pos = [
-                float(camera.pos.x + front.x * 256.0),
-                float(camera.pos.y + front.y * 256.0),
-                float(camera.pos.z + front.z * 256.0),
-            ]
+            return [float(camera.pos.x + front.x * 256.0),
+                    float(camera.pos.y + front.y * 256.0),
+                    float(camera.pos.z + front.z * 256.0)]
         except Exception:
-            pos = _v3(camera.pos)
+            return _v3(camera.pos)
 
-        default_name = f"Cutscene Actor {len(self.actor_meta) + 1}"
-        props = {
-            "type": "monster",
-            "id": str(uuid.uuid4()),
-            "name": default_name,
-            "display_name": default_name,
-            "monster_type": "human",
-            "triggered": True,
-            "_cutscene_temporary": True,
-        }
-        actor = Monster(pos=pos, properties=props)
+    def _add_temporary_actor(self, actor, select=True):
+        """Put *actor* (made here, embedded in the cutscene) in the map and cast."""
+        aid = str(actor.properties.get("id"))
         actor.properties["_cutscene_temporary"] = True
         self.main_window.state.things.append(actor)
-        self.actor_objects[str(actor.properties.get("id"))] = actor
-        self.temporary_actor_ids.add(str(actor.properties.get("id")))
-        self.actor_meta[str(actor.properties.get("id"))] = {
-            "id": str(actor.properties.get("id")),
+        self.actor_objects[aid] = actor
+        self.temporary_actor_ids.add(aid)
+        self.actor_meta[aid] = {
+            "id": aid,
             "name": str(actor.properties.get("display_name") or actor.properties.get("name")),
             "spawn": True,
         }
-        self.main_window.set_selected_objects([actor])
-        self.main_window.update_all_ui()
-        self._refresh_actor_lists()
-        self._select_actor_id(str(actor.properties.get("id")))
+        if select:
+            self.main_window.set_selected_objects([actor])
+            self.main_window.update_all_ui()
+            self._refresh_actor_lists()
+            self._select_actor_ids([aid])
+        return actor
+
+    def _create_temporary_actor(self, kind=None):
+        """A new actor of *kind* (an :data:`ACTOR_KINDS` entry; the first by
+        default) in front of the editor camera."""
+        if not isinstance(kind, (tuple, list)):
+            kind = ACTOR_KINDS[0] if ACTOR_KINDS else ("+ Actor", "Monster", {})
+        label, type_name, defaults = kind
+        if self.main_window.view_3d.camera is None:
+            return None
+        cls = _entity_class(type_name)
+        noun = str(label).lstrip("+ ").strip() or "Actor"
+        default_name = f"{noun} {len(self.actor_meta) + 1}"
+        props = dict(defaults)
+        props.update({
+            "id": str(uuid.uuid4()),
+            "name": default_name,
+            "display_name": default_name,
+            "_cutscene_temporary": True,
+        })
+        try:
+            actor = cls(pos=self._spawn_point(), properties=props)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Actor", f"Could not create the actor: {exc}")
+            return None
+        self._add_temporary_actor(actor)
         self.main_window.show_toast(f"{default_name} created in the current 3D view")
+        return actor
+
+    def _duplicate_selected_actors(self):
+        """A copy of each selected actor -- its kit, style and spells too --
+        beside it: the quick way to raise a company."""
+        import copy
+        self._refresh_actor_objects_from_state()
+        made = []
+        for aid in self._current_actor_ids():
+            actor = self.actor_objects.get(aid)
+            if actor is None:
+                continue
+            props = {k: copy.deepcopy(v) for k, v in actor.properties.items()
+                     if k != "_io_connections" and not str(k).startswith("_cutscene_")}
+            props["id"] = str(uuid.uuid4())
+            name = str(props.get("display_name") or props.get("name") or "Actor")
+            props["name"] = props["display_name"] = f"{name} copy"
+            pos = _v3(actor.pos)
+            pos[0] += 64.0
+            try:
+                twin = type(actor)(pos=pos, properties=props)
+                twin.angle = float(getattr(actor, "angle", 0.0))
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self, "Duplicate", f"Could not copy {name}: {exc}")
+                continue
+            made.append(self._add_temporary_actor(twin, select=False))
+        if made:
+            self.main_window.set_selected_objects(made)
+            self.main_window.update_all_ui()
+            self._refresh_actor_lists()
+            self._select_actor_ids([str(a.properties["id"]) for a in made])
+            self._refresh_summary()
 
     def _capture_selected_actors(self):
         selected = _selected_actors(self.main_window)
@@ -880,10 +1065,14 @@ class CutsceneWizard(QtWidgets.QDialog):
 
     def _remove_selected_actors(self):
         self._refresh_actor_objects_from_state()
-        item = self.actor_list.currentItem()
-        if item is None:
-            return
-        aid = str(item.data(QtCore.Qt.UserRole))
+        aids = self._current_actor_ids()
+        for aid in aids[1:]:
+            self._remove_actor(aid, refresh=False)
+        if aids:
+            self._remove_actor(aids[0])
+
+    def _remove_actor(self, aid, refresh=True):
+        aid = str(aid)
         self.actor_meta.pop(aid, None)
         self.actor_tracks.pop(aid, None)
 
@@ -909,6 +1098,8 @@ class CutsceneWizard(QtWidgets.QDialog):
                 event["attackers"] = attackers
                 event["defenders"] = defenders
             elif event.get("type") == "io" and str(event.get("source_id", "")) == aid:
+                continue
+            elif event.get("type") in ("say", "think") and str(event.get("actor", "")) == aid:
                 continue
             elif event.get("type") == "dialogue" and str(event.get("speaker_id", "")) == aid:
                 # Older cutscenes still carry dialogue speakers.
@@ -936,8 +1127,11 @@ class CutsceneWizard(QtWidgets.QDialog):
             ]
             self.temporary_actor_ids.discard(aid)
         self.actor_objects.pop(aid, None)
+        if not refresh:
+            return
         self._refresh_actor_lists()
-        self._refresh_waypoints()
+        self._rebuild_actor_panel()
+        self._refresh_key_list()
         self._refresh_event_list()
         self._refresh_camera_list()
         self.main_window.update_all_ui()
@@ -945,18 +1139,23 @@ class CutsceneWizard(QtWidgets.QDialog):
 
     def _actor_selection_changed(self):
         self._refresh_actor_objects_from_state()
-        aid = self._current_actor_id()
-        actor = self.actor_objects.get(aid) if aid else None
-        if actor is not None:
+        aids = self._current_actor_ids()
+        actors = [self.actor_objects[a] for a in aids if self.actor_objects.get(a) is not None]
+        if actors:
             try:
-                self.main_window.set_selected_objects([actor])
+                self.main_window.set_selected_objects(actors)
             except Exception:
                 pass
-            name = self.actor_meta.get(aid, {}).get("name", aid)
+        if len(aids) == 1:
+            name = self.actor_meta.get(aids[0], {}).get("name", aids[0])
             self.selected_actor_label.setText(f"Selected: {name}")
+        elif aids:
+            self.selected_actor_label.setText(f"{len(aids)} actors selected")
         else:
             self.selected_actor_label.setText("No actor selected")
-        self._refresh_waypoints()
+        self._rebuild_actor_panel()
+        self._update_key_controls()
+        self._refresh_key_list()
 
     def _focus_selected_actor(self):
         self._refresh_actor_objects_from_state()
@@ -968,27 +1167,85 @@ class CutsceneWizard(QtWidgets.QDialog):
         except Exception:
             pass
 
+    def _current_actor_ids(self):
+        """The ids of the actors selected in the cast list, in list order."""
+        return [str(self.actor_list.item(i).data(QtCore.Qt.UserRole))
+                for i in range(self.actor_list.count())
+                if self.actor_list.item(i).isSelected()]
+
     def _current_actor_id(self):
+        aids = self._current_actor_ids()
+        if aids:
+            return aids[0]
         item = self.actor_list.currentItem()
         return str(item.data(QtCore.Qt.UserRole)) if item is not None else ""
 
-    def _select_actor_id(self, aid):
+    def _select_actor_ids(self, aids):
+        wanted = {str(a) for a in aids}
+        self.actor_list.blockSignals(True)
+        first = None
         for i in range(self.actor_list.count()):
-            if str(self.actor_list.item(i).data(QtCore.Qt.UserRole)) == str(aid):
-                self.actor_list.setCurrentRow(i)
-                break
+            item = self.actor_list.item(i)
+            chosen = str(item.data(QtCore.Qt.UserRole)) in wanted
+            item.setSelected(chosen)
+            if chosen and first is None:
+                first = i
+        if first is not None:
+            self.actor_list.setCurrentRow(first, QtCore.QItemSelectionModel.NoUpdate)
+        self.actor_list.blockSignals(False)
+        self._actor_selection_changed()
+
+    def _select_actor_id(self, aid):
+        self._select_actor_ids([aid])
 
     def _target_actor_ids(self):
         return list(self.actor_meta.keys())
 
+    def _groups(self):
+        """``[(label, [actor ids])]``: the cast by team and by role."""
+        self._refresh_actor_objects_from_state()
+        teams, roles = {}, {}
+        for aid in self.actor_meta:
+            props = getattr(self.actor_objects.get(aid), "properties", {}) or {}
+            team = str(props.get("team") or props.get("faction") or "")
+            role = str(props.get("npc_role") or props.get("monster_type") or "")
+            if team:
+                teams.setdefault(team, []).append(aid)
+            if role:
+                roles.setdefault(role, []).append(aid)
+        out = [(f"Team: {k} ({len(v)})", v) for k, v in sorted(teams.items())]
+        out += [(f"Role: {k} ({len(v)})", v) for k, v in sorted(roles.items())]
+        return out
+
+    def _fill_group_combo(self, combo, first):
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(first, None)
+        combo.addItem(f"Everyone ({len(self.actor_meta)})", list(self.actor_meta))
+        for label, aids in self._groups():
+            combo.addItem(label, aids)
+        combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def _select_group(self, index):
+        aids = self.select_group.itemData(index)
+        self.select_group.setCurrentIndex(0)
+        if aids:
+            self._select_actor_ids(aids)
+
+    def _check_group(self, index):
+        aids = set(self.attack_group.itemData(index) or ())
+        self.attack_group.setCurrentIndex(0)
+        if not aids:
+            return
+        for i in range(self.attack_targets.count()):
+            item = self.attack_targets.item(i)
+            if str(item.data(QtCore.Qt.UserRole)) in aids:
+                item.setCheckState(QtCore.Qt.Checked)
+
     def _refresh_actor_lists(self):
-        """Refresh actor widgets that are part of the current simple wizard UI.
-
-        Keep this refresh path aligned with the widgets that actually exist
-        instead of touching removed controls.
-        """
-        wanted = self._current_actor_id()
-
+        """Refresh every widget that lists the cast."""
+        wanted = self._current_actor_ids()
         self.actor_list.blockSignals(True)
         self.actor_list.clear()
         for aid, meta in self.actor_meta.items():
@@ -1001,141 +1258,310 @@ class CutsceneWizard(QtWidgets.QDialog):
                 )
             item.setData(QtCore.Qt.UserRole, aid)
             self.actor_list.addItem(item)
+            item.setSelected(aid in wanted)
         self.actor_list.blockSignals(False)
 
-        if wanted:
-            self._select_actor_id(wanted)
+        current = self.look_at.currentData()
+        self.look_at.blockSignals(True)
+        self.look_at.clear()
+        self.look_at.addItem("Keep camera rotation", "")
+        for aid, meta in self.actor_meta.items():
+            self.look_at.addItem(meta["name"], aid)
+        idx = self.look_at.findData(current)
+        self.look_at.setCurrentIndex(idx if idx >= 0 else 0)
+        self.look_at.blockSignals(False)
 
-        # Only these actor-selection combos are present in the simplified
-        # wizard.  Do not reference removed advanced widgets here.
-        for combo in (self.look_at, self.waypoint_target):
-            current = combo.currentData()
-            combo.blockSignals(True)
-            combo.clear()
-            if combo is self.look_at:
-                combo.addItem("Keep camera rotation", "")
-            else:
-                combo.addItem("No target — use actor's current position", "")
-            for aid, meta in self.actor_meta.items():
-                combo.addItem(meta["name"], aid)
-            idx = combo.findData(current)
-            combo.setCurrentIndex(idx if idx >= 0 else 0)
-            combo.blockSignals(False)
+        current = self.move_to.currentData()
+        self.move_to.clear()
+        self.move_to.addItem("Where each stands now in the 3D view", "")
+        for aid, meta in self.actor_meta.items():
+            self.move_to.addItem(f"{meta['name']}'s position", aid)
+        idx = self.move_to.findData(current)
+        self.move_to.setCurrentIndex(idx if idx >= 0 else 0)
 
-        self._update_waypoint_controls()
+        checked = self._checked_targets()
+        self.attack_targets.clear()
+        for aid, meta in self.actor_meta.items():
+            item = QtWidgets.QListWidgetItem(meta["name"])
+            item.setData(QtCore.Qt.UserRole, aid)
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.Checked if aid in checked else QtCore.Qt.Unchecked)
+            self.attack_targets.addItem(item)
+        self._fill_group_combo(self.select_group, "Select a group…")
+        self._fill_group_combo(self.attack_group, "Tick a group…")
+        self._update_key_controls()
         self._refresh_summary()
 
-    def _update_waypoint_controls(self):
-        is_attack = self.waypoint_action.currentData() == "attack"
-        self.waypoint_attack_duration.setEnabled(is_attack)
-        self.waypoint_target_label.setText("Attack this actor" if is_attack else "Move to location")
-        self.waypoint_target.setToolTip(
-            "Choose the actor to attack" if is_attack else
-            "Optional: use another actor as the destination location"
-        )
+    def _checked_targets(self):
+        return [str(self.attack_targets.item(i).data(QtCore.Qt.UserRole))
+                for i in range(self.attack_targets.count())
+                if self.attack_targets.item(i).checkState() == QtCore.Qt.Checked]
 
-    def _add_waypoint(self, from_current=True):
+    # ------------------------------------------------------------------
+    # The selected actors' own panels (a game's kit, style and spells).
+    # ------------------------------------------------------------------
+    def _rebuild_actor_panel(self):
+        layout = self.actor_panel_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
         self._refresh_actor_objects_from_state()
-        aid = self._current_actor_id()
-        actor = self.actor_objects.get(aid)
-        if not aid or actor is None:
-            QtWidgets.QMessageBox.information(
-                self, "Waypoint", "Select an actor first."
-            )
+        actors = [self.actor_objects[a] for a in self._current_actor_ids()
+                  if self.actor_objects.get(a) is not None]
+        if not actors:
+            note = QtWidgets.QLabel("Select an actor in the cast to edit it.")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+            layout.addStretch(1)
             return
+        built = False
+        for factory in list(ACTOR_PANELS):
+            try:
+                panel = factory(self, actors)
+            except Exception as exc:
+                panel = QtWidgets.QLabel(f"This actor panel failed: {exc}")
+            if panel is not None:
+                layout.addWidget(panel)
+                built = True
+        if not built:
+            layout.addWidget(self._name_panel(actors))
+        layout.addStretch(1)
 
-        target_id = str(self.waypoint_target.currentData() or "")
-        if target_id == aid:
-            target_id = ""
-        action = str(self.waypoint_action.currentData() or "move")
-        if target_id and target_id not in self.actor_meta:
-            target_id = ""
+    def _name_panel(self, actors):
+        """The engine's own actor panel: a name, for one actor."""
+        box = QtWidgets.QGroupBox("Actor")
+        form = QtWidgets.QFormLayout(box)
+        if len(actors) != 1:
+            form.addRow(QtWidgets.QLabel(f"{len(actors)} actors selected"))
+            return box
+        actor = actors[0]
+        name = QtWidgets.QLineEdit(str(actor.properties.get("display_name") or actor.properties.get("name") or ""))
 
-        if target_id:
-            target_obj = self.actor_objects.get(target_id)
-            pos = _v3(target_obj.pos) if target_obj is not None else _v3(actor.pos)
-        else:
-            pos = _v3(actor.pos)
+        def rename():
+            text = name.text().strip()
+            if text:
+                actor.properties["name"] = actor.properties["display_name"] = text
+                self.actors_changed([actor])
+        name.editingFinished.connect(rename)
+        form.addRow("Name", name)
+        return box
 
-        row = {
-            "time": float(self.waypoint_time.value()),
-            "pos": pos,
-            "yaw": float(getattr(actor, "angle", 0.0)),
-            "action": action,
-        }
-        if target_id:
-            row["target_id"] = target_id
-        if action == "attack":
-            if not target_id:
-                QtWidgets.QMessageBox.warning(
-                    self, "Waypoint", "Attack waypoints need a target."
-                )
+    def actors_changed(self, actors, rebuild=False):
+        """A panel changed *actors*: names and groups follow, and the map
+        redraws. *rebuild* builds the panels again (an actor was replaced)."""
+        self._refresh_actor_objects_from_state()
+        for actor in actors:
+            aid = str(getattr(actor, "properties", {}).get("id", ""))
+            if aid in self.actor_meta:
+                props = actor.properties
+                self.actor_meta[aid]["name"] = str(props.get("display_name") or props.get("name") or aid)
+                self.actor_objects[aid] = actor
+        for i in range(self.actor_list.count()):
+            item = self.actor_list.item(i)
+            meta = self.actor_meta.get(str(item.data(QtCore.Qt.UserRole)))
+            if meta is not None:
+                item.setText(("★ " if meta.get("spawn") else "") + meta["name"])
+        # Every other list naming the cast follows a rename.
+        for i in range(self.attack_targets.count()):
+            item = self.attack_targets.item(i)
+            meta = self.actor_meta.get(str(item.data(QtCore.Qt.UserRole)))
+            if meta is not None:
+                item.setText(meta["name"])
+        for combo, fmt in ((self.move_to, "{}'s position"), (self.look_at, "{}")):
+            for i in range(combo.count()):
+                meta = self.actor_meta.get(str(combo.itemData(i) or ""))
+                if meta is not None:
+                    combo.setItemText(i, fmt.format(meta["name"]))
+        self._fill_group_combo(self.select_group, "Select a group…")
+        self._fill_group_combo(self.attack_group, "Tick a group…")
+        if rebuild:
+            self._rebuild_actor_panel()
+        self._refresh_key_list()
+        try:
+            self.main_window.update_all_ui()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Keyframes: MOVE / SAY / THINK / ATTACK for the selected actors.
+    # ------------------------------------------------------------------
+    def _update_key_controls(self):
+        kind = str(self.key_kind.currentData() or "move")
+        self.key_stack.setCurrentIndex({"move": 0, "say": 1, "think": 1, "attack": 2}[kind])
+        n = len(self._current_actor_ids())
+        who = "the selected actor" if n == 1 else f"{n} selected actors" if n else "no actor"
+        self.add_key_button.setText(f"Add {kind.upper()} for {who}")
+        self.add_key_button.setEnabled(n > 0)
+
+    def _add_keyframe(self):
+        self._refresh_actor_objects_from_state()
+        aids = [a for a in self._current_actor_ids() if a in self.actor_meta]
+        if not aids:
+            QtWidgets.QMessageBox.information(self, "Keyframe", "Select one or more actors first.")
+            return
+        kind = str(self.key_kind.currentData() or "move")
+        when = float(self.key_time.value())
+        advance = 1.0
+        if kind == "move":
+            dest = str(self.move_to.currentData() or "")
+            dest_obj = self.actor_objects.get(dest) if dest else None
+            for aid in aids:
+                actor = self.actor_objects.get(aid)
+                if actor is None:
+                    continue
+                source = dest_obj if dest_obj is not None and dest != aid else actor
+                row = {"time": when, "pos": _v3(source.pos),
+                       "yaw": float(getattr(actor, "angle", 0.0)), "action": "move"}
+                if self.move_teleport.isChecked():
+                    row["teleport"] = True
+                if dest_obj is not None and dest != aid:
+                    row["target_id"] = dest
+                self.actor_tracks.setdefault(aid, []).append(row)
+                self.actor_tracks[aid].sort(key=lambda r: float(r.get("time", 0.0)))
+        elif kind in ("say", "think"):
+            text = self.line_text.text().strip()
+            if not text:
+                QtWidgets.QMessageBox.information(self, "Keyframe", "Write the line first.")
                 return
-            duration = float(self.waypoint_attack_duration.value())
-            row["duration"] = duration
-            self.events.append({
-                "time": row["time"],
-                "type": "fight",
-                "duration": duration,
-                "attackers": [aid],
-                "defenders": [target_id],
-                "style": "normal",
-                "_simple_waypoint": True,
-            })
-
-        self.actor_tracks.setdefault(aid, []).append(row)
-        self.actor_tracks[aid].sort(key=lambda x: x["time"])
+            seconds = float(self.line_duration.value())
+            for aid in aids:
+                self.events.append({"time": when, "type": kind, "actor": aid,
+                                    "text": text, "duration": seconds})
+            advance = seconds
+        else:
+            targets = [t for t in self._checked_targets() if t not in aids]
+            if not targets:
+                QtWidgets.QMessageBox.information(
+                    self, "Keyframe", "Tick the actors to attack (not the attackers themselves).")
+                return
+            self.events.append({"time": when, "type": "fight",
+                                "duration": float(self.attack_duration.value()),
+                                "attackers": list(aids), "defenders": targets,
+                                "mutual": self.attack_mutual.isChecked()})
+            advance = 0.0
+        self.key_time.setValue(when + advance)
         self._refresh_actor_keys_list()
-        self._refresh_waypoints()
+        self._refresh_key_list()
         self._refresh_event_list()
         self._refresh_summary()
 
-        # Fast authoring: next waypoint starts one second later.
-        self.waypoint_time.setValue(float(row["time"]) + (float(row.get("duration", 0.0)) if action == "attack" else 1.0))
+    def _keyframes_for(self, aids):
+        """``[(time, label, ref)]`` of every keyframe involving *aids*; *ref*
+        is ``("track", aid, row)`` or ``("event", event)``."""
+        wanted = set(aids)
+        names = {aid: meta["name"] for aid, meta in self.actor_meta.items()}
+        many = len(wanted) > 1
+        out = []
+        for aid in aids:
+            for row in self.actor_tracks.get(aid, []):
+                where = row.get("target_id")
+                dest = f"{names.get(where, 'an actor')}'s position" if where else \
+                    "(" + ", ".join(f"{float(v):.0f}" for v in row.get("pos", (0, 0, 0))) + ")"
+                cut = " (teleport)" if row.get("teleport") else ""
+                who = f"{names.get(aid, aid)}  " if many else ""
+                out.append((float(row.get("time", 0.0)), f"{who}MOVE to {dest}{cut}",
+                            ("track", aid, row)))
+        for event in self.events:
+            kind = event.get("type")
+            t = float(event.get("time", 0.0))
+            if kind in ("say", "think") and str(event.get("actor", "")) in wanted:
+                who = f"{names.get(str(event.get('actor')), '')}  " if many else ""
+                out.append((t, f"{who}{kind.upper()} “{event.get('text', '')}” "
+                               f"({float(event.get('duration', LINE_SECONDS)):.1f}s)",
+                            ("event", event)))
+            elif kind == "fight":
+                attackers = [str(a) for a in event.get("attackers", [])]
+                defenders = [str(d) for d in event.get("defenders", [])]
+                if not (wanted & set(attackers + defenders)):
+                    continue
+                back = ", fought back" if event.get("mutual", True) else ""
+                out.append((t, f"ATTACK: {len(attackers)} vs {len(defenders)} for "
+                               f"{float(event.get('duration', 0.0)):.1f}s{back} — "
+                               + ", ".join(names.get(a, a) for a in attackers[:3])
+                               + ("…" if len(attackers) > 3 else "")
+                               + " → " + ", ".join(names.get(d, d) for d in defenders[:3])
+                               + ("…" if len(defenders) > 3 else ""),
+                            ("event", event)))
+        out.sort(key=lambda entry: entry[0])
+        return out
 
-    def _remove_selected_waypoint(self):
-        aid = self._current_actor_id()
-        if not aid:
+    def _refresh_key_list(self):
+        self.key_list.clear()
+        self._key_refs = []
+        for t, label, ref in self._keyframes_for(self._current_actor_ids()):
+            self.key_list.addItem(f"{t:6.2f}s  {label}")
+            self._key_refs.append(ref)
+
+    def _selected_key_ref(self):
+        row = self.key_list.currentRow()
+        return self._key_refs[row] if 0 <= row < len(self._key_refs) else None
+
+    def _remove_selected_keyframe(self):
+        ref = self._selected_key_ref()
+        if ref is None:
             return
-        row = self.waypoint_list.currentRow()
-        frames = self.actor_tracks.get(aid, [])
-        if not (0 <= row < len(frames)):
-            return
-        frame = frames.pop(row)
-        if frame.get("action") == "attack" and frame.get("target_id"):
-            t = float(frame.get("time", 0))
-            d = float(frame.get("duration", 0))
-            self.events = [
-                e for e in self.events
-                if not (
-                    e.get("_simple_waypoint")
-                    and e.get("type") == "fight"
-                    and float(e.get("time", -1)) == t
-                    and e.get("attackers") == [aid]
-                    and e.get("defenders") == [frame.get("target_id")]
-                    and float(e.get("duration", -1)) == d
-                )
-            ]
-        if not frames:
-            self.actor_tracks.pop(aid, None)
+        if ref[0] == "track":
+            _kind, aid, row = ref
+            rows = self.actor_tracks.get(aid, [])
+            if row in rows:
+                rows.remove(row)
+            if not rows:
+                self.actor_tracks.pop(aid, None)
+        else:
+            event = ref[1]
+            self.events = [e for e in self.events if e is not event]
         self._refresh_actor_keys_list()
-        self._refresh_waypoints()
+        self._refresh_key_list()
         self._refresh_event_list()
         self._refresh_summary()
 
-    def _refresh_waypoints(self):
-        self.waypoint_list.clear()
-        aid = self._current_actor_id()
-        for index, row in enumerate(self.actor_tracks.get(aid, []), 1):
-            action = str(row.get("action", "move")).lower()
-            target = row.get("target_id")
-            target_name = self.actor_meta.get(str(target), {}).get("name", "") if target else ""
-            time = float(row.get("time", 0.0))
-            if action == "attack":
-                label = f"{index}. At {time:.2f}s — ATTACK {target_name or 'target'}"
-            else:
-                label = f"{index}. At {time:.2f}s — MOVE to captured location"
-            self.waypoint_list.addItem(label)
+    def _edit_selected_keyframe(self):
+        ref = self._selected_key_ref()
+        if ref is None:
+            return
+        if ref[0] == "event":
+            self._edit_event(ref[1])
+            self._refresh_key_list()
+            return
+        _kind, aid, row = ref
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Edit MOVE")
+        form = QtWidgets.QFormLayout(dialog)
+        time = QtWidgets.QDoubleSpinBox()
+        time.setRange(0, 3600)
+        time.setDecimals(2)
+        time.setSuffix(" s")
+        time.setValue(float(row.get("time", 0.0)))
+        form.addRow("At", time)
+        teleport = QtWidgets.QCheckBox("Teleport")
+        teleport.setChecked(bool(row.get("teleport")))
+        form.addRow("", teleport)
+        here = QtWidgets.QCheckBox("Move to where the actor stands now")
+        form.addRow("", here)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save
+                                             | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        row["time"] = float(time.value())
+        if teleport.isChecked():
+            row["teleport"] = True
+        else:
+            row.pop("teleport", None)
+        actor = self.actor_objects.get(aid)
+        if here.isChecked() and actor is not None:
+            row["pos"] = _v3(actor.pos)
+            row["yaw"] = float(getattr(actor, "angle", 0.0))
+            row.pop("target_id", None)
+        self.actor_tracks.get(aid, []).sort(key=lambda r: float(r.get("time", 0.0)))
+        self._refresh_actor_keys_list()
+        self._refresh_key_list()
+        self._refresh_summary()
 
     # ------------------------------------------------------------------
     # Camera + exact keyframes.
@@ -1271,8 +1697,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         ordered = sorted(enumerate(self.events), key=lambda item: item[1].get("time", 0))
         if not (0 <= row < len(ordered)):
             return
-        index, event = ordered[row]
+        self._edit_event(ordered[row][1])
 
+    def _edit_event(self, event):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Edit event")
         dialog.setMinimumWidth(520)
@@ -1308,6 +1735,19 @@ class CutsceneWizard(QtWidgets.QDialog):
             form.addRow("Parameter", parameter)
             widgets.update(target=target, input_name=input_name, parameter=parameter)
 
+        elif kind in ("say", "think"):
+            text = QtWidgets.QLineEdit(str(event.get("text", "")))
+            seconds = QtWidgets.QDoubleSpinBox()
+            seconds.setRange(0.5, 60)
+            seconds.setDecimals(1)
+            seconds.setSuffix(" s")
+            seconds.setValue(float(event.get("duration", LINE_SECONDS)))
+            actor = self.actor_meta.get(str(event.get("actor", "")), {}).get("name", "")
+            form.addRow("Actor", QtWidgets.QLabel(actor or "(missing)"))
+            form.addRow("Line", text)
+            form.addRow("Shown for", seconds)
+            widgets.update(text=text, seconds=seconds)
+
         elif kind == "fight":
             duration = QtWidgets.QDoubleSpinBox()
             duration.setRange(0.05, 300)
@@ -1320,11 +1760,15 @@ class CutsceneWizard(QtWidgets.QDialog):
             style.setCurrentIndex(max(0, style.findData(event.get("style", "normal"))))
             attackers = QtWidgets.QLineEdit(", ".join(map(str, event.get("attackers", []))))
             defenders = QtWidgets.QLineEdit(", ".join(map(str, event.get("defenders", []))))
+            mutual = QtWidgets.QCheckBox("Defenders fight back")
+            mutual.setChecked(bool(event.get("mutual", True)))
             form.addRow("Duration", duration)
             form.addRow("Style", style)
             form.addRow("Attackers", attackers)
             form.addRow("Defenders", defenders)
-            widgets.update(duration=duration, style=style, attackers=attackers, defenders=defenders)
+            form.addRow("", mutual)
+            widgets.update(duration=duration, style=style, attackers=attackers,
+                           defenders=defenders, mutual=mutual)
 
         else:
             raw = QtWidgets.QPlainTextEdit(json.dumps(
@@ -1358,7 +1802,11 @@ class CutsceneWizard(QtWidgets.QDialog):
                 event["parameter"] = widgets["parameter"].text()
             else:
                 event.pop("parameter", None)
+        elif kind in ("say", "think"):
+            event["text"] = widgets["text"].text().strip()
+            event["duration"] = float(widgets["seconds"].value())
         elif kind == "fight":
+            event["mutual"] = widgets["mutual"].isChecked()
             event["duration"] = float(widgets["duration"].value())
             event["style"] = widgets["style"].currentData()
             event["attackers"] = [x.strip() for x in widgets["attackers"].text().split(",") if x.strip()]
@@ -1388,6 +1836,9 @@ class CutsceneWizard(QtWidgets.QDialog):
                 label += f" ({len(event.get('attackers', []))} vs {len(event.get('defenders', []))})"
             elif kind == "message":
                 label += f" — {event.get('line', 'message')}: {str(event.get('text', ''))[:45]}"
+            elif kind in ("say", "think"):
+                who = self.actor_meta.get(str(event.get("actor", "")), {}).get("name", "?")
+                label += f" — {who}: {str(event.get('text', ''))[:45]}"
             elif kind == "io":
                 label += f" — {event.get('target_name', event.get('target_id', ''))}.{event.get('input', event.get('output', ''))}"
             self.event_list.addItem(label)
@@ -1398,7 +1849,9 @@ class CutsceneWizard(QtWidgets.QDialog):
     def _refresh_summary(self):
         self.summary.setText(
             f"Actors {len(self.actor_meta)}  |  "
-            f"Waypoints {sum(len(v) for v in self.actor_tracks.values())}  |  "
+            f"Moves {sum(len(v) for v in self.actor_tracks.values())}  |  "
+            f"Lines {sum(1 for e in self.events if e.get('type') in ('say', 'think'))}  |  "
+            f"Battles {sum(1 for e in self.events if e.get('type') == 'fight')}  |  "
             f"Camera {len(self.camera_keys)}  |  Events {len(self.events)}"
         )
 
@@ -1592,11 +2045,11 @@ class CutsceneWizard(QtWidgets.QDialog):
             actor = self._find_map_actor(aid)
             if actor is None and isinstance(definition, dict):
                 try:
-                    from .things import Monster
+                    cls = _entity_class(definition.get("type") or "monster")
                     actor_props = dict(definition.get("properties") or {})
                     actor_props["id"] = aid
                     actor_props["_cutscene_temporary"] = True
-                    actor = Monster(
+                    actor = cls(
                         pos=definition.get("pos") or [0.0, 0.0, 0.0],
                         properties=actor_props,
                     )
@@ -1619,7 +2072,9 @@ class CutsceneWizard(QtWidgets.QDialog):
             }
 
         self._refresh_actor_lists()
+        self._rebuild_actor_panel()
         self._refresh_actor_keys_list()
+        self._refresh_key_list()
         self._refresh_camera_list()
         self._refresh_event_list()
         self._refresh_summary()

@@ -831,6 +831,35 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
         host.on("render.pre_sprites", self._on_pre_sprites)
         host.on("render.pre_scene", self._on_pre_scene)
+        # Fio's cutscenes: lines said and thought on a keyframe, and the combat
+        # of a cutscene battle while the cutscene holds the game's own tick.
+        host.on("cutscene.line", self._on_cutscene_line)
+        host.on("cutscene.tick", self._on_cutscene_tick)
+        host.on("cutscene.played", self._on_cutscene_played)
+
+    @staticmethod
+    def _cutscene_session(ev):
+        return getattr(getattr(ev, "logic", None), "_miniwind", None)
+
+    def _on_cutscene_line(self, ev):
+        """A cutscene's SAY / THINK keyframe: the line over the actor's head."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.cutscene_line(ev.get("kind"), ev.get("actor"), ev.get("text"),
+                                  ev.get("seconds"))
+
+    def _on_cutscene_played(self, ev):
+        """A "play once" cutscene has played: the save remembers it, so it
+        stays played across level changes and loads."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.remember_cutscene(ev.get("id"))
+
+    def _on_cutscene_tick(self, ev):
+        """A cutscene battle is on: run the game's combat for it."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.cutscene_tick(float(ev.get("delta") or 0.0))
 
     def _on_pre_scene(self, ev):
         """Update MiniWind's weather and grass wind before the world is drawn.
@@ -940,6 +969,10 @@ class MiniwindGame:
         meadow.apply(fio.terrain(logic))      # the odd tuft about the land
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
+        # The story cutscenes already played stay played (Fio's triggers).
+        runtime = getattr(logic, "cutscene_runtime", None)
+        if runtime is not None:
+            runtime.played.update(session.played_cutscenes())
         if party_lobby is not None:
             from .multiplayer.session import CoopSession
             CoopSession(session, party_lobby, cfg)
@@ -1398,6 +1431,12 @@ class MiniwindGame:
                 self._sync_loadout_window(session, viewport, w, h)
                 self._sync_strip_window(session, viewport, w, h, cutscene=True)
                 self._sync_hud_window(session, viewport, w, h, cutscene=True)
+                # What the cutscene's actors say and think, and its battle's
+                # drawn bows and floating words -- the story, not the HUD.
+                hud.draw_npc_bow_charges(painter, session, viewport, w, h)
+                hud.draw_barks(painter, session, viewport, w, h)
+                hud.draw_thoughts(painter, session, viewport, w, h)
+                hud.draw_floats(painter, session, viewport, w, h)
                 hud.draw_fade(painter, session, w, h)
                 return
             # The non-modal loadout popup (weapons + spells) lives alongside the

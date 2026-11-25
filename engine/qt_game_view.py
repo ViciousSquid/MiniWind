@@ -3246,6 +3246,15 @@ class QtGameView(QOpenGLWidget):
                 return
 
         if self.play_mode and not self.console_overlay_active:
+            lt = self.logic_thread
+            if (event.key() == Qt.Key_Escape and lt is not None
+                    and lt.cutscene_runtime.state is not None):
+                # A cutscene owns Escape: it ends one that lets itself be
+                # stopped; never the pause menu over a story scene.
+                with lt._tick_lock:
+                    lt.cutscene_runtime.skip()
+                event.accept()
+                return
             if event.key() == Qt.Key_Escape and _game_modal_escape_active(self.logic_thread):
                 # Let the parent MainWindow route Escape into the running game's
                 # modal input. Otherwise QtGameView opens Fio's pause menu first,
