@@ -156,12 +156,29 @@ def _head_file(hid) -> str:
     return os.path.join(_repo_root(), HEAD_DIR, f"{hid}.png")
 
 
+#: Head ids whose PNG has been found. The 2D views resolve every actor's
+#: head on each repaint and each click -- hundreds of file checks for the same
+#: few animal and browsed heads -- and a head that is there stays there (the
+#: numbered heads themselves are listed once, at import). A miss is asked
+#: again each time, so a head added while the editor runs is found.
+_FOUND = set()
+
+
+def _exists(hid) -> bool:
+    if hid in _FOUND:
+        return True
+    if os.path.isfile(_head_file(hid)):
+        _FOUND.add(hid)
+        return True
+    return False
+
+
 def _available(hid) -> str:
     """*hid*, or its stand-in when its own PNG is missing ("" if neither)."""
-    if hid and os.path.isfile(_head_file(hid)):
+    if hid and _exists(hid):
         return hid
     alt = FALLBACK_HEADS.get(hid)
-    if alt and os.path.isfile(_head_file(alt)):
+    if alt and _exists(alt):
         return alt
     return ""
 

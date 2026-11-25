@@ -236,3 +236,23 @@ def test_heads_given_at_play_start_survive_character_creation_but_the_players():
     alone.begin_new_character("Player", "valian", "warrior", head=chosen)
     unmoved = [i for i in range(6) if i != 2]
     assert [after[i] for i in unmoved] == [fresh[i].properties["head"] for i in unmoved]
+
+
+def test_a_found_head_file_is_not_looked_for_again_but_a_missing_one_is(tmp_path, monkeypatch):
+    """The views resolve every actor's head on each repaint and click: a head
+    found once is not checked on disk again; one not there yet is, so a head
+    added while the editor runs is found."""
+    import os
+    import game.rpg.heads as heads
+    monkeypatch.setattr(heads, "_FOUND", set())
+    monkeypatch.setattr(heads, "_head_file", lambda hid: str(tmp_path / f"{hid}.png"))
+    checked = []
+    real = os.path.isfile
+    monkeypatch.setattr(heads.os.path, "isfile", lambda p: (checked.append(p), real(p))[1])
+    (tmp_path / "sheep01.png").write_bytes(b"png")
+    assert heads._available("sheep01") == "sheep01"
+    assert heads._available("sheep01") == "sheep01"
+    assert len(checked) == 1
+    assert heads._available("browsed") == ""
+    (tmp_path / "browsed.png").write_bytes(b"png")
+    assert heads._available("browsed") == "browsed"

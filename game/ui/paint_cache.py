@@ -74,5 +74,24 @@ class PaintCache:
             self.urgent = urgent
         painter.drawPixmap(self.origin, self.pixmap)
 
+    def draw_held(self, painter, rect, interval, urgent):
+        """Draw the cached picture if :meth:`draw` would hold it now whatever
+        its key -- same place and size, same *urgent*, inside *interval* --
+        and say whether it did. A caller whose key is costly to work out asks
+        this first: while the picture is held, the key is not looked at."""
+        if not interval or self.pixmap is None or self.key is None:
+            return False
+        rect = QRect(rect)
+        if rect.isEmpty():
+            return False
+        device = painter.device()
+        dpr = float(device.devicePixelRatioF()) if device is not None else 1.0
+        if ((rect.x(), rect.y(), rect.width(), rect.height(), round(dpr, 3)) != self.key[1:]
+                or urgent != self.urgent
+                or time.perf_counter() - self.painted_at >= interval):
+            return False
+        painter.drawPixmap(self.origin, self.pixmap)
+        return True
+
     def clear(self):
         self.key = self.pixmap = self.origin = None

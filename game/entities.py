@@ -139,13 +139,30 @@ def _actor_2d_sprite_path(actor) -> str:
 _ACTOR_2D_PIXMAP_CACHE = {}
 
 
+#: Sprites at the 2D views' 60 px icon size, by the source pixmap's cache
+#: key. The views ask for a thing's icon on every repaint and every click
+#: (for each of hundreds of actors), and every source here comes from a
+#: cache of its own, so one smooth rescale of each serves them all.
+_ICON_PIXMAP_CACHE = {}
+
+
+def _icon_pixmap(pix):
+    """*pix* scaled to the 2D views' 60 px icon, aspect kept: once per source."""
+    from PyQt5.QtCore import Qt
+    key = pix.cacheKey()
+    icon = _ICON_PIXMAP_CACHE.get(key)
+    if icon is None:
+        icon = _ICON_PIXMAP_CACHE[key] = pix.scaled(
+            60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return icon
+
+
 def _actor_2d_pixmap(actor, icon=False):
     """Load the actor's own 2D sprite, optionally at standard icon size."""
     if not _HAVE_EDITOR:
         return None
 
     from PyQt5.QtGui import QPixmap
-    from PyQt5.QtCore import Qt
 
     path = _actor_2d_sprite_path(actor)
     cache = _ACTOR_2D_PIXMAP_CACHE
@@ -166,7 +183,7 @@ def _actor_2d_pixmap(actor, icon=False):
     if pix is None:
         return None
     if icon:
-        return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return _icon_pixmap(pix)
     return pix
 
 
@@ -562,8 +579,7 @@ if _HAVE_EDITOR:
         def get_icon_pixmap(self):
             pix = _marker_instance_pixmap(self)
             if pix is not None and not pix.isNull():
-                from PyQt5.QtCore import Qt
-                return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                return _icon_pixmap(pix)
             return super().get_icon_pixmap()
 else:  # pragma: no cover
     class Marker(Thing):
@@ -708,8 +724,7 @@ if _HAVE_EDITOR:
         def get_icon_pixmap(self):
             pix = _container_pixmap(self)
             if pix is not None and not pix.isNull():
-                from PyQt5.QtCore import Qt
-                return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                return _icon_pixmap(pix)
             return super().get_icon_pixmap()
 else:  # pragma: no cover - headless player
     class Container(Thing):
@@ -862,8 +877,7 @@ if _HAVE_EDITOR:
         def get_icon_pixmap(self):
             pix = _spellbook_pixmap(self)
             if pix is not None and not pix.isNull():
-                from PyQt5.QtCore import Qt
-                return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                return _icon_pixmap(pix)
             return super().get_icon_pixmap()
 else:  # pragma: no cover - headless player
     class Spellbook(_PropBase):

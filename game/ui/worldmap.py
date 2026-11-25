@@ -453,12 +453,28 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     if player is None:
         return
     x0, y0, size = minimap_rect(width, height)
+    global _MINIMAP_CACHE
+    if _MINIMAP_CACHE is None:
+        from .paint_cache import PaintCache
+        _MINIMAP_CACHE = PaintCache()
+    region = QRect(int(x0) - 2, int(y0) - 2, int(math.ceil(size)) + 4, int(math.ceil(size)) + 4)
+    interval = (1.0 / MINIMAP_HZ) if MINIMAP_HZ else None
+    rotation = minimap_rotation(session)
+    qrot = round(math.degrees(rotation) * 4.0)
+    image = world.image() if world.ready else None
+    urgent = (qrot, image.cacheKey() if image is not None else None, repr(world.bounds),
+              width, height)
+    # Between repaints (MINIMAP_HZ) the cache shows its last picture
+    # whatever the key says: the markers, actors and quest targets the key
+    # is made of are not gathered for a frame that cannot use them.
+    if _MINIMAP_CACHE.draw_held(painter, region, interval, urgent):
+        return
     scale = size / MINIMAP_SPAN
     px, pz = float(player.pos[0]), float(player.pos[2])
     import game.ui.daylight as daylight
     inputs = dict(
         world=world, player=player, width=width, height=height,
-        rotation=minimap_rotation(session),
+        rotation=rotation,
         night=daylight.map_night(session),
         status=session.law_status() if hasattr(session, "law_status") else None,
         witnesses=session.witness_markers() if hasattr(session, "witness_markers") else [],
@@ -489,7 +505,6 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     # (whole screen pixels, quarter degrees), so a cached disc is exactly
     # the disc a fresh paint would give.
     qx, qz = round(px * scale), round(pz * scale)
-    qrot = round(math.degrees(inputs["rotation"]) * 4.0)
     qangle = round(math.degrees(float(getattr(player, "angle", 0.0))))
     night = inputs["night"]
     if night is not None:
@@ -498,23 +513,17 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
                for t in inputs["targets"][:3]]
     inputs.update(px=qx / scale, pz=qz / scale, rotation=math.radians(qrot / 4.0),
                   angle=math.radians(qangle), dots=dots, night=night, targets=targets)
-    image = world.image() if world.ready else None
     key = (width, height, qx, qz, qrot,
            image.cacheKey() if image is not None else None, repr(world.bounds), world.cell,
            bool(world.error), tuple(dots),
            None if night is None else (night["hour"], repr(night["lights"])),
            repr(inputs["status"]), repr(inputs["witnesses"]),
            repr([(t[0][0], t[0][2]) for t in targets]), repr(inputs["here"]), qangle)
-    global _MINIMAP_CACHE
-    if _MINIMAP_CACHE is None:
-        from .paint_cache import PaintCache
-        _MINIMAP_CACHE = PaintCache()
-    region = QRect(int(x0) - 2, int(y0) - 2, int(math.ceil(size)) + 4, int(math.ceil(size)) + 4)
     _MINIMAP_CACHE.draw(painter, key, region, lambda p: _paint_minimap(p, session, inputs),
-                        interval=(1.0 / MINIMAP_HZ) if MINIMAP_HZ else None,
+                        interval=interval,
                         # Turning, or a new map picture, shows at once: the
                         # north marker beside it is drawn live.
-                        urgent=(qrot, key[5], key[6], width, height))
+                        urgent=urgent)
 
 
 #: The minimap's cached picture (see draw_minimap).

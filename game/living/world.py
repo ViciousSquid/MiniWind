@@ -684,7 +684,6 @@ class LivingWorld:
             return
         scene = fio.things(s.logic)
         scene.extend(things)
-        fio.rebuild_entity_caches(s.logic)
         s._rebuild_entity_caches()
         j.live = True
         self.live[j.id] = {"things": things, "calm_since": time.monotonic(),
@@ -855,7 +854,6 @@ class LivingWorld:
                 scene.remove(x)
             except ValueError:
                 pass
-        fio.rebuild_entity_caches(s.logic)
         s._rebuild_entity_caches()
 
     def shutdown(self) -> None:
@@ -914,7 +912,6 @@ class LivingWorld:
                     changed = True
         self.board.remains = keep
         if changed:
-            fio.rebuild_entity_caches(s.logic)
             s._rebuild_entity_caches()
 
     def _remains_container(self, r):
