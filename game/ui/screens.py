@@ -1024,6 +1024,59 @@ def _handle_character(session, key):
 # ===========================================================================
 # Journal
 # ===========================================================================
+#: A quest card: tall enough to show its objective under the mark.
+_QUEST_CARD = (150, 200)
+_QUEST_MIN_SCALE = 0.92
+_QUEST_DONE = QColor(120, 190, 130)
+_QUEST_ACTIVE = QColor(214, 176, 108)
+_QUEST_TRACKED = QColor(120, 160, 245)
+
+
+def _quest_card(session, q, rect, *, selected, tracked):
+    """The :class:`cards.Card` for quest *q*: a mark (◈ under way, ✓ done),
+    who it is from or its chapter, and the objective now. The tracked quest
+    glows, with ▸ on it; a finished one is greyed. The journal's detail pane
+    beside the cards says the rest, so a card has no tooltip."""
+    log = session.game.quests
+    complete = log.is_complete(q.id)
+    sub = (f"Chapter {q.chapter}" + (f": {q.chapter_title}" if q.chapter_title else "")
+           if q.chapter else
+           str(q.giver).replace("_", " ").title() if q.giver else "")
+    summary = "Completed" if complete else str(log.current_objective(q.id) or q.desc or "")
+    return cards.Card(
+        title=q.name, glyph="✓" if complete else "◈", subtitle=sub, summary=summary,
+        accent=_QUEST_DONE if complete else _QUEST_TRACKED if tracked else _QUEST_ACTIVE,
+        selected=selected, hovered=hits.hovered(rect), active=tracked and not complete,
+        mark="▸", greyed=complete)
+
+
+def _quest_grid(area, count):
+    return cards.layout_grid(area, count, _QUEST_CARD, cards.GAP,
+                             min_scale=_QUEST_MIN_SCALE, fit_all=True)
+
+
+def _quest_turn(key):
+    """A quest grid's page arrows (the journal's or the quest window's)."""
+    def turn(session, step):
+        log = session.game.quests
+        n = len(log.active_quests()) + len(log.completed_quests())
+        st = _sel(session).setdefault(key, {"row": 0})
+        size = max(1, st.get("page_size", 1))
+        st["row"] = max(0, min((st["row"] // size + step) * size, max(0, n - 1)))
+    return turn
+
+
+def _quest_move(st, key, n):
+    """Arrow keys in a grid of quest cards; True when it was one."""
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move is None:
+        return False
+    st["row"] = cards.navigate(st["row"], move, n, st.get("cols", 1), st.get("page_size"))
+    return True
+
+
 def _draw_journal(painter, session, w, h):
     log = session.game.quests
     active = log.active_quests()
@@ -1035,24 +1088,27 @@ def _draw_journal(painter, session, w, h):
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, "Journal",
                    f"{len(active)} active · {len(done)} completed")
+    tracked = getattr(session, "tracked_quest_id", lambda: "")()
 
-    list_w = int(inner.width() * 0.4)
-    for i, q in enumerate(allq):
-        ry = ty + 8 + i * 24
-        _row_target(painter, QRect(inner.x(), ry - 2, list_w, 22),
-                    lambda s, row=i: _sel(s)["journal"].update(row=row),
-                    f"journal:{q.id}")
-        if i == st["row"]:
-            painter.fillRect(QRect(inner.x(), ry - 2, list_w, 22), T.SELECT)
-        complete = log.is_complete(q.id)
-        col = QColor(120, 190, 130) if complete else (T.GOLD_BRIGHT if i == st["row"] else T.INK)
-        prefix = "✓ " if complete else "◈ "
-        T.text(painter, inner.x() + 8, ry + 14, prefix + q.name, size=11, color=col,
-               family="Segoe UI")
+    # The quests as cards on the left, the selected one in full on the right.
+    list_w = int(inner.width() * 0.48)
+    area = QRect(inner.x(), ty + 30, list_w, max(1, inner.bottom() - 22 - ty - 30))
+    grid = _quest_grid(area, len(allq))
+    st["cols"], st["page_size"] = grid.cols, grid.page_size
+    page, first, pages = _card_page(st["row"], grid.page_size, len(allq))
+    _card_pager(painter, QRect(inner.x() + list_w - 120, ty + 2, 120, 24), page, pages,
+                _quest_turn("journal"))
+    for i in range(first, min(first + grid.page_size, len(allq))):
+        q = allq[i]
+        rect = grid.slots[i - first]
+        cards.draw_card(painter, rect, _quest_card(
+            session, q, rect, selected=i == st["row"], tracked=bool(tracked) and q.id == tracked))
+        hits.add(QRect(rect), lambda s, row=i: _sel(s)["journal"].update(row=row),
+                 f"journal:{q.id}")
 
+    dx = inner.x() + list_w + 20
     if allq:
         q = allq[st["row"]]
-        dx = inner.x() + list_w + 20
         T.text(painter, dx, ty + 18, q.name, size=15, color=T.GOLD_BRIGHT, bold=True)
         entries = log.journal_entries(q.id)
         body = "\n\n".join(f"• {e}" for e in entries) or q.desc
@@ -1060,27 +1116,25 @@ def _draw_journal(painter, session, w, h):
             body += "\n\n(Quest complete.)"
         else:
             body += f"\n\nObjective: {log.current_objective(q.id)}"
-        T.text_in(painter, QRect(dx, ty + 34, inner.width() - list_w - 20, inner.height() - 80),
+        T.text_in(painter, QRect(dx, ty + 34, inner.right() - dx, inner.height() - 80),
                   body, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
     else:
-        T.text(painter, inner.x() + list_w + 20, ty + 18,
-               "Your journal is empty. Talk to the folk of Miniwind to find work.",
-               size=11, color=T.DIM, family="Segoe UI")
+        T.text_in(painter, QRect(inner.x(), ty + 8, inner.width(), 40),
+                  "Your journal is empty. Talk to the folk of Miniwind to find work.",
+                  size=11, color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "↑/↓ select   J/Esc close", size=9, color=T.DIM,
+              "Arrows or click select   J/Esc close", size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
 
 
 def _handle_journal(session, key):
     allq = session.game.quests.active_quests() + session.game.quests.completed_quests()
     st = _sel(session).setdefault("journal", {"row": 0})
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % max(1, len(allq)); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % max(1, len(allq)); return True
+    if _quest_move(st, key, len(allq)):
+        return True
     if key in ("j", "escape", "esc"):
         session.open_screen = None
     return True
@@ -1131,8 +1185,8 @@ def _objective_rows(session, q):
 
 
 def _draw_quest(painter, session, w, h):
-    """The quest journal: a clickable list of every quest the player
-    knows (active, then completed) down the left, the selected quest's story and
+    """The quest journal: a card for every quest the player knows (active,
+    then completed) on the left, the selected quest's story and
     objectives on the right, and a "Make Active Quest" box that pins the quest
     so only its arrow shows. Mouse-driven (see :func:`handle_click`); the arrow
     keys and Enter still work."""
@@ -1165,40 +1219,32 @@ def _draw_quest(painter, session, w, h):
         return
 
     top = ty + 12
-    list_w = int(inner.width() * 0.34)
+    list_w = int(inner.width() * 0.42)
     lx = inner.x() + 6
     col_x = inner.x() + list_w + 18
     col_w = inner.right() - col_x - 6
 
-    # Divider between the list and the detail pane.
+    # Divider between the cards and the detail pane.
     painter.setPen(QPen(T.GILD, 1))
     painter.drawLine(col_x - 9, top, col_x - 9, inner.bottom() - 8)
 
-    # --- left column: the clickable quest list -----------------------------
-    row_h = 22
-    yy = top
-    idx = 0
-    for group_title, group, dim in (("ACTIVE", active, False),
-                                    ("COMPLETED", completed, True)):
-        if not group:
-            continue
-        T.text(painter, lx, yy + 12, group_title, size=8, color=T.GOLD,
-               bold=True, family="Segoe UI")
-        yy += 20
-        for q in group:
-            r = QRect(lx, yy - 2, list_w - 10, row_h)
-            selected = (idx == st["row"])
-            if selected:
-                painter.fillRect(r, T.SELECT)
-            is_tracked = bool(tracked) and q.id == tracked
-            color = (T.GOLD_BRIGHT if selected else (T.DIM if dim else T.INK))
-            label = ("▸ " if is_tracked else "    ") + q.name
-            T.text_in(painter, r.adjusted(4, 0, -4, 0), label, size=10,
-                      color=color, align=T.ALIGN_LEFT, family="Segoe UI")
-            _QUEST_HITS["rows"].append((QRect(r), idx))
-            yy += row_h
-            idx += 1
-        yy += 10
+    # --- left: every quest as a card, active first (game/ui/cards.py) -----
+    area = QRect(lx, top + 28, list_w - 10, max(1, inner.bottom() - 22 - top - 28))
+    grid = _quest_grid(area, len(known))
+    st["cols"], st["page_size"] = grid.cols, grid.page_size
+    page, first, pages = _card_page(st["row"], grid.page_size, len(known))
+    T.text_in(painter, QRect(lx, top, list_w - 140, 22),
+              f"{len(active)} active · {len(completed)} completed", size=9,
+              color=T.GOLD, align=T.ALIGN_LEFT, family="Segoe UI")
+    _card_pager(painter, QRect(lx + list_w - 130, top, 120, 22), page, pages,
+                _quest_turn("quest"))
+    for idx in range(first, min(first + grid.page_size, len(known))):
+        q = known[idx]
+        r = grid.slots[idx - first]
+        cards.draw_card(painter, r, _quest_card(
+            session, q, r, selected=idx == st["row"],
+            tracked=bool(tracked) and q.id == tracked))
+        _QUEST_HITS["rows"].append((QRect(r), idx))
 
     # --- right column: the selected quest's detail -------------------------
     q = known[max(0, min(st["row"], len(known) - 1))]
@@ -1286,11 +1332,8 @@ def _handle_quest(session, key):
     active, completed = _known_quests(session)
     known = active + completed
     st = _sel(session).setdefault("quest", {"row": 0})
-    n = max(1, len(known))
-    if key in ("up", "w", "left", "a"):
-        st["row"] = (st["row"] - 1) % n; return True
-    if key in ("down", "s", "right", "d"):
-        st["row"] = (st["row"] + 1) % n; return True
+    if _quest_move(st, key, len(known)):
+        return True
     if key in ("return", "enter", "space") and known:
         # Pin the highlighted quest as the active one (only its arrow shows);
         # pressing again on the pinned quest clears it. Only active quests can
@@ -1366,11 +1409,12 @@ def _spell_card_icon(spell, px):
         return None
 
 
-def _spell_card(painter, session, spell, *, selected, locked, rect):
+def _spell_card(painter, session, spell, *, selected, locked, rect, **overrides):
     """The :class:`cards.Card` for *spell* in the spellbook grid: its school
     tints the header, its rarity the frame; the level is a row of pips and
-    the magicka cost the one badge. The rest is in the tooltip and in the
-    detail column beside the cards."""
+    the magicka cost the one badge. The rest is in the detail column beside
+    the cards. *overrides* replace any of the card's fields (a tutor's card
+    shows its price instead of the cost)."""
     c = session.game.character
     level = c.spell_level(spell.id)
     now = spell.at_level(level)
@@ -1385,7 +1429,7 @@ def _spell_card(painter, session, spell, *, selected, locked, rect):
         tip.append(f"Level {level + 1}: " + (nxt_power or "stronger") +
                    f" · {int(rpg_magic.cast_cost(c, nxt))} magicka")
     px = int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter))
-    return cards.Card(
+    fields = dict(
         title=spell.name,
         icon=_spell_card_icon(spell, max(32, px)),
         subtitle=f"{sk.label(spell.school)} · {str(spell.delivery).title()}",
@@ -1400,6 +1444,8 @@ def _spell_card(painter, session, spell, *, selected, locked, rect):
         active=c.active_spell == spell.id,
         locked=locked,
         tooltip="\n".join(tip))
+    fields.update(overrides)
+    return cards.Card(**fields)
 
 
 def _spellbook_layout(inner, ty, count):
