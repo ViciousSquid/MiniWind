@@ -475,6 +475,9 @@ _FLOAT_INK = (214, 200, 255)
 #: between the head and it.
 CAST_ICON_SIZE = 40
 CAST_ICON_GAP = 6
+#: Half a drawn head, in world units (heads are drawn 128 across): the icon
+#: clears the head by this much as well, whatever the zoom.
+HEAD_HALF = 64.0
 
 
 def _head_screen(glm, proj, view, thing, width, height):
@@ -487,6 +490,17 @@ def _head_screen(glm, proj, view, thing, width, height):
         # middle of the view, where their head would be.
         sp = (width * 0.5, height * 0.4)
     return sp
+
+
+def _head_clearance(glm, proj, view, thing, sp, width, height):
+    """How many px the drawn head reaches above its point *sp* -- half a head,
+    measured on screen so it holds at any zoom."""
+    pos = thing.pos
+    head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
+    side = _world_to_screen(glm, proj, view, pos[0] + HEAD_HALF, head_y, pos[2], width, height)
+    if side is None:
+        return 0.0
+    return min(200.0, ((side[0] - sp[0]) ** 2 + (side[1] - sp[1]) ** 2) ** 0.5)
 
 
 def draw_cast_icons(painter, session, viewport, width, height, now=None):
@@ -517,7 +531,8 @@ def draw_cast_icons(painter, session, viewport, width, height, now=None):
         pix = _spell_icon_pixmap(spell, s * 2)        # sharp on high-DPI screens
         if pix is None:
             continue
-        rect = QRectF(sp[0] - s / 2.0, sp[1] - CAST_ICON_GAP - s, s, s)
+        top = sp[1] - _head_clearance(glm, proj, view, thing, sp, width, height)
+        rect = QRectF(sp[0] - s / 2.0, top - CAST_ICON_GAP - s, s, s)
         painter.setOpacity(max(0.0, min(1.0, float(alpha))))
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(0, 0, 0, 110))        # a soft shadow under it
@@ -526,14 +541,27 @@ def draw_cast_icons(painter, session, viewport, width, height, now=None):
     painter.restore()
 
 
-def _cast_icon_lift(session):
+def _cast_icon_lift(session, viewport=None, width=0, height=0):
     """``{id(thing): px}``: how far a head's floating words rise to clear the
-    cast icon shown over it."""
+    cast icon shown over it (and the head under it, given a *viewport*)."""
     try:
         icons = session.live_cast_icons()
     except Exception:
         return {}
-    return {id(thing): CAST_ICON_SIZE + CAST_ICON_GAP for thing, _sid, _a in icons}
+    out = {}
+    for thing, _sid, _a in icons:
+        lift = CAST_ICON_SIZE + CAST_ICON_GAP
+        if viewport is not None:
+            try:
+                import glm
+                proj, view = viewport.projection_matrix, viewport.view_matrix
+                sp = _head_screen(glm, proj, view, thing, width, height)
+                if sp is not None:
+                    lift += _head_clearance(glm, proj, view, thing, sp, width, height)
+            except Exception:
+                pass
+        out[id(thing)] = lift
+    return out
 
 
 def draw_floats(painter, session, viewport, width, height):
@@ -544,7 +572,7 @@ def draw_floats(painter, session, viewport, width, height):
     floats = session.live_floats() if hasattr(session, "live_floats") else ()
     if not floats:
         return
-    lift = _cast_icon_lift(session)
+    lift = _cast_icon_lift(session, viewport, width, height)
     try:
         import glm
         proj, view = viewport.projection_matrix, viewport.view_matrix
