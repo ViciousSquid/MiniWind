@@ -136,6 +136,89 @@ def _draw_title_card(painter, session, width, height):
     painter.restore()
 
 
+#: The key hints after character creation (game/key_hints.py): the key's
+#: picture (logical px), the gap to the word under it, and that word's height
+#: (px, so it keeps to the 128 px key on any screen's DPI).
+KEY_HINT_SIZE = 128
+KEY_HINT_GAP = 8
+KEY_HINT_FONT_PX = 30
+KEY_HINT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
+                                            "assets", "ui", "keys"))
+_KEY_IMAGES = {}
+
+
+def key_hint_image(letter):
+    """The keycap picture for *letter*: ``assets/ui/keys/key_<letter>.png``
+    when there is one, else the same keycap drawn by
+    :func:`game.tools.make_key_icons.draw_key`. Cached per letter."""
+    letter = str(letter)
+    if letter not in _KEY_IMAGES:
+        from PyQt5.QtGui import QImage
+        image = None
+        path = os.path.join(KEY_HINT_DIR, f"key_{letter.lower()}.png")
+        if os.path.exists(path):
+            loaded = QImage(path)
+            if not loaded.isNull():
+                image = loaded
+        if image is None:
+            try:
+                from ..tools.make_key_icons import draw_key
+                image = draw_key(letter)
+            except Exception:
+                image = None
+        _KEY_IMAGES[letter] = image
+    return _KEY_IMAGES[letter]
+
+
+def key_hint_rect(width, height):
+    """Where the key's picture goes: centred on the screen."""
+    s = KEY_HINT_SIZE
+    return QRectF((width - s) / 2.0, (height - s) / 2.0, s, s)
+
+
+def draw_key_hints(painter, session, width, height, now=None):
+    """The key hint now due (game/key_hints.py): the key in the middle of the
+    screen, its word ("Inventory") centred under it, both at the hint's
+    fade. Nothing while a menu, conversation or the pause menu is up."""
+    import game.key_hints as key_hints
+    shown = key_hints.current(session, now)
+    if shown is None:
+        return
+    letter, caption, alpha = shown
+    draw_key_hint(painter, letter, caption, alpha, width, height)
+
+
+def draw_key_hint(painter, letter, caption, alpha, width, height):
+    """One key hint at opacity *alpha*."""
+    from PyQt5.QtGui import QPainter, QPainterPath, QBrush
+    import game.ui.fonts as fonts
+    rect = key_hint_rect(width, height)
+    painter.save()
+    painter.setOpacity(max(0.0, min(1.0, float(alpha))))
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    image = key_hint_image(letter)
+    if image is not None:
+        painter.drawImage(rect, image)
+    # The word under it: the game's medieval face (MedievalSharp, one
+    # weight, never bold), white with a dark outline and shadow.
+    font = fonts.dialogue_font_px(KEY_HINT_FONT_PX)
+    fm = QFontMetrics(font)
+    path = QPainterPath()
+    x = (width - fm.horizontalAdvance(caption)) / 2.0
+    y = rect.bottom() + KEY_HINT_GAP + fm.ascent()
+    path.addText(QPointF(x, y), font, caption)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(QColor(0, 0, 0, 120), 6.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.drawPath(path.translated(1.5, 2.0))          # soft drop shadow
+    painter.setPen(QPen(QColor(12, 12, 18, 235), 3.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.drawPath(path)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QBrush(QColor(255, 255, 255)))
+    painter.drawPath(path)
+    painter.restore()
+
+
 #: The bow-draw pie's radius, and how far it sits out from the player's head:
 #: tucked against its upper right edge, this fraction of the pie outside it.
 BOW_PIE_RADIUS = 14

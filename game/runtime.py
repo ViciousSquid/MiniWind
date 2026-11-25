@@ -806,6 +806,9 @@ class MiniwindSession(SettlementLaw):
         self.law = Writs(self.store)
         self._arrest_region = ""
         self.needs_char_creation = str(cfg.get("start_scenario", "prompt")) == "prompt"
+        #: The key hints a new character is shown (game/key_hints.py): armed
+        #: by begin_new_character only, so never for a loaded save.
+        self.key_hints = None
         #: Which map this is, for what it remembers (game/map_memory.py): the
         #: map's own settings entity, else its region's name.
         self._map_key = str(cfg.get("id") or cfg.get("region_name") or "")
@@ -1999,6 +2002,7 @@ class MiniwindSession(SettlementLaw):
         self.game.add_xp_listener(self._on_xp)
         self.game.add_drink_listener(self._on_drink)
         self.needs_char_creation = True
+        self.key_hints = None
         self.open_screen = "charcreate"
         self.dialogue = None
         self.dialogue_npc = None
@@ -2656,6 +2660,10 @@ class MiniwindSession(SettlementLaw):
         self._sync_engine_health(full=True)
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
         self._start_opening_quests()
+        # "I: Inventory" in the middle of the screen, then (for a class that
+        # works magic) "P: Spellbook" -- a new character only (game/key_hints.py).
+        import game.key_hints as key_hints
+        key_hints.arm(self)
 
     def _start_opening_quests(self) -> None:
         """Start every quest marked ``starts_on_new_game``: a new character
@@ -12456,6 +12464,7 @@ class MiniwindSession(SettlementLaw):
         self._sim_hours = 0.0
         if self.game.load_from_store():
             self.needs_char_creation = False
+            self.key_hints = None           # a loaded character knows its keys
             self._law_sync()
             # A loaded chase resumes from its search record, without granting
             # any guard fresh knowledge of the player's current position.

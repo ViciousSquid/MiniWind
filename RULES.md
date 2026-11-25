@@ -133,6 +133,19 @@ Every control named is the one in use: keyboard and mouse or gamepad,
 whichever was used last, switching at once, by your own bindings. Enter / A
 next, ← / D-pad ← back, Esc / B skip. Without the setting none of it appears.
 
+**Key hints.** As a new character first comes into view (after the tutorial's
+pages, if shown), the inventory key appears in the middle of the screen
+(128 × 128, the word "Inventory" under it): 0.5 s fading in, 2 s held, 0.5 s
+fading out. A class that works magic (every class but the Warrior and the
+Barbarian) is then shown the spellbook key ("Spellbook") the same way, at
+3 s after the first began or as soon as it has gone, whichever is later --
+never both at once. Pressing a hint's key (by your own binding, which is
+the key shown) hides it at once; pressed before its hint shows, the hint is
+skipped. Real time, so Slow Time does not stretch them; a hint keeps its
+clock but is not drawn while a menu, a conversation or the pause menu is up,
+and one not yet begun waits for them to close. Never for a loaded save
+(`game/key_hints.py`; the pictures are `assets/ui/keys/key_<letter>.png`).
+
 ### Classes
 
 Thirteen classes; the character creator offers six (★). A class sets your
