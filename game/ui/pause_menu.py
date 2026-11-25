@@ -843,10 +843,10 @@ class PauseMenu:
             else:
                 sub, summary = "Empty", ("Nothing saved here" if self.page == 'load'
                                          else "Save here")
-            cards.draw_card(painter, rect, cards.Card(
+            cards.draw_card(painter, rect, cards.dimmed(cards.Card(
                 title=f"Slot {i + 1}", glyph=str(i + 1), subtitle=sub, summary=summary,
                 accent=_ACCENT, selected=i == self.index,
-                greyed=not info and self.page == 'load'))
+                greyed=not info and self.page == 'load'), 0 <= self.index < SLOT_COUNT))
         # BACK, centred under the cards, a word as on the other pages.
         label = _shown(items[-1][1]) if items else ''
         painter.setFont(_display_font(back_pt))

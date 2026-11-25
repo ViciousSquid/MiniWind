@@ -21,6 +21,7 @@ from PyQt5.QtGui import QColor, QPen
 
 from ..rpg import attributes as attr
 from ..rpg import skills as sk
+from . import theme as T
 
 #: Mastery ranks: (from level, name), and the one a level has reached.
 RANKS = sk.RANKS
@@ -32,6 +33,18 @@ _INK = QColor(226, 228, 232)
 _DIM = QColor(140, 144, 150)
 _GOLD = QColor(240, 200, 110)
 _TRACK = QColor(54, 56, 60)
+_STRIP = QColor(26, 25, 24, 230)
+_DISC = QColor(30, 31, 34)
+_EDGE = QColor(90, 92, 98)
+_XP_BAR = QColor(150, 200, 255)
+#: On a parchment scroll (theme.parchment): inks, discs of pale vellum.
+T.ink_colours(globals(),
+              BRANCH_COLORS={sk.COMBAT: QColor(156, 52, 34), sk.MAGIC: QColor(40, 70, 160),
+                             sk.STEALTH: QColor(36, 112, 58)},
+              _INK=QColor(40, 26, 16), _DIM=QColor(100, 76, 52), _GOLD=QColor(146, 36, 22),
+              _TRACK=QColor(206, 180, 134), _STRIP=QColor(0, 0, 0, 0),
+              _DISC=QColor(248, 238, 212), _EDGE=QColor(120, 84, 42),
+              _XP_BAR=QColor(40, 74, 160))
 
 
 
@@ -62,13 +75,13 @@ def draw(painter, rect, character, fonts, selected=None, pointer=None):
     # The strip: what the next character level is waiting on.
     from ..rpg.character import SKILL_UPS_PER_LEVEL
     strip = QRect(rect.x(), rect.y(), rect.width(), 40)
-    painter.fillRect(strip, QColor(26, 25, 24, 230))
+    painter.fillRect(strip, _STRIP)
     majors = int(getattr(character, "xp_progress", 0))
     xp, need = int(getattr(character, "xp", 0)), int(character.xp_needed)
     _text(painter, f_body, _GOLD, strip.adjusted(12, 0, 0, 0),
           Qt.AlignVCenter | Qt.AlignLeft, f"Level {character.level}")
     bars = (("Major skill rises", majors, SKILL_UPS_PER_LEVEL, _GOLD),
-            ("Experience", xp, need, QColor(150, 200, 255)))
+            ("Experience", xp, need, _XP_BAR))
     bx = strip.x() + 110
     bw = (strip.width() - 130) // 2 - 16
     for label, have, total, colour in bars:
@@ -117,8 +130,8 @@ def draw(painter, rect, character, fonts, selected=None, pointer=None):
     # The detail line for the picked skill.
     pick = selected if selected in sk.SKILLS else None
     detail = QRect(rect.x() + 8, rect.bottom() - detail_h + 6, rect.width() - 16, detail_h - 8)
-    painter.setPen(QPen(QColor(90, 92, 98), 1))
-    painter.setBrush(QColor(26, 25, 24, 230))
+    painter.setPen(QPen(_EDGE, 1))
+    painter.setBrush(_STRIP)
     painter.drawRoundedRect(detail, 6, 6)
     if pick is None:
         _text(painter, f_small, _DIM, detail, Qt.AlignCenter,
@@ -162,7 +175,7 @@ def _node(painter, character, sid, centre, colour, fonts, hit, chosen, hot):
     painter.drawArc(ring, 90 * 16, -int(360 * 16 * frac))
     # The disc, gilded for a major skill.
     painter.setPen(QPen(_GOLD if major else colour.darker(130), 2))
-    painter.setBrush(QColor(30, 31, 34))
+    painter.setBrush(_DISC)
     painter.drawEllipse(centre, r, r)
     _text(painter, f_body, _INK, QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r).toRect(),
           Qt.AlignCenter, str(level))

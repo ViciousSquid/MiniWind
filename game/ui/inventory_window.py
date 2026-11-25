@@ -95,6 +95,47 @@ SMALL_SLOTS = ("light", "ring", "hands", "hands_right")
 #: The faint hand an empty hand slot shows behind its label.
 _HAND_GHOST = QColor(176, 162, 136, 46)
 _HAND_GHOST_EDGE = QColor(196, 182, 150, 60)
+_TAB_ON = QColor(58, 56, 52, 250)
+_TAB_HOT = QColor(54, 48, 40, 240)
+_TAB_OFF = QColor(32, 30, 28, 240)
+_PANEL_TOP = QColor(58, 56, 52, 250)
+_PANEL_BOT = QColor(38, 37, 35, 250)
+_PANEL_BAR = QColor(26, 25, 24, 230)
+_LOCKED = QColor(14, 13, 12, 200)
+_LOCKED_EDGE = QColor(44, 40, 36)
+_COUNT = QColor(255, 236, 140)
+_COUNT_SHADOW = QColor(0, 0, 0, 200)
+_LABEL = QColor(120, 112, 98)
+_SHIELD = QColor(52, 46, 36, 245)
+_SHIELD_INK = QColor(255, 236, 170)
+_WELL = QColor(20, 19, 18, 200)
+_BTN = QColor(40, 37, 33, 240)
+_BTN_HOT = QColor(96, 70, 34, 240)
+_BTN_OFF_EDGE = QColor(70, 66, 60)
+_BTN_OFF_TEXT = QColor(90, 86, 80)
+_ACTIVE_INK = QColor(150, 190, 255)
+#: On a parchment scroll (theme.parchment): the same window in ink, its
+#: panels ruled on the page, its slots pale wells.
+T.ink_colours(
+    globals(),
+    _STONE=QColor(0, 0, 0, 0), _STONE_DARK=QColor(0, 0, 0, 0),
+    _STONE_EDGE=QColor(120, 84, 42, 170),
+    _SLOT=QColor(228, 206, 162, 210), _SLOT_EDGE=QColor(118, 82, 46),
+    _SLOT_HOT=QColor(150, 36, 22), _OK=QColor(40, 120, 52), _NO=QColor(150, 36, 22),
+    _INK=QColor(40, 26, 16), _DIM=QColor(100, 76, 52), _GOLD=QColor(146, 36, 22),
+    _OFF_HAND=QColor(30, 90, 140), _OFF_HAND_FILL=QColor(196, 212, 214),
+    _HAND_GHOST=QColor(120, 84, 48, 40), _HAND_GHOST_EDGE=QColor(120, 84, 48, 70),
+    _TAB_ON=QColor(238, 204, 136, 220), _TAB_HOT=QColor(248, 234, 202, 210),
+    _TAB_OFF=QColor(236, 218, 180, 150),
+    _PANEL_TOP=QColor(255, 248, 226, 50), _PANEL_BOT=QColor(214, 186, 136, 50),
+    _PANEL_BAR=QColor(0, 0, 0, 0),
+    _LOCKED=QColor(196, 170, 124, 110), _LOCKED_EDGE=QColor(140, 108, 70),
+    _COUNT=QColor(52, 26, 12), _COUNT_SHADOW=QColor(250, 240, 214, 230),
+    _LABEL=QColor(96, 72, 50), _SHIELD=QColor(240, 220, 176, 245),
+    _SHIELD_INK=QColor(146, 36, 22), _WELL=QColor(230, 210, 168, 200),
+    _BTN=QColor(246, 232, 200, 210), _BTN_HOT=QColor(236, 196, 128, 230),
+    _BTN_OFF_EDGE=QColor(170, 150, 120), _BTN_OFF_TEXT=QColor(150, 130, 104),
+    _ACTIVE_INK=QColor(40, 74, 160))
 _hand_paths = {}
 
 
@@ -559,8 +600,8 @@ class InventoryWindow(FloatingWindow):
             # Rounded on top only: draw it taller and clip off the bottom.
             painter.setClipRect(QRect(r.x() - 2, r.y() - 2, r.width() + 4,
                                       r.height() + (3 if on else 2)))
-            painter.setBrush(QColor(58, 56, 52, 250) if on else
-                             QColor(54, 48, 40, 240) if hot else QColor(32, 30, 28, 240))
+            painter.setBrush(_TAB_ON if on else
+                             _TAB_HOT if hot else _TAB_OFF)
             painter.setPen(QPen(_GOLD if on else _SLOT_EDGE, 1.2))
             painter.drawRoundedRect(r.adjusted(0, 0, 0, 10), 6, 6)
             painter.restore()
@@ -573,14 +614,14 @@ class InventoryWindow(FloatingWindow):
         path = QPainterPath()
         path.addRoundedRect(QRectF(rect), 6, 6)
         g = QLinearGradient(0, rect.y(), 0, rect.bottom())
-        g.setColorAt(0.0, QColor(58, 56, 52, 250))
-        g.setColorAt(1.0, QColor(38, 37, 35, 250))
+        g.setColorAt(0.0, _PANEL_TOP)
+        g.setColorAt(1.0, _PANEL_BOT)
         painter.fillPath(path, QBrush(g))
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(_STONE_EDGE, 2))
         painter.drawPath(path)
         bar = QRect(rect.x() + 2, rect.y() + 2, rect.width() - 4, 28)
-        painter.fillRect(bar, QColor(26, 25, 24, 230))
+        painter.fillRect(bar, _PANEL_BAR)
         painter.setPen(QPen(_SLOT_EDGE, 1))
         painter.drawLine(bar.bottomLeft(), bar.bottomRight())
         painter.setFont(self.f_title)
@@ -594,8 +635,8 @@ class InventoryWindow(FloatingWindow):
 
     def _locked_cell(self, painter, rect):
         """A pack slot the player does not have: a satchel adds them."""
-        painter.setBrush(QColor(14, 13, 12, 200))
-        painter.setPen(QPen(QColor(44, 40, 36), 1, Qt.DashLine))
+        painter.setBrush(_LOCKED)
+        painter.setPen(QPen(_LOCKED_EDGE, 1, Qt.DashLine))
         painter.drawRoundedRect(rect, 4, 4)
 
     def _slot_box(self, painter, rect, iid, target=None, source=None, label=None,
@@ -651,16 +692,16 @@ class InventoryWindow(FloatingWindow):
             qty = int(stack.get("qty", 1)) if stack else 1
             if qty > 1:
                 painter.setFont(self.f_count)
-                painter.setPen(QColor(0, 0, 0, 200))
+                painter.setPen(_COUNT_SHADOW)
                 painter.drawText(rect.adjusted(0, 0, -3, -1), Qt.AlignRight | Qt.AlignBottom, str(qty))
-                painter.setPen(QColor(255, 236, 140))
+                painter.setPen(_COUNT)
                 painter.drawText(rect.adjusted(0, 0, -4, -2), Qt.AlignRight | Qt.AlignBottom, str(qty))
             rarity = (stack or {}).get("rarity")
             if rarity and rarity != "common":
                 try:
                     import game.rpg.items as items
                     rgb = items.RARITY_INFO[items.rarity_of(stack)]["rgb"]
-                    painter.setPen(QPen(QColor(*rgb), 2))
+                    painter.setPen(QPen(T.legible(QColor(*rgb), 0.45), 2))
                     painter.setBrush(Qt.NoBrush)
                     painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), 3, 3)
                 except Exception:
@@ -670,13 +711,13 @@ class InventoryWindow(FloatingWindow):
             if label:
                 # In the outer bottom corner, on bare paper clear of the wrist.
                 painter.setFont(self.f_small)
-                painter.setPen(_HAND_INK if paper else QColor(120, 112, 98))
+                painter.setPen(_HAND_INK if paper else _LABEL)
                 corner = Qt.AlignLeft if hand == "left" else Qt.AlignRight
                 _fit(painter, rect.adjusted(6, rect.height() - 17, -6, -3),
                      corner | Qt.AlignVCenter, label)
         elif label and not iid:
             painter.setFont(self.f_small)
-            painter.setPen(QColor(120, 112, 98))
+            painter.setPen(_LABEL)
             _fit(painter, rect, Qt.AlignCenter, label)
         if number is not None:
             painter.setFont(self.f_count)
@@ -870,11 +911,11 @@ class InventoryWindow(FloatingWindow):
         path.quadTo(cx + 18, cy + 18, cx, cy + 26)
         path.quadTo(cx - 18, cy + 18, cx - 20, cy + 2)
         path.closeSubpath()
-        painter.setBrush(QColor(52, 46, 36, 245))
+        painter.setBrush(_SHIELD)
         painter.setPen(QPen(_GOLD, 1.6))
         painter.drawPath(path)
         painter.setFont(self.f_title)
-        painter.setPen(QColor(255, 236, 170))
+        painter.setPen(_SHIELD_INK)
         painter.drawText(QRect(cx - 20, cy - 20, 40, 30), Qt.AlignCenter, str(ac))
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
@@ -953,7 +994,7 @@ class InventoryWindow(FloatingWindow):
         for i, (label, _cats) in enumerate(tabs):
             r = QRect(inner.x() + i * tw, inner.y(), tw - 4, 26)
             on = i == self.tab
-            painter.setBrush(QColor(78, 70, 52, 240) if on else QColor(34, 33, 31, 240))
+            painter.setBrush(_TAB_ON if on else _TAB_OFF)
             painter.setPen(QPen(_GOLD if on else _SLOT_EDGE, 1.2))
             painter.drawRoundedRect(r, 4, 4)
             painter.setFont(self.f_small)
@@ -1040,7 +1081,7 @@ class InventoryWindow(FloatingWindow):
             except Exception:
                 cost = int(getattr(sp, "base_cost", 0) or 0)
             painter.setFont(self.f_count)
-            painter.setPen(QColor(150, 190, 255))
+            painter.setPen(_ACTIVE_INK)
             painter.drawText(r.adjusted(0, 0, -4, -2), Qt.AlignRight | Qt.AlignBottom, str(cost))
             if self._spell_locked:
                 spell_lock.veil(painter, r, 4)
@@ -1067,7 +1108,7 @@ class InventoryWindow(FloatingWindow):
         painter.drawText(inner.x(), inner.y() + 40,
                          f"{str(sp.school).title()}  ·  {str(sp.delivery).title()}")
         desc = QRect(inner.x(), inner.y() + 56, inner.width(), 110)
-        painter.setBrush(QColor(20, 19, 18, 200))
+        painter.setBrush(_WELL)
         painter.setPen(QPen(_SLOT_EDGE, 1))
         painter.drawRect(desc)
         painter.setFont(self.f_body)
@@ -1103,7 +1144,7 @@ class InventoryWindow(FloatingWindow):
                                                  ("Exit", self._close_action))):
                 r = QRect(inner.x() + k * (bw + 6), by, bw, 30)
                 hot = hits.hovered(r)
-                painter.setBrush(QColor(96, 70, 34, 240) if hot else QColor(40, 37, 33, 240))
+                painter.setBrush(_BTN_HOT if hot else _BTN)
                 painter.setPen(QPen(_GOLD, 1.4))
                 painter.drawRoundedRect(r, 5, 5)
                 painter.setFont(self.f_button)
@@ -1131,7 +1172,7 @@ class InventoryWindow(FloatingWindow):
             except Exception:
                 rgb, prefix = (232, 228, 240), ""
             painter.setFont(self.f_name)
-            painter.setPen(QColor(*rgb))
+            painter.setPen(T.legible(QColor(*rgb)))
             _fit(painter, QRect(inner.x(), inner.y(), inner.width(), 26),
                              Qt.AlignLeft | Qt.AlignVCenter, prefix + d.name)
             painter.setFont(self.f_small)
@@ -1142,7 +1183,7 @@ class InventoryWindow(FloatingWindow):
             if pm is not None and not pm.isNull():
                 painter.drawPixmap(inner.center().x() - pm.width() // 2, inner.y() + 52, pm)
             desc = QRect(inner.x(), inner.y() + 156, inner.width(), 96)
-            painter.setBrush(QColor(20, 19, 18, 200))
+            painter.setBrush(_WELL)
             painter.setPen(QPen(_SLOT_EDGE, 1))
             painter.drawRect(desc)
             painter.setFont(self.f_body)
@@ -1167,7 +1208,7 @@ class InventoryWindow(FloatingWindow):
             for k, line in enumerate(lines[:4]):
                 painter.drawText(inner.x(), desc.bottom() + 20 + k * 18, line)
             stats = QRect(inner.x(), desc.bottom() + 96, inner.width(), 26)
-            painter.setBrush(QColor(20, 19, 18, 200))
+            painter.setBrush(_WELL)
             painter.setPen(QPen(_SLOT_EDGE, 1))
             painter.drawRect(stats)
             painter.setPen(_GOLD)
@@ -1190,11 +1231,11 @@ class InventoryWindow(FloatingWindow):
                 ("Exit", self._close_action, True))):
             r = QRect(inner.x() + k * (bw + 6), by, bw, 30)
             hot = enabled and hits.hovered(r)
-            painter.setBrush(QColor(96, 70, 34, 240) if hot else QColor(40, 37, 33, 240))
-            painter.setPen(QPen(_GOLD if enabled else QColor(70, 66, 60), 1.4))
+            painter.setBrush(_BTN_HOT if hot else _BTN)
+            painter.setPen(QPen(_GOLD if enabled else _BTN_OFF_EDGE, 1.4))
             painter.drawRoundedRect(r, 5, 5)
             painter.setFont(self.f_button)
-            painter.setPen(_GOLD if enabled else QColor(90, 86, 80))
+            painter.setPen(_GOLD if enabled else _BTN_OFF_TEXT)
             _fit(painter, r, Qt.AlignCenter, label)
             if enabled:
                 self._buttons.append((QRect(r), action))

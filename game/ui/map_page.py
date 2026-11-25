@@ -362,8 +362,12 @@ class MapPage:
         painter.setRenderHint(painter.SmoothPixmapTransform, True)
 
         # Heading.
+        # On a parchment scroll (game/ui/scroll.py) the words round the map
+        # are in ink; the map itself is drawn as ever.
+        import game.ui.theme as T
+        inked = T.inked()
         painter.setFont(display_font(max(16, min(30, w // 45))))
-        painter.setPen(_GOLD_BRIGHT)
+        painter.setPen(T.GOLD_BRIGHT if inked else _GOLD_BRIGHT)
         painter.drawText(QRectF(x, y, w, top - 6), int(Qt.AlignHCenter | Qt.AlignBottom), "Map")
 
         window = QPainterPath()
@@ -388,7 +392,7 @@ class MapPage:
         painter.setClipping(False)
 
         painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(_GOLD, 2.5))
+        painter.setPen(QPen(T.GILD if inked else _GOLD, 2.5))
         painter.drawRect(rect)
         painter.setPen(QPen(QColor(90, 74, 44), 1))
         painter.drawRect(rect.adjusted(5, 5, -5, -5))
@@ -398,7 +402,7 @@ class MapPage:
                          int(Qt.AlignCenter), "N")
 
         painter.setFont(text_font(max(9, min(12, w // 130))))
-        painter.setPen(_CAPTION)
+        painter.setPen(T.DIM if inked else _CAPTION)
         painter.drawText(QRectF(x, rect.bottom() + 4, w, bottom - 4),
                          int(Qt.AlignCenter),
                          _caption())

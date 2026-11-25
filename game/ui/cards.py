@@ -67,6 +67,22 @@ _BODY_TOP = QColor(42, 38, 56, 250)
 _BODY_BOT = QColor(20, 18, 28, 250)
 _WELL = QColor(12, 11, 18, 230)
 _BADGE = QColor(14, 13, 20, 225)
+_GREY_VEIL = QColor(18, 18, 22, 90)
+#: On a parchment scroll (theme.parchment): a pale vellum card in ink.
+T.ink_colours(globals(), GREY=QColor(112, 94, 76), ACTIVE_GLOW=QColor(40, 74, 160),
+              _BODY_TOP=QColor(250, 240, 214, 235), _BODY_BOT=QColor(232, 214, 174, 235),
+              _WELL=QColor(206, 182, 136, 200), _BADGE=QColor(248, 236, 208, 230),
+              _GREY_VEIL=QColor(236, 222, 190, 120),
+              _TIP_BG=QColor(246, 234, 204, 248), _TIP_EDGE=QColor(120, 84, 42))
+
+
+def _tint(colour, lighten=100):
+    """*colour* as text or a mark on a card: lifted *lighten* % on the dark
+    card; on parchment, deepened to an ink of the same hue instead."""
+    c = QColor(colour)
+    if not T.inked():
+        return c.lighter(lighten) if lighten != 100 else c
+    return T.legible(c)
 
 
 @dataclass
@@ -110,6 +126,12 @@ class Card:
     active: bool = False
     locked: bool = False
     greyed: bool = False
+    #: An illuminated manuscript entry (the journal): a PIGMENT_CYCLE name -- no
+    #: picture; the title opens with a decorated initial on parchment.
+    illuminate: str = ""
+    #: One of a list in which another card is chosen: drawn faded so the
+    #: chosen one stands out (see :func:`dimmed`).
+    dimmed: bool = False
 
 
 @dataclass
@@ -327,13 +349,41 @@ def _badge_rect(painter, text, s, x, y, anchor_right=False):
 _ROW_ASPECT = 1.25
 
 
+#: A card in a list that has another card chosen is drawn this opaque, so
+#: the chosen one stands out; under the pointer it lifts to the second;
+#: a card already greyed is only faded to the third (it stays greyed, not
+#: lost).
+DIM_OPACITY = 0.5
+DIM_HOVER_OPACITY = 0.8
+DIM_GREYED_OPACITY = 0.75
+
+
+def dimmed(card: Card, others_dimmed: bool = True) -> Card:
+    """*card*, marked to be drawn faded when it is one of a list in which
+    another card is chosen (*others_dimmed*); the chosen one is not."""
+    card.dimmed = bool(others_dimmed) and not card.selected
+    return card
+
+
 def draw_card(painter, rect: QRect, card: Card) -> None:
     """Paint *card* filling *rect*: as a row card (:func:`draw_row_card`)
-    when *rect* is wider than tall, as a portrait card otherwise."""
-    if rect.width() > rect.height() * _ROW_ASPECT:
-        draw_row_card(painter, rect, card)
-    else:
-        draw_portrait_card(painter, rect, card)
+    when *rect* is wider than tall, as a portrait card otherwise. A
+    :func:`dimmed` card is drawn faded (:data:`DIM_OPACITY`)."""
+    fade = 1.0
+    if card.dimmed and not card.selected:
+        fade = (DIM_HOVER_OPACITY if card.hovered else
+                DIM_GREYED_OPACITY if (card.greyed or card.locked) else DIM_OPACITY)
+    if fade < 1.0:
+        painter.save()
+        painter.setOpacity(painter.opacity() * fade)
+    try:
+        if rect.width() > rect.height() * _ROW_ASPECT:
+            draw_row_card(painter, rect, card)
+        else:
+            draw_portrait_card(painter, rect, card)
+    finally:
+        if fade < 1.0:
+            painter.restore()
 
 
 def draw_portrait_card(painter, rect: QRect, card: Card) -> None:
@@ -439,7 +489,7 @@ def draw_portrait_card(painter, rect: QRect, card: Card) -> None:
         painter.drawEllipse(well.center(), side * 0.36, side * 0.36)
         f, ok = fitted_font(card.glyph, int(side * 0.8), side * 0.5, side * 0.2)
         painter.setFont(f)
-        painter.setPen(GREY.lighter(130) if grey else accent.lighter(140))
+        painter.setPen(GREY.lighter(130) if grey else _tint(accent, 140))
         painter.drawText(well.adjusted(3, 3, -3, -3),
                          int(Qt.AlignCenter | (0 if ok else Qt.TextWordWrap)), card.glyph)
     else:
@@ -469,7 +519,7 @@ def draw_portrait_card(painter, rect: QRect, card: Card) -> None:
 
     # Subtitle and summary.
     ty = well.bottom() + 5 * s
-    sub_ink = GREY if grey else accent.lighter(135)
+    sub_ink = GREY if grey else _tint(accent, 135)
     if card.subtitle:
         f, _ok = fitted_font(card.subtitle, tw, max(9.0, 11 * s), max(8.0, 8 * s))
         painter.setFont(f)
@@ -527,7 +577,7 @@ def draw_portrait_card(painter, rect: QRect, card: Card) -> None:
         painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
         painter.drawRoundedRect(r.adjusted(3, 3, -3, -3), rad - 2, rad - 2)
     if grey:
-        painter.fillPath(body, QColor(18, 18, 22, 90))
+        painter.fillPath(body, _GREY_VEIL)
     painter.restore()
 
 
@@ -581,6 +631,178 @@ def _row_badges(card: Card):
     return top, bottom
 
 
+#: The illuminated rows' parchment, ink and the initials' pigments (main,
+#: ornament) -- lapis blue with madder red, and red with blue.
+_VELLUM_TOP = QColor(236, 224, 196)
+_VELLUM_BOT = QColor(219, 202, 166)
+_INK = QColor(52, 36, 24)
+_RUBRIC = QColor(160, 52, 36)
+_PIGMENTS = {"blue": (QColor(38, 68, 150), QColor(196, 96, 84)),
+             "red": (QColor(172, 60, 44), QColor(52, 80, 160)),
+             # Fio's own colours: its green and its orange.
+             "green": (QColor(34, 177, 76), QColor(196, 70, 44)),
+             "orange": (QColor(240, 128, 0), QColor(38, 68, 150)),
+             # Every entry but the active quest's: warm grey inks.
+             "grey": (QColor(112, 104, 96), QColor(176, 166, 154))}
+#: The initials' pigments down the page, entry by entry.
+PIGMENT_CYCLE = ("blue", "red", "green", "orange")
+#: A rubric in grey ink (an entry that is not the active quest).
+_RUBRIC_GREY = QColor(120, 110, 100)
+#: The faint warm-grey band behind an entry's title.
+_TITLE_BAND = QColor(120, 110, 98, 46)
+
+
+def _illuminated_initial(painter, box: QRectF, letter: str, colour: str, faded: bool) -> None:
+    """A decorated capital filling *box* (game/ui/initials.py, in its
+    current style), the capital in the pigment *colour* -- or all in grey
+    ("grey", an entry that is not the active quest); *faded* (a finished
+    entry) draws it lighter."""
+    from . import initials
+    grey = colour == "grey"
+    initials.draw(painter, box, letter, "red" if grey else colour, grey=grey,
+                  opacity=0.6 if faded else 1.0)
+
+
+def _draw_illuminated_row(painter, rect: QRect, card: Card) -> None:
+    """A journal entry as a line of a manuscript: parchment, a decorated
+    initial opening the title (the rest of it in ink, the subtitle as a red
+    rubric), the objective written under it. Completed entries are faded;
+    the tracked one glows; the selected one has a gold edge."""
+    h = float(rect.height())
+    s = max(0.4, min(1.4, h / float(ROW_H)))
+    faded = card.greyed or card.locked
+    r = QRectF(rect)
+    rad = 6 * min(1.0, s)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    if card.active and not faded:
+        for k in range(4, 0, -1):
+            painter.setPen(QPen(QColor(ACTIVE_GLOW.red(), ACTIVE_GLOW.green(),
+                                       ACTIVE_GLOW.blue(), 34), k * 2.2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(r.adjusted(-1, -1, 1, 1), rad, rad)
+    if card.selected:
+        for k in range(3, 0, -1):
+            painter.setPen(QPen(QColor(255, 214, 130, 40), k * 2.6))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(r.adjusted(-2, -2, 2, 2), rad + 2, rad + 2)
+    body = QPainterPath()
+    body.addRoundedRect(r, rad, rad)
+    grad = QLinearGradient(0, r.top(), 0, r.bottom())
+    top, bot = QColor(_VELLUM_TOP), QColor(_VELLUM_BOT)
+    if card.hovered and not card.selected:
+        top, bot = top.lighter(104), bot.lighter(104)
+    grad.setColorAt(0.0, top)
+    grad.setColorAt(1.0, bot)
+    painter.fillPath(body, QBrush(grad))
+    # Faint ruling, as a scribe ruled the page.
+    painter.save()
+    painter.setClipPath(body)
+    painter.setPen(QPen(QColor(150, 120, 90, 46), 1))
+    pad = max(5.0, 10 * s)
+    rule = max(12.0, 22 * s)
+    y = r.top() + pad + rule
+    while y < r.bottom() - 2:
+        painter.drawLine(int(r.left() + 6), int(y), int(r.right() - 6), int(y))
+        y += rule
+    painter.restore()
+    # The initial: a box the row's height less the padding.
+    side = max(10.0, h - 2 * pad)
+    box = QRectF(r.left() + pad + side * 0.22, r.top() + pad, side * 0.86, side)
+    title = card.title or ""
+    # Only the active quest's entry is in colour; the rest in grey ink.
+    lit = card.active and not faded
+    # The rest of the title, in the manuscript's hand, then a red rubric.
+    tx = box.right() + 6 * s
+    right = r.right() - max(10.0, 16 * s)
+    tw = max(20.0, right - tx)
+    ink = QColor(_INK)
+    if faded:
+        ink.setAlpha(140)
+    family = fonts.dialogue_family()
+    from PyQt5.QtGui import QFont
+    tf = QFont(family)
+    tf.setPixelSize(int(max(16, 24 * s)))
+    # After a one-letter word ("A Culling of Wolves") the rest is tucked up
+    # to the initial rather than set a space away from it.
+    rest = title[1:].lstrip()
+    while tf.pixelSize() > 11 and QFontMetrics(tf).horizontalAdvance(rest) > tw:
+        tf.setPixelSize(tf.pixelSize() - 1)
+    tfm = QFontMetrics(tf)
+    base = int(box.top() + tfm.ascent() + 2 * s)
+    used = tfm.horizontalAdvance(rest)
+    sub, sf = card.subtitle, None
+    if sub:
+        sf = QFont(family)
+        sf.setPixelSize(int(max(11, 15 * s)))
+        if QFontMetrics(sf).horizontalAdvance(sub) > tw - used - 14 * s:
+            sub = ""
+    # A faint grey band behind the title line: from the middle of the
+    # initial (never out to the row's edge) to just past the title and its
+    # rubric, its ends feathered. The initial and the words sit on it.
+    end = tx + used + (14 * s + QFontMetrics(sf).horizontalAdvance(sub) if sub else 0)
+    band = QRectF(box.center().x(), base - tfm.ascent() - 3 * s,
+                  min(right, end + 14 * s) - box.center().x(),
+                  tfm.ascent() + tfm.descent() + 6 * s)
+    if title and band.width() > 0:
+        g = QLinearGradient(band.left(), 0, band.right(), 0)
+        tone = QColor(_TITLE_BAND)
+        clear = QColor(tone)
+        clear.setAlpha(0)
+        feather = min(0.2, 18.0 / max(1.0, band.width()))
+        g.setColorAt(0.0, clear)
+        g.setColorAt(feather, tone)
+        g.setColorAt(1.0 - feather, tone)
+        g.setColorAt(1.0, clear)
+        bp = QPainterPath()
+        bp.addRoundedRect(band, band.height() / 2.0, band.height() / 2.0)
+        painter.fillPath(bp, QBrush(g))
+    if title:
+        _illuminated_initial(painter, box, title[0], card.illuminate if lit else "grey",
+                             faded)
+    painter.setFont(tf)
+    painter.setPen(ink)
+    painter.drawText(int(tx), base, rest)
+    if sub:
+        rub = QColor(_RUBRIC if lit else _RUBRIC_GREY)
+        if faded:
+            rub.setAlpha(140)
+        painter.setFont(sf)
+        painter.setPen(rub)
+        painter.drawText(int(tx + used + 14 * s), base, sub)
+    text = card.desc or card.summary
+    if text:
+        df = QFont(family)
+        df.setPixelSize(int(max(13, 17 * s)))
+        dfm = QFontMetrics(df)
+        line_h = dfm.lineSpacing()
+        top_y = base + tfm.descent() + 4 * s
+        max_lines = max(0, min(3, int((r.bottom() - pad - top_y) // line_h)))
+        lines = _wrap_lines(text, dfm, int(tw), max_lines) if max_lines else []
+        painter.setFont(df)
+        painter.setPen(ink)
+        y = top_y
+        for line in lines:
+            painter.drawText(QRect(int(tx), int(y), int(tw), line_h),
+                             int(Qt.AlignLeft | Qt.AlignVCenter), line)
+            y += line_h
+    if card.active and card.mark and not faded:
+        painter.setFont(_font(max(12.0, 18 * s)))
+        painter.setPen(QColor(ACTIVE_GLOW).darker(130))
+        painter.drawText(QRectF(r.right() - 30 * s, r.top() + 4 * s, 24 * s, 24 * s),
+                         int(Qt.AlignCenter), card.mark)
+    # The edge: gold when selected, a brown hairline otherwise.
+    painter.setBrush(Qt.NoBrush)
+    if card.selected:
+        painter.setPen(QPen(T.GOLD_BRIGHT, 2.6))
+    elif card.hovered:
+        painter.setPen(QPen(QColor(150, 110, 60), 1.8))
+    else:
+        painter.setPen(QPen(QColor(120, 90, 60, 200), 1.2))
+    painter.drawRoundedRect(r.adjusted(0.8, 0.8, -0.8, -0.8), rad, rad)
+    painter.restore()
+
+
 def draw_row_card(painter, rect: QRect, card: Card) -> None:
     """Paint *card* as one wide row filling *rect* (laid out for
     :data:`ROW_H` tall; any height from about 40 to 140 works): the accent
@@ -588,7 +810,11 @@ def draw_row_card(painter, rect: QRect, card: Card) -> None:
     fit, never cut short) with the subtitle after it, the description
     wrapped under them, and the badges, price and level pips at the right
     edge. Selected, hovered, active, locked and greyed look as on the
-    portrait card."""
+    portrait card. An *illuminate* card is a manuscript entry instead
+    (:func:`_draw_illuminated_row`)."""
+    if card.illuminate:
+        _draw_illuminated_row(painter, rect, card)
+        return
     h = float(rect.height())
     s = max(0.4, min(1.4, h / float(ROW_H)))
     grey = card.locked or card.greyed
@@ -663,7 +889,7 @@ def draw_row_card(painter, rect: QRect, card: Card) -> None:
         painter.drawEllipse(well.center(), side * 0.38, side * 0.38)
         f, ok = fitted_font(card.glyph, int(side * 0.84), side * 0.5, side * 0.2)
         painter.setFont(f)
-        painter.setPen(GREY.lighter(130) if grey else accent.lighter(140))
+        painter.setPen(GREY.lighter(130) if grey else _tint(accent, 140))
         painter.drawText(well.adjusted(3, 3, -3, -3),
                          int(Qt.AlignCenter | (0 if ok else Qt.TextWordWrap)), card.glyph)
     else:
@@ -697,7 +923,7 @@ def draw_row_card(painter, rect: QRect, card: Card) -> None:
     one_line = line2_y < line1_y + bh + 3           # a short row
     if one_line:
         line1_y = line2_y = int(r.center().y() - bh / 2)
-    ink_of = (lambda c: GREY.lighter(120)) if grey else (lambda c: c)
+    ink_of = (lambda c: GREY.lighter(120)) if grey else (lambda c: _tint(c, 100))
     used = [0, 0]
     for line, (badges, y) in enumerate(((top_badges, line1_y), (bottom_badges, line2_y))):
         x = right - (used[0] + 6 if line and one_line and used[0] else 0)
@@ -760,7 +986,7 @@ def draw_row_card(painter, rect: QRect, card: Card) -> None:
         sub = card.subtitle
         if QFontMetrics(sf).horizontalAdvance(sub) <= room:       # whole, or not at all
             painter.setFont(sf)
-            painter.setPen(GREY if grey else accent.lighter(135))
+            painter.setPen(GREY if grey else _tint(accent, 135))
             base = int(ty) + (title_h + tfm.ascent() - tfm.descent()) // 2
             painter.drawText(tx + title_w + gap, base, sub)       # on the title's baseline
     if lines:
@@ -786,7 +1012,7 @@ def draw_row_card(painter, rect: QRect, card: Card) -> None:
         painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
         painter.drawRoundedRect(r.adjusted(3, 3, -3, -3), max(1.0, rad - 2), max(1.0, rad - 2))
     if grey:
-        painter.fillPath(body, QColor(18, 18, 22, 90))
+        painter.fillPath(body, _GREY_VEIL)
     painter.restore()
 
 

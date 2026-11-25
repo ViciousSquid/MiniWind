@@ -34,6 +34,95 @@ MAGICKA = QColor(64, 116, 200)
 STAMINA = QColor(96, 168, 84)
 XP = QColor(200, 170, 90)
 
+# ------------------------------------------------------------ window style
+#: How the game's windows (Statistics, loot, trade, conversation, level-up
+#: ...) are dressed: "classic" (dark gilded panels under a title bar) or
+#: "scroll" (each window is a parchment scroll, its words in ink;
+#: game/ui/scroll.py). ``[GAME] window_style`` in settings.ini, or the
+#: MINIWIND_UI_STYLE environment variable, picks it; classic by default.
+STYLES = ("classic", "scroll")
+STYLE = "classic"
+
+
+def set_style(name):
+    """Dress every window opened from now on in *name* (see STYLES)."""
+    global STYLE
+    STYLE = name if name in STYLES else "classic"
+    return STYLE
+
+
+def scroll_on() -> bool:
+    """Whether windows are dressed as parchment scrolls."""
+    return STYLE == "scroll"
+
+
+#: The palette while drawing on parchment: dark inks on a light page.
+_INK_PALETTE = {
+    "GOLD": QColor(132, 88, 26),           # dark gold leaf
+    "GOLD_BRIGHT": QColor(150, 36, 22),    # rubric red: headings, the chosen
+    "GILD": QColor(120, 84, 42),           # ink rules and frames
+    "PARCH": QColor(58, 40, 26),           # body text: iron-gall brown
+    "INK": QColor(34, 22, 14),             # near-black ink
+    "DIM": QColor(104, 80, 56),            # faded ink
+    "PANEL_TOP": QColor(0, 0, 0, 0),
+    "PANEL_BOT": QColor(0, 0, 0, 0),
+    "SHADOW": QColor(60, 36, 14, 60),
+    "SELECT": QColor(214, 160, 70, 110),   # a warm wash
+    "XP": QColor(150, 110, 30),
+}
+#: Other modules' own colours, swapped for their ink while on parchment:
+#: [(module globals, {name: ink colour})] (see :func:`ink_colours`).
+_INK_OVERRIDES = []
+_inked = [0]
+
+
+def ink_colours(module_globals, **colours):
+    """Register a module's own colour constants' parchment versions: while a
+    window is drawn as a scroll (:func:`parchment`), *module_globals[name]*
+    is *colours[name]*; the rest of the time it keeps its own value."""
+    _INK_OVERRIDES.append((module_globals, colours))
+
+
+def inked() -> bool:
+    """True while drawing a window's body on parchment."""
+    return _inked[0] > 0
+
+
+def legible(colour, light=0.33):
+    """*colour* as words or a mark: itself on the dark panels; on parchment
+    an ink of the same hue, deep enough to read (lightness at most
+    *light*)."""
+    c = QColor(colour)
+    if not inked():
+        return c
+    h, sat, l, _a = c.getHslF()
+    return QColor.fromHslF(max(0.0, h), min(1.0, sat * 1.1), min(l, light), 1.0)
+
+
+class parchment:
+    """``with parchment():`` -- the palette (this module's and every
+    :func:`ink_colours` registration) is ink on a light page inside."""
+
+    def __enter__(self):
+        if _inked[0] == 0:
+            g = globals()
+            self._saved = [(g, {k: g[k] for k in _INK_PALETTE})]
+            g.update(_INK_PALETTE)
+            for mod, colours in _INK_OVERRIDES:
+                self._saved.append((mod, {k: mod.get(k) for k in colours}))
+                mod.update(colours)
+        else:
+            self._saved = []
+        _inked[0] += 1
+        return self
+
+    def __exit__(self, *exc):
+        _inked[0] -= 1
+        for mod, values in reversed(self._saved):
+            mod.update(values)
+        return False
+
+
 ALIGN_CENTER = int(Qt.AlignCenter)
 ALIGN_LEFT = int(Qt.AlignVCenter | Qt.AlignLeft)
 ALIGN_RIGHT = int(Qt.AlignVCenter | Qt.AlignRight)
@@ -160,6 +249,9 @@ def _paint_panel(painter, x, y, w, h, radius, shadow):
 
 def panel(painter, x, y, w, h, radius=12, shadow=True):
     """Draw a framed, gilded, gradient panel and return its inner rect."""
+    if inked():
+        # On a scroll the page is the panel: no box drawn round it.
+        return QRect(int(x + 16), int(y + 16), int(w - 32), int(h - 32))
     if x == int(x) and y == int(y):
         # Whole-pixel placement: the same panel every frame, so a blit. The
         # 2 px gilt stroke and the drop shadow reach past the body's rect.
@@ -215,20 +307,20 @@ def bar(painter, x, y, w, h, frac, color, bg=QColor(20, 18, 26, 220), label=None
         _paint_bar(painter, x, y, w, h, fill, color, bg, label, text_color)
 
 
-def text(painter, x, y, s, size=11, color=INK, bold=False, italic=False,
+def text(painter, x, y, s, size=11, color=None, bold=False, italic=False,
          family="MedievalSharp"):
     painter.save()
     painter.setFont(font(size, bold, italic, family))
-    painter.setPen(color)
+    painter.setPen(INK if color is None else color)
     painter.drawText(int(x), int(y), s)
     painter.restore()
 
 
-def text_in(painter, rect, s, size=11, color=INK, align=ALIGN_LEFT, bold=False,
+def text_in(painter, rect, s, size=11, color=None, align=ALIGN_LEFT, bold=False,
             italic=False, family="MedievalSharp"):
     painter.save()
     painter.setFont(font(size, bold, italic, family))
-    painter.setPen(color)
+    painter.setPen(INK if color is None else color)
     painter.drawText(rect, align, s)
     painter.restore()
 

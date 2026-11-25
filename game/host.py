@@ -1871,6 +1871,7 @@ class MiniwindGame:
                 from .ui.pack_window import PackWindow
                 cur = PackWindow(session, viewport=viewport)
                 cur.place(w, h)
+                self._dress_scroll(session, cur, w, h)
                 wm.add(cur)
                 session._overlay_win = cur
                 session._overlay_key = key
@@ -1940,6 +1941,7 @@ class MiniwindGame:
                 win.title_font = _fonts.dialogue_font_px(13)
             except Exception:
                 pass
+            self._dress_scroll(session, win, w, h)
             wm.add(win)
             session._overlay_win = win
             session._overlay_key = key
@@ -1948,6 +1950,18 @@ class MiniwindGame:
             bw, bh = dialogue_ui.window_body_size(session)
             cur.set_body_size(bw, bh)
         return True
+
+    @staticmethod
+    def _dress_scroll(session, win, w, h):
+        """With ``[GAME] window_style = scroll`` the window is a parchment
+        scroll (game/ui/scroll.py); with the classic style it is untouched."""
+        try:
+            import game.ui.scroll as scroll
+            import game.ui.theme as T
+            if T.set_style(scroll.configured_style(session)) == "scroll":
+                scroll.dress(win, w, h)
+        except Exception as exc:
+            print(f"[MiniwindGame] scroll window failed: {exc}")
 
     @staticmethod
     def _dim_behind_creation(painter, session, w, h):

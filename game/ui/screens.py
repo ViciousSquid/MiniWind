@@ -110,6 +110,25 @@ _QUEST_HITS = {"rows": [], "toggle": None, "toggle_qid": None,
 _SPELL_HITS = {"cells": [], "targets": []}
 
 
+#: The screens' boxes and button plates (dark on the classic panels).
+_BTN = QColor(34, 30, 44, 235)
+_BTN_HOT = QColor(96, 70, 34, 240)
+_BTN_PRIMARY = QColor(62, 48, 30, 235)
+_BTN_OFF = QColor(24, 22, 30, 200)
+_BOX = QColor(12, 12, 16, 220)
+_HEAD_BOX = QColor(18, 18, 24)
+_TICK_BOX = QColor(34, 30, 44, 235)
+_PANE = QColor(14, 13, 20, 150)
+_HAND_BOX = QColor(30, 28, 36, 245)
+#: On a parchment scroll (theme.parchment): pale wells ruled in ink.
+T.ink_colours(globals(),
+              _BTN=QColor(246, 232, 200, 210), _BTN_HOT=QColor(236, 196, 128, 230),
+              _BTN_PRIMARY=QColor(240, 214, 160, 220), _BTN_OFF=QColor(236, 222, 190, 110),
+              _BOX=QColor(250, 240, 214, 150), _HEAD_BOX=QColor(232, 212, 170, 200),
+              _TICK_BOX=QColor(250, 240, 214, 200), _PANE=QColor(255, 246, 222, 70),
+              _HAND_BOX=QColor(250, 240, 214, 160))
+
+
 def button(painter, rect, label, action, enabled=True, primary=False):
     """A clickable button: gilded frame, MedievalSharp label, lit on hover.
 
@@ -117,11 +136,15 @@ def button(painter, rect, label, action, enabled=True, primary=False):
     button draws dimmed and does nothing.
     """
     hot = enabled and hits.hovered(rect)
+    if T.inked():
+        _inked_button(painter, rect, label, hot, enabled, primary)
+        if enabled:
+            hits.add(QRect(rect), action, label)
+        return
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
-    fill = (QColor(96, 70, 34, 240) if hot else
-            QColor(62, 48, 30, 235) if primary else QColor(34, 30, 44, 235))
-    painter.setBrush(fill if enabled else QColor(24, 22, 30, 200))
+    fill = (_BTN_HOT if hot else _BTN_PRIMARY if primary else _BTN)
+    painter.setBrush(fill if enabled else _BTN_OFF)
     painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD if enabled else T.DIM, 1.5))
     painter.drawRoundedRect(rect, 5, 5)
     painter.setFont(fonts.dialogue_font(12))
@@ -131,6 +154,19 @@ def button(painter, rect, label, action, enabled=True, primary=False):
     painter.restore()
     if enabled:
         hits.add(QRect(rect), action, label)
+
+
+def _inked_button(painter, rect, label, hot, enabled, primary):
+    """A button on a parchment scroll: an ink-outlined plaque; the primary
+    one sealed in red wax down its left end."""
+    from .scroll import plaque
+    plaque(painter, rect, on=hot, enabled=enabled)
+    painter.save()
+    painter.setFont(fonts.dialogue_font(12))
+    painter.setPen(QColor(150, 36, 22) if (primary or hot) and enabled
+                   else T.INK if enabled else QColor(120, 98, 74, 170))
+    painter.drawText(rect, T.ALIGN_CENTER, label)
+    painter.restore()
 
 
 def _row_target(painter, rect, action, label=None):
@@ -413,7 +449,7 @@ def _draw_fortune(painter, inner, ty, s):
     # The bio, once the dice are down.
     by = top + 3 * row_h + 6
     box = QRect(inner.x(), by, inner.width(), inner.bottom() - 70 - by)
-    painter.setBrush(QColor(12, 12, 16, 220))
+    painter.setBrush(_BOX)
     painter.setPen(QPen(T.GILD, 1))
     painter.drawRect(box)
     if all_settled and rolls:
@@ -469,7 +505,7 @@ def _draw_identity(painter, inner, ty, s):
     fx = inner.x() + 90
     fw = inner.width() - 90
     box = QRect(fx, ty + 2, fw, 30)
-    painter.setBrush(QColor(12, 12, 16))
+    painter.setBrush(_BOX)
     painter.setPen(QPen(T.GILD, 1))
     painter.drawRect(box)
     caret = "_" if (int(__import__("time").time() * 2) % 2 == 0) else " "
@@ -482,7 +518,7 @@ def _draw_identity(painter, inner, ty, s):
     size = min(hh, int(inner.width() * 0.5))
     cx = inner.x() + inner.width() // 2
     box = QRect(cx - size // 2, hy, size, size)
-    painter.setBrush(QColor(18, 18, 24))
+    painter.setBrush(_HEAD_BOX)
     painter.setPen(QPen(T.GILD, 1))
     painter.drawRect(box)
     pm = _head_pixmap(s["head"])
@@ -573,7 +609,8 @@ def _cc_list(painter, x, y, w, ids, sel, labeller, field=None, h=420, state=None
     for i in range(first, min(first + grid.page_size, len(ids))):
         item = ids[i]
         rect = grid.slots[i - first]
-        cards.draw_card(painter, rect, _cc_card(painter, field, item, rect, i == sel))
+        cards.draw_card(painter, rect, cards.dimmed(
+            _cc_card(painter, field, item, rect, i == sel), 0 <= sel < len(ids)))
         if field is not None:
             hits.add(QRect(rect), _cc_set(field, i), labeller(item))
 
@@ -686,7 +723,7 @@ def _draw_tutorial_box(painter, rect, s):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     box = QRect(rect.x(), rect.y() + (rect.height() - 18) // 2, 18, 18)
-    painter.setBrush(QColor(34, 30, 44, 235))
+    painter.setBrush(_TICK_BOX)
     painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD, 1.5))
     painter.drawRoundedRect(box, 3, 3)
     if on:
@@ -905,7 +942,7 @@ def _draw_inventory(painter, session, w, h):
         if i == st["row"]:
             ncol = T.GOLD_BRIGHT
         elif rpg_items.rarity_of(stack) != rpg_items.COMMON:
-            ncol = QColor(*rpg_items.rarity_rgb(stack))
+            ncol = T.legible(QColor(*rpg_items.rarity_rgb(stack)))
         else:
             ncol = T.INK
         T.text(painter, inner.x() + 8, ry + 16, name + qty, size=11,
@@ -1065,7 +1102,7 @@ def _draw_character(painter, session, w, h):
                family="Segoe UI")
     if c.bounty:
         T.text(painter, inner.x(), gy + 16, f"Bounty: {c.bounty} gold", size=10,
-               color=QColor(220, 100, 90), family="Segoe UI")
+               color=T.legible(QColor(220, 100, 90), 0.4), family="Segoe UI")
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               "C/Esc close", size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
 
@@ -1087,7 +1124,7 @@ _QUEST_ACTIVE = QColor(214, 176, 108)
 _QUEST_TRACKED = QColor(120, 160, 245)
 
 
-def _quest_card(session, q, rect, *, selected, tracked):
+def _quest_card(session, q, rect, *, selected, tracked, index=0):
     """The :class:`cards.Card` for quest *q*: a mark (◈ under way, ✓ done),
     who it is from or its chapter, and the objective now. The tracked quest
     glows, with ▸ on it; a finished one is greyed. The journal's detail pane
@@ -1100,6 +1137,10 @@ def _quest_card(session, q, rect, *, selected, tracked):
     summary = "Completed" if complete else str(log.current_objective(q.id) or q.desc or "")
     desc = summary            # the quest's story is in the detail pane, not here
     return cards.Card(
+        # A manuscript entry: no picture, an illuminated initial, blue, red,
+        # green and orange in turn down the page (only the active quest's in
+        # colour: the rest are in grey ink).
+        illuminate=cards.PIGMENT_CYCLE[index % len(cards.PIGMENT_CYCLE)],
         title=q.name, glyph="✓" if complete else "◈", subtitle=sub, summary=summary,
         desc=desc,
         accent=_QUEST_DONE if complete else _QUEST_TRACKED if tracked else _QUEST_ACTIVE,
@@ -1160,8 +1201,9 @@ def _draw_journal(painter, session, w, h):
     for i in range(first, min(first + grid.page_size, len(allq))):
         q = allq[i]
         rect = grid.slots[i - first]
-        cards.draw_card(painter, rect, _quest_card(
-            session, q, rect, selected=i == st["row"], tracked=bool(tracked) and q.id == tracked))
+        cards.draw_card(painter, rect, cards.dimmed(_quest_card(
+            session, q, rect, selected=i == st["row"], tracked=bool(tracked) and q.id == tracked,
+            index=i), True))
         hits.add(QRect(rect), lambda s, row=i: _sel(s)["journal"].update(row=row),
                  f"journal:{q.id}")
 
@@ -1300,9 +1342,9 @@ def _draw_quest(painter, session, w, h):
     for idx in range(first, min(first + grid.page_size, len(known))):
         q = known[idx]
         r = grid.slots[idx - first]
-        cards.draw_card(painter, r, _quest_card(
+        cards.draw_card(painter, r, cards.dimmed(_quest_card(
             session, q, r, selected=idx == st["row"],
-            tracked=bool(tracked) and q.id == tracked))
+            tracked=bool(tracked) and q.id == tracked, index=idx), True))
         _QUEST_HITS["rows"].append((QRect(r), idx))
 
     # --- right column: the selected quest's detail -------------------------
@@ -1354,7 +1396,7 @@ def _draw_quest(painter, session, w, h):
     if is_active_q:
         box = QRect(col_x, inner.bottom() - 34, 16, 16)
         painter.setPen(QPen(T.GILD, 1))
-        painter.setBrush(QColor(30, 28, 40))
+        painter.setBrush(_TICK_BOX)
         painter.drawRect(box)
         if is_tracked:
             painter.setPen(QPen(T.GOLD_BRIGHT, 2))
@@ -1372,7 +1414,7 @@ def _draw_quest(painter, session, w, h):
         if tpos is not None:
             mrect = QRect(inner.right() - 132, box.y() - 6, 126, 26)
             hot = hits.hovered(mrect)
-            painter.setBrush(QColor(96, 70, 34, 240) if hot else QColor(62, 48, 30, 235))
+            painter.setBrush(_BTN_HOT if hot else _BTN_PRIMARY)
             painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD, 1.5))
             painter.drawRoundedRect(mrect, 5, 5)
             painter.setFont(fonts.dialogue_font(11))
@@ -1550,7 +1592,7 @@ def _draw_spells(painter, session, w, h):
         rect = grid.slots[i - first]
         card = _spell_card(painter, session, spell, selected=i == st["row"],
                            locked=locked, rect=rect)
-        cards.draw_card(painter, rect, card)
+        cards.draw_card(painter, rect, cards.dimmed(card, True))
         # No card tooltip here: the pane on the right shows the selected
         # spell in full. Only a greyed card says why (metal armour).
         if locked:
@@ -1579,7 +1621,7 @@ def _draw_spells(painter, session, w, h):
     # The selected spell in full, beside the cards.
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
-    painter.setBrush(QColor(14, 13, 20, 150))
+    painter.setBrush(_PANE)
     painter.setPen(QPen(QColor(T.GILD.red(), T.GILD.green(), T.GILD.blue(), 140), 1))
     painter.drawRoundedRect(QRectF(detail), 8, 8)
     painter.restore()
@@ -1658,7 +1700,7 @@ _RARITY_COLORS = {"common": QColor(190, 186, 176), "uncommon": QColor(120, 210, 
 
 
 def _rarity_color(rarity):
-    return _RARITY_COLORS.get(str(rarity), _RARITY_COLORS["common"])
+    return T.legible(_RARITY_COLORS.get(str(rarity), _RARITY_COLORS["common"]), 0.36)
 
 
 def _spell_power(spell) -> str:
@@ -1709,7 +1751,7 @@ def _draw_spell_hands(painter, session, area, selected):
                 item = eq.weapon(c)                 # both hands on it
         rect = QRect(area.x() + i * (width + 12), area.y(), width, 78)
         painter.save()
-        painter.setBrush(QColor(30, 28, 36, 245))
+        painter.setBrush(_HAND_BOX)
         painter.setPen(QPen(T.GILD, 1.5))
         painter.drawRoundedRect(rect, 5, 5)
         mouse = "LMB" if physical == "left" else "RMB"
@@ -1720,7 +1762,7 @@ def _draw_spell_hands(painter, session, area, selected):
         T.text_in(painter, rect.adjusted(6, 30, -6, -6),
                   spell.name if spell else item.name if item else "Empty",
                   size=10, color=(spell_lock.GREY if locked else
-                                  QColor(*spell.color) if spell else T.INK),
+                                  T.legible(QColor(*spell.color)) if spell else T.INK),
                   align=int(Qt.AlignCenter | Qt.TextWordWrap))
         if locked:
             spell_lock.veil(painter, rect, 5)
@@ -1874,7 +1916,8 @@ def _item_card(painter, stack, rect, *, selected=False, qty=None, active=False,
         subtitle=cat.title(),
         desc=_item_desc(stack),
         accent=_CATEGORY_ACCENT.get(cat, _CATEGORY_ACCENT[rpg_items.MISC]),
-        frame=(QColor(*rpg_items.rarity_rgb(stack)) if rarity != rpg_items.COMMON
+        frame=(T.legible(QColor(*rpg_items.rarity_rgb(stack)), 0.45)
+               if rarity != rpg_items.COMMON
                else None),
         quantity=qty,
         badges=badges, badge_colors=badge_colors,
@@ -2005,7 +2048,7 @@ def _draw_trade(painter, session, w, h):
                               greyed=left == 0 or unwanted,
                               badges=(note, f"{price} g"),
                               badge_colors=(T.DIM, T.GOLD_BRIGHT), extra=extra)
-            cards.draw_card(painter, rect, card)
+            cards.draw_card(painter, rect, cards.dimmed(card, active))
             cards.note_tooltip(rect, card, focus=pad and selected)
         # Where a new card would appear: an item with no card to land on (one
         # sold into stock the merchant does not list) flies there.
@@ -2277,6 +2320,8 @@ def _level_preview(c, choice):
 
 def _paint_parchment(painter, rect):
     """An old page: warm in the middle, browning to the edges, flecked."""
+    if T.inked():
+        return              # on a scroll the scroll is the page
     import random as _random
     from PyQt5.QtGui import QRadialGradient, QBrush
     painter.save()
@@ -2409,8 +2454,8 @@ def _draw_levelup(painter, session, w, h):
         grid = cards.layout(area, len(rows), grid_min_scale=0.55, fit_all=True)
     for i, (choice, label, desc) in enumerate(rows):
         rect = grid.slots[i]
-        cards.draw_card(painter, rect, _level_card(painter, c, choice, label, rect,
-                                                   st["row"] == i))
+        cards.draw_card(painter, rect, cards.dimmed(
+            _level_card(painter, c, choice, label, rect, st["row"] == i), True))
         hits.add(QRect(rect), _levelup_pick(i), f"levelup:{choice}")
 
     # The highlighted choice: what it does, and what it would change.
@@ -2474,7 +2519,8 @@ _LEVEL_ICONS = {}
 def _level_icon(choice, px):
     """The choice's woodcut glyph (:func:`_paint_level_icon`) as a picture,
     in pale parchment ink for a dark card."""
-    key = (choice, int(px))
+    inked = T.inked()
+    key = (choice, int(px), inked)
     if key not in _LEVEL_ICONS:
         from PyQt5.QtGui import QPainter, QPixmap
         pm = QPixmap(int(px), int(px))
@@ -2482,7 +2528,8 @@ def _level_icon(choice, px):
         p = QPainter(pm)
         try:
             _paint_level_icon(p, QRect(int(px * 0.12), int(px * 0.12), int(px * 0.76),
-                                       int(px * 0.76)), choice, ink=_PARCH_LIGHT)
+                                       int(px * 0.76)), choice,
+                              ink=_INK_RED if inked else _PARCH_LIGHT)
         finally:
             p.end()
         _LEVEL_ICONS[key] = pm
@@ -2643,7 +2690,7 @@ def _draw_container(painter, session, w, h):
             card = _item_card(painter, stack, rect, selected=selected, qty=qty,
                               active=side == 1 and stack.get("id") in worn,
                               greyed=qty <= 0)
-            cards.draw_card(painter, rect, card)
+            cards.draw_card(painter, rect, cards.dimmed(card, active))
             cards.note_tooltip(rect, card, focus=pad and selected)
             hits.add(QRect(rect), _cont_click(side, i),
                      f"{taking if side == 0 else 'store'}:{i}")

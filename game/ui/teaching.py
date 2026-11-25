@@ -318,11 +318,11 @@ def draw_tutor(painter, session, w, h):
         rect = grid.slots[i - first]
         known = spell.id in c.known_spells
         price = session._teacher_price(training.spell_price(c, p, spell))
-        cards.draw_card(painter, rect, s._spell_card(
+        cards.draw_card(painter, rect, cards.dimmed(s._spell_card(
             painter, session, spell, selected=i == st["row"], locked=False, rect=rect,
             badges=("known" if known else "", f"{price} g" if not known else ""),
             badge_colors=(T.DIM, T.GOLD_BRIGHT), greyed=known, active=False,
-            pips=None, tooltip=""))
+            pips=None, tooltip=""), True))
         hits.add(QRect(rect), _pick("tutor", i), f"tutor:{spell.id}")
 
     spell = spells[st["row"]]
