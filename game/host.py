@@ -1092,6 +1092,12 @@ class MiniwindGame:
         inspector.cancel_focus_on_move(logic, ctx)
 
         just = self._just_pressed(ctx)
+        # The inventory / spellbook key hides its hint (game/key_hints.py), by
+        # the keys they are bound to now.
+        if just and getattr(session, "key_hints", None) is not None:
+            import game.key_hints as key_hints
+            key_hints.note_keys(session, just, {"inventory": K_INVENTORY,
+                                                "spells": K_SPELLS})
 
         # While a modal screen (character creation, inventory, journal…) or a
         # conversation is open, the *world* is frozen: hold MiniWind's own
@@ -1579,6 +1585,10 @@ class MiniwindGame:
                 # "!" / "?" over heightened NPCs (a guard coming to arrest
                 # the player); shown in conversation too.
                 hud.draw_head_marks(painter, session, viewport, w, h)
+                # The key hints after character creation (I, then P), in the
+                # middle of the screen over the play view and the HUD, under
+                # any menu window; not drawn while one is up.
+                hud.draw_key_hints(painter, session, w, h)
             if not windowed:
                 if session.dialogue is not None:
                     dialogue_ui.draw(painter, session, w, h)
