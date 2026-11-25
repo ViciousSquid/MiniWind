@@ -41,8 +41,9 @@ Guild.
 | **X** | Cycle active spell | **B** (hold) | Block |
 | **V** | Toggle sneak | **H** | Quick-heal: a healing potion, else food |
 | **I** | Inventory & equipment | **C** | Character sheet |
-| **J** | Quest journal | **P** | Spellbook (click a spell to ready it) |
+| **J** | Quest journal | **P** | Spellbook: drag a known spell onto a shortcut bar slot |
 | **L** | Level up (when available) | **1–9 / Esc** | Dialogue choices / close |
+| **1–9** (in play) | Use a shortcut bar slot; a spell there is equipped in the main hand and cast, swapping places with what the hand held | **Shift+1–9** | Ready a bar spell in the off hand |
 | **[ / ]** (hold) | Rotate camera left / right | | |
 
 ### Gamepad
