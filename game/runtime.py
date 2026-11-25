@@ -11296,15 +11296,56 @@ class MiniwindSession(SettlementLaw):
             if iid == item_id:
                 strip[i] = None
 
-    def store_item_in_container(self, item_id) -> bool:
-        """Put the whole carried stack of *item_id* in the open container."""
+    def store_item_in_container(self, item_id, qty=None, onto=None) -> bool:
+        """Put the carried stack of *item_id* in the open container -- all of
+        it, or *qty* of it (half a stack split off with a right click);
+        *onto* a container row holding the same thing, it joins that stack."""
         if self.container_thing is None:
             return False
         pinv = self.game.character.inventory
         index = next((i for i, st in enumerate(pinv) if st.get("id") == item_id), None)
         if index is None:
             return False
-        return self.store_in_container(index)
+        return self.store_in_container(index, qty=qty, onto=onto)
+
+    @staticmethod
+    def _same_stack(a, b) -> bool:
+        """Whether two stacks may be one: the same thing, of the same rarity,
+        and stolen alike (joining must not launder stolen goods)."""
+        import game.sim.ownership as own
+        return (isinstance(a, dict) and isinstance(b, dict)
+                and a.get("id") == b.get("id")
+                and rpg_items.rarity_of(a) == rpg_items.rarity_of(b)
+                and own.is_stolen(a) == own.is_stolen(b)
+                and a.get(own.STOLEN_FROM) == b.get(own.STOLEN_FROM))
+
+    def split_container_stack(self, index: int, qty: int, onto=None) -> bool:
+        """Move *qty* of the open container's stack at *index* within it: onto
+        the stack at row *onto* (the same thing: they join), or, with *onto*
+        None, into a stack of its own. A container may hold the same thing in
+        several stacks; the player's pack keeps one record per thing."""
+        items = self.container_inventory()
+        if not (0 <= int(index) < len(items)):
+            return False
+        stack = items[int(index)]
+        have = int(stack.get("qty", 1) or 1)
+        n = max(1, min(int(qty or 1), have))
+        if isinstance(onto, int) and not isinstance(onto, bool):
+            if onto == index or not (0 <= onto < len(items)):
+                return False
+            other = items[onto]
+            if not self._same_stack(stack, other):
+                return False
+            other["qty"] = int(other.get("qty", 1) or 1) + n
+            stack["qty"] = have - n
+            if stack["qty"] <= 0:
+                items.pop(int(index))
+            return True
+        if n >= have:
+            return False                 # nothing left behind: no split
+        stack["qty"] = have - n
+        items.append(dict(stack, qty=n))
+        return True
 
     def item_drop(self, source, target) -> bool:
         """One drag and drop between any of the item windows: the pack and the
@@ -11312,9 +11353,18 @@ class MiniwindSession(SettlementLaw):
 
         *source* is ``(kind, key, item id)`` and *target* ``(kind, key)``,
         where kind is ``pack``, ``equip``, ``quick``, ``strip`` or
-        ``container`` (key: a slot, a slot index, or a container row)."""
+        ``container`` (key: a slot, a slot index, or a container row).
+
+        A source may carry a fourth item, a count: half a stack split off
+        with a right click (``(kind, key, item id, n)``). Only *n* then move
+        into or out of a container (onto a container row of the same thing
+        they join it; within the container they become a stack of their
+        own). Within the pack and the strip a split is the whole stack again,
+        as the pack keeps one record per thing (its slots of five are only
+        how it is shown)."""
         skind, skey, iid = source[0], source[1], source[2]
         tkind, tkey = target[0], target[1]
+        qty = int(source[3]) if len(source) > 3 and source[3] else None
         if not iid:
             return False
         if skind in ("spell", "spell_hand") and tkind == "strip":
@@ -11331,13 +11381,15 @@ class MiniwindSession(SettlementLaw):
         if skind in ("spell", "spell_hand") or tkind == "hand":
             return self.inventory_move(source, target, iid)
         if skind == "container":
-            if tkind == "container":
-                return False
             items = self.container_inventory()
             row = skey if (isinstance(skey, int) and 0 <= skey < len(items)
                            and items[skey].get("id") == iid) else next(
                 (i for i, st in enumerate(items) if st.get("id") == iid), None)
-            if row is None or not self.take_from_container(row):
+            if tkind == "container":
+                if qty is None or row is None:
+                    return False
+                return self.split_container_stack(row, qty, tkey)
+            if row is None or not self.take_from_container(row, qty=qty):
                 return False
             if iid == rpg_items.GOLD:
                 return True                          # coin goes to the purse
@@ -11347,7 +11399,8 @@ class MiniwindSession(SettlementLaw):
                 return self.inventory_move(("pack", None, iid), (tkind, tkey), iid)
             return True
         if tkind == "container":
-            return self.store_item_in_container(iid)
+            return self.store_item_in_container(
+                iid, qty=qty, onto=tkey if isinstance(tkey, int) else None)
         if tkind == "strip":
             return self.set_strip_slot(int(tkey), iid,
                                        from_index=skey if skind == "strip" else None)
@@ -12375,16 +12428,23 @@ class MiniwindSession(SettlementLaw):
         return sim_own.is_theft(self.container_thing.properties, actor_key(actor),
                                actor.properties.get("faction", ""))
 
-    def take_from_container(self, index: int) -> bool:
-        """Move one stack from the open container into the player's inventory."""
+    def take_from_container(self, index: int, qty=None) -> bool:
+        """Move one stack from the open container into the player's inventory
+        -- or *qty* of it (half a stack split off with a right click)."""
         items = self.container_inventory()
         if not (0 <= index < len(items)):
             return False
+        have = int(items[index].get("qty", 1) or 1)
+        n = have if qty is None else max(1, min(int(qty), have))
         if items[index].get("id") != rpg_items.GOLD and not self.pack_has_room(
-                items[index].get("id"), int(items[index].get("qty", 1) or 1)):
+                items[index].get("id"), n):
             self._pack_full_note()
             return False
-        stack = items.pop(index)
+        if n < have:
+            items[index]["qty"] = have - n
+            stack = dict(items[index], qty=n)
+        else:
+            stack = items.pop(index)
         name = stack.get("name", stack.get("id", ""))
         # A chest with an owner makes emptying it a theft, exactly like a world
         # item — the container needed no code of its own to become stealable.
@@ -12414,8 +12474,11 @@ class MiniwindSession(SettlementLaw):
                                     sim_own.owner_name_of(props))
         return True
 
-    def store_in_container(self, index: int) -> bool:
-        """Move one stack from the player's inventory into the open container."""
+    def store_in_container(self, index: int, qty=None, onto=None) -> bool:
+        """Move one stack from the player's inventory into the open container
+        -- or *qty* of it (half a stack split off with a right click). Given
+        *onto*, a container row holding the same thing, it joins that stack;
+        otherwise it is a stack of its own there."""
         if self.container_thing is None:
             return False
         if self.container_thing.properties.get("lock_jammed") or self.container_thing.properties.get("locked"):
@@ -12427,14 +12490,37 @@ class MiniwindSession(SettlementLaw):
         if warrior_fist.innate(iid):
             self.notify("Your fists stay with you", 2.0)
             return False
-        # Whatever is worn or slotted comes off first, so nothing points at a
-        # stack that is no longer carried.
-        before = eq.armour_class(self.game.character)
-        self._forget_in_slots(iid)
+        have = int(pinv[index].get("qty", 1) or 1)
+        n = have if qty is None else max(1, min(int(qty), have))
+        c = self.game.character
+        before = eq.armour_class(c)
+        if n < have:
+            # Part of the stack: fewer copies than hands holding it, the off
+            # hand lets go first (as dropping some does).
+            left = have - n
+            for slot in (rpg_items.SLOT_SHIELD, rpg_items.SLOT_WEAPON):
+                if list((c.equipment or {}).values()).count(iid) > left \
+                        and c.equipment.get(slot) == iid:
+                    if slot == rpg_items.SLOT_WEAPON:
+                        self._cancel_bow_draw()
+                    self.game.unequip(slot)
+            pinv[index]["qty"] = left
+            stack = dict(pinv[index], qty=n)
+        else:
+            # Whatever is worn or slotted comes off first, so nothing points
+            # at a stack that is no longer carried.
+            self._forget_in_slots(iid)
+            stack = pinv.pop(index)
         self._announce_ac(before)
-        stack = pinv.pop(index)
-        self.container_inventory().append(stack)
-        self.notify(f"Stored {stack.get('name', stack.get('id',''))}")
+        items = self.container_inventory()
+        other = items[onto] if (isinstance(onto, int) and not isinstance(onto, bool)
+                                and 0 <= onto < len(items)) else None
+        if other is not None and self._same_stack(other, stack):
+            other["qty"] = int(other.get("qty", 1) or 1) + n
+        else:
+            items.append(stack)
+        name = stack.get('name', stack.get('id', ''))
+        self.notify(f"Stored {name}" + (f" ({n})" if n < have else ""))
         return True
 
     def close_container(self) -> None:

@@ -408,6 +408,8 @@ class InventoryWindow(FloatingWindow):
         self._targets = []
         #: (QRect, callable) for buttons and tabs.
         self._buttons = []
+        #: (QRect, count) for every pack cell: a right click splits it.
+        self._counts = []
         self._press = None              # (QPoint, source) of a pending press
         self._drag = None               # source being dragged
         self._last_click = (0.0, None)
@@ -513,6 +515,7 @@ class InventoryWindow(FloatingWindow):
     def _draw_content(self, painter, x, y, w, h):
         """Equipment, pack and sheet within the supplied body rectangle."""
         self._cells, self._targets, self._buttons = [], [], []
+        self._counts = []
         self.hover = None
         # Worn metal armour greys every spell out (game/ui/spell_lock.py).
         self._spell_locked = spell_lock.locked(self._character())
@@ -681,6 +684,9 @@ class InventoryWindow(FloatingWindow):
             self._targets.append((QRect(rect), target))
         if iid and source is not None:
             self._cells.append((QRect(rect), source))
+            if source[0] == "pack":
+                shown = stack if stack is not None else self._stack(iid)
+                self._counts.append((QRect(rect), int((shown or {}).get("qty", 1) or 1)))
 
     def _draw_paperdoll_figure(self, painter, area):
         """The player as MiniWind draws everyone: a head, and nothing else
@@ -1462,7 +1468,8 @@ class InventoryWindow(FloatingWindow):
                 drag.unpick()
                 current["action"]()
             elif picked is not None:
-                if source == picked or (target and target[0] == picked[0] == "pack"):
+                if (source and tuple(source[:3]) == tuple(picked[:3])) or \
+                        (target and target[0] == picked[0] == "pack"):
                     drag.unpick()
                 elif target and placeable(target, picked):
                     drag.unpick()
@@ -1510,6 +1517,16 @@ class InventoryWindow(FloatingWindow):
         if picked is not None and event.y() >= body_top and event.button() == Qt.RightButton:
             drag.unpick()                    # a right click puts it back down
             return True
+        if picked is None and event.y() >= body_top and event.button() == Qt.RightButton:
+            # A right click on a stack in the pack splits it: the larger half
+            # is picked up, to be stored in a chest with a click there.
+            source = self._at(self._cells, event.pos())
+            count = self._at(self._counts, event.pos())
+            half = drag.split_half(count or 0)
+            if source is not None and source[0] == "pack" and half:
+                drag.pick(self, tuple(source[:3]) + (half,))
+                self.selected, self.selected_spell = source[2], None
+                return True
         if event.y() < body_top or event.button() != Qt.LeftButton:
             return super().handle_mouse_press(event)
         p = event.pos()
@@ -1520,7 +1537,7 @@ class InventoryWindow(FloatingWindow):
         source = self._at(self._cells, p)
         self._unpicked = False
         if picked is not None:
-            if source is not None and tuple(source) == tuple(picked):
+            if source is not None and tuple(source[:3]) == tuple(picked[:3]):
                 drag.unpick()                # the same item again: put down
                 self._unpicked = True
             else:

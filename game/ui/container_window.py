@@ -23,6 +23,9 @@ DRAG_START = 5
 class ContainerWindow(CallbackWindow):
     """A :class:`CallbackWindow` for the container screen, with drag and drop."""
 
+    #: It draws what it picked up (a split stack) itself, over its own body.
+    draws_picked = True
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._press = None              # (QPoint, source) of a press on a row
@@ -34,11 +37,32 @@ class ContainerWindow(CallbackWindow):
         drag.set_zones(self, zones)
         if self._dragging:
             drag.draw_ghost(painter, self, hits.pointer, 48)
+        picked = drag.picked_source()
+        if picked is not None and drag.picked.get("owner") is self and hits.pointer:
+            # Half a stack split off here rides beside the pointer.
+            drag.draw_ghost(painter, self, (hits.pointer[0] + 22, hits.pointer[1] + 22),
+                            40, source=picked)
 
     def _cell_at(self, p):
         for rect, source in reversed(screens.CONTAINER_DRAG["cells"]):
             if rect.contains(p) and source[2]:
                 return source
+        return None
+
+    @staticmethod
+    def _zone_at(p):
+        """The drop target under *p*: a contents card, else a column."""
+        for rect, target in reversed(screens.CONTAINER_DRAG["zones"]):
+            if rect.contains(p):
+                return target
+        return None
+
+    def _split_at(self, p):
+        """``(source, half)`` for a right click on a stack of two or more."""
+        for rect, source, qty in reversed(screens.CONTAINER_DRAG.get("stacks", [])):
+            if rect.contains(p) and source[2]:
+                half = drag.split_half(qty)
+                return (tuple(source[:3]) + (half,), half) if half else None
         return None
 
     def handle_mouse_press(self, event):
@@ -51,13 +75,24 @@ class ContainerWindow(CallbackWindow):
         picked = drag.picked_source()
         if in_body and self.expanded and picked is not None:
             # Something picked up with a click: a click on the contents
-            # stores it; any other puts it back down.
+            # stores it (or, half a stack split off the contents, moves it
+            # there); one on your side takes what came from the contents;
+            # any other puts it back down.
             drag.unpick()
-            zone = next((t for r, t in screens.CONTAINER_DRAG["zones"]
-                         if r.contains(event.pos())), None)
-            if event.button() == Qt.LeftButton and zone == ("container", None) \
-                    and picked[0] != "container":
-                hits.queue(lambda session: session.item_drop(picked, zone))
+            zone = self._zone_at(event.pos())
+            if event.button() == Qt.LeftButton and zone is not None:
+                split = len(picked) > 3 and bool(picked[3])
+                from_here = picked[0] == "container"
+                if zone[0] == "container" and (not from_here or split):
+                    hits.queue(lambda session: session.item_drop(picked, zone))
+                elif zone[0] == "pack" and from_here:
+                    hits.queue(lambda session: session.item_drop(picked, ("pack", None)))
+            return True
+        if in_body and self.expanded and event.button() == Qt.RightButton:
+            # A right click on a stack splits it: half of it is picked up.
+            hit = self._split_at(event.pos())
+            if hit is not None:
+                drag.pick(self, hit[0])
             return True
         if in_body and self.expanded and event.button() == Qt.LeftButton:
             source = self._cell_at(event.pos())

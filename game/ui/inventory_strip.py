@@ -21,6 +21,9 @@ raised and lit, its name shown above the bar.
   click readies -- and every slot lights up; a click on one puts it there.
   An item picked up in the character window or the spellbook is placed on
   the strip the same way;
+* right-click a stack of two or more to split it: its larger half is picked
+  up, and a click on an open chest or body puts that many in it (a right
+  click puts it back);
 * drag between the strip and the character window (C), a chest or a body:
   out of the strip into the pack takes it off the strip, onto the body wears
   it, into a container stores it; from any of them onto a slot puts it there
@@ -280,7 +283,7 @@ class InventoryStrip(FloatingWindow):
             spell_lock.flush(painter)
         if mine:
             drag.draw_ghost(painter, self, hits.pointer, self._rects[0].width() - 8)
-        elif picked is not None:
+        elif picked is not None and not getattr(drag.picked.get("owner"), "draws_picked", False):
             # What a click picked up rides beside the pointer until placed.
             drag.draw_ghost(painter, self, (hits.pointer[0] + 22, hits.pointer[1] + 22)
                             if hits.pointer else None, 34, source=picked)
@@ -516,6 +519,14 @@ class InventoryStrip(FloatingWindow):
             # A spell's slot, right-clicked: readied in the off hand.
             self.selected = i
             hits.queue(lambda session: session.select_strip_slot(i, hand="off"))
+            return True
+        if (i is not None and event.button() == Qt.RightButton and stack
+                and drag.split_half(stack.get("qty", 1))):
+            # A stack, right-clicked: its larger half is picked up, to be put
+            # in a chest with a click there (a right click puts it back).
+            self.selected = i
+            drag.pick(self, ("strip", i, stack.get("id"),
+                             drag.split_half(stack.get("qty", 1))))
             return True
         if i is None or event.button() != Qt.LeftButton:
             return True               # the bar itself: swallowed, not a swing

@@ -57,7 +57,8 @@ class Card:
     *quantity* above 1 shows a small "x3" on the icon well (a stack count);
     *price* (text, e.g. "25 g") a gold badge on the well's lower edge --
     prefer the tooltip for it. *mark* is the glyph in the well's corner when
-    the card is *active* ("✦").
+    the card is *active* ("✦"). *glyph* is drawn large in the icon well
+    when there is no *icon* (a quest's mark, a save slot's number).
     """
     title: str
     icon: object = None                     # QPixmap or None
@@ -70,6 +71,7 @@ class Card:
     quantity: int = 0
     price: Optional[str] = None
     mark: str = "✦"
+    glyph: str = ""
     tooltip: str = ""
     pips: Optional[Tuple[int, int]] = None
     selected: bool = False
@@ -102,12 +104,23 @@ class Grid:
 
 
 def layout_grid(area: QRect, count: int, card_size=SIZE, gap: int = GAP,
-                min_scale: float = 0.75, center: bool = True) -> Grid:
+                min_scale: float = 0.75, center: bool = True,
+                fit_all: bool = False) -> Grid:
     """A grid of cards inside *area*: as many columns and rows as fit at
     *card_size*. When only one row would fit but more are needed, the cards
     shrink (down to *min_scale*) so two rows fit; when not even one row fits
     they shrink to fit one (never past *min_scale* wide, but always inside
-    *area*'s height). The grid is centred horizontally when *center*."""
+    *area*'s height). With *fit_all*, cards that would need more than one
+    page shrink further (still not past *min_scale*) until all *count* fit
+    on one, where they can. The grid is centred horizontally when *center*."""
+    if fit_all and count > 0:
+        grid = layout_grid(area, count, card_size, gap, min_scale, center)
+        scale = 1.0
+        while grid.page_size < count and scale > min_scale + 1e-6:
+            scale = max(min_scale, scale - 0.04)
+            size = (max(1, int(card_size[0] * scale)), max(1, int(card_size[1] * scale)))
+            grid = layout_grid(area, count, size, gap, 1.0, center)
+        return grid
     cw, ch = int(card_size[0]), int(card_size[1])
     aw, ah = max(1, area.width()), max(1, area.height())
 
@@ -191,15 +204,15 @@ def _badge(painter, rect, text, color, s):
     painter.setBrush(_BADGE)
     painter.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 150), 1))
     painter.drawRoundedRect(QRectF(rect), 4 * s, 4 * s)
-    painter.setFont(_font(10 * s))
+    painter.setFont(_font(max(9.0, 10 * s)))
     painter.setPen(color)
     painter.drawText(rect, int(Qt.AlignCenter), text)
 
 
 def _badge_rect(painter, text, s, x, y, anchor_right=False):
-    f = _font(10 * s)
-    w = QFontMetrics(f).horizontalAdvance(text) + int(10 * s)
-    h = max(12, int(17 * s))
+    f = _font(max(9.0, 10 * s))
+    w = QFontMetrics(f).horizontalAdvance(text) + max(6, int(10 * s))
+    h = max(13, int(17 * s))
     return QRect(x - w if anchor_right else x, y, w, h)
 
 
@@ -260,12 +273,12 @@ def draw_card(painter, rect: QRect, card: Card) -> None:
     ink = GREY.lighter(125) if grey else (T.GOLD_BRIGHT if card.selected else T.INK)
     tw = int(r.width() - 10 * s)
     title_rect = QRect(int(r.left() + 5 * s), int(r.top()), tw, int(head_h))
-    f, ok = fitted_font(card.title, tw, 15 * s, 10 * s)
+    f, ok = fitted_font(card.title, tw, max(11.0, 15 * s), max(9.0, 10 * s))
     flags = int(Qt.AlignCenter)
     if not ok:
         f, ok2 = None, False
-        px = int(round(12 * s))
-        while px >= 6:
+        px = int(round(max(10.0, 12 * s)))
+        while px >= 7:
             f = _font(px)
             br = QFontMetrics(f).boundingRect(title_rect, int(Qt.AlignCenter | Qt.TextWordWrap),
                                               card.title)
@@ -299,6 +312,14 @@ def draw_card(painter, rect: QRect, card: Card) -> None:
         painter.setClipPath(clip)
         painter.drawPixmap(inset.toRect(), pm)
         painter.restore()
+    elif card.glyph:
+        painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 50))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(well.center(), side * 0.36, side * 0.36)
+        f, _ok = fitted_font(card.glyph, int(side * 0.8), side * 0.5, side * 0.2)
+        painter.setFont(f)
+        painter.setPen(GREY.lighter(130) if grey else accent.lighter(140))
+        painter.drawText(well, int(Qt.AlignCenter), card.glyph)
     else:
         painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 120))
         painter.setPen(Qt.NoPen)
@@ -328,7 +349,7 @@ def draw_card(painter, rect: QRect, card: Card) -> None:
     ty = well.bottom() + 5 * s
     sub_ink = GREY if grey else accent.lighter(135)
     if card.subtitle:
-        f, _ok = fitted_font(card.subtitle, tw, 11 * s, 8 * s)
+        f, _ok = fitted_font(card.subtitle, tw, max(9.0, 11 * s), max(8.0, 8 * s))
         painter.setFont(f)
         painter.setPen(sub_ink)
         sub = QFontMetrics(f).elidedText(card.subtitle, Qt.ElideRight, tw)
@@ -405,6 +426,9 @@ def note_tooltip(rect: QRect, card: Card, focus: bool = False) -> bool:
     if focus:
         _pending_tip = (card.tooltip, (rect.right() - 10, rect.bottom() - 10))
         return True
+    from . import drag
+    if drag.current is not None or drag.picked is not None:
+        return False            # an item rides on the pointer: no tooltip over it
     if hits.pointer is not None and hits.hovered(rect):
         _pending_tip = (card.tooltip, hits.pointer)
         return True

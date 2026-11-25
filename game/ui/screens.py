@@ -84,8 +84,8 @@ _SCREEN_BODY_SIZE = {
     "journal": (700, 470),
     "spells": (700, 470),
     "levelup": (820, 600),
-    "trade": (760, 520),
-    "container": (760, 500),
+    "trade": (960, 600),
+    "container": (900, 560),
     "quest": (880, 540),
     "lockpicking": (820, 560),
     "training": (760, 600),
@@ -1672,6 +1672,130 @@ def _handle_spells(session, key):
 
 
 # ===========================================================================
+# Item cards -- the container and trade screens show their things as cards
+# (game/ui/cards.py): the item's picture, its category tinting the header,
+# its rarity the frame, the stack count on the picture. Value, weight and
+# the rest are in the card's tooltip (these screens have no detail pane).
+# ===========================================================================
+#: Header-band tint per item category.
+_CATEGORY_ACCENT = {
+    rpg_items.WEAPON: QColor(214, 120, 96), rpg_items.ARMOUR: QColor(128, 160, 205),
+    rpg_items.AMMO: QColor(196, 168, 112), rpg_items.POTION: QColor(214, 110, 190),
+    rpg_items.INGREDIENT: QColor(120, 196, 120), rpg_items.BOOK: QColor(186, 140, 96),
+    rpg_items.SCROLL: QColor(220, 206, 160), rpg_items.KEY: QColor(232, 196, 96),
+    rpg_items.GOLD: QColor(240, 200, 80), rpg_items.MISC: QColor(170, 168, 160),
+}
+
+
+def _item_category(stack):
+    d = rpg_items.get(stack.get("id"))
+    return d.category if d is not None else str(stack.get("type", "misc"))
+
+
+def _item_card_icon(item_id, stack, px):
+    try:
+        import game.item_icons as item_icons
+        return item_icons.icon_pixmap(item_id, stack, int(px))
+    except Exception:
+        return None
+
+
+def _item_tip(stack, qty=None, extra=()):
+    """The tooltip lines for an item stack: name, kind and rarity, what it
+    does, value and weight, the count, and whether it is stolen."""
+    iid = stack.get("id")
+    d = rpg_items.get(iid)
+    name = stack.get("name") or (d.name if d else str(iid))
+    qty = int(stack.get("qty", 1) or 1) if qty is None else int(qty)
+    cat = _item_category(stack)
+    rarity = rpg_items.rarity_of(stack)
+    lines = [name, cat.title() + ("" if rarity == rpg_items.COMMON else f" · {rarity.title()}")]
+    if d is not None:
+        if d.category == rpg_items.WEAPON:
+            lines.append(f"{str(d.get('kind', 'melee')).title()} · "
+                         f"{sk.label(d.get('skill', 'blade'))} · {d.get('damage', 0)} damage")
+        elif d.category == rpg_items.ARMOUR:
+            lines.append(f"{str(d.get('armor_class', 'light')).title()} armour · "
+                         f"{d.get('armor_rating', 0)} rating")
+        elif d.category == rpg_items.AMMO:
+            lines.append(f"Ammunition · +{d.get('damage', 0)} damage")
+    desc = str(stack.get("description") or (d.desc if d else "") or "").strip()
+    if desc:
+        first = desc.split(". ")[0].rstrip(".") + "."
+        lines.append(first if len(first) <= 60 else first[:57].rstrip() + "...")
+    value = stack.get("value", d.value if d else 0)
+    weight = stack.get("weight", d.get("weight") if d else 0) or 0
+    lines.append(f"Value {int(value or 0)} g · Weight {float(weight):g}")
+    if qty > 1:
+        lines.append(f"Quantity {qty}")
+    import game.sim.ownership as own
+    if own.is_stolen(stack):
+        who = stack.get(own.STOLEN_FROM)
+        lines.append("Stolen" + (f" from {who}" if who else ""))
+    lines.extend(extra)
+    return "\n".join(lines)
+
+
+def _item_card(painter, stack, rect, *, selected=False, qty=None, active=False,
+               greyed=False, badges=(), badge_colors=(), extra=()):
+    """The :class:`cards.Card` for an item *stack* drawn in *rect*."""
+    iid = stack.get("id")
+    d = rpg_items.get(iid)
+    qty = int(stack.get("qty", 1) or 1) if qty is None else int(qty)
+    px = int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter))
+    cat = _item_category(stack)
+    rarity = rpg_items.rarity_of(stack)
+    return cards.Card(
+        title=str(stack.get("name") or (d.name if d else iid)),
+        icon=_item_card_icon(iid, stack, max(32, px)),
+        subtitle=cat.title(),
+        accent=_CATEGORY_ACCENT.get(cat, _CATEGORY_ACCENT[rpg_items.MISC]),
+        frame=(QColor(*rpg_items.rarity_rgb(stack)) if rarity != rpg_items.COMMON
+               else None),
+        quantity=qty,
+        badges=badges, badge_colors=badge_colors,
+        selected=selected, hovered=hits.hovered(rect), active=active, greyed=greyed,
+        tooltip=_item_tip(stack, qty, extra))
+
+
+def _card_page(index, page_size, count):
+    """(page, first index on it, pages) for the card at *index*."""
+    page_size = max(1, int(page_size))
+    pages = max(1, (count + page_size - 1) // page_size)
+    page = max(0, min(int(index), max(0, count - 1))) // page_size
+    return page, page * page_size, pages
+
+
+def _card_pager(painter, rect, page, pages, turn):
+    """"◂  2 / 3  ▸" in *rect* (right-aligned): *turn(session, step)* is
+    called by the arrows. Nothing when there is one page."""
+    if pages <= 1:
+        return
+    bw = 26
+    right = QRect(rect.right() - bw + 1, rect.y(), bw, rect.height())
+    left = QRect(right.x() - 60 - bw, rect.y(), bw, rect.height())
+    button(painter, left, "◂", lambda s: turn(s, -1), enabled=page > 0)
+    button(painter, right, "▸", lambda s: turn(s, 1), enabled=page < pages - 1)
+    T.text_in(painter, QRect(left.right() + 1, rect.y(), 60, rect.height()),
+              f"{page + 1} / {pages}", size=9, color=T.DIM, align=T.ALIGN_CENTER,
+              family="Segoe UI")
+
+
+def _split_shown(side_kind, index, stack):
+    """How many of a card's stack are still in it while half of it is picked
+    up (a right click split it); the stack's own count otherwise."""
+    qty = int(stack.get("qty", 1) or 1)
+    picked = drag.picked_source()
+    if picked is None or len(picked) < 4 or not picked[3]:
+        return qty
+    if side_kind == "container" and picked[0] == "container" and picked[1] == index:
+        return max(0, qty - int(picked[3]))
+    if side_kind == "pack" and picked[0] in ("pack", "strip") and picked[2] == stack.get("id"):
+        return max(0, qty - int(picked[3]))
+    return qty
+
+
+# ===========================================================================
 # Trade
 # ===========================================================================
 def _draw_trade(painter, session, w, h):
@@ -1687,84 +1811,92 @@ def _draw_trade(painter, session, w, h):
     # subtitle line).
     from PyQt5.QtCore import QPoint
     from PyQt5.QtGui import QFontMetrics
-    gold_w = QFontMetrics(T.font(10, italic=True, family="Segoe UI")).horizontalAdvance(gold_text)
+    gold_w = QFontMetrics(fonts.dialogue_font_px(13)).horizontalAdvance(gold_text)
     trade_anim.begin_frame()
     trade_anim.record_gold(QPoint(inner.x() + gold_w + 10, inner.y() + 48))
 
-    # buy list = merchant stock; sell list = player inventory (sellable)
+    # buy cards = merchant stock; sell cards = player inventory (sellable)
     stock = _merchant_stock(npc)
     sell = _sell_list(c)
     col_w = (inner.width() - 24) // 2
-    rows_bottom = inner.bottom() - 70          # room for the buttons below
+    head_y = ty + 4
+    grid_top = head_y + 30
+    by = inner.bottom() - 58                    # the buttons below the cards
+    pad = controls.gamepad()
 
-    # Each row shows the item's thumbnail: half the size of its inventory
-    # icon (game/ui/inventory_window.py). A list longer than the column scrolls
-    # to keep the selected row in view.
-    row_h = TRADE_THUMB + 6
-    list_top = ty + 22
-    fits = max(1, (rows_bottom - list_top) // row_h)
-    tops = st.setdefault("tops", [0, 0])
+    def _area(cx):
+        return QRect(cx + 4, grid_top, col_w - 8, max(1, by - 10 - grid_top))
+
+    left_x, right_x = inner.x(), inner.x() + col_w + 24
+    # Both sides' cards at one size: the smaller of the two that fit.
+    size = min((cards.layout_grid(_area(cx), len(lst), cards.COMPACT, cards.COMPACT_GAP,
+                                  min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
+                for cx, lst in ((left_x, stock), (right_x, sell))),
+               key=lambda wh: wh[0])
     for side, (title, lst, buying) in enumerate([("Buy", stock, True), ("Sell", sell, False)]):
-        cx = inner.x() + side * (col_w + 24)
-        if st["side"] == side:
-            row = min(st["row"], max(0, len(lst) - 1))
-            tops[side] = min(max(tops[side], row - fits + 1), row)
-        tops[side] = max(0, min(tops[side], max(0, len(lst) - fits)))
-        top = tops[side]
-        T.text(painter, cx, ty + 4, title, size=13,
-               color=T.GOLD_BRIGHT if st["side"] == side else T.DIM, bold=True)
+        cx = left_x if side == 0 else right_x
+        active = st["side"] == side
+        T.text_in(painter, QRect(cx + 6, head_y, col_w - 140, 24), title, size=13,
+                  color=T.GOLD_BRIGHT if active else T.DIM, bold=True,
+                  align=T.ALIGN_LEFT)
+        grid = cards.layout_grid(_area(cx), len(lst), size, cards.COMPACT_GAP, min_scale=1.0)
+        st.setdefault("cols", [1, 1])[side] = grid.cols
+        st.setdefault("sizes", [1, 1])[side] = grid.page_size
+        rows = st.setdefault("rows", [0, 0])
+        if active:
+            rows[side] = st["row"]
+        rows[side] = max(0, min(rows[side], max(0, len(lst) - 1)))
+        page, first, pages = _card_page(rows[side], grid.page_size, len(lst))
+        _card_pager(painter, QRect(cx + col_w - 120, head_y, 116, 24), page, pages,
+                    _trade_turn(side))
         if not lst:
-            T.text(painter, cx + 8, ty + 36, "Nothing to sell" if side else
+            T.text(painter, cx + 10, grid_top + 16, "Nothing to sell" if side else
                    "Nothing for sale", size=10, color=T.DIM, family="Segoe UI")
         shown = 0
-        for i, entry in enumerate(lst[top:top + fits], start=top):
-            ry = list_top + (i - top) * row_h
-            shown = i - top + 1
+        for i in range(first, min(first + grid.page_size, len(lst))):
+            entry = lst[i]
+            rect = grid.slots[i - first]
+            shown = i - first + 1
             iid = entry["id"] if isinstance(entry, dict) else entry
             d = rpg_items.get(iid)
             price = session._price(d.value if d else 0, buying, npc=npc,
                                    item_id=d.id if d else None)
-            selected = st["side"] == side and st["row"] == i
-            row = QRect(cx, ry, col_w, row_h - 2)
-            trade_anim.record_row(side, iid, row)
-            _row_target(painter, row, _trade_select(side, i),
-                        f"{'sell' if side else 'buy'}:{iid}")
+            selected = active and st["row"] == i
+            trade_anim.record_row(side, iid, QRect(rect))
+            hits.add(QRect(rect), _trade_select(side, i),
+                     f"{'sell' if side else 'buy'}:{iid}")
             if trade_anim.landing_hidden(side, iid):
                 continue            # its item is still flying in
-            if selected:
-                painter.fillRect(row, T.SELECT)
-            nm = (d.name if d else iid)
-            if not buying and isinstance(entry, dict) and entry.get("qty", 1) > 1:
-                nm += f" ×{entry['qty']}"
+            stack = entry if isinstance(entry, dict) and not buying else \
+                (rpg_items.make(iid) or {"id": iid, "name": iid})
             left = session.stock_left(entry) if buying else None
-            if left == 0:
-                nm += "  (sold out)"
-            elif left is not None:
-                nm += f" ×{left}"
-            colour = T.GOLD_BRIGHT if selected else T.INK
-            pm = _trade_thumb(iid, entry if isinstance(entry, dict) else None)
-            if pm is not None and not pm.isNull():
-                if left == 0:
-                    painter.setOpacity(0.45)
-                painter.drawPixmap(cx + 4 + (TRADE_THUMB - pm.width()) // 2,
-                                   ry + (row_h - 2 - pm.height()) // 2, pm)
-                painter.setOpacity(1.0)
-            T.text(painter, cx + TRADE_THUMB + 12, ry + row_h // 2 + 4, nm, size=10,
-                   color=T.DIM if left == 0 else colour, family="Segoe UI")
-            T.text_in(painter, QRect(cx, ry, col_w - 8, row_h - 2), f"{price}g", size=9,
-                      color=T.GOLD, align=T.ALIGN_RIGHT, family="Segoe UI")
-        # Where a new row would appear: a card with no row to land on (an
-        # item sold into stock the merchant does not list) lands here.
-        trade_anim.record_column(side, QRect(cx, list_top + shown * row_h, col_w, row_h - 2))
-        # More above or below the rows shown.
-        if top > 0:
-            T.text_in(painter, QRect(cx, list_top - 18, col_w - 8, 16), "▲ more", size=8,
-                      color=T.DIM, align=T.ALIGN_RIGHT, family="Segoe UI")
-        if top + fits < len(lst):
-            T.text_in(painter, QRect(cx, list_top + fits * row_h - 2, col_w - 8, 16),
-                      "▼ more", size=8, color=T.DIM, align=T.ALIGN_RIGHT, family="Segoe UI")
+            qty = (int(entry.get("qty", 1) or 1) if not buying else
+                   (left if left else 0))
+            unwanted = not buying and not session.merchant_will_buy(iid)
+            note = ("sold out" if left == 0 else "not wanted" if unwanted else "")
+            extra = [f"{'Buy' if buying else 'Sell'} for {price} g"]
+            if buying:
+                extra.append("Plenty in stock" if left is None else
+                             f"{left} left" if left else "Sold out until tomorrow")
+            card = _item_card(painter, stack, rect, selected=selected, qty=qty,
+                              greyed=left == 0 or unwanted,
+                              badges=(note, f"{price} g"),
+                              badge_colors=(T.DIM, T.GOLD_BRIGHT), extra=extra)
+            cards.draw_card(painter, rect, card)
+            cards.note_tooltip(rect, card, focus=pad and selected)
+        # Where a new card would appear: an item with no card to land on (one
+        # sold into stock the merchant does not list) flies there.
+        if grid.slots:
+            spot = grid.slots[min(shown, len(grid.slots) - 1)]
+            trade_anim.record_column(side, QRect(spot))
 
-    # The trade button names what it will do; Leave ends the trade.
+    # divider
+    painter.setPen(T.GILD)
+    midx = inner.x() + col_w + 12
+    painter.drawLine(midx, grid_top - 4, midx, by - 8)
+
+    # The trade button names what it will do, and for how much; Leave ends
+    # the trade.
     lst = stock if st["side"] == 0 else sell
     label, can = "Choose an item", False
     if lst:
@@ -1772,7 +1904,7 @@ def _draw_trade(painter, session, w, h):
         d = rpg_items.get(entry["id"] if isinstance(entry, dict) else entry)
         buying = st["side"] == 0
         price = session._price(d.value if d else 0, buying, npc=npc,
-                                   item_id=d.id if d else None)
+                               item_id=d.id if d else None)
         name_ = d.name if d else "item"
         sold_out = buying and session.stock_left(entry) == 0
         can = (c.gold >= price and not sold_out) if buying else True
@@ -1784,7 +1916,7 @@ def _draw_trade(painter, session, w, h):
             label = f"{name_}: sold out until tomorrow"
         elif buying and not can:
             label = f"{name_}: {price}g (not enough gold)"
-    by = inner.bottom() - 58
+    by = inner.bottom() - 52
     button(painter, QRect(inner.x() + (inner.width() - 360) // 2, by, 360, 34),
            label, lambda sess: _handle_trade(sess, "return"), enabled=can, primary=True)
     button(painter, QRect(inner.right() - 110, by, 110, 34), "Leave",
@@ -1795,15 +1927,15 @@ def _draw_trade(painter, session, w, h):
                lambda sess: _handle_trade(sess, "r"))
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "Click or ↑/↓ select   ←/→ buy|sell   Enter trade   R read   Esc leave", size=9,
-              color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+              "Click or arrows select   Tab buy|sell   Enter trade   R read   Esc leave",
+              size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+    cards.flush_tooltip(painter)
 
     # Items changing hands, over everything else on the screen.
     trade_anim.draw(painter)
 
 
-#: Trade rows show the item's thumbnail at half its inventory icon
-#: (inventory_window.CELL less its margin).
+#: Trade thumbnails (the flying card's picture) at half an inventory icon.
 TRADE_THUMB = (58 - 10) // 2
 
 
@@ -1830,9 +1962,51 @@ def _trade_select(side, row):
     return action
 
 
+def _trade_turn(side):
+    """A trade column's page arrows: onto the first card of the next page."""
+    def turn(session, step):
+        st = _sel(session).setdefault("trade", {"row": 0, "side": 0})
+        lst = (_merchant_stock(session.merchant_npc) if side == 0
+               else _sell_list(session.game.character))
+        size = max(1, st.get("sizes", [1, 1])[side])
+        rows = st.setdefault("rows", [0, 0])
+        row = st["row"] if st["side"] == side else rows[side]
+        st["side"] = side
+        st["row"] = max(0, min((row // size + step) * size, max(0, len(lst) - 1)))
+    return turn
+
+
 def _merchant_stock(npc):
     from ..rpg.shops import stock_for
     return stock_for(npc)
+
+
+def _trade_move(st, move, stock, sell):
+    """An arrow key in the trade's two card grids: within one, and across to
+    the other off its inner edge (Tab also switches)."""
+    side = st["side"]
+    lst, other = (stock, sell) if side == 0 else (sell, stock)
+    cols = max(1, st.get("cols", [1, 1])[side])
+    size = max(1, st.get("sizes", [1, 1])[side])
+    ocols = max(1, st.get("cols", [1, 1])[side ^ 1])
+    osize = max(1, st.get("sizes", [1, 1])[side ^ 1])
+    rows = st.setdefault("rows", [0, 0])
+    row = max(0, min(st["row"], max(0, len(lst) - 1)))
+    if move in ("left", "right"):
+        first_col = not lst or row % cols == 0
+        last_col = not lst or row % cols == cols - 1 or row >= len(lst) - 1
+        toward_other = (move == "right") == (side == 0)
+        if toward_other and (last_col if side == 0 else first_col):
+            line = (row % size) // cols
+            ofirst = (rows[side ^ 1] // osize) * osize
+            col = 0 if side == 0 else ocols - 1
+            rows[side] = row
+            st["side"] = side ^ 1
+            st["row"] = max(0, min(ofirst + line * ocols + col, max(0, len(other) - 1)))
+            return
+        if not toward_other and (last_col if side == 1 else first_col):
+            return                      # the outer edge
+    st["row"] = cards.navigate(row, move, len(lst), cols, size)
 
 
 def _handle_trade(session, key):
@@ -1842,12 +2016,18 @@ def _handle_trade(session, key):
     stock = _merchant_stock(npc)
     sell = _sell_list(c)
     lst = stock if st["side"] == 0 else sell
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % max(1, len(lst)); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % max(1, len(lst)); return True
-    if key in ("left", "a", "right", "d"):
-        st["side"] ^= 1; st["row"] = 0; return True
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move:
+        _trade_move(st, move, stock, sell)
+        return True
+    if key == "tab":
+        rows = st.setdefault("rows", [0, 0])
+        rows[st["side"]] = st["row"]
+        st["side"] ^= 1
+        st["row"] = rows[st["side"]]
+        return True
     if key in ("return", "enter") and lst:
         st["row"] = min(st["row"], len(lst) - 1)
         entry = lst[st["row"]]
@@ -1856,8 +2036,8 @@ def _handle_trade(session, key):
         d = rpg_items.get(iid)
         price = session._price(d.value if d else 0, buying, npc=npc,
                                    item_id=d.id if d else None)
-        # Whether the item already has a row on the side it is going to: if
-        # so it lands on that row, otherwise its new row waits for it.
+        # Whether the item already has a card on the side it is going to: if
+        # so it lands on that card, otherwise its new card waits for it.
         to_list = sell if buying else stock
         had_row = any((e["id"] if isinstance(e, dict) else e) == iid for e in to_list)
         done = session.buy(iid) if buying else session.sell(iid)
@@ -2222,15 +2402,34 @@ def _cont_state(session):
                                     {"side": 0, "row_c": 0, "row_p": 0})
 
 
-#: The container screen's draggable rows and its two drop zones, recorded as
-#: it paints for the window that hosts it (game/ui/container_window.py):
-#: ``cells`` [(QRect, source)], ``zones`` [(QRect, target)].
-CONTAINER_DRAG = {"cells": [], "zones": []}
+#: The container screen's cards and drop zones, recorded as it paints for
+#: the window that hosts it (game/ui/container_window.py): ``cells``
+#: [(QRect, source)] (the drag sources), ``zones`` [(QRect, target)] (each
+#: column, then each contents card as ``("container", index)``), and
+#: ``stacks`` [(QRect, source, qty)] for a right click to split.
+CONTAINER_DRAG = {"cells": [], "zones": [], "stacks": []}
+
+#: Container cards are compact; they shrink (to this) to keep a chest on one page.
+_CONT_MIN_SCALE = 0.8
+
+
+def _cont_turn(side):
+    def turn(session, step):
+        st = _cont_state(session)
+        key = "row_c" if side == 0 else "row_p"
+        n = len(session.container_inventory()) if side == 0 else \
+            len(session.game.character.inventory)
+        size = max(1, st.get("size_c" if side == 0 else "size_p", 1))
+        page = st[key] // size + step
+        st["side"] = side
+        st[key] = max(0, min(page * size, max(0, n - 1)))
+    return turn
 
 
 def _draw_container(painter, session, w, h):
     CONTAINER_DRAG["cells"] = []
     CONTAINER_DRAG["zones"] = []
+    CONTAINER_DRAG["stacks"] = []
     c = session.game.character
     st = _cont_state(session)
     citems = session.container_inventory()
@@ -2240,64 +2439,84 @@ def _draw_container(painter, session, w, h):
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, session.container_name(),
                    f"{c.gold} gold    ·    {controls.label('click')} to {taking} / store   ·   "
-                   f"{controls.label('back')} close")
+                   f"right click splits a stack   ·   {controls.label('back')} close")
 
     st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
     st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))
 
     col_w = int((inner.width() - 24) / 2)
-    # Column titles sit clear below the heading's subtitle line (drawn by
-    # T.heading at ty-8); the item list starts below the titles.
-    head_y = ty + 20
-    list_y = head_y + 24
-    row_h = 22
+    head_y = ty + 4                 # the column titles' row
+    grid_top = head_y + 30
+    btn_h = 30
+    by = inner.bottom() - btn_h
+    worn = {v for v in (c.equipment or {}).values() if v}
+    pad = controls.gamepad()
 
-    def _column(cx, title, items, sel_row, active, side):
-        zone = QRect(cx, head_y - 16, col_w, inner.bottom() - 40 - (head_y - 16))
-        CONTAINER_DRAG["zones"].append((zone, ("container", None) if side == 0
-                                        else ("pack", None)))
-        if drag.current is not None and hits.hovered(zone):
+    def _area(cx):
+        return QRect(cx + 4, grid_top, col_w - 8, max(1, by - 10 - grid_top))
+
+    # Both columns' cards at one size: the smaller of the two that fit.
+    left_x, right_x = inner.x(), inner.x() + col_w + 24
+    size = min((cards.layout_grid(_area(cx), len(lst), cards.COMPACT, cards.COMPACT_GAP,
+                                  min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
+                for cx, lst in ((left_x, citems), (right_x, pitems))),
+               key=lambda wh: wh[0])
+
+    def _column(cx, title, items, side):
+        kind = "container" if side == 0 else "pack"
+        active = st["side"] == side
+        key = "row_c" if side == 0 else "row_p"
+        zone = QRect(cx, head_y, col_w, by - 6 - head_y)
+        CONTAINER_DRAG["zones"].append((zone, (kind, None)))
+        if (drag.current is not None or drag.picked_source() is not None) \
+                and hits.hovered(zone):
             painter.save()
             painter.setPen(QPen(T.GOLD_BRIGHT, 1.5))
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(zone, 5, 5)
             painter.restore()
-        head_col = T.GOLD_BRIGHT if active else T.DIM
-        T.text(painter, cx + 6, head_y, title, size=12, color=head_col, bold=True,
-               family="Segoe UI")
+        T.text_in(painter, QRect(cx + 6, head_y, col_w - 140, 24), title, size=12,
+                  color=T.GOLD_BRIGHT if active else T.DIM, bold=True,
+                  align=T.ALIGN_LEFT, family="Segoe UI")
+        grid = cards.layout_grid(_area(cx), len(items), size, cards.COMPACT_GAP,
+                                 min_scale=1.0)
+        st["cols_c" if side == 0 else "cols_p"] = grid.cols
+        st["size_c" if side == 0 else "size_p"] = grid.page_size
+        page, first, pages = _card_page(st[key], grid.page_size, len(items))
+        _card_pager(painter, QRect(cx + col_w - 120, head_y, 116, 24), page, pages,
+                    _cont_turn(side))
         if not items:
-            T.text(painter, cx + 10, list_y + 16, "(empty)", size=10, color=T.DIM,
+            T.text(painter, cx + 10, grid_top + 16, "(empty)", size=10, color=T.DIM,
                    family="Segoe UI")
-        for i, stack in enumerate(items):
-            ry = list_y + i * row_h
-            if ry > inner.bottom() - 58:
-                break
-            if i == sel_row and active:
-                painter.fillRect(QRect(cx, ry, col_w, row_h - 2), T.SELECT)
-            name = stack.get("name", stack.get("id"))
-            _row_target(painter, QRect(cx, ry, col_w, row_h - 2),
-                        _cont_click(side, i), f"{taking if side == 0 else 'store'}:{i}")
-            CONTAINER_DRAG["cells"].append(
-                (QRect(cx, ry, col_w, row_h - 2),
-                 ("container", i, stack.get("id")) if side == 0
-                 else ("pack", None, stack.get("id"))))
-            qty = f" ×{stack['qty']}" if stack.get("qty", 1) > 1 else ""
-            ncol = T.GOLD_BRIGHT if (i == sel_row and active) else T.INK
-            T.text(painter, cx + 8, ry + 15, name + qty, size=11, color=ncol,
-                   family="Segoe UI")
+        for i in range(first, min(first + grid.page_size, len(items))):
+            stack = items[i]
+            rect = grid.slots[i - first]
+            selected = i == st[key] and active
+            qty = _split_shown(kind, i, stack)
+            card = _item_card(painter, stack, rect, selected=selected, qty=qty,
+                              active=side == 1 and stack.get("id") in worn,
+                              greyed=qty <= 0)
+            cards.draw_card(painter, rect, card)
+            cards.note_tooltip(rect, card, focus=pad and selected)
+            hits.add(QRect(rect), _cont_click(side, i),
+                     f"{taking if side == 0 else 'store'}:{i}")
+            source = (("container", i, stack.get("id")) if side == 0
+                      else ("pack", None, stack.get("id")))
+            CONTAINER_DRAG["cells"].append((QRect(rect), source))
+            CONTAINER_DRAG["stacks"].append((QRect(rect), source,
+                                             int(stack.get("qty", 1) or 1)))
+            if side == 0:
+                CONTAINER_DRAG["zones"].append((QRect(rect), ("container", i)))
 
-    left_x = inner.x()
-    right_x = inner.x() + col_w + 24
-    _column(left_x, "Contents", citems, st["row_c"], st["side"] == 0, 0)
-    _column(right_x, "Your inventory", pitems, st["row_p"], st["side"] == 1, 1)
+    _column(left_x, "Contents", citems, 0)
+    _column(right_x, "Your inventory", pitems, 1)
 
     # divider
     painter.setPen(T.GILD)
     midx = inner.x() + col_w + 12
-    painter.drawLine(midx, list_y - 4, midx, inner.bottom() - 40)
+    painter.drawLine(midx, grid_top - 4, midx, by - 8)
 
-    bw, bh = 120, 30
-    by = inner.bottom() - bh
+    bw, bh = 120, btn_h
     button(painter, QRect(inner.x(), by, bw, bh), "Steal all" if taking == "steal" else "Take all",
            lambda sess: sess.take_all_from_container(), enabled=bool(citems),
            primary=True)
@@ -2310,13 +2529,15 @@ def _draw_container(painter, session, w, h):
         hint += "    ·    R: read"
     T.text_in(painter, QRect(inner.x() + bw, by, inner.width() - 2 * bw, bh),
               hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+    cards.flush_tooltip(painter)
 
 
 def _cont_click(side, index):
-    """A click on a container row: take it (contents) or store it (yours)."""
+    """A click on a container card: take it (contents) or store it (yours)."""
     def act(session):
         st = _cont_state(session)
         st["side"] = side
+        st["row_c" if side == 0 else "row_p"] = index
         if side == 0:
             session.take_from_container(index)
         else:
@@ -2324,22 +2545,47 @@ def _cont_click(side, index):
     return act
 
 
+def _cont_move(st, move, citems, pitems):
+    """An arrow key in the container's two card grids: within a grid, and
+    across to the other one off its inner edge (Tab also switches)."""
+    side = st["side"]
+    key, other_key = ("row_c", "row_p") if side == 0 else ("row_p", "row_c")
+    items, others = (citems, pitems) if side == 0 else (pitems, citems)
+    cols = max(1, st.get("cols_c" if side == 0 else "cols_p", 1))
+    size = max(1, st.get("size_c" if side == 0 else "size_p", cols))
+    ocols = max(1, st.get("cols_p" if side == 0 else "cols_c", 1))
+    osize = max(1, st.get("size_p" if side == 0 else "size_c", ocols))
+    row = st[key]
+    if move in ("left", "right"):
+        first_col = not items or row % cols == 0
+        last_col = not items or row % cols == cols - 1 or row >= len(items) - 1
+        inner_edge = last_col if side == 0 else first_col
+        toward_other = (move == "right") == (side == 0)
+        if toward_other and inner_edge:
+            # Across to the other grid, on the same row of cards.
+            line = (row % size) // cols
+            ofirst = (st[other_key] // osize) * osize
+            col = 0 if side == 0 else ocols - 1
+            st[other_key] = max(0, min(ofirst + line * ocols + col, max(0, len(others) - 1)))
+            st["side"] = side ^ 1
+            return
+        if not toward_other and (last_col if side == 1 else first_col):
+            return                      # the outer edge
+    st[key] = cards.navigate(row, move, len(items), cols, size)
+
+
 def _handle_container(session, key):
     st = _cont_state(session)
     citems = session.container_inventory()
     pitems = session.game.character.inventory
-    if key in ("left", "a", "right", "d", "tab"):
+    if key == "tab":
         st["side"] ^= 1
         return True
-    if key in ("up", "w"):
-        k = "row_c" if st["side"] == 0 else "row_p"
-        n = len(citems) if st["side"] == 0 else len(pitems)
-        st[k] = (st[k] - 1) % max(1, n)
-        return True
-    if key in ("down", "s"):
-        k = "row_c" if st["side"] == 0 else "row_p"
-        n = len(citems) if st["side"] == 0 else len(pitems)
-        st[k] = (st[k] + 1) % max(1, n)
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move:
+        _cont_move(st, move, citems, pitems)
         return True
     if key in ("return", "enter"):
         if st["side"] == 0:
