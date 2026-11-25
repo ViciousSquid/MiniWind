@@ -287,10 +287,21 @@ runs it as its own job (`tests/README.md`).
 ## Map and save compatibility
 
 * **Maps.** Fio 3.5 writes map version 5 (convex planes in the brush's own
-  frame). MiniWind's shipped maps are version 3 and are converted on load;
-  they are not rewritten on disk. All 12 angled brushes of the overworld keep
-  their world bounds exactly (worst error 1.5e-11). Exported `.fiopak`
-  packages still carry version 4.
+  frame). MiniWind's shipped maps were version 3 and are converted on load.
+  All 12 angled brushes of the overworld keep their world bounds exactly
+  (worst error 1.5e-11). Exported `.fiopak` packages still carry version 4.
+  Since 3.5.2.2411 the overworld (`miniwind_world.json`) is saved by the
+  editor as version 5: each angled brush's one face record is on its plane
+  and its `pos` is its placement, so the roof whose stored `pos` was 4928
+  units from its planes, and the per-face copies that disagreed with them,
+  are settled in the file. Every brush draws exactly what it drew from the
+  version-3 file (`test_the_version_5_world_draws_what_its_legacy_save_drew`);
+  the save's one visible addition is a trigger volume. The version-3 record
+  of its 12 angled brushes is kept as a test fixture
+  (`tests/brush_model/legacy_miniwind_world.json`) for the tests that
+  characterise legacy data (the brush-model drift counts, Stage 1's face
+  changes, Stage 2a's stale bound). The caves are still version 3, boxes
+  throughout.
 * **Saves.** MiniWind's schema is kept: co-op campaign saves version 4, solo
   saves version 3, full/delta/both modes and Big World cell deltas. Five saves
   made by the pre-migration code (solo overworld, solo cave full/delta/both,
@@ -432,6 +443,16 @@ builds' test sessions size the 3D view differently. Run with
   the world with 256-texel paint (a content change), or keep converted chunks
   per process (~26 MB more memory).
 * Hardware parity on M5/Adreno is unverified; macOS behaviour is unverified.
+* On the hosted Linux runner's Mesa 26 llvmpipe (not Mesa 25), the first
+  paint of a session lights one model of the `_SHOWCASE` fixture differently
+  from every later paint (about 750 pixels, channel difference up to 44). It
+  does not come from the uniform upload path (a later raw paint matches a
+  wrapped one), the shadow pass (a later frame re-rendering the shadow maps,
+  with or without `glFinish` after it, matches the later frames), or the
+  first-frame model streams, texture loads or model loads (each redone, the
+  frame still matches the later ones). The cause is not found; it has not
+  been reproduced off the runner. `test_raw_uniform_uploads` compares two
+  steady-state paints, as its subprocess test always did.
 
 
 ## Milestone 9 — Fio Canary sky-map integration (2026-11-15)

@@ -497,9 +497,11 @@ def test_the_editor_pickers_ignore_a_stale_copy(main_window, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The shipped brush with a stale copy (MiniWind's world: a roof whose stored
-# pos is 2032 units along X and 4928 along Z from its planes; Fio's test used
-# two clipped terrain brushes of maps MiniWind does not ship)
+# The legacy brush with a stale copy (MiniWind's world as last saved before
+# version 5, ``bs.LEGACY_WORLD``: a roof whose stored pos is 2032 units along
+# X and 4928 along Z from its planes; Fio's test used two clipped terrain
+# brushes of maps MiniWind does not ship). The shipped map is now version 5,
+# where the same roof's pos is its placement.
 # ---------------------------------------------------------------------------
 
 CLIPPED_TERRAIN = 'e23ac095'
@@ -508,7 +510,7 @@ CLIPPED_TERRAIN = 'e23ac095'
 @pytest.mark.parametrize("name", ["miniwind_world.json"])
 def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
     # The world's convex brushes are enough company (it has 16,000 boxes).
-    raws = [b for b in bs.shipped_maps(REPO_ROOT)[name] if bs.encoding(b) == 'convex']
+    raws = [b for b in bs.legacy_maps(REPO_ROOT)[name] if bs.encoding(b) == 'convex']
     brushes = [bs.loaded(b) for b in raws]
     slot = next(i for i, b in enumerate(brushes)
                 if str(b.get('id')).startswith(CLIPPED_TERRAIN))
@@ -522,6 +524,12 @@ def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
     assert np.allclose(hi, bs.world_convex(raw).bounds[1], atol=1e-9)
     # Loading either representation leaves the brush's world bound on its planes.
     assert brush['pos'][0] - brush['size'][0] / 2 == pytest.approx(lo[0], abs=1e-9)
+    # The shipped version-5 save of the same roof stores that placement, so
+    # it loads to the same solid with nothing to re-derive.
+    shipped = next(b for b in bs.shipped_maps(REPO_ROOT)[name]
+                   if str(b.get('id')).startswith(CLIPPED_TERRAIN))
+    assert np.allclose(bp.world_bounds(bs.loaded(shipped)), np.concatenate((lo, hi)), atol=1e-9)
+    assert shipped['pos'][0] - shipped['size'][0] / 2 == pytest.approx(lo[0], abs=1e-9)
 
     # Drawn exactly where its planes are.
     table = RenderTable()

@@ -303,8 +303,20 @@ def test_fio_gl_debug_checks_every_upload_and_the_app_takes_the_raw_path(tmp_pat
 
 def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
         fio_session, monkeypatch):
-    """Fails before the change: 149 wrapped array uploads on this frame (it
-    also refreshes the shadow maps; ~47 a steady-state showcase frame)."""
+    """Fails before the change: 149 wrapped array uploads on a frame that
+    refreshes the shadow maps (~47 a steady-state showcase frame).
+
+    The two paints compared are steady-state ones, both re-rendering the
+    shadow maps, as the subprocess test above paints once before it measures.
+    The session's first paint does one-off work, and on the hosted runner's
+    Mesa 26 llvmpipe it lights one model of the showcase differently from
+    every later paint *whichever path the uploads take*: CI showed a later
+    raw paint matching a wrapped one, and that neither re-rendering the shadow
+    maps, finishing the shadow pass (glFinish), rebuilding the model instance
+    streams, reloading the textures nor reloading the models makes a later
+    frame come out as the first did. That is not what this test is about; it
+    is recorded in docs/MIGRATION_FIO_3.5.md (Known limitations). The first
+    paint still sends no row through the wrappers."""
     import OpenGL.GL as gl
     from engine.renderer.core import uniform_rows as ur
 
@@ -334,70 +346,37 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
             return _real(*args)
         monkeypatch.setattr(gl, name, recording)
 
-    raw = session.paint()
+    renderer = session.view.renderer
+
+    def paint_rerendering_shadows():
+        # Every shadow slot out of date: the paint renders the shadow maps
+        # again, so the shadow pass's uploads are in both compared frames.
+        renderer._shadow_slot_sig = [None] * len(renderer._shadow_slot_sig)
+        return session.paint()
+
+    session.paint()                    # the session's first paint (see above)
+    assert not wrapped, "%d row uniforms of the first paint went through the wrappers: %s" % (
+        len(wrapped), sorted(set(wrapped)))
+
+    raw = paint_rerendering_shadows()
     raw_stats = _stats(session)
     assert not wrapped, "%d row uniforms still went through the wrappers: %s" % (
         len(wrapped), sorted(set(wrapped)))
+    assert raw_stats.get('shadow_draw_calls'), "the compared frame rendered no shadow map"
 
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: False)
-    through_wrappers = session.paint()
+    through_wrappers = paint_rerendering_shadows()
     wrapped_stats = _stats(session)
     assert wrapped, "the wrapper path sent nothing: the frame drew no row-uploading pass"
+    assert wrapped_stats.get('shadow_draw_calls') == raw_stats.get('shadow_draw_calls')
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: True)
     assert raw.max() > 0, "the frame is blank"
     if not np.array_equal(raw, through_wrappers):
-        # Which differs: the upload path, or the first paint from the ones
-        # after it? A third paint, raw again, says.
-        again = session.paint()
-        renderer = session.view.renderer
-        # A frame that re-renders the shadow maps, not the first one: does it
-        # come out as the first did?
-        renderer._shadow_slot_sig = [None] * len(renderer._shadow_slot_sig)
-        rerendered = session.paint()
-        # And with the driver made to finish the shadow pass before the lit
-        # passes read it?
-        import OpenGL.GL as gl_finish
-        real_shadows = type(renderer).render_shadow_maps
-
-        def finished(self, *args, **kwargs):
-            result = real_shadows(self, *args, **kwargs)
-            gl_finish.glFinish()
-            return result
-        renderer._shadow_slot_sig = [None] * len(renderer._shadow_slot_sig)
-        type(renderer).render_shadow_maps = finished
-        try:
-            finished_frame = session.paint()
-        finally:
-            type(renderer).render_shadow_maps = real_shadows
-
-        def which(frame):
-            return ("the first" if np.array_equal(frame, raw) else
-                    "the later ones" if np.array_equal(frame, through_wrappers)
-                    else "neither")
-        message = _frames_differ(raw, through_wrappers)
-        message += ("; a frame re-rendering the shadows matches %s; with glFinish "
-                    "after the shadow pass, %s" % (which(rerendered), which(finished_frame)))
-        # What only the first frame does: build the model instance streams and
-        # their vertex arrays, load the textures, load the models. Each made to
-        # happen again, in turn: the one whose frame matches the first is it.
-        renderer.__dict__.pop('_model_instance_streams', None)
-        fresh_streams = session.paint()
-        renderer.texture_manager.clear()
-        fresh_textures = session.paint()
-        renderer.loaded_models.clear()
-        fresh_models = session.paint()
-        message += ("; fresh model streams: %s; then fresh textures: %s; then "
-                    "fresh models: %s" % (which(fresh_streams), which(fresh_textures),
-                                          which(fresh_models)))
-        message += ("; a third paint (raw again) %s; render stats that differ, "
-                    "raw -> wrapped: %s" % (
-                        "matches the raw one" if np.array_equal(again, raw) else
-                        "matches the wrapped one" if np.array_equal(again, through_wrappers)
-                        else "matches neither",
-                        {k: (raw_stats.get(k), wrapped_stats.get(k))
-                         for k in sorted(set(raw_stats) | set(wrapped_stats))
-                         if raw_stats.get(k) != wrapped_stats.get(k)}))
-        raise AssertionError(message)
+        raise AssertionError(_frames_differ(raw, through_wrappers) + (
+            "; render stats that differ, raw -> wrapped: %s" % {
+                k: (raw_stats.get(k), wrapped_stats.get(k))
+                for k in sorted(set(raw_stats) | set(wrapped_stats))
+                if raw_stats.get(k) != wrapped_stats.get(k)}))
 
 
 def _stats(session):

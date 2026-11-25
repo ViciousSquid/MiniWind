@@ -155,16 +155,22 @@ def test_every_shipped_map_loads_to_the_solids_its_file_describes(name):
 
 
 def test_loading_localises_a_shipped_brush_however_stale_its_copy():
-    """``miniwind_world``'s roof brush ``e23ac095`` stores a pos 4928 units
-    off its planes; the load places it by its planes' centre, so nothing the
-    editor holds drifts. (Fio's test used its two clipped terrain brushes,
-    128 units off, in maps MiniWind does not ship.)"""
+    """``miniwind_world``'s roof brush ``e23ac095``, as the map's last legacy
+    save stored it (``bs.LEGACY_WORLD``), has a pos 4928 units off its
+    planes; the load places it by its planes' centre, so nothing the editor
+    holds drifts -- and it holds exactly the solid the shipped version-5 save
+    stores. (Fio's test used its two clipped terrain brushes, 128 units off,
+    in maps MiniWind does not ship.)"""
+    legacy = bs.legacy_maps(REPO_ROOT)
     for name in ("miniwind_world.json",):
-        raw = next(b for b in MAPS[name] if str(b.get('id')).startswith('e23ac095'))
+        raw = next(b for b in legacy[name] if str(b.get('id')).startswith('e23ac095'))
         assert bs.inconsistencies(raw)['bound_drift'] == pytest.approx(4928.0)
         live = bs.loaded(raw)
         assert 'bound_drift' not in bs.inconsistencies(live)
         assert _same_solid(bg.get_convex(live), bs.world_convex(raw))
+        shipped = next(b for b in MAPS[name] if str(b.get('id')).startswith('e23ac095'))
+        assert 'bound_drift' not in bs.inconsistencies(shipped)
+        assert _same_solid(bs.world_convex(shipped), bs.world_convex(raw))
 
 
 # ---------------------------------------------------------------------------

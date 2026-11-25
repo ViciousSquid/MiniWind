@@ -15,6 +15,12 @@ The Stage 0 reading is frozen below (it is what
 is the helper. Both are compared *as drawn*: a missing scale is the 1.0 it
 draws as, and a Natural face's stored scale is not drawn. The pixel-level
 check of the same claim is ``tools/compare_map_pixels.py``.
+
+The shipped ``miniwind_world`` has since been re-saved as version 5, which
+writes each face's one record onto its plane and drops the per-tag copies, so
+the Stage 0 reading no longer applies to it. The comparison reads the map's
+last legacy save (``bs.LEGACY_WORLD``); ``test_semantics_snapshot`` holds the
+version-5 map to drawing exactly what that record draws.
 """
 
 import pytest
@@ -24,6 +30,8 @@ from tests.helpers import brush_semantics as bs
 from tests.helpers.paths import REPO_ROOT
 
 MAPS = bs.shipped_maps(REPO_ROOT)
+#: The legacy (pre-version-5) record Stage 1's comparison is defined on.
+LEGACY = bs.legacy_maps(REPO_ROOT)
 
 WORLD = 'miniwind_world.json'
 WALL_SCALED = '0ce48c9d-d122-49ad-b3ff-2147acdbfbc7'
@@ -80,7 +88,7 @@ def _drawn(material):
 
 def _changes():
     changes = {}
-    for name, brushes in MAPS.items():
+    for name, brushes in LEGACY.items():
         for brush in brushes:
             if bs.encoding(brush) == 'box':
                 continue        # the box path is untouched by Stage 1

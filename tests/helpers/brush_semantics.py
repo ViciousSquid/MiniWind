@@ -551,15 +551,38 @@ def shipped_maps(root):
     for path in sorted(glob.glob(os.path.join(root, 'maps', '*.json'))):
         if path.endswith('_autosave.json'):
             continue        # the editor's autosave of a level, not a shipped map
-        with open(path) as handle:
-            data = json.load(handle)
-        legacy_world_planes = int(data.get('version', 0) or 0) < 5
-        brushes = [
-            dict(brush, **{WORLD_PLANES: True})
-            if legacy_world_planes and bg.brush_has_geometry(brush)
-            else dict(brush)
-            for brush in data.get('brushes') or []
-        ]
+        brushes = _file_brushes(path)
         if brushes:
             out[os.path.basename(path)] = brushes
     return out
+
+
+def _file_brushes(path):
+    """The brushes of the map file at *path*, as :func:`shipped_maps` reads
+    them: a convex brush of a pre-version-5 file is marked
+    :data:`WORLD_PLANES`."""
+    with open(path) as handle:
+        data = json.load(handle)
+    legacy_world_planes = int(data.get('version', 0) or 0) < 5
+    return [
+        dict(brush, **{WORLD_PLANES: True})
+        if legacy_world_planes and bg.brush_has_geometry(brush)
+        else dict(brush)
+        for brush in data.get('brushes') or []
+    ]
+
+
+#: ``miniwind_world``'s twelve convex brushes exactly as its last
+#: pre-version-5 save stored them (map version 3, commit ``158af14``): world
+#: planes, per-tag material dicts, and the roof ``e23ac095`` whose stored
+#: ``pos`` is 4928 units from its planes. The shipped map has since been
+#: re-saved as version 5, which settles all of that; this fixture keeps the
+#: legacy data the load-time migration must still read.
+LEGACY_WORLD = os.path.join('tests', 'brush_model', 'legacy_miniwind_world.json')
+
+
+def legacy_maps(root):
+    """``{'miniwind_world.json': brushes}`` from :data:`LEGACY_WORLD`, read
+    as :func:`shipped_maps` reads a map file (its brushes marked
+    :data:`WORLD_PLANES`)."""
+    return {'miniwind_world.json': _file_brushes(os.path.join(root, LEGACY_WORLD))}
