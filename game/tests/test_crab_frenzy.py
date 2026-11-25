@@ -1,11 +1,15 @@
-"""Crabs feed on gibs near water (game/crab_frenzy.py, GoreFX.bite/hold)."""
+"""Crabs feed on gibs: blue near water, red on sand (game/crab_frenzy.py, GoreFX.bite/hold)."""
 
 from __future__ import annotations
 
+import math
 import random
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+
+from engine import terrain_biomes as tb
 
 from .. import crab_frenzy as cf
 from .. import fio
@@ -286,3 +290,176 @@ def test_crabs_never_chase_more_than_150_from_where_the_chase_began(monkeypatch)
     before = len(hurt.player)
     _run(session, clock, frenzy, 2.0)
     assert len(hurt.player) == before                      # out of reach: no more bites
+
+
+# -- blue crabs by the water, red crabs on the sand -----------------------------------
+
+#: Where the tests' gibs fall: by the water (the _session sea, z -900..-300),
+#: on the desert (west, far from water) and on grass (east, far from water).
+BY_WATER = (0.0, 0.0, -150.0)
+ON_SAND = (-2500.0, 0.0, 2000.0)
+ON_GRASS = (2500.0, 0.0, 2000.0)
+
+
+class _Terrain:
+    """A terrain with a biome map: desert west of *desert_below_x*, sampled
+    the engine's own way (terrain_biomes.sample, as Terrain does)."""
+    enabled = True
+
+    def __init__(self, desert_below_x=0.0, surface=0.0):
+        self.bounds = ((-8000.0, 8000.0), (-8000.0, 8000.0))
+        self.biome_map = np.zeros((128, 128, 5), np.uint8)
+        xs = -8000.0 + (np.arange(128) + 0.5) * 125.0
+        self.biome_map[:, xs < desert_below_x, tb.DESERT] = 255
+        self.surface = surface
+        self.looks = 0
+
+    def get_terrain_bounds(self):
+        return self.bounds
+
+    def biome_weights_batch(self, xs, zs):
+        self.looks += 1
+        return tb.sample(self.biome_map, self.bounds, xs, zs)
+
+    def get_height_at_safe(self, x, z):
+        return self.surface
+
+
+def _sandy(monkeypatch, terrain=None, player_at=(0.0, 0.0, 4000.0), actors=()):
+    """A session on a world with a western desert (and the water of _session)."""
+    session, clock = _session(monkeypatch)
+    hurt = _Hurt()
+    session.logic.trigger_runtime = hurt
+    session.logic.monster_ai = hurt
+    session.logic.player_runtime = SimpleNamespace(damage_source=None, player_dead=False)
+    session.logic.world_runtime = SimpleNamespace(terrain=terrain or _Terrain(),
+                                                  monster_things=list(actors))
+    session._player_pos = lambda: list(player_at)
+    return session, clock, hurt
+
+
+def _kinds(session):
+    crabs = [t for t in fio.things(session.logic) if t.properties.get("_frenzy")]
+    return [(t.properties["crab_kind"], t.properties["head"]) for t in crabs]
+
+
+def test_near_water_the_crabs_are_all_blue(monkeypatch):
+    session, clock, _hurt = _sandy(monkeypatch)
+    _land_pieces(session.gore, clock, pos=BY_WATER)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    for mass in (1.0, 2.0, 3.5):
+        frenzy.gibbed(session, BY_WATER, mass=mass)
+    kinds = _kinds(session)
+    assert len(kinds) > 20
+    assert set(kinds) == {(cf.BLUE, cf.HEADS[cf.BLUE])}       # no red among them
+
+
+def test_on_sand_red_crabs_come_up_out_of_it(monkeypatch):
+    session, clock, _hurt = _sandy(monkeypatch)
+    _land_pieces(session.gore, clock, pos=ON_SAND)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    assert frenzy.gibbed(session, ON_SAND, mass=1.0) == 6     # a person: six, as by water
+    kinds = _kinds(session)
+    assert set(kinds) == {(cf.RED, cf.HEADS[cf.RED])}
+    for t in fio.things(session.logic):
+        d = math.hypot(t.pos[0] - ON_SAND[0], t.pos[2] - ON_SAND[2])
+        assert d <= cf.BURROW[1] + 160.0                       # up out of the sand nearby
+        assert t.properties["sprite_width"] == 64 and t.properties["aggression"] == "passive"
+
+
+def test_the_two_heads_are_the_blue_and_the_red_crab():
+    import game.rpg.heads as heads
+    assert heads.is_any_head(cf.HEADS[cf.BLUE]) and heads.is_any_head(cf.HEADS[cf.RED])
+    assert set(cf.HEADS.values()) == set(heads.animal_heads("crab"))
+
+
+def test_on_grass_away_from_water_no_crabs(monkeypatch):
+    session, clock, _hurt = _sandy(monkeypatch)
+    _land_pieces(session.gore, clock, pos=ON_GRASS)
+    assert cf.CrabFrenzy(random.Random(1)).gibbed(session, ON_GRASS, mass=1.0) == 0
+    assert not _kinds(session)
+
+
+def test_where_sand_meets_water_the_crabs_are_blue(monkeypatch):
+    session, clock, _hurt = _sandy(monkeypatch, terrain=_Terrain(desert_below_x=1e9))
+    assert cf.on_sand(session, BY_WATER)                       # sand here too
+    _land_pieces(session.gore, clock, pos=BY_WATER)
+    assert cf.CrabFrenzy(random.Random(1)).gibbed(session, BY_WATER, mass=1.0) == 6
+    assert {k for k, _h in _kinds(session)} == {cf.BLUE}
+
+
+def test_a_floor_built_over_the_sand_is_not_sand(monkeypatch):
+    # The ground (0) stands well above the terrain's surface: a brush floor.
+    session, clock, _hurt = _sandy(monkeypatch, terrain=_Terrain(surface=-60.0))
+    assert not cf.on_sand(session, ON_SAND)
+    _land_pieces(session.gore, clock, pos=ON_SAND)
+    assert cf.CrabFrenzy(random.Random(1)).gibbed(session, ON_SAND, mass=1.0) == 0
+
+
+def test_no_terrain_or_no_biome_map_is_never_sand(monkeypatch):
+    session, _clock, _hurt = _sandy(monkeypatch)
+    session.logic.world_runtime.terrain.biome_map = None
+    assert not cf.on_sand(session, ON_SAND)
+    session.logic.world_runtime = SimpleNamespace(monster_things=[])
+    assert not cf.on_sand(session, ON_SAND)
+
+
+def test_the_sand_test_is_one_lookup(monkeypatch):
+    terrain = _Terrain()
+    session, clock, _hurt = _sandy(monkeypatch, terrain=terrain)
+    _land_pieces(session.gore, clock, pos=ON_SAND)
+    cf.CrabFrenzy(random.Random(1)).gibbed(session, ON_SAND, mass=1.0)
+    assert terrain.looks == 1
+
+
+# Red crabs are the same creature: everything the blue ones do, on sand.
+@pytest.mark.parametrize("at", [BY_WATER, ON_SAND], ids=["blue", "red"])
+def test_both_kinds_eat_every_piece_then_leave_and_are_gone(monkeypatch, at):
+    session, clock, _hurt = _sandy(monkeypatch)
+    _land_pieces(session.gore, clock, pos=at, count=3)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    assert frenzy.gibbed(session, at, mass=1.0) == 6
+    saw_bitten = False
+    for _ in range(3000):
+        _run(session, clock, frenzy, 0.05)
+        saw_bitten = saw_bitten or any(p.get("bites") for p in session.gore.pieces)
+        if not frenzy.feasts:
+            break
+    assert saw_bitten and not session.gore.pieces and not frenzy.feasts
+    assert not _kinds(session)
+
+
+@pytest.mark.parametrize("at", [BY_WATER, ON_SAND], ids=["blue", "red"])
+def test_both_kinds_swarm_the_player_with_small_nips(monkeypatch, at):
+    player = (at[0] + 30.0, 0.0, at[2])
+    session, clock, hurt = _sandy(monkeypatch, player_at=player)
+    _land_pieces(session.gore, clock, pos=at, count=3)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    crabs = frenzy.gibbed(session, at, mass=1.0)
+    _run(session, clock, frenzy, 8.0)
+    assert hurt.player
+    assert all(d == cf.NIP_DAMAGE and cause == "crab" for d, cause, _s in hurt.player)
+    assert len({id(src) for _d, _c, src in hurt.player}) >= crabs // 2
+
+
+@pytest.mark.parametrize("at", [BY_WATER, ON_SAND], ids=["blue", "red"])
+def test_both_kinds_grow_one_frenzy_to_the_same_limit(monkeypatch, at):
+    session, clock, _hurt = _sandy(monkeypatch)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    total = 0
+    for k in range(8):
+        spot = (at[0] + 40.0 * k, 0.0, at[2])
+        _land_pieces(session.gore, clock, pos=spot, count=2)
+        total += frenzy.gibbed(session, spot, mass=1.0)
+    assert len(frenzy.feasts) == 1 and total == cf.MAX_LIVE
+
+
+@pytest.mark.parametrize("at", [BY_WATER, ON_SAND], ids=["blue", "red"])
+def test_both_kinds_bring_as_many_for_a_body_and_none_survive_a_save(monkeypatch, at):
+    session, clock, _hurt = _sandy(monkeypatch)
+    _land_pieces(session.gore, clock, pos=at)
+    frenzy = cf.CrabFrenzy(random.Random(1))
+    assert frenzy.gibbed(session, at, mass=0.1) == cf.MIN_CRABS
+    assert frenzy.gibbed(session, at, mass=3.5) == cf.MAX_CRABS
+    assert cf.CrabFrenzy(random.Random(2)).purge(session) == cf.MIN_CRABS + cf.MAX_CRABS
+    assert not _kinds(session)

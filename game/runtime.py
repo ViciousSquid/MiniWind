@@ -2480,7 +2480,7 @@ class MiniwindSession(SettlementLaw):
                 # Blown apart: the body's own picture in pieces, and blood.
                 self.gore.gib(feet, damage, away, sprite=self._body_picture(target),
                               body=float(p.get("sprite_width", 96) or 96), mass=mass)
-                # Near water, crabs come for the pieces.
+                # Near water (blue) or on sand (red), crabs come for the pieces.
                 self.crab_frenzy.gibbed(self, feet, mass)
                 if crit_kill:
                     # A critical killing blow: blown apart, and then some.
