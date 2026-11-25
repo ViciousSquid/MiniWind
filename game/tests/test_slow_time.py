@@ -1,6 +1,11 @@
 """Slow Time: the world at half speed for 5 s (+1 s a level past 5), tinted
-violet -- all but its caster, who keeps their own speed (twice the world's),
-wears a violet fisheye bubble and gives off a flickering violet light."""
+violet -- all but its casters, each of whom keeps their own speed (twice the
+world's) for their own spell, wears a violet fisheye bubble and gives off a
+flickering violet light. However many cast it, the world slows once, and
+stays slow until the last spell ends (game/slow_time.py).
+
+Co-op play (several sessions on one world, and a network client's replica)
+is in test_multiplayer_slow_time.py."""
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +41,14 @@ def _player(s):
 def _rate(s, thing):
     from .. import fio
     return fio.actor_time_rate(s.logic, thing)
+
+
+def _past_fade_in(s):
+    """As though the spell had been running a second already."""
+    record = s.slow_time_record()
+    record.since -= 1.0
+    for cast in record.casts:
+        cast.since -= 1.0
 
 
 def test_slow_time_lasts_five_seconds_and_a_second_a_level_past_five():
@@ -122,20 +135,91 @@ def test_npc_magic_casts_it_for_the_caster(clock):
     assert npc_magic is not None
 
 
-def test_a_second_caster_takes_it_over(clock):
-    """One Slow Time at a time: recast it lasts the longer, and the newer
-    caster is the one not slowed (and wears the bubble and the light)."""
+def test_the_same_caster_casting_again_lasts_the_longer(clock):
+    s = _session()
+    s.slow_time(10)                              # 10 s
+    clock[0] += 1.0
+    assert s.slow_time(1) == pytest.approx(9.0)  # 5 s from now is sooner
+    assert s.slow_time_casters() == [_player(s)]
+    assert s.logic.time_scale == pytest.approx(0.5)
+
+
+def test_a_second_caster_is_exempt_too_and_the_world_slows_once(clock):
+    """The player and an NPC both cast: both keep their own speed, each wears
+    their own bubble and light, and the world is at half speed -- never a
+    quarter."""
     s = _session()
     s.slow_time(1)                               # the player: 5 s
     clock[0] += 1.0
     mage = _Thing("Necromancer", (300.0, 56.0, 0.0), type="npc")
-    s.slow_time(10, caster=mage)                 # 10 s from now
-    assert s.slow_time_left() == pytest.approx(10.0)
-    assert _rate(s, mage) == pytest.approx(2.0) and _rate(s, _player(s)) == 1.0
+    assert s.slow_time(10, caster=mage) == pytest.approx(10.0)
+    assert s.slow_time_casters() == [_player(s), mage]
+    assert _rate(s, mage) == pytest.approx(2.0)
+    assert _rate(s, _player(s)) == pytest.approx(2.0)
     assert s.logic.time_scale == pytest.approx(0.5)      # not slowed twice
     s._update_slow_time()
-    assert s.slow_time_light().pos[0] == pytest.approx(300.0)
-    assert s.slow_time_lenses()[0][0] == pytest.approx(300.0)
+    assert s.logic.time_scale == pytest.approx(0.5)
+    lights = s.slow_time_lights()
+    assert sorted(round(l.pos[0]) for l in lights) == [0, 300]
+    clock[0] += 0.5                              # the NPC's bubble swells in
+    xs = sorted(round(lens[0]) for lens in s.slow_time_lenses())
+    assert xs == [0, 300]
+    assert s.slow_time_left() == pytest.approx(9.5)
+    assert s.slow_time_left(_player(s)) == pytest.approx(3.5)
+
+
+def test_the_first_caster_slows_when_their_own_spell_ends(clock):
+    """The player's 5 s are up while the NPC's 10 s run on: the player slows
+    with everyone else, their bubble and light gone; the world stays slowed
+    until the NPC's spell ends, then runs at the speed it ran before."""
+    from .. import fio
+    s = _session()
+    s.logic.time_scale = 1.5                     # the debug tools' speed
+    s.slow_time(1)
+    clock[0] += 1.0
+    mage = _Thing("Necromancer", (300.0, 56.0, 0.0), type="npc")
+    s.slow_time(10, caster=mage)
+    s._update_slow_time()
+    first = next(l for l in s.slow_time_lights() if round(l.pos[0]) == 0)
+    clock[0] += 4.1                              # the player's spell is over
+    s._update_slow_time()
+    assert _rate(s, _player(s)) == 1.0 and _rate(s, mage) == pytest.approx(2.0)
+    assert s.logic.time_scale == pytest.approx(0.75)
+    assert s.slow_time_casters() == [mage]
+    assert first not in fio.things(s.logic)
+    assert [round(l[0]) for l in s.slow_time_lenses()] == [300]
+    assert s.slow_time_tint() == pytest.approx(1.0)      # the screen stays slowed
+    clock[0] += 6.0                              # and now the NPC's
+    s._update_slow_time()
+    assert s.logic.time_scale == pytest.approx(1.5)
+    assert _rate(s, mage) == 1.0 and s.slow_time_casters() == []
+    assert s.slow_time_lights() == [] and s.slow_time_lenses() == []
+    assert s.slow_time_tint() == 0.0
+
+
+def test_one_caster_falling_ends_only_their_spell(clock):
+    s = _session()
+    s.slow_time(1)
+    mage = _Thing("Necromancer", (300.0, 56.0, 0.0), type="npc")
+    s.slow_time(1, caster=mage)
+    mage.properties["dead"] = True
+    s._update_slow_time()
+    assert s.slow_time_casters() == [_player(s)] and _rate(s, mage) == 1.0
+    assert s.logic.time_scale == pytest.approx(0.5)
+
+
+def test_leaving_the_map_ends_every_spell(clock):
+    from .. import fio
+    s = _session()
+    s.slow_time(1)
+    mage = _Thing("Necromancer", (300.0, 56.0, 0.0), type="npc")
+    s.slow_time(1, caster=mage)
+    lights = s.slow_time_lights()
+    assert len(lights) == 2
+    s.uninstall()
+    assert s.logic.time_scale == 1.0 and s.slow_time_casters() == []
+    assert fio.actor_time_rates(s.logic) == {}
+    assert not any(l in fio.things(s.logic) for l in lights)
 
 
 def test_it_ends_when_its_caster_falls(clock):
@@ -394,7 +478,7 @@ def test_the_screen_is_tinted_violet_at_its_edges_only(qt_app):
     from ..ui import hud
     s = _session()
     s.slow_time(1)
-    s._slow_time_from -= 1.0                     # past the fade-in
+    _past_fade_in(s)
     img = QImage(320, 180, QImage.Format_ARGB32)
     img.fill(QColor(0, 0, 0))
     p = QPainter(img)
@@ -496,6 +580,37 @@ def test_the_world_outside_the_bubble_turns_greyscale_in_gl():
     assert centre[0] - centre[1] > 40                   # still coloured inside
 
 
+@pytest.mark.gl
+def test_two_casters_bubbles_both_keep_their_colour_in_gl():
+    """Two casters: the world drained to greyscale outside both bubbles, and
+    each bubble keeps its colour."""
+    import OpenGL.GL as gl
+    import glm
+    from tests.helpers import gl as glh
+    from ..ui import magic_gl
+    size = 160
+    with glh.GLTestContext(size, size) as ctx:
+        ctx.bind()
+        gl.glClearColor(0.9, 0.2, 0.1, 1.0)            # a red world
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        proj = glm.ortho(-200.0, 200.0, -200.0, 200.0, 1.0, 2000.0)
+        view = glm.lookAt(glm.vec3(0, 0, 500), glm.vec3(0, 0, 0), glm.vec3(0, 1, 0))
+        bubble = (0.6, 60.0, 0.94, (0.65, 0.51, 0.92), 0.0, 0.55)
+        lenses = [(-100.0, 0.0, 0.0) + bubble, (100.0, 0.0, 0.0) + bubble]
+        assert magic_gl.draw_lenses(proj, view, lenses, grey=1.0) == 2
+        after = ctx.read_pixels().astype(int)
+        magic_gl._S.ok = None
+        magic_gl._S.tex_size = (0, 0)
+        magic_gl._S.fbo = magic_gl._S.tex = 0
+    mid = size // 2
+    for x in (mid, 5):                                  # between them, the edge
+        px = after[mid, x]
+        assert px.max() - px.min() <= 3                 # grey
+    for x in (mid - 40, mid + 40):                      # each bubble's middle
+        px = after[mid, x]
+        assert px[0] - px[1] > 40                       # still coloured
+
+
 def test_the_bubble_tint_and_light_are_the_spell_icons_colour():
     """One colour: the spell's (its icon's violet) for the bubble, the light
     and the screen tint."""
@@ -515,7 +630,7 @@ def test_the_edge_effect_is_gently_animated(qt_app):
     from ..ui import hud
     s = _session()
     s.slow_time(1)
-    s._slow_time_from -= 1.0
+    _past_fade_in(s)
 
     def frame(t):
         img = QImage(320, 180, QImage.Format_ARGB32)

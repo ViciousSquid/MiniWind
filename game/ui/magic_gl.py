@@ -143,6 +143,9 @@ void main() {
     frag = vec4(col, clamp(a, 0.0, 1.0) * vColour.a);
 }"""
 
+#: The most lenses one pass draws (the shader's arrays below are this long).
+MAX_LENSES = 8
+
 _LENS_VERT = """#version 330 core
 out vec2 uv;
 void main() {
@@ -513,7 +516,9 @@ def draw_lenses(projection, view, lenses, grey=0.0) -> int:
         return 0
     try:
         x0, y0, w, h = (int(v) for v in gl.glGetIntegerv(gl.GL_VIEWPORT))
-        screen = project_lenses(projection, view, lenses, w, h)
+        # The shader holds eight; the first eight on screen are drawn (Slow
+        # Time's bubbles come first, so a crowd of impacts never hides one).
+        screen = project_lenses(projection, view, lenses, w, h)[:MAX_LENSES]
         if not screen:
             return 0
         _grab_frame(gl, x0, y0, w, h)
@@ -528,19 +533,19 @@ def draw_lenses(projection, view, lenses, grey=0.0) -> int:
         gl.glBindTexture(gl.GL_TEXTURE_2D, _S.tex)
         loc = _S.lens_loc
         gl.glUniform1i(loc["scene"], 0)
-        lens = np.zeros((8, 4), dtype=np.float32)
-        ring = np.zeros((8, 4), dtype=np.float32)
-        shimmer = np.zeros(8, dtype=np.float32)
-        fill = np.zeros(8, dtype=np.float32)
+        lens = np.zeros((MAX_LENSES, 4), dtype=np.float32)
+        ring = np.zeros((MAX_LENSES, 4), dtype=np.float32)
+        shimmer = np.zeros(MAX_LENSES, dtype=np.float32)
+        fill = np.zeros(MAX_LENSES, dtype=np.float32)
         for i, (cx, cy, r, s, progress, colour, ripple, tinted) in enumerate(screen):
             lens[i] = (cx, cy, r, s)
             ring[i] = (progress, *colour)
             shimmer[i] = ripple
             fill[i] = tinted
-        gl.glUniform4fv(loc["lens"], 8, lens)
-        gl.glUniform4fv(loc["ring"], 8, ring)
-        gl.glUniform1fv(loc["shimmer"], 8, shimmer)
-        gl.glUniform1fv(loc["fill"], 8, fill)
+        gl.glUniform4fv(loc["lens"], MAX_LENSES, lens)
+        gl.glUniform4fv(loc["ring"], MAX_LENSES, ring)
+        gl.glUniform1fv(loc["shimmer"], MAX_LENSES, shimmer)
+        gl.glUniform1fv(loc["fill"], MAX_LENSES, fill)
         gl.glUniform1f(loc["grey"], max(0.0, min(1.0, float(grey))))
         gl.glUniform1f(loc["time"], float(time.perf_counter() % 1000.0))
         gl.glUniform1i(loc["count"], len(screen))

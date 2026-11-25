@@ -502,6 +502,18 @@ says *Metal armour prevents this*.
   rare, 18+ uncommon, else common.
 * **Resurrection** (100 magicka, all of it) raises a fallen body as a
   follower, once a day; each body only once; never one blown apart.
+* **Slow Time** (base cost 45) slows the world to half speed for 5 seconds, a
+  second more for each level past the fifth. The caster is not slowed for
+  their own spell: they move, swing and recover at their normal speed --
+  twice everyone else's -- inside a violet fisheye bubble, giving off a
+  flickering violet light; the world outside every bubble turns greyscale
+  and the screen's edges take a faint violet clock. Anyone may cast it, a
+  player or an NPC, and **several at once never slow the world further**:
+  it stays at half speed, every caster is exempt for their own spell's time
+  (then slows with everyone else), and the world runs as before when the
+  last spell ends. Casting it again yourself lasts the longer of the two. A
+  caster who falls ends their own spell; leaving the map ends them all. In
+  co-op everyone sees every bubble and light (`game/slow_time.py`).
 
 ### Ground cover
 
