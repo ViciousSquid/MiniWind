@@ -70,8 +70,8 @@ K_MAP = "m"
 K_QUEST = "q"          # show the current quest (objective + how to complete)
 #: Number keys that pick a slot on the inventory strip: '1' the first, and so
 #: on, as numbered under the slots. A weapon there is taken in hand at once;
-#: a spell is readied in the left hand (Shift: the right hand). Nine is
-#: plenty and leaves '0' free.
+#: a spell is taken up in the main hand and cast (Shift: readied in the off
+#: hand). Nine is plenty and leaves '0' free.
 WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 #: How long E stays ignored after it opened a screen, when the held-key
 #: snapshot never showed it down (a very quick tap), seconds.
@@ -1141,14 +1141,16 @@ class MiniwindGame:
         # Number keys pick a slot on the inventory strip; a weapon in it is
         # taken in hand at once -- the main hand, or the off hand when the
         # main hand is full -- and pressing it again puts it away. A spell
-        # there is readied in the left hand, or with Shift the right hand,
-        # and then casts on that hand's mouse button.
+        # there is taken up in the main hand and cast at once, whatever the
+        # main hand held going into its slot; with Shift it is readied in
+        # the off hand instead. Either way it then casts on that hand's
+        # mouse button.
         for slot in WEAPON_SLOT_KEYS:
             if slot in just:
                 down = getattr(ctx, "key_down", None)
                 shift = bool(down and down("shift"))
                 session.select_strip_slot(int(slot) - 1,
-                                          hand="right" if shift else None)
+                                          hand="off" if shift else None)
                 break
         if K_SNEAK in just:
             session.toggle_sneak()

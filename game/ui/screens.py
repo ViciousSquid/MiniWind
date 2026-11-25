@@ -1495,8 +1495,9 @@ def _upgrade_spell(session, spell_id):
 def _draw_spell_hands(painter, session, area, selected):
     """What each hand holds, and the mouse button that uses it: the left
     button the left hand, the right button the right hand. Only shown here --
-    a spell is readied from the shortcut bar (its number key, Shift for the
-    right hand), so the selected spell's slot on the bar is named too."""
+    a spell is taken up from the shortcut bar (its number key casts it from
+    the main hand, Shift readies it in the off hand), so the selected spell's
+    slot on the bar is named too."""
     c = session.game.character
     width = (area.width() - 12) // 2
     for i, physical in enumerate(("left", "right")):
@@ -1527,8 +1528,8 @@ def _draw_spell_hands(painter, session, area, selected):
             spell_lock.note(rect, True)
         painter.restore()
     slot = _strip_slot_of(session, selected)
-    note = (f"On the shortcut bar as {slot + 1}: press {slot + 1} for the left hand, "
-            f"Shift+{slot + 1} for the right" if slot is not None else
+    note = (f"On the shortcut bar as {slot + 1}: press {slot + 1} to take it in your main "
+            f"hand and cast it, Shift+{slot + 1} for the off hand" if slot is not None else
             "Not on the shortcut bar: drag it there, or press 1-9")
     T.text_in(painter, QRect(area.x(), area.y() + 84, area.width(), 30), note,
               size=9, color=T.DIM, align=int(Qt.AlignCenter | Qt.TextWordWrap),

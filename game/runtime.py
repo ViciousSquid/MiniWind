@@ -10344,11 +10344,13 @@ class MiniwindSession(SettlementLaw):
     def select_strip_slot(self, index: int, hand=None) -> bool:
         """A strip slot picked, by a click or its number key: selected, and
         what is in it applied at once -- a weapon taken in hand (see
-        :meth:`ready_weapon`); a spell readied in *hand*, the physical
-        ``"left"`` (the default) or ``"right"`` (see :meth:`ready_spell`);
-        anything else used as a double-click would (:meth:`inventory_use`):
-        a shield or armour worn, or taken off when already worn, a potion
-        drunk. True if anything changed."""
+        :meth:`ready_weapon`); a spell taken up in the main hand and cast
+        at once, the main hand's weapon (or spell) going into the slot the
+        spell leaves (see :meth:`cast_from_strip`) -- or, given *hand* (Shift
+        or a right click: ``"off"``), readied in that hand without casting
+        (:meth:`ready_spell`); anything else used as a double-click would
+        (:meth:`inventory_use`): a shield or armour worn, or taken off when
+        already worn, a potion drunk. True if anything changed."""
         slots = self.strip_slots()
         index = int(index)
         if not 0 <= index < len(slots):
@@ -10358,14 +10360,85 @@ class MiniwindSession(SettlementLaw):
         if not stack:
             return False
         if stack.get("spell"):
-            return self.ready_spell(stack["spell"], hand or "left")
+            if hand is None:
+                return self.cast_from_strip(index)
+            return self.ready_spell(stack["spell"], hand)
         d = rpg_items.get(stack.get("id"))
         if d is None:
             return False
         if d.category != rpg_items.WEAPON:
             return self.inventory_use(d.id)
         copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
-        return self.ready_weapon(d.id, copy)
+        c = self.game.character
+        held = eq.hand_spell(c, "main")
+        done = self.ready_weapon(d.id, copy)
+        if done and held is not None and eq.hand_spell(c, "main") is None \
+                and STRIP_SPELL + held.id not in c.strip:
+            # The weapon took the hand from a spell: the spell takes the
+            # weapon's slot, so the same key swaps them back again.
+            c.strip[index] = STRIP_SPELL + held.id
+        return done
+
+    def _main_hand_entry(self):
+        """What the main hand holds, as a strip entry: a weapon's item id,
+        ``"spell:<id>"`` for a spell, or None (empty, or only the fists)."""
+        c = self.game.character
+        spell = eq.hand_spell(c, "main")
+        if spell is not None:
+            return STRIP_SPELL + spell.id
+        iid = eq.equipped_id(c, rpg_items.SLOT_WEAPON)
+        if not iid or warrior_fist.innate(iid) or not inv.has_item(c.inventory, iid, 1):
+            return None
+        return iid
+
+    def _put_in_strip_slot(self, index: int, entry) -> None:
+        """Put *entry* in strip slot *index*, out of any other slot it would
+        hold one copy too many in (a spell has one slot; a weapon one per
+        copy carried -- the main hand's copy is the first)."""
+        strip = self.game.character.strip
+        others = [k for k, v in enumerate(strip) if v == entry and k != index]
+        if str(entry).startswith(STRIP_SPELL):
+            room = 1
+        else:
+            room = self._strip_copies(inv.find(self.game.character.inventory, entry))
+            self.game.character._strip_seen.add(entry)
+        while others and len(others) + 1 > room:
+            strip[others.pop(0)] = None
+        strip[index] = entry
+
+    def cast_from_strip(self, index: int) -> bool:
+        """The number key (or a click) on a strip slot holding a spell.
+
+        The spell is taken up in the main hand and cast at once, aimed as the
+        hand's mouse button aims it (straight out along the facing). Whatever
+        the main hand held -- a weapon, or another spell -- takes the spell's
+        place in the slot, so the same key swaps them back. An empty main
+        hand leaves the spell where it is, and a spell already in the main
+        hand just casts. The spell stays in hand: its mouse button (and the
+        attack key) cast it again. True if anything changed."""
+        self.strip_slots()
+        c = self.game.character
+        strip = c.strip
+        index = int(index)
+        if not 0 <= index < len(strip) or not str(strip[index] or "").startswith(STRIP_SPELL):
+            return False
+        sid = str(strip[index])[len(STRIP_SPELL):]
+        spell = rpg_magic.get(sid)
+        if spell is None or sid not in (c.known_spells or ()):
+            return False
+        held = eq.hand_spell(c, "main")
+        swapped = held is None or held.id != sid
+        if swapped:
+            if not c.can_use_magic():
+                self.notify("You cannot use magic", 2.0)
+                return False
+            previous = self._main_hand_entry()
+            if not self.equip_hand_spell(sid, "main"):
+                return False
+            if previous is not None:
+                self._put_in_strip_slot(index, previous)
+        cast = self.do_cast(aim="facing", hand="main")
+        return swapped or bool(cast)
 
     def cycle_strip(self, step) -> bool:
         """Highlight the previous/next occupied quickbar slot without using it.

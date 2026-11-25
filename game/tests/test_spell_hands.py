@@ -185,10 +185,12 @@ def test_a_spell_dragged_to_the_shortcut_bar_keeps_one_slot_and_follows_the_spel
 
 @pytest.mark.qt
 @pytest.mark.parametrize("handed", ["right", "left"])
-def test_a_bar_spell_is_readied_left_by_its_key_and_right_with_shift(handed):
+def test_a_bar_spell_casts_from_the_main_hand_and_shift_readies_the_off_hand(handed):
     s = _session()
     c = s.game.character
     c.handed = handed
+    casts = []
+    s.do_cast = lambda **kw: casts.append(kw) or True
     eq.equip(c, "iron_shortsword")
     s.set_strip_slot(5, "spell:flare")
     s.set_strip_slot(6, "spell:heal_minor")
@@ -196,15 +198,20 @@ def test_a_bar_spell_is_readied_left_by_its_key_and_right_with_shift(handed):
     up = SimpleNamespace(key_down=lambda key: False)
     shift = SimpleNamespace(key_down=lambda key: key == "shift")
     game._handle_gameplay_input(s, {"6"}, up)
-    assert eq.hand_spell(c, "left").id == "flare"
-    assert s.strip_hands()[5] == eq.relative_hand(c, "left")
+    assert eq.hand_spell(c, "main").id == "flare"
+    assert casts == [{"aim": "facing", "hand": "main"}]
+    assert _strip(s)[5] == "iron_shortsword"         # the sword took its slot
     game._handle_gameplay_input(s, {"7"}, shift)
-    assert eq.hand_spell(c, "right").id == "heal_minor"
+    assert eq.hand_spell(c, "off").id == "heal_minor"
+    assert s.strip_hands()[6] == "off"
+    assert len(casts) == 1                           # Shift readies, no cast
     assert eq.weapon(c) is None              # both hands hold spells now
     assert any(st["id"] == "iron_shortsword" for st in s.pack_stacks())
-    game._handle_gameplay_input(s, {"6"}, up)  # again: put away
-    assert eq.hand_spell(c, "left") is None
-    assert eq.hand_spell(c, "right").id == "heal_minor"
+    game._handle_gameplay_input(s, {"6"}, up)  # again: the sword swaps back
+    assert eq.weapon(c).id == "iron_shortsword"
+    assert eq.hand_spell(c, "main") is None
+    assert eq.hand_spell(c, "off").id == "heal_minor"
+    assert _strip(s)[5] == "spell:flare"
 
 
 def test_equipped_spells_glow_in_their_own_hands_and_stop_when_replaced():
