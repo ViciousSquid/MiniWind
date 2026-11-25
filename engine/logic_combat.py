@@ -71,6 +71,14 @@ class LogicCombat:
         #: Optional ``hook(store, row, target) -> bool`` before a missile hits.
         #: True keeps the changed projectile alive and skips its impact effects.
         self.projectile_deflector = None
+        #: Optional game object for Props that catch projectiles (MiniWind's
+        #: barrels catch arrows). ``trace(store, row, origin, direction,
+        #: reach)`` -> distance along the swept path to the first it meets,
+        #: or None; ``catch(store, row, prop=None)`` -> whether *row*, where
+        #: it now is, stops in one (it is then consumed, its ``on_impact``
+        #: not called). *prop* names the explosive Prop it has just damaged.
+        #: Asked after the actors and before the walls; None: nothing catches.
+        self.projectile_catcher = None
         #: Projectile paths swept this session (_sweep_projectile): a work count.
         self.projectile_sweeps = 0
         self.bullet_marks = []
@@ -833,6 +841,19 @@ class LogicCombat:
             return None
         return -b - math.sqrt(disc)
 
+    def _catch_projectile(self, projectiles, i, prop=None):
+        """Whether the game's :attr:`projectile_catcher` stops row *i* where
+        it is (in *prop*, when given). A failing catcher catches nothing."""
+        catcher = self.projectile_catcher
+        if catcher is None:
+            return False
+        try:
+            return bool(catcher.catch(projectiles, i, prop))
+        except Exception:
+            import traceback
+            debug_log("Error", "projectile catcher failed:\n" + traceback.format_exc())
+            return False
+
     def _sweep_projectile(self, projectiles, i, prev, delta, rows, explosions):
         """Stop row *i* at the first thing its path from *prev* meets this tick.
 
@@ -921,6 +942,17 @@ class LogicCombat:
             hit = explosions.trace((sx, sy, sz), (ux, uy, uz), best)
             if hit is not None and hit[1] < best:
                 best = hit[1]
+
+        catcher = self.projectile_catcher
+        if catcher is not None:
+            try:
+                t = catcher.trace(projectiles, i, (sx, sy, sz), (ux, uy, uz), best)
+            except Exception:
+                import traceback
+                debug_log("Error", "projectile catcher failed:\n" + traceback.format_exc())
+                t = None
+            if t is not None and t < best:
+                best = t
 
         if best >= length:
             return False
@@ -1039,6 +1071,7 @@ class LogicCombat:
 
         sweep_sq = (self.PROJECTILE_SWEEP_STEP / delta) ** 2 if delta > 0.0 else math.inf
         sweep_barrels = explosions if any_explosives else None
+        catching = self.projectile_catcher is not None
 
         for i in range(count):
             pos = projectiles.pos[i]
@@ -1133,6 +1166,10 @@ class LogicCombat:
             barrel = explosions.point_hit(px, py, pz) if any_explosives else None
             if barrel is not None:
                 explosions.damage_prop(barrel, float(projectiles.damage[i]))
+                if catching:
+                    self._catch_projectile(projectiles, i, barrel)
+                continue
+            if catching and self._catch_projectile(projectiles, i):
                 continue
 
             hit_wall = False
@@ -1244,6 +1281,7 @@ class LogicCombat:
         keep = live.copy()
         explosions = logic.explosion_runtime
         any_explosives = bool(explosions.explosives())
+        catching = self.projectile_catcher is not None
 
         live_rows = np.flatnonzero(live)
         owners = projectiles.owner_id[live_rows]
@@ -1306,8 +1344,13 @@ class LogicCombat:
                 barrel = explosions.point_hit(bx, by, bz)
                 if barrel is not None:
                     explosions.damage_prop(barrel, float(projectiles.damage[i]))
+                    if catching:
+                        self._catch_projectile(projectiles, i, barrel)
                     keep[i] = False
                     continue
+            if catching and self._catch_projectile(projectiles, i):
+                keep[i] = False
+                continue
 
             if wall_hits is not None:
                 hit_wall = any(

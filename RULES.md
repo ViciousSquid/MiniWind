@@ -441,6 +441,20 @@ shakes, never the HUD (`game/runtime.py`, `game/host.py`).
 | Your overkill | 0.032 | 0.48 |
 | Your critical killing blow | 0.044 | 0.60 |
 
+### Arrows in barrels
+
+An arrow or crossbow bolt -- yours or an archer's -- that hits a barrel sticks
+in it where it struck, at the angle it flew, with a thunk
+(`assets/sounds/thunk.wav`). It stays there, moving and turning with the
+barrel when it is pushed, topples, rolls or is carried; a barrel holds at most
+12 (another pushes the oldest out). Standing within 140 of a barrel with
+arrows in it, when it is the nearest thing to use, **E** pulls them all out
+into your pack, each as the ammunition it was (plain Iron Arrows if that is
+not known); any your pack has no room for stay in the barrel. While you are
+that near, E pulls arrows rather than picking a carryable barrel up. A barrel
+that explodes destroys the arrows in it. They are kept with the barrel, so a
+save keeps them (`game/stuck_arrows.py`).
+
 ---
 
 ## 8. Armour and magic

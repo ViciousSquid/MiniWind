@@ -966,6 +966,11 @@ class MiniwindGame:
                 arrow_art.draw_paths(projection, view, paths)
             if arrows:
                 arrow_art.draw_arrows(projection, view, arrows)
+        stuck = getattr(getattr(session, "stuck_arrows", None), "drawn", ())
+        if stuck:
+            # Arrows left sticking out of barrels (game/stuck_arrows.py).
+            import game.ui.arrows as arrow_art
+            arrow_art.draw_stuck(projection, view, stuck)
         if lenses:
             magic_gl.draw_lenses(projection, view, lenses)
         # Rain on the camera's glass, over everything in the world
@@ -1350,6 +1355,19 @@ class MiniwindGame:
         # loot, with the same key (whichever is nearer).
         container = session.nearest_container(player.pos, TALK_RADIUS)
         corpse = session.nearest_corpse(player.pos, TALK_RADIUS)
+        # Or a barrel with arrows stuck in it, when it is the nearest of them:
+        # E pulls them all out into the pack (game/stuck_arrows.py).
+        stuck = getattr(session, "stuck_arrows", None)
+        barrel = stuck.nearest(player.pos) if stuck is not None else None
+        if barrel is not None and all(
+                other is None or _dist2(player.pos, barrel.pos) < _dist2(player.pos, other.pos)
+                for other in (corpse, container)):
+            prompt = f"[{controls.label('interact')}] {stuck.prompt(barrel)}"
+            ctx.set_prompt(prompt, priority=5)
+            session.interact_prompt = prompt
+            if K_INTERACT in just or ctx.use_pressed:
+                stuck.pull(barrel)
+            return
         if corpse is not None and (container is None or _dist2(player.pos, corpse.pos)
                                    < _dist2(player.pos, container.pos)):
             prompt = f"[{controls.label('interact')}] Loot {session.corpse_name(corpse)}"

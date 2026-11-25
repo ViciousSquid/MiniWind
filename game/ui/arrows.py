@@ -93,6 +93,32 @@ def draw_arrows(projection, view, arrows) -> int:
     return drawn
 
 
+def draw_stuck(projection, view, stuck) -> int:
+    """Draw the arrows stuck in barrels (``(centre, heading, squash, sprite)``
+    each, game/stuck_arrows.py): the same art, head buried in the wood, its
+    length shortened as it tilts away from the flat (*squash*). Returns how
+    many were drawn."""
+    if not stuck:
+        return 0
+    renderer = _arrow_renderer()
+    if not renderer._ready():
+        return 0
+    drawn = 0
+    batching = renderer.begin(projection, view)
+    try:
+        for centre, heading, squash, sprite in stuck:
+            tex = renderer.texture(sprite)
+            if not tex:
+                continue
+            renderer._draw_texture(projection, view, centre, heading, tex,
+                                   ARROW_SIZE, 0.0, depth_write=False, squash=squash)
+            drawn += 1
+    finally:
+        if batching:
+            renderer.end()
+    return drawn
+
+
 # --------------------------------------------------------------- flight paths
 #: How long each dot of an arrow's trail takes to fade, from the moment the
 #: arrow passed it (seconds).

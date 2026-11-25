@@ -341,15 +341,20 @@ class NpcArchery:
             if ai is not None:
                 ai._apply_monster_damage(victim, dmg, attacker=shooter)
 
+        ammo = "iron_bolt" if crossbow else "iron_arrow"
+        # The ammo rides with it: one that sticks in a barrel can be pulled
+        # out as what it is (game/stuck_arrows.py).
+        from .stuck_arrows import AMMO_KEY
         row = fio.spawn_projectile(logic, start, vel, lifetime=max_dist / ARROW_SPEED,
                                    damage=damage, owner_id=id(thing),
-                                   max_dist=max_dist, on_hit=_on_hit)
+                                   max_dist=max_dist, on_hit=_on_hit,
+                                   metadata={AMMO_KEY: ammo})
         if row is None:
             return
         tag = fio.projectile_tag(logic, row)
         if tag:
             from .ui.arrows import arrow_sprite
-            session._arrow_tags[tag] = arrow_sprite("iron_bolt" if crossbow else "iron_arrow")
+            session._arrow_tags[tag] = arrow_sprite(ammo)
             trace = getattr(session, "trace_arrow", None)
             if trace is not None:
                 trace(tag, start)
