@@ -261,3 +261,40 @@ def test_fallback_cache_key_includes_late_terrain_changes():
     first = {"heightmap_blob": "a" * 6000 + "old"}
     second = {"heightmap_blob": "a" * 6000 + "new"}
     assert worldmap.WorldMap.cache_key(None, first) != worldmap.WorldMap.cache_key(None, second)
+
+
+def test_a_held_minimap_frame_gathers_nothing_and_shows_the_same_picture(qt_app, monkeypatch):
+    """Between repaints the minimap's cache shows its last picture whatever
+    has moved: the actors, markers and targets its key is made of are not
+    gathered for such a frame. Once the interval is up it paints what a fresh
+    paint would."""
+    monkeypatch.setattr(worldmap, "_MINIMAP_CACHE", None)
+    monkeypatch.setattr(worldmap, "MINIMAP_HZ", 30)
+    from types import SimpleNamespace
+    mover = _Thing((300, 0, 0), team="bandits", aggression="hostile")
+    session = _Session([mover, _Thing((-200, 0, 100), team="villagers")])
+    session.logic = SimpleNamespace(player_runtime=SimpleNamespace(player=_Player()))
+    asked = []
+    real = session._live_actors
+    session._live_actors = lambda: (asked.append(1), real())[1]
+    world = _ready_world()
+
+    def frame():
+        image = QtGui.QImage(1280, 720, QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        painter = QtGui.QPainter(image)
+        try:
+            worldmap.draw_minimap(painter, session, None, 1280, 720, world=world)
+        finally:
+            painter.end()
+        return bytes(image.constBits().asarray(image.sizeInBytes()))
+
+    first = frame()
+    assert asked == [1]
+    mover.pos[0] += 200.0
+    assert frame() == first and asked == [1]          # held: nothing gathered
+    worldmap._MINIMAP_CACHE.painted_at -= 1.0          # the interval is up
+    moved = frame()
+    assert asked == [1, 1] and moved != first
+    monkeypatch.setattr(worldmap, "_MINIMAP_CACHE", None)
+    assert frame() == moved                            # as a fresh paint
