@@ -665,9 +665,14 @@ def draw_roll_boxes(painter, session, viewport, width, height):
     except Exception:
         pass
     floor = height
+    bottom = None
     try:
         if not layout.collapsed("strip"):
-            floor = int(layout.screen_rect("strip", width, height).top()) - 4
+            strip_top = int(layout.screen_rect("strip", width, height).top())
+            floor = strip_top - 4
+            # The player's own attack sits clear of the selected slot's name,
+            # which the bar shows above itself (inventory_strip._draw_name).
+            bottom = strip_top - STRIP_NAME_CLEAR
     except Exception:
         floor = height
     dock_top = 8
@@ -678,7 +683,8 @@ def draw_roll_boxes(painter, session, viewport, width, height):
         dock_top = 8
     groups = _stack_roll_boxes(anchored, width, height, stack=stack, floor=floor,
                                dock=ROLL_STACK_DOCK, dock_top=dock_top,
-                               avoid=_keep_clear_rects(session, width, height))
+                               avoid=_keep_clear_rects(session, width, height),
+                               bottom=bottom)
     for group in groups:               # the lines first, under every box
         for bx, by, sp, box, lay, _pointer in group:
             if lay.get("docked"):
@@ -698,6 +704,15 @@ ROLL_BOX_STACK_GAP = 1      # stacked boxes sit locked together
 #: edge of the screen, out of the fight's way (the player's own stays over
 #: the player); None, each over its roller, stacked where they meet.
 ROLL_STACK_DOCK = "right"
+#: Where the player's own attack rolls go: "bottom", centred at the foot of
+#: the screen just above the shortcut bar, out of the fight's way; None,
+#: over the player like their other rolls.
+PLAYER_ATTACK_DOCK = "bottom"
+#: The gap between the bottom-docked rolls and the shortcut bar.
+PLAYER_ATTACK_DOCK_GAP = 6
+#: How far above the shortcut bar's top the bottom-docked rolls end: clear of
+#: the selected slot's name plate (30 px above the bar), and a small gap.
+STRIP_NAME_CLEAR = 30 + PLAYER_ATTACK_DOCK_GAP
 #: A docked box's width: the roller's name on one line, what they roll for
 #: on the next, so the column stays narrow however long the names.
 ROLL_DOCK_W = 210
@@ -715,7 +730,7 @@ def _is_attack(box) -> bool:
 
 
 def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
-                      dock=None, dock_top=8, avoid=()):
+                      dock=None, dock_top=8, avoid=(), bottom=None):
     """Lay the boxes out: each right over its roller, a slight overlap
     allowed; boxes closer than that join one stack over their rollers, the
     attacker's roll always at the top (with *stack* off -- Settings > Game >
@@ -780,6 +795,15 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
         # them -- even when one touched another's box before docking.
         order = [[i for i in m if _box_side(anchored[i][1]) == "you"] for m in order]
         order = [m for m in order if m]
+    if PLAYER_ATTACK_DOCK == "bottom":
+        # The player's own attacks: at the foot of the screen, not over them.
+        mine = [i for m in order for i in m
+                if _box_side(anchored[i][1]) == "you" and _is_attack(anchored[i][1])]
+        if mine:
+            base = bottom if bottom is not None else height - PLAYER_ATTACK_DOCK_GAP
+            groups.append(_bottom_dock(anchored, natural, width, base, mine, placed))
+            order = [[i for i in m if i not in mine] for m in order]
+            order = [m for m in order if m]
     for members in order:
         # Attacks on top, then the rest (saves), each in roll order.
         members.sort(key=lambda i: (not _is_attack(anchored[i][1]), i))
@@ -836,6 +860,30 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
         placed.append((int(centre - widest / 2), int(chosen[1]), int(widest), int(total)))
         groups.append(group)
     return groups
+
+
+def _bottom_dock(anchored, natural, width, base, members, placed):
+    """The player's own attack rolls centred at the bottom of the screen,
+    the newest lowest, stacked up from *base* (just above the shortcut bar
+    and the name it shows); as many as fit. No pointer: they are the
+    player's."""
+    members = sorted(members)
+    room = base - 4
+    while len(members) > 1 and (sum(natural[i][3] for i in members)
+                                + ROLL_BOX_STACK_GAP * (len(members) - 1)) > room:
+        members.pop(0)                  # the oldest gives way
+    total = sum(natural[i][3] for i in members) + ROLL_BOX_STACK_GAP * (len(members) - 1)
+    y = int(max(4, base - total))
+    top, widest, group = y, 0, []
+    for i in members:
+        sp, box, lay = anchored[i]
+        w, h = lay["w"], lay["h"]
+        x = int(max(4, min(width - w - 4, width / 2 - w / 2)))
+        group.append((x, y, sp, box, lay, False))
+        widest = max(widest, w)
+        y += h + ROLL_BOX_STACK_GAP
+    placed.append((int(width / 2 - widest / 2), top, int(widest), int(y - top)))
+    return group
 
 
 def _docked_column(anchored, natural, width, height, top, placed):
