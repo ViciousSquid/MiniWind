@@ -316,10 +316,11 @@ def draw_card(painter, rect: QRect, card: Card) -> None:
         painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 50))
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(well.center(), side * 0.36, side * 0.36)
-        f, _ok = fitted_font(card.glyph, int(side * 0.8), side * 0.5, side * 0.2)
+        f, ok = fitted_font(card.glyph, int(side * 0.8), side * 0.5, side * 0.2)
         painter.setFont(f)
         painter.setPen(GREY.lighter(130) if grey else accent.lighter(140))
-        painter.drawText(well, int(Qt.AlignCenter), card.glyph)
+        painter.drawText(well.adjusted(3, 3, -3, -3),
+                         int(Qt.AlignCenter | (0 if ok else Qt.TextWordWrap)), card.glyph)
     else:
         painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 120))
         painter.setPen(Qt.NoPen)

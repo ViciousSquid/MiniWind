@@ -9,12 +9,13 @@ uses InventoryWindow's equipment, pack and sheet, including drag and drop.
 from __future__ import annotations
 
 import math
+import re
 
 from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QColor, QLinearGradient, QBrush, QPen
 
 from .inventory_window import InventoryWindow, _fit, _item
-from . import drag, fonts, hits, screens
+from . import cards, drag, fonts, hits, screens
 
 #: The big cells of the pack grid, and its shape.
 CELL = 96
@@ -223,30 +224,31 @@ class PackWindow(InventoryWindow):
              f"Fortune {fortune.score(c)}  =  (Charisma {c.attrs.get('personality', 40)}"
              f" + Luck {c.attrs.get('luck', 40)}) / 2   ·   the fair of face and the "
              "lucky have an easier road, and here is exactly how.")
-        y = inner.y() + 34
-        row_h = 40
-        for name, value, why, good in fortune.benefits(c):
-            if y + row_h > inner.bottom():
-                break
-            band = QRect(inner.x(), y, inner.width(), row_h - 6)
-            painter.fillRect(band, QColor(26, 25, 24, 230))
+        # A card per benefit (game/ui/cards.py): the number big in the
+        # middle, green for good, red for ill; the reason under it, and in
+        # full in the card's tooltip (this page has no detail pane).
+        benefits = list(fortune.benefits(c))
+        area = QRect(inner.x(), inner.y() + 34, inner.width(),
+                     max(1, inner.bottom() - inner.y() - 34))
+        grid = cards.layout_grid(area, len(benefits), min_scale=0.6, fit_all=True)
+        for (name, value, why, good), rect in zip(benefits, grid.slots):
             mark = (QColor(110, 210, 120) if good else QColor(225, 105, 95)
-                    if good is False else _DIM)
-            painter.fillRect(QRect(band.x(), band.y(), 5, band.height()), mark)
-            painter.setFont(self.f_body)
-            painter.setPen(_TEXT)
-            _fit(painter, QRect(band.x() + 16, band.y(), int(band.width() * 0.4), band.height()),
-                 Qt.AlignLeft | Qt.AlignVCenter, name)
-            painter.setPen(mark if good is not None else _TEXT)
-            _fit(painter, QRect(band.x() + int(band.width() * 0.4), band.y(),
-                                int(band.width() * 0.25), band.height()),
-                 Qt.AlignLeft | Qt.AlignVCenter, value)
-            painter.setFont(self.f_small)
-            painter.setPen(_DIM)
-            _fit(painter, QRect(band.x() + int(band.width() * 0.65), band.y(),
-                                int(band.width() * 0.35) - 10, band.height()),
-                 Qt.AlignLeft | Qt.AlignVCenter, why)
-            y += row_h
+                    if good is False else QColor(170, 168, 160))
+            why = str(why)
+            head = re.split(r"[:;]", why, maxsplit=1)[0].strip()
+            if " (" in head and "=" not in head:
+                head = head.split(" (", 1)[0]
+            rest = why[len(head):].lstrip(":; ").strip()
+            # The number in the middle; words after it go under the reason.
+            value = str(value)
+            big, _sp, more = value.partition(" ") if len(value) > 9 else (value, "", "")
+            card = cards.Card(title=name, glyph=big, subtitle=head,
+                              summary=" · ".join(t for t in (more, rest) if t),
+                              accent=mark, hovered=hits.hovered(rect),
+                              tooltip=f"{name}\n{value}\n{why}")
+            cards.draw_card(painter, rect, card)
+            cards.note_tooltip(rect, card)
+        cards.flush_tooltip(painter)
 
     def _draw_alignment(self, painter, rect):
         """Where the character stands from Villainous to Saintly, what it is

@@ -212,3 +212,27 @@ def test_quest_map_request_focuses_the_same_statistics_window(ui):
     assert window.screen == "map"
     assert window.map.centre == (30., 40.)
     assert window.map.focus == (30., 40., "The Lost Ring")
+
+
+def test_fortune_shows_a_card_per_benefit_with_its_reason_in_a_tooltip(ui, monkeypatch):
+    import game.rpg.fortune as fortune
+    from game.ui import cards
+    _game, session, _view, window = ui
+    _tab(ui, "fortune")
+    drawn, tips = [], []
+    real = cards.draw_card
+    monkeypatch.setattr(cards, "draw_card",
+                        lambda p, r, card: drawn.append((QtCore.QRect(r), card))
+                        or real(p, r, card))
+    monkeypatch.setattr(cards, "draw_tooltip", lambda p, text, pos: tips.append(text))
+    _paint(window)
+    benefits = fortune.benefits(session.game.character)
+    assert [card.title for _r, card in drawn] == [b[0] for b in benefits]
+    rects = [r for r, _c in drawn]
+    for i, a in enumerate(rects):
+        assert window.window_rect.contains(a)
+        assert all(not a.intersects(b) for b in rects[i + 1:])
+    rect, card = drawn[3]
+    monkeypatch.setattr(hits, "pointer", (rect.center().x(), rect.center().y()))
+    _paint(window)
+    assert tips and tips[-1] == card.tooltip and benefits[3][2] in tips[-1]
