@@ -334,14 +334,17 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
             return _real(*args)
         monkeypatch.setattr(gl, name, recording)
 
+    model_state = _ModelDrawState(session.view.renderer, monkeypatch)
     raw = session.paint()
     raw_stats = _stats(session)
+    raw_state = model_state.take()
     assert not wrapped, "%d row uniforms still went through the wrappers: %s" % (
         len(wrapped), sorted(set(wrapped)))
 
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: False)
     through_wrappers = session.paint()
     wrapped_stats = _stats(session)
+    wrapped_state = model_state.take()
     assert wrapped, "the wrapper path sent nothing: the frame drew no row-uploading pass"
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: True)
     assert raw.max() > 0, "the frame is blank"
@@ -375,6 +378,9 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
                     "the later ones" if np.array_equal(frame, through_wrappers)
                     else "neither")
         message = _frames_differ(raw, through_wrappers)
+        message += "; GL state at the first model draw, raw -> wrapped: %s" % (
+            _state_differences(raw_state, wrapped_state),)
+        model_state.armed_for_paint = False
         message += ("; a frame re-rendering the shadows matches %s; with glFinish "
                     "after the shadow pass, %s" % (which(rerendered), which(finished_frame)))
         # What only the first frame does: build the model instance streams and
@@ -389,6 +395,14 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
         message += ("; fresh model streams: %s; then fresh textures: %s; then "
                     "fresh models: %s" % (which(fresh_streams), which(fresh_textures),
                                           which(fresh_models)))
+        # The uniforms each program is known to hold (engine.renderer.core.
+        # gl_state), forgotten: every uniform is sent again, as on a first frame.
+        from engine.renderer.core import gl_state
+        gl_state.forget()
+        for program in renderer.uniforms.values():
+            if hasattr(program, 'active_lights'):
+                program.active_lights = None
+        message += "; with the uniform caches forgotten: %s" % which(session.paint())
         message += ("; a third paint (raw again) %s; render stats that differ, "
                     "raw -> wrapped: %s" % (
                         "matches the raw one" if np.array_equal(again, raw) else
@@ -398,6 +412,134 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
                          for k in sorted(set(raw_stats) | set(wrapped_stats))
                          if raw_stats.get(k) != wrapped_stats.get(k)}))
         raise AssertionError(message)
+
+
+class _ModelDrawState:
+    """The model program's GL state at the first model draw of each paint:
+    every active uniform, the uniform blocks' buffer bytes and the textures
+    bound on each unit (what makes a model lit as it is)."""
+
+    def __init__(self, renderer, monkeypatch):
+        import OpenGL.GL as gl
+        from engine.renderer.forward import passes
+        self._gl = gl
+        self._captured = {}
+        self._armed = False
+        self.armed_for_paint = True
+        real_prepare = renderer._prepare_model_shader
+
+        def prepare(*args, **kwargs):
+            result = real_prepare(*args, **kwargs)
+            self._armed = self.armed_for_paint
+            return result
+        monkeypatch.setattr(renderer, "_prepare_model_shader", prepare, raising=False)
+        for owner, name in ((gl, "glDrawArrays"), (gl, "glDrawArraysInstanced"),
+                            (passes, "draw_elements"), (passes, "draw_elements_instanced")):
+            monkeypatch.setattr(owner, name, self._before(getattr(owner, name)))
+        self._programs = renderer.shaders
+        self._seen = set()
+
+    def _before(self, draw):
+        def drawing(*args, **kwargs):
+            if self._armed:
+                self._armed = False
+                try:
+                    program = int(self._gl.glGetIntegerv(self._gl.GL_CURRENT_PROGRAM))
+                    if program not in self._seen:
+                        self._seen.add(program)
+                        self._captured.update(self._capture(program))
+                except Exception as exc:          # a diagnostic must not mask the test
+                    self._captured["capture failed"] = repr(exc)
+            return draw(*args, **kwargs)
+        return drawing
+
+    def take(self):
+        captured, self._captured = self._captured, {}
+        self._seen = set()
+        return captured
+
+    def _capture(self, program):
+        gl = self._gl
+        names = [name for name, value in self._programs.items() if int(value or 0) == program]
+        state = {}
+        count = int(gl.glGetProgramiv(program, gl.GL_ACTIVE_UNIFORMS))
+        for index in range(count):
+            name, size, _kind = gl.glGetActiveUniform(program, index)
+            name = name.decode() if isinstance(name, bytes) else str(name)
+            base = name[:-3] if name.endswith("[0]") else name
+            for element in range(int(size)):
+                label = "%s[%d]" % (base, element) if size > 1 else base
+                location = gl.glGetUniformLocation(program, label)
+                if location < 0:
+                    continue                      # a uniform block's member
+                values = (ctypes.c_float * 16)()
+                gl.glGetUniformfv(program, location, values)
+                state["uniform " + label] = tuple(round(v, 5) for v in values)
+        blocks = int(gl.glGetProgramiv(program, gl.GL_ACTIVE_UNIFORM_BLOCKS))
+        for block in range(blocks):
+            binding = (ctypes.c_int * 1)()
+            size = (ctypes.c_int * 1)()
+            gl.glGetActiveUniformBlockiv(program, block, gl.GL_UNIFORM_BLOCK_BINDING, binding)
+            gl.glGetActiveUniformBlockiv(program, block, gl.GL_UNIFORM_BLOCK_DATA_SIZE, size)
+            buffer = int(np.ravel(gl.glGetIntegeri_v(gl.GL_UNIFORM_BUFFER_BINDING, binding[0]))[0])
+            data = b""
+            if buffer:
+                was = int(gl.glGetIntegerv(gl.GL_COPY_READ_BUFFER_BINDING))
+                gl.glBindBuffer(gl.GL_COPY_READ_BUFFER, buffer)
+                out = (ctypes.c_uint32 * (size[0] // 4))()
+                gl.glGetBufferSubData(gl.GL_COPY_READ_BUFFER, 0, size[0], out)
+                gl.glBindBuffer(gl.GL_COPY_READ_BUFFER, was)
+                data = _Lanes(out)
+            state["block %d (binding %d, buffer %d)" % (block, binding[0], buffer)] = data
+        active = int(gl.glGetIntegerv(gl.GL_ACTIVE_TEXTURE))
+        for unit in range(20):
+            gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
+            state["unit %d" % unit] = (int(gl.glGetIntegerv(gl.GL_TEXTURE_BINDING_2D)),
+                                       int(gl.glGetIntegerv(gl.GL_TEXTURE_BINDING_CUBE_MAP)))
+        gl.glActiveTexture(active)
+        tag = "/".join(names) or str(program)
+        return {"%s %s" % (tag, key): value for key, value in state.items()}
+
+
+class _Lanes(tuple):
+    """A uniform block's 32-bit lanes, compared bit for bit (its integer
+    lanes read as floats are NaN, which equals nothing)."""
+
+    def __new__(cls, words):
+        return super().__new__(cls, (int(w) for w in words))
+
+    def show(self, index):
+        bits = self[index]
+        as_float = float(np.array([bits], dtype=np.uint32).view(np.float32)[0])
+        return "%d/%g" % (bits if bits < 2 ** 31 else bits - 2 ** 32, as_float)
+
+
+def _state_differences(a, b):
+    """What differs between two :class:`_ModelDrawState` captures."""
+    if not a or not b:
+        return "not captured (%s / %s)" % (bool(a), bool(b))
+    out = []
+    for key in sorted(set(a) | set(b)):
+        x, y = a.get(key), b.get(key)
+        if x == y:
+            continue
+        if isinstance(x, tuple) and isinstance(y, tuple) and len(x) == len(y) and len(x) > 16:
+            at = [i for i in range(len(x)) if x[i] != y[i]]
+            if isinstance(x, _Lanes):
+                out.append("%s: lanes (int/float) %s: %s -> %s" % (
+                    key, at[:16], [x.show(i) for i in at[:16]], [y.show(i) for i in at[:16]]))
+            else:
+                out.append("%s: %s: %s -> %s" % (
+                    key, at[:12], [x[i] for i in at[:12]], [y[i] for i in at[:12]]))
+        else:
+            out.append("%s: %s -> %s" % (key, x, y))
+    samplers = {key: int(value[0]) for key, value in a.items()
+                if " uniform " in key and isinstance(value, tuple)
+                and any(word in key.lower() for word in ("tex", "shadow", "cookie", "sampler",
+                                                         "map", "cloud", "sky"))}
+    programs = sorted({key.split(" ")[0] for key in a})
+    return ("programs %s (sampler units %s); " % (programs, samplers)
+            + ("; ".join(out) if out else "none"))
 
 
 def _stats(session):
