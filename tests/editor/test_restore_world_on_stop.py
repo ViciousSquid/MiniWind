@@ -209,3 +209,97 @@ def test_a_map_changed_during_play_keeps_the_current_scene_and_marks_it_unsaved(
     assert window.state.brushes[0]["name"] == "keep this scene"
     assert window.unsaved_changes is True
     assert any("Could not restore" in n.message for n in error_report.take_notices())
+
+
+def _stopped_and_reloaded(window, path, stop, monkeypatch):
+    """Play the map at *path*, change it, stop with *stop* and open it again
+    (a save loaded, or a new game, from the pause menu); what is left, and
+    how many times the map was read."""
+    import json
+    from editor import main_window as main_window_module
+    from editor.things import LogicState
+    reads = []
+    real_read = main_window_module._read_level_text
+    monkeypatch.setattr(main_window_module, "_read_level_text",
+                        lambda p: (reads.append(p), real_read(p))[1])
+    assert window.load_level_file(path)
+    window.state.undo_stack.append("{}")                # some history to keep
+    reads.clear()
+    window.enter_play_mode()
+    monster = next(t for t in window.state.things if t.properties.get("name") == "Monster_1")
+    monster.properties["dead"] = True
+    monster.pos = [900.0, 64.0, 900.0]
+    stop(path)
+    left = (len(window.state.undo_stack), list(window.state.redo_stack),
+            window.unsaved_changes, window.file_path)
+    assert window.load_level_file(path)
+    level = window.state.get_level_data()
+    level.pop("created", None)                          # when it was written
+    level = json.dumps(level, sort_keys=True, default=str)
+    stores = json.dumps(LogicState._persistent_registry, sort_keys=True, default=str)
+    monkeypatch.setattr(main_window_module, "_read_level_text", real_read)
+    return left, level, stores, window.unsaved_changes, window.file_path, len(reads)
+
+
+def test_stopping_for_a_reload_of_the_same_file_reads_it_once_and_ends_the_same(
+        main_window, tmp_path, monkeypatch):
+    """The pause menu's load and new game stop Play and open the map again at
+    once: the world is not first put back from that same file (a whole
+    second load), and everything ends as it did when it was."""
+    from tests.helpers import scenes
+    window = main_window
+    window.config.add_section("Settings")
+    window.config.set("Settings", "restore_world_on_stop", "true")
+    path = scenes.write(tmp_path, "arena.json", scenes.monster_arena())
+
+    before = _stopped_and_reloaded(window, path, lambda p: window._exit_play_mode(),
+                                   monkeypatch)
+    after = _stopped_and_reloaded(window, path, window._exit_play_mode_for_reload,
+                                  monkeypatch)
+    assert before[-1] == 2 and after[-1] == 1          # restore + load -> load
+    assert after[:-1] == before[:-1]
+
+
+def test_stopping_for_a_reload_still_restores_when_the_load_may_not_replace_it(
+        main_window, tmp_path):
+    """Unsaved edits, another map, a map that is not there: Stop puts the
+    world back first, as ever."""
+    from tests.helpers import scenes
+    window = main_window
+    window.config.add_section("Settings")
+    window.config.set("Settings", "restore_world_on_stop", "true")
+    path = scenes.write(tmp_path, "arena.json", scenes.monster_arena())
+    other = scenes.write(tmp_path, "other.json", scenes.monster_arena())
+    for target, unsaved in ((other, False), (str(tmp_path / "gone.json"), False),
+                            (None, False), (path, True)):
+        assert window.load_level_file(path)
+        window.unsaved_changes = unsaved
+        window.enter_play_mode()
+        monster = next(t for t in window.state.things
+                       if t.properties.get("name") == "Monster_1")
+        monster.properties["dead"] = True
+        window._exit_play_mode_for_reload(target)
+        assert not window.view_3d.play_mode
+        monster = next(t for t in window.state.things
+                       if t.properties.get("name") == "Monster_1")
+        assert not monster.properties.get("dead"), (target, unsaved)
+        assert window.unsaved_changes is unsaved
+
+
+def test_stopping_for_a_reload_of_a_map_changed_during_play_stops_as_ever(
+        main_window, tmp_path):
+    from engine import error_report
+    from tests.helpers import scenes
+    window = main_window
+    window.config.add_section("Settings")
+    window.config.set("Settings", "restore_world_on_stop", "true")
+    path = scenes.write(tmp_path, "arena.json", scenes.monster_arena())
+    assert window.load_level_file(path)
+    window.enter_play_mode()
+    window.state.brushes[0]["name"] = "keep this scene"
+    Path(path).write_text('{"brushes": [], "things": []}')
+    error_report.clear_notices()
+    error_report._logged.clear()
+    window._exit_play_mode_for_reload(path)
+    assert window.state.brushes[0]["name"] == "keep this scene"
+    assert window.unsaved_changes is True

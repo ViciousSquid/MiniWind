@@ -208,6 +208,16 @@ def _file_identity(path):
         return None
 
 
+def _same_file(a, b):
+    """Whether paths *a* and *b* name the same existing file."""
+    if not a or not b:
+        return False
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 class _SavedLevelFile:
     """A pre-Play world held as the saved file it is identical to."""
 
@@ -3753,6 +3763,41 @@ class MainWindow(QMainWindow):
             return bool(asks())
         except Exception:
             return False
+
+    def _exit_play_mode_for_reload(self, path):
+        """Exit play mode for a load of *path* that follows at once (a save
+        loaded, a new game started from the pause menu).
+
+        When Stop would put the world back from that same file, unchanged
+        since Play started and with no unsaved edits riding on it, the world
+        is not put back first: putting it back re-read, re-validated and
+        re-built the whole map -- seconds on the shipped overworld -- only for
+        the load to replace it with the same file a moment later. What else
+        Stop puts back (the history, the unsaved flag, the file path) is put
+        back as before; the scene and the stores are the load's to reset.
+        Anything else -- a snapshot, unsaved edits, another or a changed file,
+        a *path* that is not there -- stops exactly as :meth:`_exit_play_mode`.
+        """
+        captured = getattr(self, '_pre_play_world', None)
+        world = captured[0] if captured is not None else None
+        if (not isinstance(world, _SavedLevelFile) or captured[3]
+                or not _same_file(world.path, path)
+                or _file_identity(world.path) != world.version):
+            self._exit_play_mode()
+            return
+        _world, undo, redo, unsaved = captured
+        self._pre_play_world = None
+        self._replacing_level = True
+        try:
+            self._exit_play_mode()
+        finally:
+            self._replacing_level = False
+        self.state.undo_stack.clear()
+        self.state.undo_stack.extend(undo)
+        self.state.redo_stack = redo
+        self.file_path = world.path
+        self.unsaved_changes = unsaved
+        self.update_title()
 
     def _exit_play_mode(self):
         """Exit play mode and return to editor.
