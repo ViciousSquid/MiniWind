@@ -136,9 +136,9 @@ next, ← / D-pad ← back, Esc / B skip. Without the setting none of it appears
 **Key hints.** As a new character first comes into view (after the tutorial's
 pages, if shown), the inventory key appears in the middle of the screen
 (128 × 128, the word "Inventory" under it): 0.5 s fading in, 2 s held, 0.5 s
-fading out. A character who starts with spells (some builds are given
-them; never a Warrior or Barbarian, who never have magic) is then shown the
-spellbook key ("Spellbook") the same way, at
+fading out. A Mage, and any other character who starts with spells
+(some builds are given them; never a Warrior or Barbarian, who never have
+magic), is then shown the spellbook key ("Spellbook") the same way, at
 3 s after the first began or as soon as it has gone, whichever is later --
 never both at once. Pressing a hint's key (by your own binding, which is
 the key shown) hides it at once; pressed before its hint shows, the hint is

@@ -117,10 +117,17 @@ def test_a_build_given_spells_is_shown_it_and_one_without_is_not():
     s.game.character.known_spells = ["flare"]
     kh.arm(s)
     assert _queue(s) == ["inventory", "spells"]
-    s = _new("mage")
+    s = _new("healer")
     s.game.character.known_spells = []
     kh.arm(s)
     assert _queue(s) == ["inventory"]
+
+
+def test_a_mage_always_sees_it():
+    s = _new("mage")
+    s.game.character.known_spells = []
+    kh.arm(s)
+    assert _queue(s) == ["inventory", "spells"]
 
 
 def test_the_spellbook_follows_once_the_inventory_hint_has_faded():
