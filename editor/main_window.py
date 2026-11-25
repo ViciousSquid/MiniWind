@@ -3726,8 +3726,12 @@ class MainWindow(QMainWindow):
         with self.loading_overlay.busy(title, "Updating the editor", 30):
             if self.state.set_editor_whole_world(shown, self.view_3d.camera.pos):
                 self.update_all_ui()
+    @_gc_paused_load
     def _reload_saved_level(self, saved):
-        """Put the scene back to *saved*'s file, keeping the editor camera."""
+        """Put the scene back to *saved*'s file, keeping the editor camera.
+
+        A load like any other, so with the collector paused like one.
+        """
         position = self.view_3d.camera.pos
         try:
             if _file_identity(saved.path) != saved.version:
