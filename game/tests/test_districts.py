@@ -12,7 +12,7 @@ from .. import districts as dd
 
 def plain(**extra):
     """Two districts either side of x = 0, no warp, no biome pull."""
-    content = {"bounds": [-1000, -1000, 1000, 1000], "warp": 0.0, "biome_bias": 0.0,
+    content = {"bounds": [-1000, -1000, 1000, 1000], "warp": 0.0, "biome_bias": 0.0, "edge_margin": 0.0,
                "border": {"cell": 20.0, "smoothing": 2},
                "districts": [{"id": "west", "seat": [-500, 0]},
                              {"id": "east", "seat": [500, 0]}]}
@@ -76,7 +76,7 @@ def test_a_district_keeps_to_its_biome():
 
 
 def test_seats_of_one_district_have_no_border_between_them():
-    content = {"bounds": [-1000, -1000, 1000, 1000], "warp": 0.0, "biome_bias": 0.0,
+    content = {"bounds": [-1000, -1000, 1000, 1000], "warp": 0.0, "biome_bias": 0.0, "edge_margin": 0.0,
                "border": {"cell": 20.0},
                "districts": [{"id": "split", "seats": [[-600, 0], [600, 0]]},
                              {"id": "middle", "seat": [0, 700]}]}
@@ -107,9 +107,19 @@ def test_border_lines_run_along_the_border_smoothed():
     assert zs[0] <= -980 and zs[-1] >= 980
 
 
+def test_borders_end_short_of_the_world_s_edge():
+    found = plain(edge_margin=300.0, edge_taper=200.0)
+    for line in found.border_lines():
+        assert min(found.edge_distance(x, z) for x, z in line) >= 300.0
+    assert found.edge_fade(0.0, 0.0) == 1.0 and found.edge_fade(0.0, 990.0) == 0.0
+    assert 0.0 < float(found.edge_fade(0.0, 1000 - 400.0)) < 1.0
+    shipped = dd.load()
+    assert shipped.edge_margin >= 5000.0
+
+
 def test_borders_stop_at_water():
     water = [(-100.0, 200.0, 100.0, 1000.0, 50.0)]           # a sea over z > 200
-    found = dd.Districts({"bounds": [-1000, -1000, 1000, 1000], "warp": 0.0, "biome_bias": 0.0,
+    found = dd.Districts({"bounds": [-1000, -1000, 1000, 1000], "warp": 0.0, "biome_bias": 0.0, "edge_margin": 0.0,
                           "border": {"cell": 20.0},
                           "districts": [{"id": "w", "seat": [-500, 0]}, {"id": "e", "seat": [500, 0]}]},
                          water=water, height=lambda xs, zs: np.zeros(len(xs)))
@@ -153,7 +163,7 @@ class PaintGrid:
 
 
 def small(**extra):
-    content = {"bounds": [-1024, -1024, 1024, 1024], "warp": 0.0, "biome_bias": 0.0,
+    content = {"bounds": [-1024, -1024, 1024, 1024], "warp": 0.0, "biome_bias": 0.0, "edge_margin": 0.0,
                "border": {"cell": 16.0, "width": 30.0},
                "districts": [{"id": "w", "seat": [-500, 0]}, {"id": "e", "seat": [500, 0]}]}
     content.update(extra)

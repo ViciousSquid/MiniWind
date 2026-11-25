@@ -1017,7 +1017,10 @@ Reach** and **Cairnmoor** (desert; Cairnmoor takes in Whisperdeep),
   (30 units at its fullest) that wobbles, swells and thins with the pen's
   pressure (darker where it presses), bleeds unevenly at its edges, now and
   then runs dry, with a lighter second stroke wandering off it and back. A
-  border stops at the water's edge (the sea, a lake), and people, creatures
+  border stops at the water's edge (the sea, a lake) and short of the
+  world's rim -- the world is a square disc, and nobody goes near its edge:
+  each border tapers out from 9,000 to 6,000 units from it, and no road or
+  border is painted closer. People, creatures
   and things on a border stand over it. They are only a guide: crossing one
   changes nothing. Other maps (caves) have none.
 * *What they cost.* Nothing: they are baked once into the overworld's own

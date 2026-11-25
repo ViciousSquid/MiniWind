@@ -51,6 +51,10 @@ DEFAULTS = {
     "warp_scale": 15000.0,
     "seed": 1187,
     "biome_bias": 6000.0,
+    # The world is a square disc and nobody goes near its rim: borders end
+    # this far from the edge of the land, tapering out over the last 'taper'.
+    "edge_margin": 6000.0,
+    "edge_taper": 3000.0,
     "border": {"width": 30.0, "colour": [46, 30, 20], "alpha": 0.85,
                "cell": 160.0, "smoothing": 3},
     "districts": [],
@@ -178,6 +182,8 @@ class Districts:
         self.warp_scale = max(1.0, float(cfg["warp_scale"]))
         self.seed = int(cfg["seed"])
         self.biome_bias = max(0.0, float(cfg["biome_bias"]))
+        self.edge_margin = max(0.0, float(cfg["edge_margin"]))
+        self.edge_taper = max(1.0, float(cfg["edge_taper"]))
         self.border = border
         self.biome_weights = biome_weights
         self.water = list(water or ())[:MAX_WATER]
@@ -263,6 +269,19 @@ class Districts:
         except (TypeError, ValueError):
             return False
 
+    def edge_distance(self, x, z):
+        """How far (x, z) lies inside the edge of the land (vectorised)."""
+        x0, z0, x1, z1 = self.bounds
+        x, z = np.asarray(x, np.float64), np.asarray(z, np.float64)
+        return np.minimum(np.minimum(x - x0, x1 - x), np.minimum(z - z0, z1 - z))
+
+    def edge_fade(self, x, z):
+        """0 within :attr:`edge_margin` of the land's edge, rising to 1 over
+        :attr:`edge_taper`: how much of a border is drawn there."""
+        t = (self.edge_distance(x, z) - self.edge_margin) / self.edge_taper
+        t = np.clip(t, 0.0, 1.0)
+        return t * t * (3.0 - 2.0 * t)
+
     def under_water(self, x, z, y):
         """Whether ground at height *y* at (x, z) lies under a water brush's
         surface (vectorised)."""
@@ -289,8 +308,27 @@ class Districts:
         """Every border as a smoothed line of (x, z) points, broken where it
         would cross water (cached)."""
         if self._lines is None:
-            self._lines = self._dry(self._trace())
+            self._lines = self._inland(self._dry(self._trace()))
         return self._lines
+
+    def _inland(self, lines):
+        """The lines with every point the edge fade blanks taken out (nobody
+        goes near the rim of the world)."""
+        out = []
+        for line in lines:
+            pts = np.asarray(line, np.float64)
+            keep = self.edge_fade(pts[:, 0], pts[:, 1]) > 0.0
+            run = []
+            for p, k in zip(line, keep):
+                if k:
+                    run.append(p)
+                elif run:
+                    if len(run) > 1:
+                        out.append(run)
+                    run = []
+            if len(run) > 1:
+                out.append(run)
+        return out
 
     def cache_key(self, terrain) -> str:
         """What the drawn borders depend on: districts, warp, biomes, water,
@@ -368,7 +406,7 @@ class Districts:
             ii, jj = np.nonzero(hit)
             xs = ox + cx * size + (ii + 0.5) * cell
             zs = oz + cz * size + (jj + 0.5) * cell
-            amount = ink(xs, zs, signed[hit], width) * opacity
+            amount = ink(xs, zs, signed[hit], width) * opacity * self.edge_fade(xs, zs)
             if self.water and self.height is not None:
                 # Heights only where a water box lies: most texels need none.
                 boxed = np.zeros(len(xs), bool)

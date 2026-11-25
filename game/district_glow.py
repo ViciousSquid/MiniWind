@@ -185,6 +185,7 @@ class Glow:
         zs = np.concatenate([g[0][:, 1] for g in grid])
         ys = np.asarray(self.height(xs, zs), np.float64) + LIFT
         alpha = np.concatenate([np.full(len(pts), g[1]) for g in grid])
+        alpha *= np.tile(self.districts.edge_fade(pts[:, 0], pts[:, 1]), len(rows))
         if self.districts.water:
             alpha[self.districts.under_water(xs, zs, ys - LIFT)] = 0.0
         m = len(pts)

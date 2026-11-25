@@ -12,7 +12,7 @@ from .. import districts as dd
 
 
 def two_districts():
-    return dd.Districts({"bounds": [-4096, -4096, 4096, 4096], "warp": 0.0, "biome_bias": 0.0,
+    return dd.Districts({"bounds": [-4096, -4096, 4096, 4096], "warp": 0.0, "biome_bias": 0.0, "edge_margin": 0.0,
                          "border": {"cell": 32.0, "width": 30.0},
                          "districts": [{"id": "w", "seat": [-2000, 0]},
                                        {"id": "e", "seat": [2000, 0]}]})
