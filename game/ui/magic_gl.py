@@ -14,7 +14,9 @@ the 2D overlay not yet):
   blitted into a texture and drawn back through a distortion shader: around
   each impact the picture bulges as if through a lens, splits a little into
   red, green and blue at the rim, and a refracting shock ring runs outward.
-  Only frames with a live lens pay for it.
+  A lens with a *fill* is a tinted glass bubble (Slow Time's, round its
+  caster): the world inside it magnified and faintly tinted in its colour,
+  with a thin bright rim at its edge. Only frames with a live lens pay for it.
 
 Everything is guarded: if a GL call fails, the pass turns itself off for the
 session rather than taking the frame down with it.
@@ -155,6 +157,7 @@ uniform sampler2D scene;
 uniform vec4 lens[8];        // xy centre (uv), z radius (uv height), w strength
 uniform vec4 ring[8];        // x progress, yzw rim colour
 uniform float shimmer[8];    // a ward's ripple through the glass (0: none)
+uniform float fill[8];       // a tinted bubble: inside tint and thin rim (0: none)
 uniform int count;
 uniform float aspect;
 uniform float time;
@@ -162,6 +165,8 @@ out vec4 frag;
 void main() {
     vec2 offR = vec2(0.0), offG = vec2(0.0), offB = vec2(0.0);
     vec3 glow = vec3(0.0);
+    vec3 tintCol = vec3(0.0);
+    float tintMix = 0.0;
     for (int i = 0; i < 8; i++) {
         if (i >= count) break;
         vec2 c = lens[i].xy;
@@ -189,9 +194,24 @@ void main() {
         offG += pull;
         offB += pull * 0.94;
         glow += ring[i].yzw * wave * 0.25;
+        // A tinted glass bubble: faintly coloured through, deepening toward
+        // its edge, and a thin bright rim that wavers as the glass ripples.
+        float f = fill[i];
+        if (f > 0.0) {
+            float edge = 0.965 + 0.006 * sin(ang * 7.0 + time * 2.7);
+            float rim = exp(-pow((r - edge) / 0.018, 2.0));
+            float halo = exp(-pow((r - edge) / 0.08, 2.0));
+            glow += ring[i].yzw * (rim * 0.85 + halo * 0.18) * f;
+            float m = f * (0.24 + 0.24 * r * r);
+            if (m > tintMix) { tintMix = m; tintCol = ring[i].yzw; }
+        }
     }
     frag = vec4(texture(scene, uv + offR).r, texture(scene, uv + offG).g,
                 texture(scene, uv + offB).b, 1.0);
+    if (tintMix > 0.0) {
+        float lum = dot(frag.rgb, vec3(0.299, 0.587, 0.114));
+        frag.rgb = mix(frag.rgb, tintCol * (0.30 + 1.05 * lum), tintMix);
+    }
     frag.rgb += glow;
 }"""
 
@@ -337,8 +357,8 @@ def _init(gl) -> bool:
 
         _S.lens_prog = _compile(gl, _LENS_VERT, _LENS_FRAG)
         _S.lens_loc = {n: gl.glGetUniformLocation(_S.lens_prog, n)
-                       for n in ("scene", "lens", "ring", "shimmer", "count", "aspect",
-                                 "time")}
+                       for n in ("scene", "lens", "ring", "shimmer", "fill", "count",
+                                 "aspect", "time")}
         _S.lens_vao = gl.glGenVertexArrays(1)
         _S.wet_prog = _compile(gl, _LENS_VERT, _WET_FRAG)
         _S.wet_loc = {n: gl.glGetUniformLocation(_S.wet_prog, n)
@@ -409,9 +429,10 @@ def draw_sprites(projection, view, sprites, now=None) -> int:
 
 
 def project_lenses(projection, view, lenses, width, height):
-    """``[(cx, cy, radius, strength, progress, colour, shimmer)]`` in screen uv
-    for the lenses in front of the camera (``(x, y, z, strength, radius_world,
-    progress, colour, shimmer)`` each)."""
+    """``[(cx, cy, radius, strength, progress, colour, shimmer, fill)]`` in
+    screen uv for the lenses in front of the camera (``(x, y, z, strength,
+    radius_world, progress, colour, shimmer[, fill])`` each; *fill*, a tinted
+    bubble's tint and rim, is 0 when left out)."""
     import glm
     out = []
     if not lenses or width <= 0 or height <= 0:
@@ -419,8 +440,10 @@ def project_lenses(projection, view, lenses, width, height):
     vp = projection * view
     right, _up = _camera_axes(view)
     aspect = width / float(height)
-    for x, y, z, strength, radius, progress, colour, shimmer in lenses:
-        if strength <= 1e-3:
+    for lens in lenses:
+        x, y, z, strength, radius, progress, colour, shimmer = lens[:8]
+        fill = float(lens[8]) if len(lens) > 8 else 0.0
+        if strength <= 1e-3 and fill <= 1e-3:
             continue
         c = vp * glm.vec4(x, y, z, 1.0)
         if c.w <= 1e-4:
@@ -434,7 +457,8 @@ def project_lenses(projection, view, lenses, width, height):
         r = math.hypot((ex - cx) * aspect, ey - cy)
         if r <= 1e-4 or cx < -r or cx > 1 + r or cy < -r or cy > 1 + r:
             continue
-        out.append((cx, cy, min(r, 1.5), min(1.0, strength), progress, colour, shimmer))
+        out.append((cx, cy, min(r, 1.5), min(1.0, strength), progress, colour, shimmer,
+                    min(1.0, fill)))
     return out[:8]
 
 
@@ -498,13 +522,16 @@ def draw_lenses(projection, view, lenses) -> int:
         lens = np.zeros((8, 4), dtype=np.float32)
         ring = np.zeros((8, 4), dtype=np.float32)
         shimmer = np.zeros(8, dtype=np.float32)
-        for i, (cx, cy, r, s, progress, colour, ripple) in enumerate(screen):
+        fill = np.zeros(8, dtype=np.float32)
+        for i, (cx, cy, r, s, progress, colour, ripple, tinted) in enumerate(screen):
             lens[i] = (cx, cy, r, s)
             ring[i] = (progress, *colour)
             shimmer[i] = ripple
+            fill[i] = tinted
         gl.glUniform4fv(loc["lens"], 8, lens)
         gl.glUniform4fv(loc["ring"], 8, ring)
         gl.glUniform1fv(loc["shimmer"], 8, shimmer)
+        gl.glUniform1fv(loc["fill"], 8, fill)
         gl.glUniform1f(loc["time"], float(time.perf_counter() % 1000.0))
         gl.glUniform1i(loc["count"], len(screen))
         gl.glUniform1f(loc["aspect"], w / float(h))

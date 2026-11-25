@@ -942,7 +942,8 @@ class MiniwindGame:
     def _on_post_scene(self, ev):
         """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
         flight and their fading flight paths (game/ui/arrows.py), and last the
-        fisheye lenses of heavy spell impacts, which bend all of it."""
+        fisheye lenses of heavy spell impacts and of a Slow Time caster's
+        bubble, which bend all of it."""
         if not ev.get("play_mode"):
             return
         host = getattr(self, "_host", None)
@@ -971,6 +972,13 @@ class MiniwindGame:
             # Arrows left sticking out of barrels (game/stuck_arrows.py).
             import game.ui.arrows as arrow_art
             arrow_art.draw_stuck(projection, view, stuck)
+        if getattr(session, "_slow_time_until", None) is not None:
+            # The Slow Time caster's icy fisheye bubble, first among the lenses.
+            bubble = session.slow_time_lenses()
+            if bubble:
+                lenses = list(bubble) + list(lenses or ())
+                if fx is None:
+                    import game.ui.magic_gl as magic_gl
         if lenses:
             magic_gl.draw_lenses(projection, view, lenses)
         # Rain on the camera's glass, over everything in the world
