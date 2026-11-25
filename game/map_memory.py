@@ -265,11 +265,16 @@ class MapMemory:
         if self._accum < CHECK_SECONDS or not self.key:
             return
         self._accum = 0.0
-        s = self.session
-        now = _hours(s.clock)
-        things = fio.things(s.logic)
+        now = _hours(self.session.clock)
+        self._record_deaths(now)
+        self._return_due(now)
+        if self._dirty:
+            self.save()
+
+    def _record_deaths(self, now) -> None:
+        """Note everyone in the live map who has died since the last look."""
         dead = self.record["dead"]
-        for t in list(things):
+        for t in list(fio.things(self.session.logic)):
             kind = _kind(t)
             if kind not in ACTOR_TYPES:
                 continue
@@ -285,9 +290,6 @@ class MapMemory:
                          "d": round(self._delay(key), 2),
                          "pos": [round(float(v), 1) for v in t.pos]}
             self._dirty = True
-        self._return_due(now)
-        if self._dirty:
-            self.save()
 
     def _return_due(self, now) -> None:
         """Bring back whoever's day is up, out of the player's sight."""
@@ -369,6 +371,10 @@ class MapMemory:
     def save(self) -> None:
         if not self.key:
             return
+        # Deaths are noted every CHECK_SECONDS; a kill made since then (the
+        # player struck and walked straight into a cave mouth, or saved) is
+        # noted now, or the map forgot it and the victim stood up again.
+        self._record_deaths(_hours(self.session.clock))
         supply = getattr(self.session, "flour_supply", None)
         if supply is not None and supply.roads is not None:
             supply.roads.sync_live()
