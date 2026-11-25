@@ -1330,7 +1330,7 @@ all accumulated time when it runs, so simulation time is not lost.
                         slide_x = glm.vec3(thing_pos.x + step.x, thing_pos.y, thing_pos.z)
                         slide_z = glm.vec3(thing_pos.x, thing_pos.y, thing_pos.z + step.z)
                         if not self._monster_overlaps_wall(slide_x.x, slide_x.y, slide_x.z, MONSTER_WALL_MARGIN):
-                            thing.pos = [slide_x.x, slide_x.y, slide_z.z]
+                            thing.pos = [slide_x.x, slide_x.y, slide_x.z]
                         elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                             thing.pos = [slide_z.x, slide_z.y, slide_z.z]
                         # else: blocked on both axes – no movement
@@ -2015,7 +2015,7 @@ the scalar fallback for callers that do not have the dense table.
                 slide_x = glm.vec3(thing_pos.x + step.x, thing_pos.y, thing_pos.z)
                 slide_z = glm.vec3(thing_pos.x, thing_pos.y, thing_pos.z + step.z)
                 if not self._monster_overlaps_wall(slide_x.x, slide_x.y, slide_x.z, MONSTER_WALL_MARGIN):
-                    monster.pos = [slide_x.x, slide_x.y, slide_z.z]
+                    monster.pos = [slide_x.x, slide_x.y, slide_x.z]
                 elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                     monster.pos = [slide_z.x, slide_z.y, slide_z.z]
 
@@ -2241,7 +2241,7 @@ the scalar fallback for callers that do not have the dense table.
             slide_x = glm.vec3(m_pos.x + step.x, m_pos.y, m_pos.z)
             slide_z = glm.vec3(m_pos.x, m_pos.y, m_pos.z + step.z)
             if not self._monster_overlaps_wall(slide_x.x, slide_x.y, slide_x.z, MONSTER_WALL_MARGIN):
-                monster.pos = [slide_x.x, slide_x.y, slide_z.z]
+                monster.pos = [slide_x.x, slide_x.y, slide_x.z]
                 state['patrol_blocked_count'] = 0
             elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                 monster.pos = [slide_z.x, slide_z.y, slide_z.z]

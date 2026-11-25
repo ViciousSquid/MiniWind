@@ -62,6 +62,9 @@ class _Walker:
 
     _move = MiniwindSession._move
     _step_to = MiniwindSession._step_to
+    _slide_to = MiniwindSession._slide_to
+    _glance_or_strafe = MiniwindSession._glance_or_strafe
+    _strafe_tick = MiniwindSession._strafe_tick
     _blocked_by_wall = MiniwindSession._blocked_by_wall
 
     def __init__(self, walls=()):
