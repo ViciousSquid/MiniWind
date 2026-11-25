@@ -308,3 +308,36 @@ def test_tool_metadata_survives_a_load_save_round_trip():
     assert saved["_miniwind_world"] == {"caves": ["cave01"], "roads": True}
     state.clear_scene()
     assert "_miniwind_world" not in state.get_level_data()
+
+
+def test_an_unchanged_map_file_is_validated_once_across_reloads(main_window, tmp_path,
+                                                                 monkeypatch):
+    """Validation only reads a map, and the same unchanged files are the
+    same map: reloading it (a Continue, a death restore, a cave's way out)
+    does not walk every record again. A file touched since is checked anew,
+    and a broken one is still refused."""
+    import os
+    from editor import main_window as main_window_module
+    from tests.helpers import scenes
+    monkeypatch.setattr(main_window_module, "_VALIDATED_LEVEL_FILES", set())
+    window = main_window
+    checked = []
+    real = window.state.validate_level_data
+    monkeypatch.setattr(window.state, "validate_level_data",
+                        lambda data: (checked.append(1), real(data))[1])
+    path = scenes.write(tmp_path, "arena.json", scenes.monster_arena())
+
+    assert window.load_level_file(path) and len(checked) == 1
+    first = window.state.get_level_data()
+    assert window.load_level_file(path) and len(checked) == 1      # remembered
+    again = window.state.get_level_data()
+    first.pop("created", None), again.pop("created", None)
+    assert again == first
+
+    stat = os.stat(path)
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    assert window.load_level_file(path) and len(checked) == 2      # touched: checked
+
+    with open(path, "w") as fh:
+        fh.write('{"brushes": 5, "things": []}')
+    assert window.load_level_file(path) is False                     # still refused
