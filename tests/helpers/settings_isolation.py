@@ -67,13 +67,9 @@ def redirected():
 
 
 def fresh_copy(path):
-    """Write isolated test settings with the legacy renderer selected.
-
-    The established integration and visual suite exercises the original
-    Forward/Classic renderer; tests for HD_High construct it explicitly, so
-    their target is never implicit. Whichever renderer the shipped settings
-    select, each editor test's is chosen here, and the shipped settings are
-    left untouched.
+    """Write isolated test settings: a copy of the shipped defaults, with
+    Classic -- the only renderer -- named, as the Settings dialog writes it.
+    The shipped settings are left untouched.
     """
     config = configparser.ConfigParser()
     try:

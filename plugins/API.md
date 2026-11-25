@@ -452,8 +452,9 @@ Either way Play still starts, on Soma, and the console says which it was.
 ```python
 def register_renderer(self, name: str, cls) -> bool
 ```
-Register a renderer under *name* in Fio's renderer registry (`"Forward"` is
-the built-in one). An implementation of the current renderer contract (the
+Register a renderer under *name* in Fio's renderer registry (`"Forward"` --
+Classic -- is the built-in one, and the only one Fio draws with: see
+**Classic is enforced** below). An implementation of the current renderer contract (the
 tables-only one API 1.9.0 introduced; `RENDERER_CONTRACT_VERSION` 1.0.0,
 below) requires `api_version = "1.9.0"`: a plugin that registers one
 declares it. Renderers written for 1.6-1.8 (which read the `Terrain` object
@@ -516,9 +517,8 @@ Either way the view keeps the renderer it has (`r_renderer` says why).
   the face under the cursor while another is selected.
   `draw_lens_water(drops, viewport)` -- water on the camera's lens.
   `RendererCore` implements all three; the host uses each one a renderer has.
-  Four optional settings the editor shows or changes, each of the type given
-  when present: `hd` (`bool`: it has an HD look, for View > HD preview),
-  `lowpower_mode` (`bool`), `reflections_enabled` (`bool`; the console's
+  Three optional settings the editor shows or changes, each of the type given
+  when present: `lowpower_mode` (`bool`), `reflections_enabled` (`bool`; the console's
   `reflections`), `decal_reflection_fade` (`float`; `decalfade`). The
   viewport, the editor and plugins read nothing from a renderer that is not
   in `Renderer` or `RendererOptions`.
@@ -576,12 +576,17 @@ G-buffer — and consumes the dense tables rather than authored
 `True` if registered, `False` in a headless/player context with no viewport.
 This is how a whole new renderer ships as a plugin.
 
-**Choosing it, live.** `r_renderer` lists the registered renderers and
-`r_renderer <name>` swaps to one (`QtGameView.switch_renderer`), in the editor or
-in Play. The host creates the new renderer first; if its factory raises or it is
-not `ready`, the current one keeps running. Session settings (`shadows_enabled`,
-`water_quality`, the shared `view_distance`) carry over. Map logic cannot run
-`r_renderer`.
+**Classic is enforced.** Fio draws with Classic only: `settings.ini`'s
+`[Renderer] renderer` is not consulted, `r_renderer` shows Classic and refuses
+any other name, and `QtGameView.switch_renderer` refuses every renderer but
+Classic while `engine.renderer.registry.ENFORCE_CLASSIC` holds -- which it
+always does in Fio. A registered renderer is still made by `create_renderer`
+and held to the contract, but the host does not draw with it. The swap
+machinery below is what the host does with the enforcement lifted (its own
+tests do that): it creates the new renderer first; if its factory raises or it
+is not `ready`, the current one keeps running. Session settings
+(`shadows_enabled`, `water_quality`, the shared `view_distance`) carry over.
+Map logic cannot run `r_renderer`.
 
 **Resource lifetime is part of the contract.** *No GL resource ID survives the
 lifetime of the renderer that owns it.*
@@ -617,7 +622,8 @@ The contract step by step, GL state rules and a complete working
 `DeferredRenderer` are in the wiki's
 [Renderer Development Guide](https://github.com/ViciousSquid/Fio/wiki/Renderer-Development-Guide);
 the example itself is [`docs/examples/deferred_renderer/`](../docs/examples/deferred_renderer/)
-(copy it into `plugins/` and run `r_renderer Deferred`).
+(its tests swap it in with the enforcement lifted; Fio itself keeps drawing
+with Classic).
 
 ### Developer/editor tools (API 1.4.0)
 

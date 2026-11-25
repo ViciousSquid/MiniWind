@@ -35,7 +35,8 @@ from engine.game_input import modal_escape_active as _game_modal_escape_active
 from engine.game_input import owns_number_keys as _game_owns_number_keys
 
 from engine.renderer import (
-    DEFAULT_RENDERER, available_renderers, canonical_name, create_renderer)
+    CLASSIC, DEFAULT_RENDERER, available_renderers, canonical_name,
+    classic_enforced, create_renderer, renderer_from_settings)
 from editor.selection_overlay import describe_selection
 _HUD_FONT_FILES = {
     1: "Rushfordclean-rgz89.otf",
@@ -261,12 +262,6 @@ class QtGameView(QOpenGLWidget):
         self.renderer = None
         #: Panorama selected by the earliest-created PlayerStart in the open map.
         self.sky_image_path = ""
-        #: The map's HD sky (engine.hd_graphics.sky_settings), from the
-        #: Primary PlayerStart like the panorama; None is the defaults.
-        self.hd_sky_settings = None
-        #: View > HD preview: whether the editor view draws HD in an HD
-        #: tier (Play always does).
-        self.hd_preview = True
         #: Registry name of the renderer initializeGL creates and switch_renderer replaces.
         self._renderer_mode = DEFAULT_RENDERER
 
@@ -706,23 +701,10 @@ class QtGameView(QOpenGLWidget):
         gl.glClearColor(*self.view_distance.fog_color, 1.0)
         self._log_gl_context()
         config = self.editor.config
-        # Classic unless settings.ini asks for HD_High ([Renderer] renderer).
-        # A renderer that cannot start here leaves Classic running.
-        wanted = self._configured_renderer(config)
-        self._renderer_mode = DEFAULT_RENDERER
-        self.renderer = None
-        if wanted != DEFAULT_RENDERER:
-            try:
-                candidate = create_renderer(wanted, config)
-                if candidate.ready:
-                    self.renderer, self._renderer_mode = candidate, wanted
-                else:
-                    candidate.cleanup()
-            except Exception as exc:
-                print(f"[QtGameView] Renderer '{wanted}' failed to start ({exc}); "
-                      f"using {DEFAULT_RENDERER}.")
-        if self.renderer is None:
-            self.renderer = create_renderer(DEFAULT_RENDERER, config)
+        # Always Classic: whatever [Renderer] renderer says in settings.ini
+        # (an older file may still name HD_High), Classic is what draws.
+        self._renderer_mode = self._configured_renderer(config)
+        self.renderer = create_renderer(self._renderer_mode, config)
         if not self.renderer.ready:
             debug_log("Error", "3D view: the renderer's shaders did not build, so "
                                "the view stays empty; the error is in the "
@@ -1712,10 +1694,6 @@ class QtGameView(QOpenGLWidget):
         _pmgr = self.logic_thread.plugins if self.logic_thread is not None else None
         # The map's Primary PlayerStart owns the panorama in both editor and Play.
         self.renderer.set_background_image(self.sky_image_path)
-        # The map's HD sky rides in the frame input like everything else a
-        # renderer is told: plain data, for a renderer that lights from it.
-        self._render_config["hd_sky"] = self.hd_sky_settings
-        self._render_config["hd_preview"] = self.hd_preview
         if _pmgr is not None and _pmgr.has_listeners("render.pre_scene"):
             _pmgr.emit("render.pre_scene", viewport=self, renderer=self.renderer,
                        projection=self.projection_matrix, view=self.view_matrix,
@@ -2335,17 +2313,10 @@ class QtGameView(QOpenGLWidget):
 
     @staticmethod
     def _configured_renderer(config):
-        """The registry name of the renderer settings.ini asks to start
-        with; Classic (the default renderer) on a low-power machine."""
-        from engine import hd_graphics
-        from engine import shaders as engine_shaders
-        try:
-            is_low_power, _ = engine_shaders.detect_low_power_arm()
-            lowpower = config.getboolean('Renderer', 'lowpower_mode', fallback=is_low_power)
-        except Exception:
-            lowpower = False
-        name = hd_graphics.REGISTRY_NAME[hd_graphics.renderer_from(config, lowpower=lowpower)]
-        return name if name in available_renderers() else DEFAULT_RENDERER
+        """The registry name of the renderer this view draws with: Classic,
+        always (engine.renderer.renderer_from_settings). A settings.ini that
+        names another renderer -- HD_High included -- still gets Classic."""
+        return renderer_from_settings(config)
 
     @property
     def renderer_mode(self):
@@ -2354,6 +2325,12 @@ class QtGameView(QOpenGLWidget):
 
     def switch_renderer(self, mode: str):
         """Replace the active renderer with the one registered as *mode*, live.
+
+        Classic is the only renderer the host draws with: while
+        ``engine.renderer.registry.ENFORCE_CLASSIC`` holds (always, outside
+        the tests of this machinery), a request for any other -- HD_High, or
+        a renderer a plugin registered -- is refused, leaves the current
+        renderer running and returns False.
 
         Works in the editor and in play: the frame input is rebuilt every
         frame, so a renderer needs nothing from its predecessor. The new
@@ -2366,6 +2343,10 @@ class QtGameView(QOpenGLWidget):
         active renderer afterwards.
         """
         mode = canonical_name(mode)         # "Classic" is the Forward renderer
+        if classic_enforced() and mode != DEFAULT_RENDERER:
+            print(f"[QtGameView] Renderer '{mode}' is not available; Fio draws "
+                  f"with {CLASSIC} only.")
+            return False
         if self.renderer is not None and mode == self._renderer_mode:
             return True
         if mode not in available_renderers():

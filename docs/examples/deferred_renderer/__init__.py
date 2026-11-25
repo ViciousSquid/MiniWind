@@ -1,8 +1,11 @@
 """An example plugin that adds a deferred renderer to Fio.
 
-Copy this package into ``plugins/`` and start Fio; ``r_renderer`` then lists
-``Deferred`` and ``r_renderer Deferred`` switches to it live. See the wiki's
-Renderer Development Guide for a walk through the code.
+It shows how a renderer is written against the public contract and
+registered. Fio itself draws with Classic only
+(``engine.renderer.registry.ENFORCE_CLASSIC``): copied into ``plugins/`` it is
+registered, but the host does not switch to it. Its tests swap it in with
+that enforcement lifted (``tests/e2e/test_deferred_renderer_example.py``).
+See the wiki's Renderer Development Guide for a walk through the code.
 """
 
 from plugins.api import FioPlugin

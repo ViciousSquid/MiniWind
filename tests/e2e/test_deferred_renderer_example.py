@@ -7,7 +7,8 @@ tests hold it to everything the guide promises:
 * it imports only the public contract and the dense tables -- nothing from
   the built-in renderer or its infrastructure;
 * registered through its plugin, it is swapped in live and draws a lit frame
-  from the dense tables;
+  from the dense tables -- with ``registry.ENFORCE_CLASSIC`` lifted: Fio
+  itself draws with Classic only, so the host refuses it otherwise;
 * Debug Tables shows it as DEFERRED and reads it, unchanged, like any other --
   and what it reports matches the GL draws actually issued;
 * no GL name it made survives it.
@@ -55,7 +56,10 @@ def test_the_example_uses_only_the_public_contract(module):
 
 
 @pytest.fixture
-def deferred():
+def deferred(monkeypatch):
+    # Fio draws with Classic only (registry.ENFORCE_CLASSIC): the example is
+    # swapped in here, with that lifted, to hold it to what the guide shows.
+    monkeypatch.setattr(registry, "ENFORCE_CLASSIC", False)
     saved = dict(registry._factories)
     sys.path.insert(0, str(EXAMPLES))
     try:

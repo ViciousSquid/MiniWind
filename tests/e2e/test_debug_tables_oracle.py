@@ -39,7 +39,10 @@ _OVERLAYS = {"draw_grid", "_draw_selection_overlays"}
 
 
 @pytest.fixture
-def flat():
+def flat(monkeypatch):
+    # Fio draws with Classic only (registry.ENFORCE_CLASSIC); the host's swap
+    # machinery is exercised with stand-ins only with that lifted here.
+    monkeypatch.setattr(registry, "ENFORCE_CLASSIC", False)
     saved = dict(registry._factories)
     FlatRenderer.created.clear()
     FlatRenderer.cleaned.clear()

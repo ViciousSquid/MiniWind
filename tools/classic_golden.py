@@ -1,13 +1,13 @@
 """Golden frames, shader sources and source lock of the Classic renderer.
 
-    xvfb-run -a python tools/hd_golden.py --check          # compare with the stored set
-    xvfb-run -a python tools/hd_golden.py --update         # store a new set
-    xvfb-run -a python tools/hd_golden.py --base ../fio-base [--out DIR]
-    python tools/hd_golden.py --lock-sources               # after a deliberate change to Classic
+    xvfb-run -a python tools/classic_golden.py --check          # compare with the stored set
+    xvfb-run -a python tools/classic_golden.py --update         # store a new set
+    xvfb-run -a python tools/classic_golden.py --base ../fio-base [--out DIR]
+    python tools/classic_golden.py --lock-sources               # after a deliberate change to Classic
 
-Classic (``engine/renderer/forward``) is the renderer Fio had before HD_High
-existed beside it: the same pixels from the same shaders. The stored set
-(``tests/visual/golden/``) was drawn by it before any HD code existed, and
+Classic (``engine/renderer/forward``) is Fio's only renderer, and it must
+stay the renderer it was: the same pixels from the same shaders. The stored
+set (``tests/visual/golden/``) was drawn by it, and
 ``classic_sources.json`` there holds the digest of every file it is made of
 (tests/visual/test_classic_lock.py fails when one changes; ``--lock-sources``
 records a change that was meant). ``--check`` draws the same
@@ -34,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 
-def _capture(tree, renderer):
+def _capture(tree):
     """Frames, shader sources and the driver's name, drawn by the checkout
     at *tree*."""
     os.chdir(tree)
@@ -43,13 +43,13 @@ def _capture(tree, renderer):
     app = QApplication.instance() or QApplication(sys.argv[:1])
     from tests.helpers import golden
     from tests.helpers import gl as glh
-    frames = golden.capture_frames(app, renderer=renderer)
+    frames = golden.capture_frames(app)
     with glh.GLTestContext(16, 16):
         import configparser
         config = configparser.ConfigParser()
         config.add_section("Renderer")
         config.set("Renderer", "lowpower_mode", "False")
-        built = glh.make_renderer(config, name={"Classic": "Forward"}.get(renderer, renderer))
+        built = glh.make_renderer(config, name="Forward")
         try:
             sources = golden.capture_shader_sources(built)
             driver = golden.driver_name()
@@ -122,8 +122,6 @@ def main(argv=None):
                       help="record Classic's source digests as they are now")
     mode.add_argument("--dump", help=argparse.SUPPRESS)   # internal: capture to DIR
     parser.add_argument("--tree", default=ROOT, help=argparse.SUPPRESS)
-    parser.add_argument("--renderer", default="Classic",
-                        help="the renderer to draw with (default Classic)")
     parser.add_argument("--out", help="keep what was drawn here (PNG)")
     parser.add_argument("--golden", default=os.path.join(ROOT, "tests", "visual", "golden"))
     args = parser.parse_args(argv)
@@ -144,7 +142,7 @@ def main(argv=None):
                                env=environment)
 
     if args.dump:
-        _save(args.dump, *_capture(os.path.abspath(args.tree), args.renderer))
+        _save(args.dump, *_capture(os.path.abspath(args.tree)))
         return 0
 
     if args.base:
@@ -156,13 +154,13 @@ def main(argv=None):
                 # Each checkout in a process of its own: its own engine.
                 status = subprocess.call(
                     [sys.executable, os.path.abspath(__file__), "--dump", directory,
-                     "--tree", tree, "--renderer", args.renderer], cwd=tree)
+                     "--tree", tree], cwd=tree)
                 if status:
                     return status
                 captures.append(_load(directory))
         problems = compare(*captures)
     else:
-        actual = _capture(ROOT, args.renderer)
+        actual = _capture(ROOT)
         if args.out:
             _save(args.out, *actual)
         if args.update:

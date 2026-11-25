@@ -1,5 +1,10 @@
 """The renderer swaps live through QtGameView.switch_renderer, in the editor and in Play.
 
+Fio draws with Classic only: while ``registry.ENFORCE_CLASSIC`` holds (as it
+always does in Fio) every other renderer is refused, and Classic keeps
+drawing (``test_only_classic_is_drawn_with_while_it_is_enforced``). The swap
+machinery itself is exercised with the enforcement lifted.
+
 Frames are drawn by ``QtGameView.paintGL`` on a real OpenGL context. A second
 renderer that shares nothing with ``ForwardRenderer`` -- it fills the view with
 one colour -- is registered by name and swapped in, then the built-in one is
@@ -28,7 +33,8 @@ def _broken(config):
 
 
 @pytest.fixture
-def renderers():
+def renderers(monkeypatch):
+    monkeypatch.setattr(registry, "ENFORCE_CLASSIC", False)
     saved = dict(registry._factories)
     FlatRenderer.created.clear()
     FlatRenderer.cleaned.clear()
@@ -168,6 +174,26 @@ def test_classic_names_the_forward_renderer_to_the_view_too(fio_session, rendere
     assert view.renderer_mode == "Forward" and view.renderer is not current
     session.publish()
     assert session.paint().std() > 4.0
+
+
+def test_only_classic_is_drawn_with_while_it_is_enforced(fio_session, renderers,
+                                                        monkeypatch):
+    from editor.console_commands import ConsoleCommandHandler
+    monkeypatch.setattr(registry, "ENFORCE_CLASSIC", True)
+    session = _open(fio_session, size=(160, 120))
+    view = session.view
+    current = view.renderer
+    for name in ("Flat", "HD_High", "Broken", "NoSuchRenderer"):
+        assert view.switch_renderer(name) is False
+    handler = ConsoleCommandHandler(session.window)
+    handler.handle_command("r_renderer flat")
+    handler.handle_command("r_renderer HD_High")
+    assert view.renderer is current and view.renderer_mode == "Forward"
+    assert FlatRenderer.created == []
+    assert view.switch_renderer("Classic") is True and view.renderer is current
+    session.publish()
+    image = session.paint()
+    assert image.std() > 4.0 and _magenta_fraction(image) < 0.001
 
 
 def test_the_console_swaps_the_renderer(fio_session, renderers):

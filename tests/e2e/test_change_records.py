@@ -266,6 +266,9 @@ def test_a_saved_game_loaded_in_play(session, instrument):
 def test_renderer_switching(session, instrument, monkeypatch):
     from engine.renderer import registry
     from tests.helpers.renderers import FlatRenderer
+    # Fio draws with Classic only (registry.ENFORCE_CLASSIC); the host's swap
+    # machinery is exercised with stand-ins only with that lifted here.
+    monkeypatch.setattr(registry, "ENFORCE_CLASSIC", False)
     saved = dict(registry._factories)
     registry.register_renderer("Flat", FlatRenderer)
     try:

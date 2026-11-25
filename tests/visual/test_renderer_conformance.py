@@ -1,8 +1,9 @@
-"""The same contract-conformance tests, run against Classic and HD_High.
+"""The contract-conformance tests, run against Classic.
 
-Both built-in renderers implement ``engine.renderer.api.Renderer`` and
-nothing else is asked of either, so every test here is parametrized over the
-two registry names and makes no exception for one of them:
+The built-in renderer implements ``engine.renderer.api.Renderer`` and nothing
+else is asked of it, so every test here is parametrized over the registry
+names of the built-in renderers (Classic, the only one) and makes no
+exception for it:
 
 * what the registry creates satisfies the whole contract
   (``contract_violations``), before a frame and after one;
@@ -17,7 +18,7 @@ two registry names and makes no exception for one of them:
   its constructor made is left behind.
 
 GL objects are counted by asking the driver which names are live, so nothing
-depends on how either renderer keeps track of its own.
+depends on how the renderer keeps track of its own.
 """
 
 import pytest
@@ -32,7 +33,7 @@ from tests.helpers import gl as glh
 
 pytestmark = [pytest.mark.gl]
 
-BUILT_IN = ("Forward", "HD_High")
+BUILT_IN = ("Forward",)
 
 _KINDS = {
     "texture": gl.glIsTexture, "buffer": gl.glIsBuffer,
