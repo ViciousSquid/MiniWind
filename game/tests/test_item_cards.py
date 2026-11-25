@@ -475,3 +475,46 @@ def test_runtime_split_rules(session):
     assert inv.quantity(c.inventory, "iron_shortsword") == 1
     assert c.equipment.get(items.SLOT_WEAPON) == "iron_shortsword"
     assert c.equipment.get(items.SLOT_SHIELD) != "iron_shortsword"
+
+
+def test_strip_right_click_keeps_spells_and_single_things(session, monkeypatch):
+    from game.ui.inventory_strip import InventoryStrip
+    c = session.game.character
+    c.class_id = "mage"
+    c.known_spells = ["flare"]
+    strip = InventoryStrip(session)
+    strip.place(1400, 900)
+    session.set_strip_slot(8, "spell:flare")
+    _draw(strip)
+    # A spell, right-clicked: readied in the off hand, as before.
+    strip.handle_mouse_press(_Ev(strip._rects[8].center(), Qt.RightButton))
+    assert drag.picked_source() is None
+    queued = []
+    monkeypatch.setattr(session, "select_strip_slot",
+                        lambda i, hand=None: queued.append((i, hand)))
+    hits.run_clicks(session)
+    assert queued == [(8, "off")]
+    # A single thing (the sword), right-clicked: nothing is picked up.
+    i = next(k for k, st in enumerate(session.strip_slots())
+             if st and st["id"] == "iron_shortsword")
+    strip.handle_mouse_press(_Ev(strip._rects[i].center(), Qt.RightButton))
+    assert drag.picked_source() is None
+
+
+def test_strip_things_have_a_tooltip_while_a_menu_is_open(session, monkeypatch):
+    from game.ui.inventory_strip import InventoryStrip
+    tips = []
+    monkeypatch.setattr(cards, "draw_tooltip", lambda p, text, pos: tips.append(text))
+    strip = InventoryStrip(session)
+    strip.place(1400, 900)
+    _draw(strip)
+    i = next(k for k, st in enumerate(session.strip_slots())
+             if st and st["id"] == "potion_heal")
+    centre = strip._rects[i].center()
+    monkeypatch.setattr(hits, "pointer", (centre.x(), centre.y()))
+    _draw(strip)
+    assert tips and tips[-1].startswith("Healing Potion") and "Quantity 5" in tips[-1]
+    tips.clear()
+    session.open_screen = None                     # free play: mouse-look, no tip
+    _draw(strip)
+    assert not tips

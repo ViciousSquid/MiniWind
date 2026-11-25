@@ -20,7 +20,9 @@ weapon in a quick slot, a helmet on the head, arrows in the quiver; anything
 else springs back with a word of why. Dragging something worn or slotted back
 to the pack takes it off. A double-click uses or equips. Things also drag
 to and from the inventory strip (I) and an open chest or body
-(:mod:`game.ui.drag`).
+(:mod:`game.ui.drag`). A right click on a stack in the pack picks up its
+larger half, to be stored in an open chest or body with a click there (the
+pack itself keeps one stack per thing, so put back in it they are one again).
 
 Painting and the mouse belong to the UI thread; the character belongs to the
 game tick. So every change is *queued* through :mod:`game.ui.hits` and carried

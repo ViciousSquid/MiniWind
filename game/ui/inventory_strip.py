@@ -272,6 +272,17 @@ class InventoryStrip(FloatingWindow):
                 self._draw_name(painter, {"name": hint}, QColor(170, 200, 255))
         elif stack and dragged is None and not self._roll_over_name():
             self._draw_name(painter, stack)
+        if (dragged is None and picked is None and 0 <= hovered < len(self._slots)
+                and self._slots[hovered] and _spell_of(self._slots[hovered]) is None
+                and getattr(self.session, "open_screen", None) is not None):
+            # With a menu open (the pointer free), a thing on the bar says
+            # what it is, as a card does: value, weight, how many.
+            from . import cards, screens
+            stack = self._slots[hovered]
+            cards.note_tooltip(self._rects[hovered], cards.Card(
+                title=str(stack.get("name") or stack.get("id")),
+                tooltip=screens._item_tip(stack)))
+            cards.flush_tooltip(painter)
         if self._locked and dragged is None:
             # A greyed spell says why: hovered by the pointer, or the slot a
             # gamepad has highlighted (the selected one).
