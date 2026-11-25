@@ -134,7 +134,7 @@ whichever was used last, switching at once, by your own bindings. Enter / A
 next, ← / D-pad ← back, Esc / B skip. Without the setting none of it appears.
 
 **Key hints.** As a new character first comes into view (after the tutorial's
-pages, if shown), the inventory key appears in the middle of the screen
+pages, if shown), the inventory key appears 100 px below the middle of the screen
 (64 × 64, the word "Inventory" under it): 0.5 s fading in, 2 s held, 0.5 s
 fading out. A Mage, and any other character who starts with spells
 (a birthsign's, a race's -- never a Warrior or Barbarian, who never use

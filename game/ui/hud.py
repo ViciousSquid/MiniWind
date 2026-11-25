@@ -142,6 +142,8 @@ def _draw_title_card(painter, session, width, height):
 KEY_HINT_SIZE = 64
 KEY_HINT_GAP = 8
 KEY_HINT_FONT_PX = 30
+#: How far below the middle of the screen the hint sits (logical px).
+KEY_HINT_DROP = 100
 KEY_HINT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
                                             "assets", "ui", "keys"))
 _KEY_IMAGES = {}
@@ -171,9 +173,10 @@ def key_hint_image(letter):
 
 
 def key_hint_rect(width, height):
-    """Where the key's picture goes: centred on the screen."""
+    """Where the key's picture goes: centred across the screen,
+    :data:`KEY_HINT_DROP` below its middle."""
     s = KEY_HINT_SIZE
-    return QRectF((width - s) / 2.0, (height - s) / 2.0, s, s)
+    return QRectF((width - s) / 2.0, (height - s) / 2.0 + KEY_HINT_DROP, s, s)
 
 
 def draw_key_hints(painter, session, width, height, now=None):

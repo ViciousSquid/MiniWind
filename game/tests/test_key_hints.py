@@ -287,13 +287,14 @@ def test_the_key_is_drawn_in_the_middle_with_its_word_under_it(qt_app):
 
     rect = hud.key_hint_rect(w, h)
     assert (rect.width(), rect.height()) == (64, 64)
-    assert rect.center().x() == pytest.approx(w / 2) and rect.center().y() == pytest.approx(h / 2)
-    # The keycap's slate fills the middle of the screen...
-    centre = img.pixelColor(w // 2, h // 2)
+    assert rect.center().x() == pytest.approx(w / 2)
+    assert rect.center().y() == pytest.approx(h / 2 + hud.KEY_HINT_DROP)   # 100 px below the middle
+    # The keycap's slate fills its spot...
+    centre = img.pixelColor(w // 2, int(rect.center().y()))
     assert centre.alpha() == 255
     assert centre.blue() > centre.red() and 60 < centre.green() < 140
     # ...nothing far to the sides...
-    assert img.pixelColor(20, h // 2).alpha() == 0
+    assert img.pixelColor(20, int(rect.center().y())).alpha() == 0
     # ...and the word sits under the key, centred.
     below = [(x, y) for y in range(int(rect.bottom()) + 2, min(h, int(rect.bottom()) + 50))
              for x in range(w) if img.pixelColor(x, y).alpha()]
