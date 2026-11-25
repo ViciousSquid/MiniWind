@@ -28,8 +28,11 @@ FACE = "#56707c"                 # the face
 LETTER = "#eceff1"
 
 
-def draw_key(letter: str):
-    """The key for *letter* as a QImage (SIZE x SIZE, transparent outside)."""
+def draw_key(letter: str, family: str = "DejaVu Sans", embolden: float = 0.0):
+    """The key for *letter* as a QImage (SIZE x SIZE, transparent outside),
+    the letter in *family* (bold where the face has a bold). *embolden*
+    thickens a face that has no bold: an outline that wide, as a share of
+    the letter's height, traced round it."""
     from PyQt5.QtCore import QPointF, QRectF, Qt
     from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPolygonF
 
@@ -73,9 +76,9 @@ def draw_key(letter: str):
 
     # The letter: bold, its cap height filling the upper-left box.
     box = QRectF(inner.left() + 26 * s, inner.top() + 22 * s, 0, 164 * s)
-    font = QFont("DejaVu Sans", 100)
-    font.setBold(True)
-    font.setWeight(QFont.Black)
+    font = QFont(family, 100)
+    if family == "DejaVu Sans":
+        font.setWeight(QFont.Black)
     glyph = QPainterPath()
     glyph.addText(0, 0, font, letter.upper())
     bounds = glyph.boundingRect()
@@ -84,6 +87,10 @@ def draw_key(letter: str):
     p.translate(box.left() - bounds.left() * scale, box.top() - bounds.top() * scale)
     p.scale(scale, scale)
     p.setBrush(QColor(LETTER))
+    if embolden > 0:
+        from PyQt5.QtGui import QPen
+        p.setPen(QPen(QColor(LETTER), embolden * bounds.height(), Qt.SolidLine,
+                      Qt.RoundCap, Qt.RoundJoin))
     p.drawPath(glyph)
     p.restore()
     p.end()
