@@ -3005,6 +3005,8 @@ class MiniwindSession(SettlementLaw):
         self.burning.update(delta)
         self._update_grass_fire(delta)
         self.wildlife.update(delta)
+        import game.key_hints as key_hints
+        key_hints.watch_spells(self)        # a first spell gained: the P hint
         self._check_talk_partner()
         if self.__dict__.get("_party_due") and self._player_pos() is not None:
             self._party_due = False
@@ -12464,7 +12466,8 @@ class MiniwindSession(SettlementLaw):
         self._sim_hours = 0.0
         if self.game.load_from_store():
             self.needs_char_creation = False
-            self.key_hints = None           # a loaded character knows its keys
+            import game.key_hints as key_hints
+            key_hints.loaded(self)          # a loaded character knows its keys
             self._law_sync()
             # A loaded chase resumes from its search record, without granting
             # any guard fresh knowledge of the player's current position.

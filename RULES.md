@@ -137,15 +137,16 @@ next, ← / D-pad ← back, Esc / B skip. Without the setting none of it appears
 pages, if shown), the inventory key appears in the middle of the screen
 (128 × 128, the word "Inventory" under it): 0.5 s fading in, 2 s held, 0.5 s
 fading out. A Mage, and any other character who starts with spells
-(some builds are given them; never a Warrior or Barbarian, who never have
+(a birthsign's, a race's -- never a Warrior or Barbarian, who never use
 magic), is then shown the spellbook key ("Spellbook") the same way, at
 3 s after the first began or as soon as it has gone, whichever is later --
 never both at once. Pressing a hint's key (by your own binding, which is
 the key shown) hides it at once; pressed before its hint shows, the hint is
 skipped. Real time, so Slow Time does not stretch them; a hint keeps its
 clock but is not drawn while a menu, a conversation or the pause menu is up,
-and one not yet begun waits for them to close. Never for a loaded save
-(`game/key_hints.py`; the pictures are `assets/ui/keys/key_<letter>.png`).
+and one not yet begun waits for them to close. Never for a loaded save. A
+character who gains magic later (a book, a tutor, a quest) is shown the
+spellbook key then, once (`game/key_hints.py`; the pictures are `assets/ui/keys/key_<letter>.png`).
 
 ### Classes
 

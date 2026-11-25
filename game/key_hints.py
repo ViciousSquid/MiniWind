@@ -66,8 +66,8 @@ class KeyHints:
     """The queue of hints for one new character. Thread-safe: key presses
     arrive from the logic tick, frames from the paint pass."""
 
-    def __init__(self, magic: bool):
-        self.queue = [INVENTORY] + ([SPELLBOOK] if magic else [])
+    def __init__(self, magic: bool, inventory: bool = True):
+        self.queue = ([INVENTORY] if inventory else []) + ([SPELLBOOK] if magic else [])
         self._lock = threading.Lock()
         #: When play first came into view (the inventory hint's start).
         self.t0 = None
@@ -175,18 +175,75 @@ class KeyHints:
             return self.queue[self.index][0]
 
 
+#: The session store key remembering the spellbook hint was given (saved
+#: with the game, so it is given once per character).
+SPELLBOOK_SHOWN = "hints.spellbook_shown"
+
+
+def _works_magic(character) -> bool:
+    """Never a Warrior (or a Barbarian): they never use magic."""
+    try:
+        return bool(character.can_use_magic())
+    except Exception:
+        return False
+
+
+def _note_spellbook(session) -> None:
+    try:
+        session.store.set(SPELLBOOK_SHOWN, "true")
+    except Exception:
+        pass
+
+
 def arm(session) -> None:
-    """A new character begins: queue its hints on *session*."""
+    """A new character begins: queue its hints on *session*. The spellbook
+    hint for a Mage always, and for anyone else who starts with spells (a
+    birthsign's, a race's, an author's) -- never a Warrior."""
     try:
         character = session.game.character
-        # A Mage always; anyone else with spells to show it for -- but never
-        # a Warrior (or Barbarian): they never have magic, whatever they carry.
-        magic = bool(character.can_use_magic()) and (
+        magic = _works_magic(character) and (
             str(getattr(character, "class_id", "") or "").lower() == "mage"
             or bool(character.known_spells))
     except Exception:
         magic = False
     session.key_hints = KeyHints(magic)
+    if magic:
+        _note_spellbook(session)
+
+
+def watch_spells(session) -> None:
+    """Each tick: the first spell a character gains later (a book, a tutor,
+    a quest) brings the spellbook hint, once -- after any hint still up,
+    never alongside it. Costs one store read until it has been given."""
+    try:
+        if session.store.get(SPELLBOOK_SHOWN, "") == "true":
+            return
+        character = session.game.character
+    except Exception:
+        return
+    if getattr(session, "needs_char_creation", False) or not character.known_spells:
+        return
+    if not _works_magic(character):
+        return
+    hints = getattr(session, "key_hints", None)
+    if hints is not None and not hints.done:
+        with hints._lock:
+            if SPELLBOOK not in hints.queue:
+                hints.queue.append(SPELLBOOK)
+    else:
+        session.key_hints = KeyHints(True, inventory=False)
+    _note_spellbook(session)
+
+
+def loaded(session) -> None:
+    """A saved character is loaded: it knows its keys. One that already has
+    spells is not shown the spellbook hint (an old save)."""
+    session.key_hints = None
+    try:
+        if session.game.character.known_spells:
+            _note_spellbook(session)
+    except Exception:
+        pass
 
 
 #: Screens that count as their hint's key having been pressed.

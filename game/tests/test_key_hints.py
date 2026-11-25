@@ -309,3 +309,54 @@ def test_a_key_without_a_picture_is_drawn(qt_app):
     image = hud.key_hint_image("Q")
     assert image is not None and not image.isNull()
     assert hud.key_hint_image("I").width() == 256       # the committed picture
+
+
+# -- magic awarded later ---------------------------------------------------------
+def _play_until_done(s, start=0.0):
+    t = start
+    while s.key_hints is not None and not s.key_hints.done and t < start + 30:
+        kh.current(s, t)
+        t += 0.1
+    return t
+
+
+def test_a_first_spell_gained_later_brings_the_spellbook_hint_once():
+    s = _new("thief")
+    assert _queue(s) == ["inventory"]
+    t = _play_until_done(s)
+    s.game.character.known_spells.append("flare")        # a book, a tutor, a birthsign...
+    kh.watch_spells(s)
+    assert _queue(s) == ["spells"]
+    assert kh.current(s, t + 0.1) is not None or kh.current(s, t + 0.6) is not None
+    _play_until_done(s, t)
+    s.game.character.known_spells.append("heal_minor")
+    kh.watch_spells(s)
+    assert s.key_hints is None                            # once only
+
+
+def test_a_spell_gained_while_the_inventory_hint_is_up_queues_behind_it():
+    s = _new("thief")
+    kh.current(s, 0.0)
+    kh.current(s, 1.0)
+    s.game.character.known_spells.append("flare")
+    kh.watch_spells(s)
+    assert _queue(s) == ["inventory", "spells"]
+    assert kh.current(s, 1.1)[0] == "I"
+
+
+@pytest.mark.parametrize("klass", ["warrior", "barbarian"])
+def test_a_warrior_given_a_spell_later_never_sees_it(klass):
+    s = _new(klass)
+    _play_until_done(s)
+    s.game.character.known_spells.append("flare")
+    kh.watch_spells(s)
+    assert s.key_hints is None
+
+
+def test_a_loaded_character_with_spells_is_not_shown_it():
+    s = _new("healer")
+    s.store.set(kh.SPELLBOOK_SHOWN, "")
+    kh.loaded(s)
+    assert s.key_hints is None
+    kh.watch_spells(s)
+    assert s.key_hints is None
