@@ -910,7 +910,6 @@ class MiniwindGame:
             if getattr(renderer, "grass_wind", None) is not None:
                 renderer.grass_wind = None
             renderer.snow_cover = 0.0
-            renderer.district_overlay = None
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
@@ -924,9 +923,6 @@ class MiniwindGame:
         weather = getattr(session, "weather", None)
         renderer.snow_cover = (float(getattr(weather, "snow", 0.0))
                                if weather is not None and session.weather_enabled() else 0.0)
-        # District borders on the ground (game/districts.py): purely visual.
-        overlay = getattr(session, "district_overlay", None)
-        renderer.district_overlay = overlay() if callable(overlay) else None
 
     def _on_pre_sprites(self, ev):
         """Draw what lies on the floor, before Fio's effects and actors so they

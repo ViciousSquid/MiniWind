@@ -414,7 +414,7 @@ def cmd_districts(ctx, args):
         return None
     want = str(args or "").strip().lower()
     if want in ("on", "off"):
-        session._district_borders = want == "on"
+        session.set_district_borders(want == "on")
         msg = f"District borders {'shown' if want == 'on' else 'hidden'}."
         debug_log("Info", msg)
         toast = getattr(ctx.main_window, "show_toast", None)

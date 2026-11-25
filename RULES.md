@@ -1013,14 +1013,22 @@ Reach** and **Cairnmoor** (desert; Cairnmoor takes in Whisperdeep),
   home biome, so each district keeps to its own ground and borders follow
   the desert's edge. A district can have more than one seat; there is no
   border between its own seats.
-* *How they look.* Thin dark lines on the ground (30 units wide), drawn by
-  the terrain shader each frame: the people, creatures and things on a
-  border always stand over it, and a border stops at the water's edge (the
-  sea, a lake). They are only a guide: crossing one changes nothing, and
-  nothing about them is saved. Settings › Game › *District borders* (on by
-  default) or `districts on|off` in the console shows or hides them;
-  `districts` alone says which district you are in. Other maps (caves) have
-  none.
+* *How they look.* Drawn by hand in sepia ink on the ground: a pen line
+  (30 units at its fullest) that wobbles, swells and thins with the pen's
+  pressure (darker where it presses), bleeds unevenly at its edges, now and
+  then runs dry, with a lighter second stroke wandering off it and back. A
+  border stops at the water's edge (the sea, a lake), and people, creatures
+  and things on a border stand over it. They are only a guide: crossing one
+  changes nothing. Other maps (caves) have none.
+* *What they cost.* Nothing: they are baked once into the overworld's own
+  terrain paint (`python -m game.tools.bake_districts`, run again after
+  changing the districts), with a record of every texel they cover
+  (`maps/miniwind_world.districts.npz`). Settings › Game › *District borders*
+  (on by default) or `districts off` in the console lifts them out of the
+  paint -- every texel put back exactly -- and `districts on` lays them in
+  again; when Play stops the map's paint is as its file has it. The record
+  is also how they could be moved one day (lift the old, bake the new).
+  `districts` alone says which district you are in.
 * *Seeing them.* `python -m game.tools.district_map` draws the world map
   with every border, seat and name (`docs/images/districts_map.png`).
 

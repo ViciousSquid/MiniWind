@@ -158,9 +158,6 @@ class TerrainGL:
         'uHeights', 'uChunkI', 'uChunkX', 'uChunkY', 'uTiling', 'uFlatMode',
         'uGradCount', 'uGradH', 'uGradC', 'uGradW', 'uGradD',
         'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds', 'uSnowCover',
-        'uDistrictSeats', 'uDistrictSeat', 'uDistrictOf', 'uDistrictBiome',
-        'uDistrictWarp', 'uDistrictSeed', 'uDistrictLine', 'uDistrictWaterCount',
-        'uDistrictWater', 'uDistrictWaterTop',
     )
     #: Texture unit of the regional biome map (``uBiomeMap``). Above the
     #: shadow cube-maps (4..11), the height and paint pages (12, 13) and the
@@ -327,44 +324,6 @@ class TerrainGL:
                      'uPushers', 'uPusherCount'):
             self.grass_uniforms[name] = gl.glGetUniformLocation(
                 self.grass_shader_program, name)
-
-    def _upload_district_overlay(self, u, overlay):
-        """Set the district-border uniforms, only when the overlay (or the
-        program) changed: uniforms keep their values between frames."""
-        count_loc = u.get('uDistrictSeats', -1)
-        if count_loc is None or count_loc == -1:
-            return
-        key = (self.shader_program, id(overlay) if overlay is not None else None)
-        if getattr(self, '_district_key', None) == key:
-            return
-        self._district_key = key
-        if overlay is None:
-            gl_state.glUniform1i(count_loc, 0)
-            return
-        seats = np.ascontiguousarray(overlay['seats'], np.float32)
-        n = len(seats)
-
-        def put(name, fn, *args):
-            loc = u.get(name, -1)
-            if loc is not None and loc != -1:
-                fn(loc, *args)
-
-        put('uDistrictSeat', gl_state.glUniform2fv, n, seats)
-        put('uDistrictOf', gl_state.glUniform1iv, n,
-            np.ascontiguousarray(overlay['seat_of'], np.int32))
-        biome = np.ascontiguousarray(overlay['biome'], np.int32)
-        put('uDistrictBiome', gl_state.glUniform1iv, len(biome), biome)
-        put('uDistrictWarp', gl_state.glUniform4f, *(float(v) for v in overlay['warp']))
-        put('uDistrictSeed', gl_state.glUniform1ui, int(overlay['seed']))
-        put('uDistrictLine', gl_state.glUniform4f, *(float(v) for v in overlay['line']))
-        water_n = int(overlay.get('water_count', 0))
-        put('uDistrictWaterCount', gl_state.glUniform1i, water_n)
-        if water_n:
-            put('uDistrictWater', gl_state.glUniform4fv, water_n,
-                np.ascontiguousarray(overlay['water'][:water_n], np.float32))
-            put('uDistrictWaterTop', gl_state.glUniform1fv, water_n,
-                np.ascontiguousarray(overlay['water_top'][:water_n], np.float32))
-        gl_state.glUniform1i(count_loc, n)
 
     def _upload_appearance_uniforms(self, u):
         for name, value in self.frame.appearance.items():
@@ -1385,7 +1344,7 @@ class TerrainGL:
     def render(self, frame, projection, view, camera_pos, frustum_planes=None,
                active_lights_count=0, shadow_cubemaps=None, shadow_unit_base=4,
                env_uniforms=None, draw_grass=True, grass_wind=None,
-               shadow_filter=None, snow_cover=0.0, district_overlay=None):
+               shadow_filter=None, snow_cover=0.0):
         """Draw the published *frame* with the current GL context.
 
         ``draw_grass=False`` leaves the grass pass out whatever the frame
@@ -1395,9 +1354,7 @@ class TerrainGL:
         *shadow_filter* is each shadow slot's ``(softness, bias)`` row from
         the Light that owns it (0: the shader's default).
         *snow_cover* (0..1) lays settled snow over the ground: patchy at
-        first, a full white blanket from about 0.8, thin on steep slopes.
-        *district_overlay* (``game.districts.Districts.overlay``) draws a
-        game's district borders on the ground; None draws none."""
+        first, a full white blanket from about 0.8, thin on steep slopes."""
         self.visible_chunks = 0
         self.culled_chunks = 0
         self.total_triangles = 0
@@ -1406,7 +1363,6 @@ class TerrainGL:
         self.frame = frame
         self.grass_wind = grass_wind
         self.snow_cover = max(0.0, min(1.0, float(snow_cover or 0.0)))
-        self.district_overlay = district_overlay
         try:
             self._render(projection, view, camera_pos, frustum_planes,
                          active_lights_count, shadow_cubemaps, shadow_unit_base,
@@ -1496,7 +1452,6 @@ class TerrainGL:
         if snow_loc is not None and snow_loc != -1:
             gl_state.glUniform1f(snow_loc, 0.0 if frame.flat_mode else
                                  float(getattr(self, 'snow_cover', 0.0)))
-        self._upload_district_overlay(u, getattr(self, 'district_overlay', None))
 
         # Distance fog + global ambient (engine.shaders.FOG_GLSL): this
         # program has its own uniform table, so the renderer hands the

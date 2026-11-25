@@ -1,8 +1,6 @@
 """The Vale's districts: membership, biomes, several seats, water, the
 shader overlay and its agreement with Python, the console and the session."""
 
-import json
-import math
 import os
 from types import SimpleNamespace
 
@@ -132,101 +130,136 @@ def test_water_boxes_come_from_water_brushes_largest_first():
     assert boxes[0] == (-500.0, -500.0, 500.0, 500.0, 50.0) and len(boxes) == 2
 
 
-# -- the shader's copy ----------------------------------------------------------------------
-def test_the_overlay_carries_seats_districts_biomes_and_water():
-    found = dd.load(water=[(0, 0, 10, 10, 5.0)])
-    ov = found.overlay()
-    assert ov is found.overlay()                              # cached: uploaded once
-    assert len(ov["seats"]) == sum(len(d.seats) for d in found.districts)
-    assert list(ov["seat_of"]).count(found.districts.index(found.get("cairnmoor"))) == 2
-    assert ov["water_count"] == 1 and ov["water_top"][0] == 5.0
-    assert ov["seed"] == dd.seed_term(found.seed)
-    assert ov["warp"][3] == found.border["width"]
+# -- drawn by hand, baked into the paint ---------------------------------------------
+class PaintGrid:
+    """Just enough terrain for drawing: the engine's own paint calls."""
+    from engine.terrain import Terrain as _T
+    TERRAIN_PAINT_RESOLUTION = 64
+    chunk_size = 512.0
+    offset_x = offset_z = 0.0
+    blend_paint = _T.blend_paint
+    set_paint_texels = _T.set_paint_texels
+    restore_paint = _T.restore_paint
+
+    def __init__(self):
+        self.texture_paint_maps = {}
+        self.touched = set()
+
+    def _paint_changed_grass(self, keys):
+        pass
+
+    def _touch_texture_paint(self, coord):
+        self.touched.add(tuple(coord))
 
 
-def test_the_terrain_shader_declares_and_draws_the_borders():
-    from engine import shaders
-    from engine.renderer.core.terrain_gl import TerrainGL
-    frag = shaders.DEFAULT_SHADERS["terrain.frag"]
-    for name in ("uDistrictSeats", "uDistrictSeat", "uDistrictWater", "uDistrictSeed"):
-        assert name in frag and name in TerrainGL.UNIFORM_NAMES
-    assert "if (uDistrictSeats > 0)" in frag
-    assert str(dd.HASH_X) + "u" in frag and str(dd.HASH_MIX) + "u" in frag
+def small(**extra):
+    content = {"bounds": [-1024, -1024, 1024, 1024], "warp": 0.0, "biome_bias": 0.0,
+               "border": {"cell": 16.0, "width": 30.0},
+               "districts": [{"id": "w", "seat": [-500, 0]}, {"id": "e", "seat": [500, 0]}]}
+    content.update(extra)
+    return dd.Districts(content)
 
 
-@pytest.mark.gl
-def test_the_shader_noise_matches_python_exactly():
-    """The warp noise, run in GLSL, gives Python's values (8-bit output)."""
-    from OpenGL import GL as gl
-    from OpenGL.GL.shaders import compileProgram, compileShader
-    from engine import shaders
-    from tests.helpers.gl import GLTestContext
+def test_ink_is_a_line_with_rough_edges_and_a_second_stroke():
+    zs = np.linspace(-3000, 3000, 600)
+    ds = np.linspace(-dd.REACH, dd.REACH, 211)
+    Z, D = np.meshgrid(zs, ds, indexing="ij")
+    amount = dd.ink(np.zeros_like(Z), Z, D)
+    strongest = amount.max(axis=1)
+    assert (strongest > 0.15).mean() > 0.9           # a line all the way along ...
+    assert strongest.std() > 0.05                    # ... darker and lighter as the pen goes
+    where = np.abs(D[np.arange(len(zs)), amount.argmax(axis=1)])
+    assert where.max() > 20.0                        # it wobbles off the true border
+    assert dd.ink(0.0, 0.0, dd.REACH + 50) == 0.0    # and never strays past its reach
 
-    frag_src = shaders.DEFAULT_SHADERS["terrain.frag"]
-    start = frag_src.index("// The districts' warp noise")
-    end = frag_src.index("// How strongly this fragment is a district border")
-    funcs = frag_src[start:end]
-    salt = dd.seed_term(1187)
-    vert = """#version 330 core
-layout (location = 0) in vec2 pos;
-void main() { gl_Position = vec4(pos, 0.0, 1.0); }"""
-    frag = """#version 330 core
-out vec4 FragColor;
-""" + funcs + """
-void main() {
-    ivec2 c = ivec2(gl_FragCoord.xy);
-    highp vec2 p = vec2(float(c.x) * 0.37 - 11.3, float(c.y) * 0.53 - 2.1);
-    FragColor = vec4(districtFbm(p, %du) * 0.5 + 0.5,
-                     districtHash(c - ivec2(30, 2), %du), 0.0, 1.0);
-}""" % (salt, salt)
-    w, h = 64, 4
-    with GLTestContext(w, h):
-        prog = compileProgram(compileShader(vert, gl.GL_VERTEX_SHADER),
-                              compileShader(frag, gl.GL_FRAGMENT_SHADER), validate=False)
-        quad = np.array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1], np.float32)
-        vao = gl.glGenVertexArrays(1)
-        vbo = gl.glGenBuffers(1)
-        try:
-            gl.glBindVertexArray(vao)
-            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vbo)
-            gl.glBufferData(gl.GL_ARRAY_BUFFER, quad.nbytes, quad, gl.GL_STATIC_DRAW)
-            gl.glEnableVertexAttribArray(0)
-            gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
-            gl.glViewport(0, 0, w, h)
-            gl.glUseProgram(prog)
-            gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
-            raw = gl.glReadPixels(0, 0, w, h, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE)
-        finally:
-            gl.glDeleteBuffers(1, [vbo])
-            gl.glDeleteVertexArrays(1, [vao])
-            gl.glDeleteProgram(prog)
-    got = np.frombuffer(raw, np.uint8).reshape(h, w, 4).astype(np.float64) / 255.0
-    cx, cy = np.meshgrid(np.arange(w), np.arange(h))
-    fbm = dd._fbm(cx * 0.37 - 11.3, cy * 0.53 - 2.1, salt) * 0.5 + 0.5
-    hashed = dd._hash(cx - 30, cy - 2, salt)
-    assert np.abs(got[..., 0] - fbm).max() < 2.5 / 255.0
-    assert np.abs(got[..., 1] - hashed).max() < 1.5 / 255.0
+
+def test_the_bake_inks_the_border_and_lifts_it_exactly():
+    grid = PaintGrid()
+    road = np.zeros((64, 64, 4), np.uint8)
+    road[:, 30:34] = (120, 110, 90, 255)            # a road already there
+    grid.texture_paint_maps[(-1, 0)] = road.copy()
+    found = small()
+    drawing = found.bake(grid)
+    inked = set(drawing.under)
+    assert inked and all(abs(cx * 512 + 256) <= 768 for cx, _cz in inked)   # along x = 0
+    assert grid.texture_paint_maps[(-1, 0)][:, 30:34, 3].min() == 255      # the road stays
+    drawing.lift(grid)
+    assert np.array_equal(grid.texture_paint_maps[(-1, 0)], road)
+    assert set(grid.texture_paint_maps) == {(-1, 0)}                        # nothing left behind
+    drawing.lay(grid)
+    again = {k: v.copy() for k, v in grid.texture_paint_maps.items()}
+    drawing.lift(grid)
+    drawing.lay(grid)
+    assert all(np.array_equal(again[k], grid.texture_paint_maps[k]) for k in again)
+
+
+def test_the_drawing_is_kept_beside_the_map_and_read_back(tmp_path):
+    grid = PaintGrid()
+    drawing = small().bake(grid)
+    path = dd.record_path(str(tmp_path / "world.json"))
+    assert path.endswith("world.districts.npz")
+    drawing.save(path)
+    back = dd.Drawing.load(path, 64)
+    assert back.laid and set(back.under) == set(drawing.under)
+    back.lift(grid)
+    assert grid.texture_paint_maps == {}
+    assert dd.Drawing.load(str(tmp_path / "none.npz"), 64) is None
+    with pytest.raises(ValueError):
+        dd.Drawing(drawing.alphas, (0, 0, 0)).lay(type("G", (PaintGrid,), {"TERRAIN_PAINT_RESOLUTION": 32})())
+
+
+def test_borders_skip_the_water():
+    grid = PaintGrid()
+    found = small(border={"cell": 16.0, "width": 30.0})
+    found.water = [(-300.0, 0.0, 300.0, 1024.0, 50.0)]
+    found.height = lambda xs, zs: np.zeros(len(xs))
+    drawing = found.bake(grid)
+    for (cx, cz), alpha in drawing.alphas.items():
+        rows = np.nonzero(alpha.any(axis=0))[0]
+        zs = cz * 512 + (rows + 0.5) * 8
+        assert (zs < 8.0).all(), (cx, cz)
+
+
+def test_the_shipped_world_has_its_borders_baked_and_recorded():
+    found = dd.load()
+    assert found.map == "maps/miniwind_world.json"
+    record = dd.record_path(found.map)
+    assert os.path.isfile(record)
+    drawing = dd.Drawing.load(record, 512)
+    assert drawing is not None and len(drawing.under) > 50
 
 
 # -- the session, the host, the console ------------------------------------------------------
 def _session(on=True):
     from ..runtime import MiniwindSession
     s = MiniwindSession.__new__(MiniwindSession)
+    s.logic = object()
     s.districts = dd.load()
     s._district_borders = on
+    s._district_drawing = None
+    s._district_lifted = False
     s._player_pos = lambda: (500.0, 0.0, 600.0)
     return s
 
 
-def test_the_session_hands_out_the_overlay_only_while_borders_are_on():
+def test_shown_borders_cost_nothing_and_hiding_lifts_them_once(monkeypatch):
+    from .. import runtime
+    grid = PaintGrid()
     s = _session(True)
-    assert s.district_overlay() is s.districts.overlay()
-    assert s.district_at((1000.0, 0.0, 1500.0)).id == "millbrook"
-    s._district_borders = False
-    assert s.district_overlay() is None
-    s.districts = None
-    s._district_borders = True
-    assert s.district_overlay() is None and s.district_at((0.0, 0.0, 0.0)) is None
+    s.districts = small()
+    s._district_drawing = s.districts.bake(grid)
+    painted = {k: v.copy() for k, v in grid.texture_paint_maps.items()}
+    monkeypatch.setattr(runtime.fio, "terrain", lambda logic: grid)
+    grid.touched.clear()
+    s.set_district_borders(True)                 # already shown: nothing at all
+    assert not grid.touched
+    s.set_district_borders(False)
+    assert s._district_lifted and grid.texture_paint_maps == {}
+    s.set_district_borders(False)                # twice: still once
+    s._restore_district_borders()                # the session ends: the map's paint again
+    assert not s._district_lifted
+    assert all(np.array_equal(painted[k], grid.texture_paint_maps[k]) for k in painted)
+    assert s.district_at((1000.0, 0.0, 1500.0)).id == "e"
 
 
 def test_the_console_reports_districts_and_toggles_borders(monkeypatch):
@@ -234,37 +267,12 @@ def test_the_console_reports_districts_and_toggles_borders(monkeypatch):
     lines = []
     monkeypatch.setattr(console, "debug_log", lambda category, message: lines.append(message))
     s = _session(True)
+    toggled = []
+    s.set_district_borders = toggled.append
     ctx = console.ConsoleContext(logic_thread=SimpleNamespace(_miniwind=s), play_mode=True)
     console.cmd_districts(ctx, "")
     assert "you are in Millbrook" in lines[0] and any("Cairnmoor" in l for l in lines)
     console.cmd_districts(ctx, "off")
-    assert s._district_borders is False and s.district_overlay() is None
+    assert toggled == [False]
     console.cmd_districts(console.ConsoleContext(), "")
     assert "Play Mode only" in lines[-1]
-
-
-@pytest.mark.gl
-def test_borders_change_a_real_terrain_frame_and_none_changes_nothing(qt_app):
-    from tests.helpers import scenes
-    from tests.helpers.session import FioTestSession
-    found = dd.Districts({"bounds": [-600, -600, 600, 600], "warp": 120.0, "warp_scale": 400.0,
-                          "border": {"width": 12.0, "alpha": 0.9},
-                          "districts": [{"id": "a", "seat": [-300, 0]},
-                                        {"id": "b", "seat": [300, 50]},
-                                        {"id": "c", "seat": [0, 400]}]})
-    session = FioTestSession(qt_app, scenes.terrain_map(), size=(320, 180))
-    try:
-        renderer = session.view.renderer
-        session.paint()
-        renderer.district_overlay = None
-        off = session.paint().astype(int)
-        renderer.district_overlay = found.overlay()
-        on = session.paint().astype(int)
-        renderer.district_overlay = None
-        again = session.paint().astype(int)
-    finally:
-        session.close()
-    changed = np.abs(on - off).sum(axis=2) > 0
-    assert changed.any()
-    assert on[changed].mean() < off[changed].mean()           # dark lines
-    assert np.array_equal(off, again)                         # off again: untouched
