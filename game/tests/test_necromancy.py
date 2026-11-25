@@ -93,3 +93,36 @@ def test_actors_a_cutscene_spawns_are_armed_as_a_maps_are(monkeypatch):
     monkeypatch.setattr(s, "_assign_npc_stats", lambda: ran.append("stats"))
     s.prepare_cutscene_actors([])
     assert set(ran) == {"arm", "hand", "stats"}
+
+
+def test_raised_in_a_cutscene_battle_it_joins_its_raisers_side(monkeypatch):
+    import game.npc_magic as npc_magic
+    monkeypatch.setattr(npc_magic.NpcMagic, "_fizzles", lambda self, t, s: False)
+    necro, body = _necromancer(_aggro_target=1), _body(200.0)
+    s = _session(necro, body)
+    calls = []
+
+    class _Runtime:
+        state = {"active_fights": {}}
+
+        def join_side(self, newcomer, ally):
+            calls.append((newcomer, ally))
+            return True
+
+    s.logic.cutscene_runtime = _Runtime()
+    assert s.npc_magic.try_raise(necro)
+    assert calls == [(body, necro)]
+
+
+def test_a_cutscene_starting_drops_the_chatter_that_was_up():
+    a, b = _Thing("Ann", (0.0, 0.0, 0.0), type="npc"), _Thing("Bo", (10.0, 0.0, 0.0), type="npc")
+    s = _session(a, b)
+    s.logic.player.pos = [0.0, 0.0, 0.0]
+    s.bark(a, "Nice weather.")
+    s.think(b, "I'm hungry.")
+    s.bark_later(b, "Aye.", 1.0)
+    s.cutscene_started()
+    s.cutscene_line("say", b, "To arms!")
+    assert [t for _x, t, _l in s.live_barks()] == ["To arms!"]
+    assert s.live_thoughts() == []
+    assert not s.__dict__.get("_bark_queue")

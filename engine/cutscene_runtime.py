@@ -436,6 +436,8 @@ class CutsceneRuntime:
             # A game readies its new actors as it does a map's (MiniWind arms
             # an archer with a blade for close quarters, rolls handedness...).
             self.logic._plugin_emit("cutscene.spawned", actors=list(spawned))
+        # The scene starts clean: a game drops whatever chatter was up.
+        self.logic._plugin_emit("cutscene.started", actors=list(actors.values()))
 
         # The editor Camera stores yaw/pitch in degrees, while the play-mode
         # camera math below uses radians.  Keep the authored JSON human-readable
@@ -849,28 +851,42 @@ class CutsceneRuntime:
 
     def join_side(self, newcomer, ally):
         """*newcomer* (raised or summoned by *ally*) fights on *ally*'s side
-        in every battle *ally* is in."""
+        in every battle *ally* is in -- turning on its old side when it was
+        already in the fight (a guard who fell to the bandits rises as the
+        necromancer's)."""
         cs = self.state
         if not cs:
             return False
         joined = False
         for fight in (cs.get("active_fights") or {}).values():
-            row = next((r for r in fight["fighters"] if r[0] is ally), None)
-            if row is None or any(r[0] is newcomer for r in fight["fighters"]):
+            fighters = fight["fighters"]
+            row = next((r for r in fighters if r[0] is ally), None)
+            if row is None or newcomer is ally:
                 continue
+            foes = [f for f in row[2] if f is not newcomer]
+            index = next((i for i, r in enumerate(fighters) if r[0] is newcomer), None)
             props = newcomer.properties
-            snapshot = {"had_disabled": "disabled" in props, "disabled": props.get("disabled", False),
-                        "had_awake": "awake" in props, "awake": props.get("awake", False),
-                        "had_aggro": False, "aggro": None, "had_target_name": False,
-                        "target_name": None, "had_triggered": "triggered" in props,
-                        "triggered": props.get("triggered", False)}
+            if index is None:
+                snapshot = {"had_disabled": "disabled" in props, "disabled": props.get("disabled", False),
+                            "had_awake": "awake" in props, "awake": props.get("awake", False),
+                            "had_aggro": False, "aggro": None, "had_target_name": False,
+                            "target_name": None, "had_triggered": "triggered" in props,
+                            "triggered": props.get("triggered", False)}
+                fighters.append((newcomer, snapshot, foes))
+            else:
+                fighters[index] = (newcomer, fighters[index][1], foes)
             set_live_flag(newcomer, "disabled", False)
             props["awake"] = True
             props["triggered"] = False
-            foes = list(row[2])
-            fight["fighters"].append((newcomer, snapshot, foes))
-            for other, _s, their in fight["fighters"]:
-                if any(f is ally for f in their) and not any(f is newcomer for f in their):
+            props.pop("_aggro_target", None)
+            # Its new side no longer fights it; whoever fights its master
+            # fights it too.
+            for other, _s, their in fighters:
+                if other is newcomer:
+                    continue
+                against_ally = any(f is ally for f in their)
+                their[:] = [f for f in their if f is not newcomer]
+                if against_ally:
                     their.append(newcomer)
             joined = True
             self._aim_fighters(fight)

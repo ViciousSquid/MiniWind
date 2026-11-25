@@ -6583,6 +6583,13 @@ class MiniwindSession(SettlementLaw):
         store[id(thing)] = (thing, str(text), _time.monotonic() + max(0.1, seconds))
         self.__dict__.setdefault("_scripted_lines", set()).add(id(thing))
 
+    def cutscene_started(self) -> None:
+        """A cutscene begins (Fio's ``cutscene.started``): the chatter that
+        was up -- said, thought or about to be said -- is dropped, so the
+        scene opens on its own lines only."""
+        for store in ("barks", "thoughts", "_bark_queue", "_scripted_lines"):
+            self.__dict__.pop(store, None)
+
     def _scripted_first(self, lines):
         """*lines* (``[(thing, text, left)]``) with a cutscene's own first, so
         the HUD's cap on how many it shows never drops one. An actor is
@@ -9458,6 +9465,13 @@ class MiniwindSession(SettlementLaw):
         self.magic_fx.resurrection(_feet(body))
         self._spell_sound(caster, RESURRECTION_SOUND)
         self.float_text(body, "RAISED")
+        # Mid-cutscene, the raised turns on its old side in the battle too.
+        runtime = getattr(self.logic, "cutscene_runtime", None)
+        if runtime is not None and getattr(runtime, "state", None):
+            try:
+                runtime.join_side(body, caster)
+            except Exception:
+                pass
         return True
 
     # -- what a cutscene asks of the game (Fio's cutscene.* events) ----------

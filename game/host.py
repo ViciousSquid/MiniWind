@@ -839,6 +839,7 @@ class MiniwindGame:
         host.on("cutscene.cast", self._on_cutscene_cast)
         host.on("cutscene.order", self._on_cutscene_order)
         host.on("cutscene.spawned", self._on_cutscene_spawned)
+        host.on("cutscene.started", self._on_cutscene_started)
 
     @staticmethod
     def _cutscene_session(ev):
@@ -876,6 +877,12 @@ class MiniwindGame:
         session = self._cutscene_session(ev)
         if session is not None and ev.get("order") == "flee" and ev.get("actor") is not None:
             session.cutscene_flee(ev.get("actor"), ev.get("threat"))
+
+    def _on_cutscene_started(self, ev):
+        """A cutscene begins: the chatter that was up is dropped."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.cutscene_started()
 
     def _on_cutscene_spawned(self, ev):
         session = self._cutscene_session(ev)

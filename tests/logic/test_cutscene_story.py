@@ -356,3 +356,31 @@ def test_a_cast_goes_to_the_game_at_its_time_and_the_raised_join_its_side(logic)
     _step(runtime, 0.3)
     assert body.properties["_aggro_target"] == id(foe)
     assert id(body) in runtime.fighting_ids()
+
+
+def test_one_who_fell_on_the_other_side_rises_and_turns_on_it(logic):
+    """A guard killed fighting the necromancer is raised mid-battle: it leaves
+    its old side, fights its old friends, and they fight it."""
+    necro, guard, friend = _actor("necro", 0.0), _actor("guard", 100.0), _actor("friend", 120.0)
+    runtime, emitted = _play(logic, [necro, guard, friend], events=[
+        {"time": 0.0, "type": "fight", "duration": 20.0,
+         "attackers": ["necro"], "defenders": ["guard", "friend"]}])
+    _step(runtime, 0.3)
+    guard.properties.update(dead=True, health=0)
+    _step(runtime, 0.3)
+    guard.properties.update(dead=False, health=40)       # the game raised it
+    assert runtime.join_side(guard, necro)
+    _step(runtime, 0.3)
+    (fight,) = runtime.state["active_fights"].values()
+    foes = {r[0].properties["name"]: [f.properties["name"] for f in r[2]] for r in fight["fighters"]}
+    assert foes["guard"] == ["friend"]
+    assert "guard" not in foes["necro"]
+    assert "guard" in foes["friend"]
+    assert guard.properties["_aggro_target"] == id(friend)
+    assert len([r for r in fight["fighters"] if r[0] is guard]) == 1
+
+
+def test_a_cutscene_starting_tells_the_game(logic):
+    a1 = _actor("a1", 0.0)
+    runtime, emitted = _play(logic, [a1], events=[])
+    assert [d for n, d in emitted if n == "cutscene.started"]
