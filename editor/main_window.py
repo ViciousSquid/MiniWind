@@ -1418,6 +1418,15 @@ class MainWindow(QMainWindow):
             return
         tool.set_active(not tool.active if checked is None else bool(checked))
 
+    def toggle_tree_tool(self, checked=None):
+        """Tools > Trees Tool: click the terrain to plant a random tree."""
+        tool = self.view_3d.tree_tool
+        if self.view_3d.play_mode:
+            self.show_toast("Leave Play to plant trees", is_error=True)
+            tool.set_active(False)
+            return
+        tool.set_active(not tool.active if checked is None else bool(checked))
+
     def _finish_stamp_nudge(self):
         if self.terrain is not None:
             self.terrain.finish_stamp_edit()

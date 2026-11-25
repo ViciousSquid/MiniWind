@@ -187,6 +187,9 @@ class DecalTool:
             return
         if active and getattr(self.view, 'terrain_sculpt_active', False):
             self.view.terrain_edit.set_terrain_sculpt_active(False)
+        trees = getattr(self.view, 'tree_tool', None)
+        if active and trees is not None:
+            trees.set_active(False)                  # one placing tool at a time
         self.active = active
         self._drag = None
         if active:

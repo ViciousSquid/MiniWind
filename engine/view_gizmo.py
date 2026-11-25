@@ -68,7 +68,8 @@ class ViewGizmo:
         if view.play_mode or self.editor.primary_selection() is None:
             return False
         if (view.face_mode_active or view.terrain_sculpt_active
-                or view.decal_tool.active or view.components._component_mode_active()):
+                or view.decal_tool.active or getattr(view, 'tree_tool', None) and view.tree_tool.active
+                or view.components._component_mode_active()):
             return False
         if getattr(self.editor, 'clip_mode', False):
             return False
