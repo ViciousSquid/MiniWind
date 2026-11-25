@@ -344,7 +344,9 @@ def _kinds(session):
 
 
 def test_near_water_the_crabs_are_all_blue(monkeypatch):
-    session, clock, _hurt = _sandy(monkeypatch)
+    # The desert stops well short of the water here.
+    session, clock, _hurt = _sandy(monkeypatch, terrain=_Terrain(desert_below_x=-1000.0))
+    assert not cf.on_sand(session, BY_WATER)
     _land_pieces(session.gore, clock, pos=BY_WATER)
     frenzy = cf.CrabFrenzy(random.Random(1))
     for mass in (1.0, 2.0, 3.5):
@@ -380,12 +382,13 @@ def test_on_grass_away_from_water_no_crabs(monkeypatch):
     assert not _kinds(session)
 
 
-def test_where_sand_meets_water_the_crabs_are_blue(monkeypatch):
+def test_where_sand_meets_water_both_red_and_blue_crabs_come(monkeypatch):
     session, clock, _hurt = _sandy(monkeypatch, terrain=_Terrain(desert_below_x=1e9))
     assert cf.on_sand(session, BY_WATER)                       # sand here too
     _land_pieces(session.gore, clock, pos=BY_WATER)
     assert cf.CrabFrenzy(random.Random(1)).gibbed(session, BY_WATER, mass=1.0) == 6
-    assert {k for k, _h in _kinds(session)} == {cf.BLUE}
+    kinds = [k for k, _h in _kinds(session)]
+    assert kinds.count(cf.BLUE) == 3 and kinds.count(cf.RED) == 3
 
 
 def test_a_floor_built_over_the_sand_is_not_sand(monkeypatch):

@@ -155,30 +155,36 @@ class CrabFrenzy:
         return None
 
     # -- a body is blown apart ----------------------------------------------------------
-    def source(self, session, pos):
-        """``(kind, origin)``: where crabs for remains at *pos* come from --
-        blue out of the water near it, or red up out of the sand under it
-        (water wins where both) -- or None for neither."""
+    def sources(self, session, pos):
+        """``[(kind, origin)]``: where crabs for remains at *pos* come from --
+        blue out of the water near it, red up out of the sand under it, both
+        where sand meets water -- or [] for neither."""
+        found = []
         water = self.water_near(session, pos)
         if water is not None:
-            return BLUE, water
+            found.append((BLUE, water))
         if on_sand(session, pos):
             a = self.rng.uniform(0.0, math.tau)
             r = self.rng.uniform(*BURROW)
-            return RED, (pos[0] + math.cos(a) * r, pos[1], pos[2] + math.sin(a) * r)
-        return None
+            found.append((RED, (pos[0] + math.cos(a) * r, pos[1], pos[2] + math.sin(a) * r)))
+        return found
+
+    def source(self, session, pos):
+        """The first of :meth:`sources` (the water's, where both), or None."""
+        found = self.sources(session, pos)
+        return found[0] if found else None
 
     def gibbed(self, session, pos, mass=1.0) -> int:
         """Remains at *pos* (a body of *mass*): if water is near, blue crabs
-        come; on sand, red ones. Returns how many."""
+        come; on sand, red ones; where sand meets water, both, in turn.
+        Returns how many."""
         live = sum(len(f["crabs"]) for f in self.feasts)
         room = MAX_LIVE - live
         if room <= 0:
             return 0
-        found = self.source(session, pos)
-        if found is None:
+        found = self.sources(session, pos)
+        if not found:
             return 0
-        kind, origin = found
         pieces = session.gore.hold(pos, FEAST_RADIUS, HOLD_SECONDS)
         if not pieces:
             return 0
@@ -189,6 +195,7 @@ class CrabFrenzy:
         count = max(MIN_CRABS, min(MAX_CRABS, count, room))
         crabs = []
         for i in range(count):
+            kind, origin = found[i % len(found)]
             # Out of the water's edge (or the sand), spread along it.
             ox, oz = self.rng.uniform(-110, 110), self.rng.uniform(-110, 110)
             spot = [origin[0] + ox, origin[1], origin[2] + oz]
