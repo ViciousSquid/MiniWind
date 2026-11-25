@@ -1216,7 +1216,6 @@ class CoopSession:
             "flour_supply",
         ):
             setattr(session, name, getattr(self.root, name))
-        session._world_bounds = getattr(self.root, "_world_bounds", None)
         session._rebuild_type_index(fio.things(self.logic))
         session.logic.trigger_runtime.rebuild_trigger_index(
             getattr(self.logic.editor_state, "brushes", [])

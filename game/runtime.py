@@ -375,6 +375,8 @@ SHAKE_STEPS_PER_SECOND = 28.0
 CRIT_SHAKE = (0.024, 0.40)        # your critical hit
 KILL_SHAKE = (0.018, 0.32)        # your killing blow
 GIB_SHAKE = (0.032, 0.48)         # your overkill: the body blown apart
+#: How wide (world units) the player's picture is when it is blown apart.
+PLAYER_GIB_BODY = 96.0
 CRIT_KILL_SHAKE = (0.044, 0.60)   # your critical killing blow: the hardest of all
 #: A heavy blow taken: starts at HURT_SHAKE_FROM of the player's health and
 #: peaks at half of it.
@@ -455,8 +457,6 @@ CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
 GUARD_AID_RADIUS = 1600.0
 AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is attacked!",
               "Seize them, lads!")
-#: How far inside the terrain's edge the player is stopped.
-WORLD_EDGE_MARGIN = 900.0
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
 #: Light Fingers practice (skill-use difficulty) each theft earns.
@@ -2055,7 +2055,6 @@ class MiniwindSession(SettlementLaw):
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
-        self._world_bounds = self._read_world_bounds()
         try:
             from .living.world import LivingWorld
             self.living = LivingWorld(self)
@@ -2127,6 +2126,14 @@ class MiniwindSession(SettlementLaw):
         c = self.game.character
         if getattr(fio.player_runtime(self.logic), "god_mode", False):
             return 0.0
+        if self._environmental_harm():
+            # A map's hurt trigger (a fall off the edge of the world, lava) is
+            # not a blow: no difficulty scaling, armour, block, deflection or
+            # lucky escape. It deals what the map author set.
+            final = max(0.0, float(raw_damage))
+            c.damage(final)
+            self._player_hurt(c, final, None)
+            return final
         raw_damage = float(raw_damage) * self.incoming_mult
         attacker = self._attacker()
         if attacker is not None and damage_kind == "physical":
@@ -2188,8 +2195,21 @@ class MiniwindSession(SettlementLaw):
                 final *= BEHIND_DAMAGE
         final = self._lucky_escape(c, final)
         c.damage(final)
+        self._player_hurt(c, final, attacker)
+        return final
+
+    def _environmental_harm(self) -> bool:
+        """Whether the damage being taken is from a hurt trigger in the map,
+        as the engine recorded it (``last_damage`` = source, cause, kind)."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        return isinstance(last, tuple) and len(last) > 1 and last[1] == "trigger"
+
+    def _player_hurt(self, c, final, attacker) -> None:
+        """What *final* damage, already taken by *c*, does on screen and to
+        the game: blood, the red flash, the death screen's cause."""
         if final > 0:
-            self._gore_player_hurt(final, attacker)
+            if not (c.is_dead and self._gib_player(c, final, attacker)):
+                self._gore_player_hurt(final, attacker)
             # A lethal hit can stop engine ticks before the next UI update.
             # Release the lock UI here too, so it cannot cover the death flow.
             if self.open_screen == "lockpicking":
@@ -2202,7 +2222,33 @@ class MiniwindSession(SettlementLaw):
                 # death, so the per-tick encounter watch never hears of it.
                 self._watch_encounter()
         self.add_floater(f"-{int(round(final))}", kind="hurt")
-        return final
+
+    def _gib_player(self, c, final, attacker) -> bool:
+        """Blow the player apart on an overkill, by the one rule every NPC
+        and creature dies by (game.rpg.gore.should_gib: a killing blow of at
+        least GIB_DAMAGE_FRACTION x max health): their picture in pieces,
+        blood, and no body left standing. True when it did."""
+        import game.rpg.gore as _gore
+        if not _gore.should_gib({"max_health": c.max_health}, final, c.health):
+            return False
+        self._player_gibbed = True
+        ppos = self._player_pos()
+        if ppos is not None and self.gore_enabled():
+            feet = [ppos[0], ppos[1] - 56.0, ppos[2]]
+            src = getattr(attacker, "pos", None)
+            away = (ppos[0] - src[0], ppos[2] - src[2]) if src is not None else None
+            self.gore.gib(feet, final, away,
+                          sprite=getattr(self.logic, "player_head_sprite", None),
+                          body=PLAYER_GIB_BODY)
+            self.crab_frenzy.gibbed(self, feet, 1.0)
+        self.shake(*GIB_SHAKE)
+        self.gore.flash_red(0.55)
+        return True
+
+    def player_body_gone(self) -> bool:
+        """Whether the player was blown apart: the overhead view draws no
+        body (nor what it held) while they stay dead."""
+        return bool(self.__dict__.get("_player_gibbed")) and self.game.character.is_dead
 
     def _lucky_escape(self, c, final):
         """A blow that would kill may, once a day, leave the fortunate on a
@@ -2787,7 +2833,6 @@ class MiniwindSession(SettlementLaw):
             # is cleared here.
             self.arrows_in_flight = ()
             self._arrow_tags.clear()
-        self._keep_player_in_world()
         self.clock.advance(delta)
         if not self.clock.paused:
             self.windmills.produce_until(float(self.clock.day) * 24.0 + self.clock.hour,
@@ -4669,62 +4714,6 @@ class MiniwindSession(SettlementLaw):
         self._run_reveals()
         self._age_lists(delta)
         self._check_pack()          # a satchel sold over the counter
-
-    def _read_world_bounds(self):
-        """``(min_x, max_x, min_z, max_z)`` the player may walk in: the
-        terrain's extent, drawn in by :data:`WORLD_EDGE_MARGIN` so the rim of
-        the map is a wall rather than a cliff into nothing. None without
-        terrain (an interior map keeps its own walls)."""
-        ter = fio.terrain(self.logic)
-        if ter is not None and getattr(ter, "enabled", False):
-            try:
-                (x0, x1), (z0, z1) = ter.get_terrain_bounds()
-            except Exception:
-                return None
-        else:
-            # No live terrain object on this thread (yet): the map's own
-            # terrain record says the same thing.
-            state = getattr(self.logic, "editor_state", None)
-            td = getattr(state, "terrain_data", None)
-            if not isinstance(td, dict) or not td.get("enabled", True):
-                return None
-            try:
-                size = float(td.get("chunk_size", 256.0))
-                x0 = int(td["min_chunk_x"]) * size + float(td.get("offset_x", 0.0))
-                x1 = (int(td["max_chunk_x"]) + 1) * size + float(td.get("offset_x", 0.0))
-                z0 = int(td["min_chunk_z"]) * size + float(td.get("offset_z", 0.0))
-                z1 = (int(td["max_chunk_z"]) + 1) * size + float(td.get("offset_z", 0.0))
-            except (KeyError, TypeError, ValueError):
-                return None
-        m = WORLD_EDGE_MARGIN
-        if x1 - x0 <= 4 * m or z1 - z0 <= 4 * m:
-            return None
-        return (x0 + m, x1 - m, z0 + m, z1 - m)
-
-    def _keep_player_in_world(self) -> None:
-        """The edges of the map are untraversable: the player is held inside
-        the world's bounds, sliding along the edge rather than stopping dead."""
-        bounds = getattr(self, "_world_bounds", None)
-        player = fio.player(self.logic)
-        if bounds is None or player is None:
-            return
-        x0, x1, z0, z1 = bounds
-        pos = player.pos
-        x, z = float(pos[0]), float(pos[2])
-        cx, cz = min(max(x, x0), x1), min(max(z, z0), z1)
-        if cx != x or cz != z:
-            pos[0], pos[2] = cx, cz
-            vel = getattr(player, "velocity", None)
-            if vel is not None:
-                if cx != x:
-                    vel[0] = 0.0
-                if cz != z:
-                    vel[2] = 0.0
-            if not getattr(self, "_edge_told", False):
-                self._edge_told = True
-                self.notify("The land beyond is impassable.", 2.5)
-        else:
-            self._edge_told = False
 
     def _update_encumbrance(self) -> None:
         """Your pace: Speed sets it (Character.move_speed_factor), and
@@ -11844,7 +11833,13 @@ class MiniwindSession(SettlementLaw):
             source, cause, kind = (getattr(c, "_last_harm", None) or (None, None, None))
             thing, trap = None, ""
             if isinstance(source, dict):
-                trap = str(source.get("name") or "")          # a hurt trigger's brush
+                # A hurt trigger's brush: the map author's own words, else
+                # its name for the game's trap phrases.
+                own = str(source.get("death_message") or "").strip()
+                if own:
+                    self._death_message = own
+                    return own
+                trap = str(source.get("name") or "")
             elif isinstance(source, int):
                 # A projectile's owner, by id(): looked up once, at death.
                 thing = next((t for t in fio.things(self.logic) if id(t) == source), None)

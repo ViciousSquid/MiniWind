@@ -1731,6 +1731,21 @@ class PropertyEditor(QWidget):
         )
         self._widgets['damage_spin'] = dmg_spin
 
+        # What the death screen says when this trigger kills the player
+        # (empty: the game picks its own words for a trap).
+        death_edit = QLineEdit(str(brush.get('death_message', '') or ''))
+        death_edit.setPlaceholderText("e.g. Fell off the edge of the world")
+        death_edit.setToolTip("Shown on the death screen when this trigger kills "
+                              "the player. Leave empty for the game's own words.")
+        death_edit.editingFinished.connect(
+            lambda: self.update_object_prop(
+                'death_message', death_edit.text().strip())
+        )
+        dmg_layout.addLayout(
+            _hbox(QLabel("Death Message:"), death_edit)
+        )
+        self._widgets['death_message_edit'] = death_edit
+
         # A trigger that detects Props cannot currently deal player damage.
         # Keep the Damage section visible so its configuration is preserved, but
         # disable it while the Props filter is selected.
