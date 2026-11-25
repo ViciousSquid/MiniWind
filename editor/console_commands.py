@@ -14,7 +14,9 @@ from editor.portal_links import set_group_active, sync_group_to
 from engine.change_journal import touch
 from engine.items import ITEM_IDS
 from engine.spatial import set_authored_flag
-from engine.renderer import WATER_QUALITIES, available_renderers
+from engine.renderer import (
+    CLASSIC, DEFAULT_RENDERER, WATER_QUALITIES, available_renderers,
+    classic_enforced, is_classic)
 from engine.physics import available_physics, select_physics, selected_physics
 
 # Try to import I/O system (available in both editor and play mode)
@@ -1060,7 +1062,7 @@ class ConsoleCommandHandler:
             (('showglasses',), '[on|off|toggle] — Show or hide the player glasses billboards (Play Mode only)'),
             (('r_list',), '— Show all current render settings'),
             (('r_info',), '— Detailed renderer status (same as r_list)'),
-            (('r_renderer',), '[name] — List the registered renderers, or switch to one live'),
+            (('r_renderer',), '— Show the renderer (Classic, the only one)'),
             (('r_presentation',), '[reset] — Frame timings of the 3D view and the native kiosk '
                                   'window, recorded alike, to compare the two'),
             (('r_nativekiosk',), '[on|off|toggle] — Kiosk mode on a native window of its own '
@@ -1284,23 +1286,32 @@ class ConsoleCommandHandler:
             debug_log("Info", line)
 
     def cmd_renderer(self, args):
-        """List the registered renderers, or switch to one: ``r_renderer [name]``.
+        """Show the renderer: ``r_renderer [name]``.
 
-        Names match case-insensitively. The swap is live (editor or play) and
-        keeps the current renderer if the new one fails to start.
+        Classic is the only renderer Fio draws with
+        (``engine.renderer.registry.ENFORCE_CLASSIC``). ``r_renderer Classic``
+        (or ``Forward``, any case) makes sure it is the active one; any other
+        name -- HD_High included -- is refused and Classic keeps drawing.
         """
         view = self.main_window.view_3d
-        names = available_renderers()
+        enforced = classic_enforced()
+        names = [DEFAULT_RENDERER] if enforced else available_renderers()
+        note = f" -- {CLASSIC} is the only renderer" if enforced else ""
         wanted = args.split()[0] if args.split() else ""
         if not wanted:
             listing = ", ".join(
                 f"<b>{name}</b> (active)" if name == view.renderer_mode else name
                 for name in names)
-            debug_log("Info", f"Renderers: {listing}")
+            debug_log("Info", f"Renderers: {listing}{note}")
             return
-        match = next((name for name in names if name.lower() == wanted.lower()), None)
+        if is_classic(wanted):
+            match = DEFAULT_RENDERER
+        else:
+            match = next((name for name in names if name.lower() == wanted.lower()), None)
         if match is None:
-            debug_log("Warning", f"No renderer '{wanted}'. Registered: {', '.join(names)}")
+            debug_log("Warning", f"No renderer '{wanted}': {CLASSIC} is the only renderer."
+                      if enforced else
+                      f"No renderer '{wanted}'. Registered: {', '.join(names)}")
             return
         if view.switch_renderer(match):
             debug_log("Info", f"Renderer: {view.renderer_mode}")

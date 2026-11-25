@@ -1,26 +1,25 @@
-"""Classic is locked: it is the renderer it was, and HD_High is not in it.
+"""Classic is locked: it is the renderer it was, and the only one.
 
-Fio has two renderers. Classic (``engine/renderer/forward``, registry name
-``Forward``) is the original and the default; HD_High
-(``engine/renderer/hd_high``) is a separate renderer beside it, reached
-through the same registry and contract. Adding the second must not have
-changed the first. ``tests/visual/test_classic_golden.py`` checks the pixels
-and the shaders the driver holds; this is the rest of the lock:
+Classic (``engine/renderer/forward``, registry name ``Forward``) is Fio's
+original renderer and the only one it ships: the HD_High renderer that once
+stood beside it has been removed, and the host draws with Classic whatever is
+asked. ``tests/visual/test_classic_golden.py`` checks the pixels and the
+shaders the driver holds; this is the rest of the lock:
 
 * every source file Classic is made of -- its package, the shared
   ``engine/renderer/core`` and ``engine/shaders.py`` -- has the digest
-  recorded in ``tests/visual/golden/classic_sources.json`` (recorded from the
-  commit before HD_High existed). A deliberate change to Classic is recorded
-  with ``python tools/hd_golden.py --lock-sources``, after
-  ``tools/hd_golden.py --check`` or ``--base`` has shown what it does to the
-  picture;
-* none of those files mentions HD_High, and building and drawing with
-  Classic never imports it, never looks for a material companion map and
-  never calls the material generator;
-* Classic is the default renderer, in the registry and in the shipped
-  settings, and the only one a low-power machine is given;
-* what the OBJ loader now reads for HD_High (``Ke`` / ``Pr`` / ``Pm``)
-  reaches nothing Classic draws a model with.
+  recorded in ``tests/visual/golden/classic_sources.json``. A deliberate
+  change to Classic is recorded with
+  ``python tools/classic_golden.py --lock-sources``, after
+  ``tools/classic_golden.py --check`` or ``--base`` has shown what it does to
+  the picture;
+* none of those files mentions HD_High, the HD_High package and its material
+  maps are gone, and drawing with Classic never looks for a material
+  companion map;
+* Classic is the renderer, in the registry and in the shipped settings,
+  whatever renderer a settings file names;
+* an MTL's ``Ke`` / ``Pr`` / ``Pm`` (read only for HD_High once) reach
+  nothing Classic draws a model with.
 """
 
 import configparser
@@ -45,8 +44,8 @@ def test_classics_source_files_are_the_recorded_ones():
                      if current[path] != recorded[path])
     assert not (added or removed or changed), (
         "Classic's source changed (added %s, removed %s, changed %s). If that "
-        "was meant: check the picture with tools/hd_golden.py --check, then "
-        "record it with tools/hd_golden.py --lock-sources." % (added, removed, changed))
+        "was meant: check the picture with tools/classic_golden.py --check, then "
+        "record it with tools/classic_golden.py --lock-sources." % (added, removed, changed))
 
 
 def test_classic_does_not_mention_hd_high():
@@ -55,6 +54,17 @@ def test_classic_does_not_mention_hd_high():
             text = handle.read()
         for word in ("hd_high", "hd_graphics", "material_maps", "HD_High"):
             assert word not in text, "%s mentions %s" % (path, word)
+
+
+def test_hd_high_and_its_material_maps_are_gone():
+    for path in ("engine/renderer/hd_high", "engine/hd_graphics.py",
+                 "engine/material_maps.py", "editor/hd_sky_panel.py",
+                 "editor/hd_readiness.py", "tools/make_material_maps.py"):
+        assert not os.path.exists(repo_path(path)), path
+    sidecars = [os.path.join(folder, name)
+                for folder, _dirs, files in os.walk(repo_path("assets"))
+                for name in files if name.endswith(".mat.json")]
+    assert sidecars == []
 
 
 @pytest.mark.qt
@@ -69,25 +79,26 @@ def test_importing_classic_imports_nothing_of_hd_high():
 
 
 @pytest.mark.qt
-def test_classic_is_the_default_renderer():
-    from engine import hd_graphics
-    from engine.renderer import DEFAULT_RENDERER, canonical_name, renderer_factory
+def test_classic_is_the_renderer():
+    from engine.renderer import (
+        DEFAULT_RENDERER, available_renderers, canonical_name, renderer_factory,
+        renderer_from_settings)
     from engine.renderer.forward import ForwardRenderer
     assert DEFAULT_RENDERER == "Forward" and canonical_name("Classic") == "Forward"
     assert renderer_factory("Classic") is ForwardRenderer
-    assert hd_graphics.DEFAULT_RENDERER == "Classic"
-    assert hd_graphics.renderer_from(None) == "Classic"
-    assert hd_graphics.renderer_from(configparser.ConfigParser()) == "Classic"
+    assert "HD_High" not in available_renderers()
+    assert renderer_from_settings(None) == "Forward"
+    assert renderer_from_settings(configparser.ConfigParser()) == "Forward"
     shipped = configparser.ConfigParser()
     shipped.read(repo_path("settings.ini"))
-    # The shipped settings start the editor with Classic too.
-    assert hd_graphics.renderer_from(shipped) == "Classic"
-    # A low-power machine is given Classic whatever is asked.
+    # The shipped settings name Classic, and Classic is what they get.
+    assert shipped.get("Renderer", "renderer") == "Classic"
+    assert renderer_from_settings(shipped) == "Forward"
+    # A file that still asks for HD_High is given Classic.
     asked = configparser.ConfigParser()
     asked.add_section("Renderer")
     asked.set("Renderer", "renderer", "HD_High")
-    assert hd_graphics.renderer_from(asked) == "HD_High"
-    assert hd_graphics.renderer_from(asked, lowpower=True) == "Classic"
+    assert renderer_from_settings(asked) == "Forward"
 
 
 @pytest.mark.qt
@@ -101,9 +112,11 @@ def test_an_mtls_ke_pr_pm_reach_nothing_classic_draws_with(tmp_path):
     model = obj_loader.OBJLoader()
     model._load_mtl(str(tmp_path / "lamp.obj"), "lamp.mtl")
     material = model.materials["glow"]
-    # The key Classic reads for emission is absent: Ke is kept apart.
-    assert "emissive" not in material
-    assert material["hd_emissive"] == (2.0, 1.5, 1.0)
+    # Classic reads no emission, roughness or metalness from an MTL, and
+    # nothing is kept for a renderer that would.
+    for key in ("emissive", "hd_emissive", "roughness", "metallic"):
+        assert key not in material, key
+    assert material["diffuse"] == (0.5, 0.4, 0.3)
 
     class Renderer(ResourcesMixin):
         def __init__(self):
@@ -122,7 +135,6 @@ def test_an_mtls_ke_pr_pm_reach_nothing_classic_draws_with(tmp_path):
 @pytest.mark.gl
 def test_a_classic_frame_never_looks_for_material_maps(monkeypatch):
     import engine.asset_archives as archives
-    import engine.material_maps as material_maps
     from tests.helpers import gl as glh
     seen = []
 
@@ -137,11 +149,6 @@ def test_a_classic_frame_never_looks_for_material_maps(monkeypatch):
     for name in ("asset_exists", "asset_bytes", "asset_source"):
         if hasattr(archives, name):
             monkeypatch.setattr(archives, name, watched(getattr(archives, name)))
-    for name in ("companion_paths", "ensure_cached", "generate", "load_params", "status"):
-        def refuse(*args, _name=name, **kwargs):
-            seen.append("material_maps." + _name)
-            raise AssertionError("material_maps.%s ran in a Classic frame" % _name)
-        monkeypatch.setattr(material_maps, name, refuse)
 
     config = configparser.ConfigParser()
     config.add_section("Renderer")

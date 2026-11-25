@@ -1,14 +1,13 @@
 """A model pass sends a material uniform when it differs, not once a group.
 
-Both renderers draw a model one material group at a time, and each group
+Classic draws a model one material group at a time, and each group
 sent its emissive factor, its opacity and its colour whether or not the
 group before had the same: on ``Reel_To_Reel_Test`` 320 of a frame's 719 GL
 calls. Each clear group also asked GL for the blend state it would put back
 (six queries), though every group puts back the same.
 
-``_ModelSends`` is what a pass keeps of what it has sent. The same tests for
-Classic's and HD_High's, which share no code. No GL context: the module's
-``gl`` is replaced by a recorder.
+``_ModelSends`` is what a pass keeps of what it has sent. No GL context: the
+module's ``gl`` is replaced by a recorder.
 """
 
 import importlib
@@ -17,7 +16,7 @@ import pytest
 
 pytestmark = [pytest.mark.qt]
 
-PACKAGES = ("engine.renderer.forward.passes", "engine.renderer.hd_high.passes")
+PACKAGES = ("engine.renderer.forward.passes",)
 
 BLEND, DEPTH_MASK = "GL_BLEND", "GL_DEPTH_WRITEMASK"
 
@@ -86,7 +85,7 @@ def _program(base, emissive=True):
                    object_color=base + 1, alpha=base + 2)
 
 
-@pytest.fixture(params=PACKAGES, ids=["Forward", "HD_High"])
+@pytest.fixture(params=PACKAGES, ids=["Forward"])
 def sends(request, monkeypatch):
     module = importlib.import_module(request.param)
     recorder = RecordingGL()
@@ -187,12 +186,12 @@ def test_the_blend_state_is_asked_for_once_a_pass(sends):
     assert (gl.blend, gl.depth_mask, gl.func) == (False, True, [1, 0, 1, 0])
 
 
-def test_both_renderers_draw_their_models_through_it():
+def test_classic_draws_its_models_through_it():
     """No group loop sends these three uniforms directly any more.
 
-    Neither renderer's instanced pass is among them: each consumes a
-    prepared plan (``tests/visual/test_model_plan.py``) and keeps what it has
-    sent each program itself.
+    The instanced pass is not among them: it consumes a prepared plan
+    (``tests/visual/test_model_plan.py``) and keeps what it has sent each
+    program itself.
     """
     import ast
     import inspect

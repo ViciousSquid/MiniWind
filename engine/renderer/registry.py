@@ -1,10 +1,13 @@
 """The renderer registry: name -> factory.
 
-``"Forward"`` is Fio's built-in renderer. A plugin or developer adds another
-with :func:`register_renderer`; the host creates the active one with
-:func:`create_renderer`. A factory is any callable ``factory(config)`` that
-returns an object satisfying :class:`engine.renderer.api.Renderer` -- usually
-the renderer class itself. :func:`create_renderer` checks that it does,
+``"Forward"`` -- Classic -- is Fio's built-in renderer, and the only one the
+host draws with (:func:`renderer_from_settings`; while :data:`ENFORCE_CLASSIC`
+holds, ``QtGameView`` refuses to switch to any other). Another renderer can
+still be registered with :func:`register_renderer` and made with
+:func:`create_renderer` -- the contract's tests and the example in
+``docs/examples`` do -- but the host does not draw with it. A factory is any
+callable ``factory(config)`` that returns an object satisfying
+:class:`engine.renderer.api.Renderer` -- usually the renderer class itself. :func:`create_renderer` checks that it does,
 whichever renderer it is: the built-in ones are held to the contract exactly
 as a plugin's is.
 
@@ -29,20 +32,50 @@ class RendererInitError(RuntimeError):
     included). The original exception is its ``__cause__``. Not a verdict
     on the contract."""
 
-#: The renderer the host starts with: Fio's original forward renderer, the
-#: one people call Classic.
+#: The renderer the host draws with: Fio's original forward renderer, the
+#: one people call Classic. It is the only renderer Fio ships, and the host
+#: uses it whatever settings.ini, a map or the console ask for.
 DEFAULT_RENDERER = "Forward"
+
+#: What a person calls the default renderer.
+CLASSIC = "Classic"
 
 #: Other names a renderer answers to. "Classic" is what the forward renderer
 #: has been called since there was a second one.
-ALIASES = {"Classic": "Forward"}
+ALIASES = {CLASSIC: DEFAULT_RENDERER}
+
+#: The host draws with Classic only: ``QtGameView.switch_renderer`` and the
+#: console's ``r_renderer`` refuse every other name while this is true, a
+#: renderer a plugin registers included. Nothing in Fio turns it off; the
+#: tests of the host's own swap machinery do, to swap in their stand-in
+#: renderers and back.
+ENFORCE_CLASSIC = True
+
+
+def classic_enforced():
+    """Whether the host may draw with Classic only (:data:`ENFORCE_CLASSIC`,
+    read when asked)."""
+    return bool(ENFORCE_CLASSIC)
 
 _factories = {
-    "Forward": "engine.renderer.forward:ForwardRenderer",
-    # A separate renderer of its own package: physically based surfaces, a
-    # sun and sky, HDR post-processing (engine/renderer/hd_high).
-    "HD_High": "engine.renderer.hd_high:HDHighRenderer",
+    DEFAULT_RENDERER: "engine.renderer.forward:ForwardRenderer",
 }
+
+
+def renderer_from_settings(config=None):
+    """The registry name of the renderer the host draws with: always
+    Classic (``"Forward"``).
+
+    ``[Renderer] renderer`` in settings.ini is not consulted: an older file
+    that names a renderer Fio no longer ships (such as ``HD_High``), any
+    other value, or none at all, all start Classic."""
+    return DEFAULT_RENDERER
+
+
+def is_classic(name):
+    """Whether *name* (a registry name or an alias, any case) is Classic."""
+    text = str(name or "").strip().lower()
+    return text in (DEFAULT_RENDERER.lower(), CLASSIC.lower())
 
 
 def canonical_name(name):

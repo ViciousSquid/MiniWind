@@ -1,6 +1,6 @@
-"""Classic's and HD_High's classes against the contract, without a GL context.
+"""Classic's class against the contract, without a GL context.
 
-The same checks for both renderers. Importing either needs PyOpenGL (the
+Classic is the only built-in renderer. Importing it needs PyOpenGL (the
 ``qt`` tier) but no context: a class says what its methods take and where
 each was defined, which is all these read. What a made renderer holds -- its
 attributes' values, its GL objects -- is in
@@ -18,11 +18,13 @@ from engine.renderer import api
 
 pytestmark = [pytest.mark.qt]
 
-BUILT_IN = {"Forward": "engine.renderer.forward", "HD_High": "engine.renderer.hd_high"}
+BUILT_IN = {"Forward": "engine.renderer.forward"}
 SHARED = "engine.renderer.core"
 
-def test_both_built_in_renderers_are_registered():
+def test_classic_is_the_only_built_in_renderer():
     assert set(BUILT_IN) <= set(available_renderers())
+    assert "HD_High" not in available_renderers()
+    assert renderer_factory("HD_High") is None
 
 
 @pytest.mark.parametrize("name", BUILT_IN)
@@ -48,8 +50,9 @@ def test_the_contract_version_is_declared_by_the_renderer_itself(name):
 
 @pytest.mark.parametrize("name", BUILT_IN)
 def test_a_renderer_is_made_of_its_own_package_and_the_shared_core(name):
-    """No class of the other renderer is among its bases, so no method of
-    the other's -- public or internal -- is one it could run."""
+    """No class outside its package and the shared core is among its bases,
+    so no method from elsewhere -- public or internal -- is one it could
+    run."""
     cls = renderer_factory(name)
     assert cls.__module__.startswith(BUILT_IN[name])
     for base in cls.__mro__[:-1]:
@@ -59,10 +62,3 @@ def test_a_renderer_is_made_of_its_own_package_and_the_shared_core(name):
     for member in list(methods) + ["ready"]:
         owner = next(base for base in cls.__mro__ if member in vars(base))
         assert owner.__module__.startswith((BUILT_IN[name], SHARED)), (member, owner)
-
-
-def test_the_two_renderers_share_no_class_outside_the_core():
-    forward, hd_high = (set(renderer_factory(name).__mro__) for name in BUILT_IN)
-    shared = (forward & hd_high) - {object}
-    assert shared, "both are built on RendererCore"
-    assert all(cls.__module__.startswith(SHARED) for cls in shared), shared

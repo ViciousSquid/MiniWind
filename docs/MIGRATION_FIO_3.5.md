@@ -685,6 +685,13 @@ What it brings (Fio's own words are in its commit log; the large items):
   `*_n.webp`, `*_m.webp`; `tools/make_material_maps.py`). Each display mode in
   its own folder; GL state through `core/gl_state.py`, pointer calls through
   `core/raw_calls.py`; prepared model plans.
+  *Since removed from MiniWind:* the HD_High renderer, its HD Sky panel, HD
+  preview, HD Readiness Report, `engine/hd_graphics.py`,
+  `engine/material_maps.py`, `tools/make_material_maps.py`,
+  `tools/bench_hd.py` and every baked companion map. Classic is the only
+  renderer and is enforced: any `[Renderer] renderer` value starts Classic
+  (see `docs/renderers.md`). `tools/hd_golden.py` is now
+  `tools/classic_golden.py`.
 * **Editor**: brush and entity groups (UUIDs I/O can target), a Move / Rotate /
   Scale gizmo, light volumes, model Rotate animation with a preview, Save As
   Minified, toasts as Debug Console cards, `condump`, a floating Terrain
