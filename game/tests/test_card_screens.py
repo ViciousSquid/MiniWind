@@ -222,3 +222,66 @@ def test_journal_cards_select_with_a_click(session):
     assert screens._sel(session)["journal"]["row"] == 2
     screens.handle_key(session, "left")
     assert screens._sel(session)["journal"]["row"] == 1
+
+
+# --------------------------------------------------------- character creation
+@pytest.mark.parametrize("step,field", [(2, "class"), (3, "birthsign")])
+@pytest.mark.parametrize("w,h,full", [(1280, 720, True), (1920, 1080, True),
+                                      (1000, 620, False)])
+def test_creation_choices_are_cards(session, drawn, step, field, w, h, full):
+    from game.rpg import classes, birthsigns
+    ids = classes.CREATION_CLASS_IDS if field == "class" else birthsigns.CREATION_BIRTHSIGN_IDS
+    label = (lambda i: classes.get(i).label) if field == "class" else \
+        (lambda i: birthsigns.get(i).label)
+    session.needs_char_creation = True
+    session.open_screen = "charcreate"
+    screens._cc(session).update(step=step, name="Ada")
+    _paint(session, w, h, full)
+    names = {label(i) for i in ids}
+    rects = [r for r, lab in hits.targets() if lab in names]
+    assert len(rects) == len(ids)                        # all on one page
+    _laid_out(rects, _panel(w, h, full))
+    back = next(r for r, lab in hits.targets() if lab == "Back")
+    assert all(not r.intersects(back) for r in rects)
+    shown = [card for _r, card in drawn.cards]
+    assert all(card.icon is not None and card.summary and not card.tooltip
+               for card in shown)
+    # Arrows move by card and row; a click picks.
+    cc = screens._cc(session)
+    cc[field] = 0
+    screens.handle_key(session, "right")
+    assert cc[field] == 1
+    screens.handle_key(session, "down")
+    assert cc[field] == cards.navigate(1, "down", len(ids), cc[f"cols_{field}"]) != 1
+    r = rects[-1]
+    hits.click(r.center().x(), r.center().y())
+    hits.run_clicks(session)
+    assert cc[field] == len(ids) - 1
+
+
+# ------------------------------------------------------------------- level up
+@pytest.mark.parametrize("w,h,full", [(1280, 720, True), (1920, 1080, True),
+                                      (820, 600, False)])
+def test_level_up_choices_are_cards(session, drawn, w, h, full):
+    c = session.game.character
+    c.class_id = "mage"
+    session.open_screen = "levelup"
+    _paint(session, w, h, full)
+    targets = _targets("levelup:")
+    assert len(targets) == len(screens._level_rows(c)) == 4
+    rects = [r for r, _l in targets]
+    _laid_out(rects, _panel(w, h, full))
+    assert len({r.y() for r in rects}) == 1                # one row
+    confirm = next(r for r, lab in hits.targets() if str(lab).startswith("Increase "))
+    assert all(not r.intersects(confirm) for r in rects)
+    cards_ = [card for _r, card in drawn.cards]
+    assert [card.title for card in cards_] == [r[1] for r in screens._level_rows(c)]
+    assert all(card.icon is not None and card.badges[1] == "+5" and not card.tooltip
+               for card in cards_)
+    # Click the third card, then confirm with the button.
+    r = next(r for r, lab in targets if lab == "levelup:charisma")
+    hits.click(r.center().x(), r.center().y())
+    hits.run_clicks(session)
+    assert screens._levelup_state(session)["row"] == 2
+    screens.handle_key(session, "right")
+    assert screens._levelup_state(session)["row"] == 3

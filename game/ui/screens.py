@@ -11,6 +11,8 @@ they need nothing beyond a QPainter and the session. Selection lives in
 
 from __future__ import annotations
 
+import re
+
 from PyQt5.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
@@ -246,25 +248,27 @@ def _draw_charcreate(painter, session, w, h):
     elif step == "class":
         ids = classes.CREATION_CLASS_IDS
         k = classes.get(ids[s["class"]])
-        list_w = int(inner.width() * 0.42)
+        list_w = int(inner.width() * 0.5)
         _cc_list(painter, inner.x(), ty, list_w, ids, s["class"],
-                 lambda i: classes.get(i).label, field="class")
+                 lambda i: classes.get(i).label, field="class",
+                 h=inner.bottom() - 64 - ty, state=s)
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
         majors = ", ".join(sk.label(m) for m in k.major_skills if sk.is_shown(m))
         no_magic = "" if k.magic else f"\n\n{classes.NO_MAGIC_NOTE}"
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    k.label, k.desc + f"\n\nSpecialisation: {k.specialisation}"
                    f"\nFavoured: {favs}\nMajor skills: {majors}{no_magic}")
-        hint = "↑/↓ choose class    Enter next    Esc back"
+        hint = "Arrows or click choose a class    Enter next    Esc back"
     elif step == "birthsign":
         ids = birthsigns.CREATION_BIRTHSIGN_IDS
         b = birthsigns.get(ids[s["birthsign"]])
-        list_w = int(inner.width() * 0.42)
+        list_w = int(inner.width() * 0.5)
         _cc_list(painter, inner.x(), ty, list_w, ids, s["birthsign"],
-                 lambda i: birthsigns.get(i).label, field="birthsign")
+                 lambda i: birthsigns.get(i).label, field="birthsign",
+                 h=inner.bottom() - 64 - ty, state=s)
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    b.label, b.desc)
-        hint = "↑/↓ choose birthsign    Enter next    Esc back"
+        hint = "Arrows or click choose a birthsign    Enter next    Esc back"
     else:  # confirm
         name = " ".join(p.capitalize() for p in s["name"].split()) or "Adventurer"
         k = classes.get(classes.CREATION_CLASS_IDS[s["class"]])
@@ -510,19 +514,64 @@ def _draw_identity(painter, inner, ty, s):
            _cc_toggle_hand)
 
 
-def _cc_list(painter, x, y, w, ids, sel, labeller, field=None):
-    row_h = 26
-    for i, item in enumerate(ids):
-        ry = y + i * row_h
+#: A picture for each class and birthsign card: ("item" | "spell", id).
+_CC_ICONS = {
+    "class": {"warrior": ("item", "iron_longsword"), "archer": ("item", "hunting_bow"),
+              "mage": ("spell", "firebolt"), "healer": ("spell", "heal"),
+              "necromancer": ("spell", "_occult"), "thief": ("item", "lockpick")},
+    "birthsign": {"warrior": ("item", "iron_battleaxe"), "mage": ("spell", "_spell"),
+                  "thief": ("item", "adventurers_keepsake"),
+                  "lord": ("spell", "heal_minor"), "shadow": ("spell", "invisibility_minor")},
+}
+#: Header tint per specialisation (a birthsign takes its namesake's).
+_SPEC_ACCENT = {"Combat": QColor(214, 120, 96), "Magic": QColor(150, 140, 240),
+                "Stealth": QColor(120, 196, 140)}
+
+
+def _cc_card(painter, field, item, rect, selected):
+    """The :class:`cards.Card` for a class or birthsign: its picture, its
+    specialisation and the gist in a line; the detail beside the cards says
+    the rest (so no tooltip)."""
+    kind, pic = _CC_ICONS.get(field, {}).get(item, ("item", ""))
+    px = max(32, int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter)))
+    icon = None
+    try:
+        import game.item_icons as item_icons
+        icon = (item_icons.spell_pixmap(pic, px) if kind == "spell"
+                else item_icons.icon_pixmap(pic, None, px)) if pic else None
+    except Exception:
+        icon = None
+    if field == "class":
+        k = classes.get(item)
+        title, spec = k.label, k.specialisation
+        summary = re.split(r"[:;,.]", k.desc, maxsplit=1)[0].strip()
+        sub = spec + ("" if k.magic else " · no magic")
+    else:
+        b = birthsigns.get(item)
+        title = b.label
+        rest = b.desc[len(b.flavour):].strip() if b.desc.startswith(b.flavour) else b.desc
+        summary = rest.split(". ")[0].rstrip(".")
+        spec = {"warrior": "Combat", "mage": "Magic", "thief": "Stealth"}.get(item, "Magic")
+        sub = ""
+    return cards.Card(title=title, icon=icon, subtitle=sub, summary=summary,
+                      accent=_SPEC_ACCENT.get(spec), selected=selected,
+                      hovered=hits.hovered(rect), glyph=title[:1])
+
+
+def _cc_list(painter, x, y, w, ids, sel, labeller, field=None, h=420, state=None):
+    """The class or birthsign choices as cards in (x, y, w, h); the grid's
+    shape is kept in *state* (``cols_<field>``) for the arrow keys."""
+    area = QRect(x, y + 6, w, max(1, int(h) - 6))
+    grid = cards.layout_grid(area, len(ids), min_scale=0.6, fit_all=True)
+    if state is not None and field:
+        state[f"cols_{field}"], state[f"size_{field}"] = grid.cols, grid.page_size
+    first = (sel // max(1, grid.page_size)) * grid.page_size
+    for i in range(first, min(first + grid.page_size, len(ids))):
+        item = ids[i]
+        rect = grid.slots[i - first]
+        cards.draw_card(painter, rect, _cc_card(painter, field, item, rect, i == sel))
         if field is not None:
-            _row_target(painter, QRect(x, ry, w, row_h - 2), _cc_set(field, i),
-                        labeller(item))
-        if i == sel:
-            painter.fillRect(QRect(x, ry, w, row_h - 2), T.SELECT)
-            painter.setPen(T.GILD)
-            painter.drawRect(QRect(x, ry, w, row_h - 2))
-        T.text_in(painter, QRect(x + 10, ry, w - 12, row_h - 2), labeller(item),
-                  size=12, color=T.GOLD_BRIGHT if i == sel else T.INK, align=T.ALIGN_LEFT)
+            hits.add(QRect(rect), _cc_set(field, i), labeller(item))
 
 
 def _cc_detail(painter, x, y, w, title, body):
@@ -565,10 +614,12 @@ def _handle_charcreate(session, key):
     elif step in ("class", "birthsign"):
         ids = (classes.CREATION_CLASS_IDS if step == "class"
                else birthsigns.CREATION_BIRTHSIGN_IDS)
-        if key in ("up", "w"):
-            s[step] = (s[step] - 1) % len(ids); return True
-        if key in ("down", "s"):
-            s[step] = (s[step] + 1) % len(ids); return True
+        move = {"up": "up", "w": "up", "down": "down", "s": "down",
+                "left": "left", "a": "left", "right": "right", "d": "right"}.get(key)
+        if move:
+            s[step] = cards.navigate(s[step], move, len(ids), s.get(f"cols_{step}", 1),
+                                     s.get(f"size_{step}"))
+            return True
     if key in ("return", "enter"):
         if s["step"] == 0 and not s["name"].strip():
             return True                       # a name is required
@@ -2318,69 +2369,35 @@ def _draw_levelup(painter, session, w, h):
               bold=True, family="Segoe UI")
     top += 28
 
-    # The choices, down the left.
-    list_w = int(inner.width() * 0.52)
-    row_h = 58
-    tile = row_h - 8
+    # The choices, as cards across the page (game/ui/cards.py); the one
+    # highlighted in full below them -- so the cards carry no tooltip.
+    foot_top = inner.bottom() - 60
+    detail_h = 150
+    area = QRect(inner.x(), top, inner.width(), max(1, foot_top - detail_h - top))
+    grid = cards.layout_grid(area, len(rows), min_scale=0.55, fit_all=True)
     for i, (choice, label, _desc) in enumerate(rows):
-        ry = top + i * (row_h + 6)
-        chosen = st["row"] == i
-        tile_r = QRect(inner.x(), ry + 4, tile, tile)
-        painter.fillRect(tile_r, QColor(122, 40, 30, 230) if chosen else QColor(196, 170, 128))
-        painter.setPen(QPen(QColor(90, 52, 30), 1))
-        painter.drawRect(tile_r)
-        _paint_level_icon(painter, tile_r.adjusted(6, 6, -6, -6), choice,
-                          ink=_PARCH_LIGHT if chosen else QColor(150, 110, 80))
-        band = QRect(tile_r.right() + 10, ry + 6, list_w - tile - 10, row_h - 12)
-        if chosen:
-            from PyQt5.QtGui import QLinearGradient, QBrush
-            g = QLinearGradient(band.topLeft(), band.bottomLeft())
-            g.setColorAt(0.0, QColor(214, 222, 236))
-            g.setColorAt(0.5, QColor(150, 170, 204))
-            g.setColorAt(1.0, QColor(118, 140, 182))
-            painter.save()
-            painter.setPen(QPen(QColor(40, 40, 60), 1.5))
-            painter.setBrush(QBrush(g))
-            painter.drawRect(band)
-            painter.restore()
-        a = LEVEL_CHOICES[choice]
-        ink = _INK if chosen else QColor(120, 98, 84)
-        T.text_in(painter, band.adjusted(14, 0, 0, 0), label, size=17, color=ink,
-                  align=T.ALIGN_LEFT, family=fonts.dialogue_family())
-        value = (f"{int(c.max_magicka)}" if choice == "magicka" else str(c.attrs[a]))
-        T.text_in(painter, QRect(band.right() - 120, band.y(), 60, band.height()), value,
-                  size=16, color=ink, align=int(Qt.AlignVCenter | Qt.AlignRight),
-                  family=fonts.dialogue_family())
-        T.text_in(painter, QRect(band.right() - 52, band.y(), 48, band.height()),
-                  f"+{LEVEL_ATTR_GAIN}", size=16, color=_INK_RED if chosen else ink,
-                  align=T.ALIGN_CENTER, family=fonts.dialogue_family())
-        _row_target(painter, QRect(tile_r.x(), ry, list_w, row_h), _levelup_pick(i),
-                    f"levelup:{choice}")
+        rect = grid.slots[i]
+        cards.draw_card(painter, rect, _level_card(painter, c, choice, label, rect,
+                                                   st["row"] == i))
+        hits.add(QRect(rect), _levelup_pick(i), f"levelup:{choice}")
 
-    # The highlighted choice, on the right: its picture, what it does, and
-    # what it would change.
+    # The highlighted choice: what it does, and what it would change.
     choice, label, desc = rows[st["row"]]
-    right = QRect(inner.x() + list_w + 24, top - 28, inner.width() - list_w - 24,
-                  inner.bottom() - 60 - (top - 28))
-    frame = min(right.width(), 150)
-    fr = QRect(right.x() + (right.width() - frame) // 2, right.y(), frame, frame)
-    painter.fillRect(fr, QColor(190, 196, 206))
-    painter.setPen(QPen(QColor(90, 52, 30), 3))
-    painter.drawRect(fr)
-    painter.setPen(QPen(QColor(90, 52, 30), 1))
-    painter.drawRect(fr.adjusted(6, 6, -6, -6))
-    _paint_level_icon(painter, fr.adjusted(18, 18, -18, -18), choice)
+    right = QRect(inner.x(), grid.bounds().bottom() + 14, inner.width(),
+                  max(1, foot_top - grid.bounds().bottom() - 18))
+    half = (right.width() - 24) // 2
     painter.save()
     painter.setFont(T.font(10, bold=True, family="Segoe UI"))
     painter.setPen(_INK)
-    drect = QRect(right.x(), fr.bottom() + 10, right.width(), 76)
+    drect = QRect(right.x(), right.y(), half, right.height())
     painter.drawText(drect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
     painter.restore()
-    ey = drect.bottom() + 6
+    ex = right.x() + half + 24
+    ey = right.y()
     for name, before, after in _level_preview(c, choice):
-        if ey > right.bottom() - 14:
+        if ey > right.bottom() - 16:
             break
-        T.text_in(painter, QRect(right.x(), ey, right.width(), 18),
+        T.text_in(painter, QRect(ex, ey, half, 18),
                   f"{name}:  {before}  →  {after}", size=9, color=_INK_BLUE,
                   align=T.ALIGN_LEFT, bold=True, family="Segoe UI")
         ey += 18
@@ -2399,8 +2416,49 @@ def _draw_levelup(painter, session, w, h):
            f"Increase {label}", lambda sess: _handle_levelup(sess, "return"),
            primary=True)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 26, inner.width() - 260, 20),
-              f"Click, 1–{len(rows)} or ↑/↓ to choose   ·   Enter to confirm", size=9,
+              f"Click, 1–{len(rows)} or the arrows to choose   ·   Enter to confirm", size=9,
               color=QColor(110, 86, 60), align=T.ALIGN_LEFT, family="Segoe UI")
+
+
+#: Header tint per level-up choice.
+_LEVEL_ACCENT = {"strength": QColor(214, 110, 96), "endurance": QColor(120, 190, 130),
+                 "charisma": QColor(232, 196, 96), "magicka": QColor(110, 150, 240)}
+_LEVEL_ICONS = {}
+
+
+def _level_icon(choice, px):
+    """The choice's woodcut glyph (:func:`_paint_level_icon`) as a picture,
+    in pale parchment ink for a dark card."""
+    key = (choice, int(px))
+    if key not in _LEVEL_ICONS:
+        from PyQt5.QtGui import QPainter, QPixmap
+        pm = QPixmap(int(px), int(px))
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        try:
+            _paint_level_icon(p, QRect(int(px * 0.12), int(px * 0.12), int(px * 0.76),
+                                       int(px * 0.76)), choice, ink=_PARCH_LIGHT)
+        finally:
+            p.end()
+        _LEVEL_ICONS[key] = pm
+    return _LEVEL_ICONS[key]
+
+
+def _level_card(painter, c, choice, label, rect, selected):
+    """The :class:`cards.Card` for a level-up choice: its glyph, where it
+    stands now and where the level takes it."""
+    from ..rpg.character import LEVEL_ATTR_GAIN, LEVEL_CHOICES
+    a = LEVEL_CHOICES[choice]
+    now = int(c.attrs[a])
+    shown = attr.label(a) if choice != "magicka" else "Intelligence"
+    px = max(32, int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter)))
+    return cards.Card(
+        title=label, icon=_level_icon(choice, px),
+        subtitle=f"{shown} {now}",
+        summary=f"{now} → {attr.clamp(now + LEVEL_ATTR_GAIN)}",
+        accent=_LEVEL_ACCENT.get(choice), badges=("", f"+{LEVEL_ATTR_GAIN}"),
+        badge_colors=(None, T.GOLD_BRIGHT), selected=selected,
+        hovered=hits.hovered(rect))
 
 
 def _levelup_pick(i):
