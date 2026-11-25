@@ -406,7 +406,11 @@ class LightingMixin:
                 gl_state.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, cm)
                 self._specify_shadow_cube(1)
                 self._shadow_cube_sizes.append(1)
-                self._shadow_cube_parameters()
+                gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+                gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+                gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+                gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+                gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_R, gl.GL_CLAMP_TO_EDGE)
                 self._shadow_cubemaps.append(cm)
             gl_state.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, 0)
             self.shadow_units_changed()
@@ -460,32 +464,12 @@ class LightingMixin:
         sizes = getattr(self, '_shadow_cube_sizes', None)
         if sizes is None or slot >= len(sizes) or sizes[slot] == size:
             return False
-        # A new texture object at the new size, not the old one re-specified:
-        # Mesa 26's llvmpipe went on sampling a re-specified cube-map's old
-        # (1x1 placeholder) storage for the rest of the frame it was resized
-        # in, so the first frame a shadow appeared in was drawn without it.
-        # A new name is rebound everywhere it is sampled (_bind_shadow_maps
-        # compares names), so no unit can hold a stale view of it.
-        old = self._shadow_cubemaps[slot]
-        cube = int(gl.glGenTextures(1))
-        gl_state.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, cube)
+        gl_state.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, self._shadow_cubemaps[slot])
         self._specify_shadow_cube(size)
-        self._shadow_cube_parameters()
         gl_state.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, 0)
-        self._shadow_cubemaps[slot] = cube
-        gl_state.glDeleteTextures([old])
         sizes[slot] = size
         self.shadow_units_changed()
         return True
-
-    @staticmethod
-    def _shadow_cube_parameters():
-        """Sampling state of the bound shadow cube-map: nearest, clamped."""
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-        gl.glTexParameteri(gl.GL_TEXTURE_CUBE_MAP, gl.GL_TEXTURE_WRAP_R, gl.GL_CLAMP_TO_EDGE)
 
     def _bind_shadow_maps(self, uniforms):
         """Bind shadow samplers to dedicated texture units.

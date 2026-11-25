@@ -377,6 +377,18 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
         message = _frames_differ(raw, through_wrappers)
         message += ("; a frame re-rendering the shadows matches %s; with glFinish "
                     "after the shadow pass, %s" % (which(rerendered), which(finished_frame)))
+        # What only the first frame does: build the model instance streams and
+        # their vertex arrays, load the textures, load the models. Each made to
+        # happen again, in turn: the one whose frame matches the first is it.
+        renderer.__dict__.pop('_model_instance_streams', None)
+        fresh_streams = session.paint()
+        renderer.texture_manager.clear()
+        fresh_textures = session.paint()
+        renderer.loaded_models.clear()
+        fresh_models = session.paint()
+        message += ("; fresh model streams: %s; then fresh textures: %s; then "
+                    "fresh models: %s" % (which(fresh_streams), which(fresh_textures),
+                                          which(fresh_models)))
         message += ("; a third paint (raw again) %s; render stats that differ, "
                     "raw -> wrapped: %s" % (
                         "matches the raw one" if np.array_equal(again, raw) else
