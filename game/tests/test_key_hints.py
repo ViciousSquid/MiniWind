@@ -1,5 +1,5 @@
 """The key hints after character creation (game/key_hints.py): the I key
-over "Inventory", then -- for a class that works magic -- the P key over
+over "Inventory", then -- for a character who starts with spells -- the P key over
 "Spellbook"; 0.5 s in, 2 s held, 0.5 s out; never both at once; a hint's
 key hides it at once."""
 
@@ -8,6 +8,8 @@ from __future__ import annotations
 import configparser
 
 import pytest
+
+from game.rpg.classes import CREATION_CLASS_IDS
 
 from .. import key_hints as kh
 from .test_player_head import _Globals, _actor, _session
@@ -91,16 +93,26 @@ def test_opening_the_inventory_any_way_hides_it():
 
 
 # -- the spellbook key -------------------------------------------------------
-@pytest.mark.parametrize("klass", ["archer", "mage", "healer", "necromancer", "thief"])
-def test_a_class_that_works_magic_is_shown_the_spellbook(klass):
-    s = _new(klass)
-    assert [a for a, _c in s.key_hints.queue] == ["inventory", "spells"]
+def _queue(s):
+    return [a for a, _c in s.key_hints.queue]
 
 
-@pytest.mark.parametrize("klass", ["warrior", "barbarian"])
-def test_warriors_and_barbarians_are_not(klass):
+@pytest.mark.parametrize("klass", CREATION_CLASS_IDS)
+def test_only_a_character_who_starts_with_spells_is_shown_the_spellbook(klass):
     s = _new(klass)
-    assert [a for a, _c in s.key_hints.queue] == ["inventory"]
+    has_spells = bool(s.game.character.known_spells)
+    assert _queue(s) == (["inventory", "spells"] if has_spells else ["inventory"])
+
+
+def test_a_build_given_spells_is_shown_it_and_one_without_is_not():
+    s = _new("warrior")
+    s.game.character.known_spells = ["flare"]
+    kh.arm(s)
+    assert _queue(s) == ["inventory", "spells"]
+    s = _new("mage")
+    s.game.character.known_spells = []
+    kh.arm(s)
+    assert _queue(s) == ["inventory"]
 
 
 def test_the_spellbook_follows_once_the_inventory_hint_has_faded():

@@ -4,9 +4,9 @@ key over "Spellbook".
 
 The moment a new character starts to play, the inventory key is shown in the
 middle of the screen -- the key's picture (128 x 128) with its word under it --
-fading in, held, then fading out. A character who works magic (any class but
-the Warrior and the Barbarian: ``classes.can_use_magic``) is then shown the
-spellbook key the same way. Only one hint is ever up at a time:
+fading in, held, then fading out. A character who starts with spells (some
+builds are given them; ``known_spells``) is then shown the spellbook key the
+same way. Only one hint is ever up at a time:
 
 * the inventory hint starts as soon as play is first in view (no menu up --
   the experimental tutorial's pages, if ticked, come first);
@@ -177,7 +177,7 @@ class KeyHints:
 def arm(session) -> None:
     """A new character begins: queue its hints on *session*."""
     try:
-        magic = bool(session.game.character.can_use_magic())
+        magic = bool(session.game.character.known_spells)
     except Exception:
         magic = False
     session.key_hints = KeyHints(magic)

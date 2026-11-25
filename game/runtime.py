@@ -2660,8 +2660,8 @@ class MiniwindSession(SettlementLaw):
         self._sync_engine_health(full=True)
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
         self._start_opening_quests()
-        # "I: Inventory" in the middle of the screen, then (for a class that
-        # works magic) "P: Spellbook" -- a new character only (game/key_hints.py).
+        # "I: Inventory" in the middle of the screen, then (for a character
+        # who starts with spells) "P: Spellbook" -- a new character only (game/key_hints.py).
         import game.key_hints as key_hints
         key_hints.arm(self)
 
