@@ -68,4 +68,30 @@ def test_floating_words_rise_above_the_icon():
     s.show_cast(necro, "firebolt")
     import time
     s.cast_icons[id(necro)] = (necro, "firebolt", time.monotonic() - 0.5)
-    assert hud._cast_icon_lift(s) == {id(necro): hud.CAST_ICON_SIZE + hud.CAST_ICON_GAP}
+    assert hud._cast_icon_lift(s) == {id(necro): hud.CAST_ICON_SIZE / 2 + hud.CAST_ICON_GAP}
+
+
+def test_the_icon_glows_on_top_of_the_caster(qt_app):
+    """Emissive: the spell's colour lights the pixels round the icon, which
+    is centred on the caster's head."""
+    import glm
+    from PyQt5.QtGui import QImage, QPainter, QColor
+    from game.ui import hud
+    necro = _necromancer()
+    s = _session(necro)
+    s.show_cast(necro, "firebolt")
+    t0 = s.cast_icons[id(necro)][2]
+
+    class _View:
+        projection_matrix = glm.perspective(glm.radians(60.0), 1.0, 1.0, 5000.0)
+        view_matrix = glm.lookAt(glm.vec3(0, 900, 1), glm.vec3(0, 0, 0), glm.vec3(0, 1, 0))
+    img = QImage(400, 400, QImage.Format_ARGB32)
+    img.fill(QColor(30, 30, 30))
+    p = QPainter(img)
+    hud.draw_cast_icons(p, s, _View, 400, 400, now=t0 + 1.0)
+    p.end()
+    sp = hud._head_screen(glm, _View.projection_matrix, _View.view_matrix, necro, 400, 400)
+    cx, cy = int(sp[0]), int(sp[1])
+    halo = img.pixelColor(cx + int(hud.CAST_ICON_SIZE * 0.6), cy)   # just outside the icon
+    assert halo.red() > 60 and halo.red() > halo.blue()            # firebolt's warm light
+    assert img.pixelColor(cx + 150, cy) == QColor(30, 30, 30)        # nothing far off
