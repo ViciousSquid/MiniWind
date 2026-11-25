@@ -20,6 +20,7 @@ def wizard(main_window, qt_app, tmp_path, monkeypatch):
     monkeypatch.setattr(cutscene_wizard, "ACTOR_PANELS", list(cutscene_wizard.ACTOR_PANELS))
     monkeypatch.setattr(cutscene_wizard, "ACTOR_TYPES", set(cutscene_wizard.ACTOR_TYPES))
     monkeypatch.setattr(cutscene_wizard, "ACTOR_CLASSES", dict(cutscene_wizard.ACTOR_CLASSES))
+    monkeypatch.setattr(cutscene_wizard, "TOP_DOWN_CAMERA", cutscene_wizard.TOP_DOWN_CAMERA)
     cutscene_editor.register()
     # Saved into the test's own folder, not the project's cutscenes/.
     monkeypatch.setattr(cutscene_wizard, "CUTSCENE_DIR", str(tmp_path / "cutscenes"))
@@ -168,7 +169,9 @@ def test_a_cutscene_saves_and_loads_its_equipped_cast_and_keyframes(wizard, main
     assert wizard._write_cutscene("story.json")
     from editor import cutscene_wizard
     saved = Path(cutscene_wizard.CUTSCENE_DIR) / "story.json"
-    data = json.loads(saved.read_text())
+    raw = saved.read_text()
+    assert "\n" not in raw and ": " not in raw.split('"text"')[0]   # minified
+    data = json.loads(raw)
     kinds = {row["definition"]["type"] for row in data["actors"]}
     assert kinds == {"npc", "creature"}
 
@@ -194,3 +197,174 @@ def test_a_rename_reaches_every_list_naming_the_cast(wizard, qt_app):
     assert "Captain Aldric" in targets
     assert any("Captain Aldric" in wizard.move_to.itemText(i) for i in range(wizard.move_to.count()))
     assert any("Captain Aldric" in wizard.look_at.itemText(i) for i in range(wizard.look_at.count()))
+
+
+# -- authoring in the map, RTS style -------------------------------------------
+def _company(wizard, kind, n, group, x0):
+    import glm
+    out = []
+    for i in range(n):
+        a = wizard._create_temporary_actor(_kind(wizard, kind))
+        a.pos = glm.vec3(x0 + (i % 3) * 70.0, 0.0, (i // 3) * 90.0)
+        a.properties["brush_group"] = group
+        out.append(a)
+    wizard._refresh_actor_lists()
+    return out
+
+
+def _ids(actors):
+    return [a.properties["id"] for a in actors]
+
+
+def test_the_open_editor_is_the_views_cutscene_author(wizard, main_window, qt_app):
+    assert main_window.cutscene_author is wizard
+    wizard.hide()
+    qt_app.processEvents()
+    assert main_window.cutscene_author is None
+    wizard.show()
+    qt_app.processEvents()
+
+
+def test_an_attack_on_anyone_in_a_group_takes_the_group_ctrl_just_one(wizard):
+    guards = _company(wizard, "+ NPC", 6, "Guards", 0.0)
+    brigands = _company(wizard, "+ Creature", 5, "Brigands", 900.0)
+    wizard._select_actor_ids(_ids(guards))
+    wizard._arm_pick("attack", _ids(guards))
+    assert wizard.pick_armed()
+    wizard.pick_click(brigands[2], None)
+    (fight,) = [e for e in wizard.events if e["type"] == "fight"]
+    assert fight["attackers"] == _ids(guards) and sorted(fight["defenders"]) == sorted(_ids(brigands))
+    wizard._arm_pick("attack", _ids(guards))
+    wizard.pick_click(brigands[2], None, ctrl=True)
+    assert [e["defenders"] for e in wizard.events if e["type"] == "fight"][-1] == [_ids(brigands)[2]]
+
+
+def test_clicking_a_group_member_selects_the_group(wizard):
+    guards = _company(wizard, "+ NPC", 4, "Guards", 0.0)
+    loner = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    wizard.select_from_view(guards[1])
+    assert sorted(wizard._current_actor_ids()) == sorted(_ids(guards))
+    wizard.select_from_view(loner, add=True)
+    assert set(wizard._current_actor_ids()) == set(_ids(guards)) | {loner.properties["id"]}
+
+
+def test_a_move_drops_a_pin_and_the_company_keeps_its_shape(wizard):
+    guards = _company(wizard, "+ NPC", 3, "Guards", 0.0)        # x = 0, 70, 140
+    wizard._select_actor_ids(_ids(guards))
+    wizard.key_time.setValue(2.0)
+    wizard._arm_pick("move", _ids(guards))
+    wizard.pick_click(None, [1000.0, 0.0, 500.0])
+    xs = [wizard.actor_tracks[g][0]["pos"][0] for g in _ids(guards)]
+    assert xs == [930.0, 1000.0, 1070.0]                       # same spacing, centred on the pin
+    assert all(wizard.actor_tracks[g][0]["time"] == 2.0 for g in _ids(guards))
+    from editor import cutscene_intents
+    (pin,) = [i for i in cutscene_intents.intents(wizard) if i.kind == "move"]   # one arrow, one pin
+    assert pin.dst == (1000.0, 0.0, 500.0) and len(pin.ghosts) == 3 and "3 actors" in pin.label
+
+
+def test_a_line_points_at_who_it_is_said_to(wizard):
+    import glm
+    cap, other = (wizard._create_temporary_actor(_kind(wizard, "+ NPC")) for _ in range(2))
+    other.pos = glm.vec3(float(cap.pos[0]) + 300.0, float(cap.pos[1]), float(cap.pos[2]))
+    wizard._arm_pick("say", [cap.properties["id"]], text="Hold the line!")
+    wizard.pick_click(other, None)
+    (line,) = [e for e in wizard.events if e["type"] == "say"]
+    assert line["to"] == other.properties["id"] and line["text"] == "Hold the line!"
+    from editor import cutscene_intents
+    (intent,) = [i for i in cutscene_intents.intents(wizard) if i.kind == "say"]
+    assert intent.head and intent.src != intent.dst
+
+
+def test_a_big_battle_is_one_arrow_a_small_one_an_arrow_a_pair(wizard):
+    from editor import cutscene_intents
+    guards = _company(wizard, "+ NPC", 6, "Guards", 0.0)
+    brigands = _company(wizard, "+ Creature", 5, "Brigands", 900.0)
+    wizard.events.append({"time": 3.5, "type": "fight", "duration": 10.0,
+                          "attackers": _ids(guards), "defenders": _ids(brigands), "mutual": True})
+    (big,) = [i for i in cutscene_intents.intents(wizard) if i.kind == "attack"]
+    assert big.src_group is not None and big.both and "6 vs 5" in big.label
+    wizard.events[:] = [{"time": 1.0, "type": "fight", "duration": 5.0,
+                         "attackers": _ids(guards[:2]), "defenders": _ids(brigands[:1]), "mutual": False}]
+    small = [i for i in cutscene_intents.intents(wizard) if i.kind == "attack"]
+    assert len(small) == 2 and all(i.src_group is None and not i.both for i in small)
+
+
+def test_the_scrubber_shows_the_moment_but_never_moves_where_the_cutscene_starts(wizard):
+    import glm
+    hero = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    hero.pos = glm.vec3(0.0, 0.0, 0.0)
+    aid = hero.properties["id"]
+    wizard.actor_tracks[aid] = [{"time": 0.0, "pos": [0.0, 0.0, 0.0], "yaw": 0.0},
+                                {"time": 4.0, "pos": [400.0, 0.0, 0.0], "yaw": 0.0}]
+    wizard.scrub(2.0)
+    assert 150.0 < float(hero.pos[0]) < 250.0 and wizard.key_time.value() == 2.0
+    from PyQt5 import QtCore
+    assert wizard.scrub_key(QtCore.Qt.Key_Right)
+    assert abs(wizard._preview_time - 2.1) < 1e-6
+    assert wizard.scrub_key(QtCore.Qt.Key_Right, shift=True)      # the next keyframe
+    assert wizard._preview_time == 4.0
+    wizard.camera_keys = [{"time": 0.0, "pos": [0, 0, 0], "yaw": 0, "pitch": 0, "fov": 90}]
+    data_pos = None
+    assert wizard._validate_for_save()
+    data_pos = wizard._actor_definition(aid)["pos"]
+    assert data_pos == [0.0, 0.0, 0.0]                            # back at its start
+
+
+def test_new_actors_never_stand_on_top_of_each_other(wizard):
+    made = [wizard._create_temporary_actor(_kind(wizard, "+ NPC")) for _ in range(8)]
+    wizard._select_actor_ids([made[0].properties["id"]])
+    wizard._duplicate_selected_actors()
+    wizard._duplicate_selected_actors()
+    actors = [wizard.actor_objects[a] for a in wizard.actor_meta]
+    pts = [(float(a.pos[0]), float(a.pos[2])) for a in actors]
+    gap = wizard.ACTOR_SPACING - 1e-6
+    assert all((x1 - x2) ** 2 + (z1 - z2) ** 2 >= gap * gap
+               for i, (x1, z1) in enumerate(pts) for (x2, z2) in pts[i + 1:])
+
+
+def test_face_turns_the_selected_actors_toward_what_is_clicked(wizard):
+    import glm
+    a = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    b = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    a.pos = glm.vec3(0.0, 0.0, 0.0)
+    b.pos = glm.vec3(500.0, 0.0, 0.0)                 # due +X of a
+    wizard._arm_pick("face", [a.properties["id"]])
+    wizard.pick_click(b, None)
+    assert a.properties["angle"] == pytest.approx(90.0)
+    wizard._arm_pick("face", [a.properties["id"]])
+    wizard.pick_click(None, [0.0, 0.0, -300.0])       # a spot due -Z
+    assert a.properties["angle"] == pytest.approx(180.0)
+
+
+def test_the_facing_dial_turns_every_selected_actor(wizard, qt_app):
+    from PyQt5 import QtWidgets
+    actors = [wizard._create_temporary_actor(_kind(wizard, "+ Creature")) for _ in range(3)]
+    wizard._select_actor_ids([x.properties["id"] for x in actors])
+    qt_app.processEvents()
+    dial = next(sb for sb in wizard.actor_panel_host.findChildren(QtWidgets.QSpinBox)
+                if sb.suffix() == "°")
+    dial.setValue(270)
+    assert all(x.properties["angle"] == 270.0 for x in actors)
+
+
+def test_a_cutscene_keeps_its_actors_facing(wizard):
+    import glm
+    hero = wizard._create_temporary_actor(_kind(wizard, "+ NPC"))
+    hero.properties["angle"] = 135.0
+    wizard._select_actor_ids([hero.properties["id"]])
+    wizard.key_kind.setCurrentIndex(wizard.key_kind.findData("move"))
+    wizard._add_keyframe()
+    aid = hero.properties["id"]
+    assert wizard.actor_tracks[aid][0]["yaw"] == 135.0
+    assert wizard._actor_definition(aid)["yaw"] == 135.0
+
+
+def test_miniwind_camera_shots_look_straight_down(wizard, main_window):
+    from editor import cutscene_wizard
+    assert cutscene_wizard.TOP_DOWN_CAMERA
+    camera = main_window.view_3d.camera
+    camera.pitch, camera.yaw = -30.0, 45.0
+    wizard._capture_camera_keyframe()
+    (shot,) = wizard.camera_keys
+    assert shot["pitch"] == cutscene_wizard.TOP_DOWN_PITCH and shot["yaw"] == 0.0
+    assert wizard._build_cutscene_data()["settings"]["camera"] == "top_down"

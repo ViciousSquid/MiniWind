@@ -360,7 +360,23 @@ class LogicRender:
 
         if logic.session_runtime.play_mode and logic.player_runtime.player:
             cs = logic.cutscene_runtime.state
-            if cs and "cam_pos" in cs:
+            if cs and "cam_pos" in cs and cs.get("top_down"):
+                # A top-down game's cutscene: straight down, the top of the
+                # screen the way it is in play (the overhead camera's heading).
+                cam_pos = glm.vec3(*cs["cam_pos"])
+                heading = logic.camera.overhead_heading(
+                    float(getattr(logic.player_runtime.player, "angle", 0.0)))
+                cam_angle, cam_pitch = heading, -math.pi / 2.0
+                view_matrix = glm.lookAt(
+                    cam_pos,
+                    cam_pos + glm.vec3(0.0, -1.0, 0.0),
+                    glm.vec3(math.sin(heading), 0.0, math.cos(heading)),
+                )
+                write_state.player_pos = cam_pos
+                write_state.player_angle = cam_angle
+                write_state.player_pitch = cam_pitch
+                fov = cs["fov"] if cs.get("fov") else 90.0
+            elif cs and "cam_pos" in cs:
                 cam_pos = glm.vec3(*cs["cam_pos"])
                 cam_angle = cs.get("cam_angle", 0.0)
                 cam_pitch = cs.get("cam_pitch", 0.0)

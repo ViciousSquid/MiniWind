@@ -969,10 +969,12 @@ class MiniwindGame:
         meadow.apply(fio.terrain(logic))      # the odd tuft about the land
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
-        # The story cutscenes already played stay played (Fio's triggers).
+        # The story cutscenes already played stay played (Fio's triggers), and
+        # every cutscene camera looks straight down, as the game does.
         runtime = getattr(logic, "cutscene_runtime", None)
         if runtime is not None:
             runtime.played.update(session.played_cutscenes())
+            runtime.top_down = True
         if party_lobby is not None:
             from .multiplayer.session import CoopSession
             CoopSession(session, party_lobby, cfg)

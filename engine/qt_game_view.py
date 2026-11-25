@@ -1950,6 +1950,14 @@ class QtGameView(QOpenGLWidget):
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         if self.play_mode:
             self.hud._draw_underwater_overlay(painter, render_state)
+        else:
+            author = self._cutscene_author()
+            if author is not None:
+                # The cutscene editor's layer: who does what, and its scrubber.
+                from editor.cutscene_intents import projector_3d
+                cursor = self.mapFromGlobal(QCursor.pos())
+                author.paint_view(painter, projector_3d(self), (cursor.x(), cursor.y()),
+                                  size=(self.width(), self.height()))
         # The FPS counter is an editor's readout: a game launched to play
         # (kiosk mode) keeps it off its screen; F3's sysmon still shows it.
         if (self.editor.config.getboolean('Display', 'show_fps', fallback=False)
@@ -2483,6 +2491,62 @@ class QtGameView(QOpenGLWidget):
     # keeps, so nothing here touches the render loop or the wider scene.
 
 
+    def _cutscene_author(self):
+        """The cutscene editor, while it is open over this editor view (never
+        in Play): the views ask it first about clicks, and it draws."""
+        if self.play_mode:
+            return None
+        author = getattr(self.editor, 'cutscene_author', None)
+        if author is None or not author.isVisible():
+            return None
+        return author
+
+    def _cutscene_ground(self, mx, my):
+        """The world point under the mouse on the terrain, or None."""
+        distance = self.picking.terrain_pick_distance(mx, my)
+        if distance is None:
+            return None
+        origin, direction = self.picking.get_ray_from_mouse(mx, my)
+        hit = origin + direction * float(distance)
+        return [float(hit.x), float(hit.y), float(hit.z)]
+
+    def _cutscene_press(self, event):
+        """Cutscene authoring, RTS style: click (Shift/Ctrl: add) to select
+        actors, right-click one for its orders, then click the target or the
+        destination; the scrubber steps through the cutscene."""
+        author = self._cutscene_author()
+        if author is None:
+            return False
+        mods = QApplication.keyboardModifiers()
+        if event.button() == Qt.LeftButton:
+            if author.scrubber_press(self, event.pos()):
+                self.update()
+                return True
+            if author.pick_armed():
+                obj = self.picking.get_object_at_3d(event.x(), event.y())
+                author.pick_click(obj, self._cutscene_ground(event.x(), event.y()),
+                                  ctrl=bool(mods & Qt.ControlModifier))
+                self.update()
+                return True
+            obj = self.picking.get_object_at_3d(event.x(), event.y())
+            if obj is not None and author.is_cast(obj):
+                author.select_from_view(
+                    obj, add=bool(mods & (Qt.ShiftModifier | Qt.ControlModifier)))
+                self.update()
+                return True
+            return False
+        if event.button() == Qt.RightButton:
+            if author.pick_armed():
+                author.cancel_pick()
+                self.update()
+                return True
+            obj = self.picking.get_object_at_3d(event.x(), event.y())
+            if obj is not None and author.is_cast(obj):
+                author.action_menu(obj, event.globalPos(), self)
+                self.update()
+                return True
+        return False
+
     def mousePressEvent(self, event):
         if self.pointer.party_press(event):
             return
@@ -2521,6 +2585,9 @@ class QtGameView(QOpenGLWidget):
             if self._level_complete_btn_rect.contains(event.pos()):
                 self.hud._confirm_level_complete()
                 return
+
+        if self._cutscene_press(event):
+            return
 
         if self.terrain_sculpt_active and not self.play_mode and event.button() == Qt.LeftButton:
             self._terrain_brush_mouse_pos = event.pos()
@@ -2844,6 +2911,11 @@ class QtGameView(QOpenGLWidget):
         if _play_menu_open(self):
             self.play_menu.handle_mouse_move(event)
             return
+        author = self._cutscene_author()
+        if author is not None:
+            if author.scrubber_drag(self, event.pos()):
+                return
+            self.update()               # the hover tint follows the mouse
         if (not self.play_mode and self._editor_right_mouse_held
                 and not (event.buttons() & Qt.RightButton)):
             # The release went somewhere else (another window, another app):
@@ -2972,6 +3044,9 @@ class QtGameView(QOpenGLWidget):
         return self.hovered_face_info
 
     def mouseReleaseEvent(self, event):
+        author = self._cutscene_author()
+        if author is not None and event.button() == Qt.LeftButton and author.scrubber_release():
+            return
         self.pointer.party_release(event)
         if _play_menu_open(self):
             release = getattr(self.play_menu, 'handle_mouse_release', None)
@@ -3206,6 +3281,16 @@ class QtGameView(QOpenGLWidget):
             return
         if self.play_mode and event.key() == Qt.Key_Home:
             self.return_camera_to_player()
+        author = self._cutscene_author()
+        if author is not None:
+            # The cutscene editor: Left / Right step its scrubber, Escape
+            # drops a pending order.
+            if author.scrub_key(event.key(), bool(event.modifiers() & Qt.ShiftModifier)):
+                self.update()
+                return
+            if event.key() == Qt.Key_Escape and author.cancel_pick():
+                self.update()
+                return
         if event.key() == Qt.Key_Escape and self.gizmo.dragging:
             self.gizmo.cancel()
             event.accept()

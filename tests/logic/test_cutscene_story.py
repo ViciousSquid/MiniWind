@@ -248,3 +248,57 @@ def test_escape_ends_a_cutscene_only_if_it_lets_itself_be_stopped(logic, tmp_pat
     assert runtime.skip() is allowed
     assert (runtime.state is None) is allowed
     assert ("OnFinished" in fired) is allowed         # the story carries on
+
+
+def test_spawned_actors_never_appear_on_top_of_each_other(logic):
+    from engine.cutscene_runtime import CutsceneRuntime
+    defs = [{"id": f"s{i}", "name": f"s{i}", "spawn": True,
+             "definition": {"type": "monster", "pos": [10.0, 0.0, 10.0], "properties": {"health": 50}}}
+            for i in range(6)]
+    logic.editor_state.things[:] = []
+    logic.world_runtime.build_entity_caches()
+    camera = make_thing(LogicCamera, "cam", (0.0, 200.0, 0.0))
+    logic._plugin_emit = lambda *a, **k: None
+    assert logic.cutscene_runtime._start_json_cutscene(
+        camera, "s.json", {"camera": [{"time": 0.0, "pos": [0, 0, 0]}], "actors": defs, "events": []})
+    pts = [(float(a.pos[0]), float(a.pos[2])) for a in logic.cutscene_runtime.state["spawned_actors"]]
+    gap = CutsceneRuntime.SPAWN_SPACING - 1e-6
+    assert len(pts) == 6 and all((x1 - x2) ** 2 + (z1 - z2) ** 2 >= gap * gap
+                                 for i, (x1, z1) in enumerate(pts) for (x2, z2) in pts[i + 1:])
+
+
+def test_actors_turn_the_short_way_and_face_as_authored(logic):
+    hero = _actor("hero", 0.0, angle=350.0)
+    tracks = {"hero": [{"time": 0.0, "pos": [0, 0, 0], "yaw": 350.0},
+                       {"time": 2.0, "pos": [0, 0, 0], "yaw": 10.0}]}
+    runtime, _ = _play(logic, [hero], tracks=tracks)
+    _step(runtime, 1.0)
+    angle = hero.properties["angle"]
+    assert angle > 355.0 or angle < 5.0                 # through 0, not round by 180
+    _step(runtime, 1.1)
+    assert hero.properties["angle"] == pytest.approx(10.0, abs=0.5)
+
+
+def test_a_top_down_cutscene_follows_its_actor_from_above(logic):
+    import glm
+    from engine.player import Player
+    hero = _actor("hero", 0.0)
+    logic.cutscene_runtime.top_down = True
+    logic.player_runtime.player = Player(0.0, 0.0)
+    runtime, _ = _play(logic, [hero])
+    runtime.state["camera_keys"] = [{"time": 0.0, "pos": [0.0, 900.0, 0.0], "yaw": 0.0,
+                                     "pitch": 0.0, "look_at": {"actor": "hero"}}]
+    hero.pos = [300.0, 0.0, -200.0]
+    _step(runtime, 0.1)
+    assert runtime.state["top_down"] and runtime.state["cam_pos"] == [300.0, 900.0, -200.0]
+    # Drawn straight down, the top of the screen the way it is in play.
+    import math
+    logic.session_runtime.play_mode = True
+    logic.render_runtime.prepare_render_state()
+    view = logic.game_state.get_write_state().camera_view_matrix
+    forward = glm.vec3(-view[0][2], -view[1][2], -view[2][2])    # the camera's -Z in world
+    assert forward.y == pytest.approx(-1.0, abs=1e-4)
+    heading = logic.camera.overhead_heading(0.0)
+    up = glm.vec3(view[0][1], view[1][1], view[2][1])
+    assert up.x == pytest.approx(math.sin(heading), abs=1e-4)
+    assert up.z == pytest.approx(math.cos(heading), abs=1e-4)

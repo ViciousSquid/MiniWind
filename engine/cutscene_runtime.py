@@ -56,6 +56,10 @@ class CutsceneRuntime:
         #: fill it from its save (MiniWind does), so a story scene played
         #: before a level change or a load never plays again.
         self.played = set()
+        #: A top-down game (MiniWind) sets this: every cutscene camera looks
+        #: straight down, screen-up as in play, and a look-at keeps the camera
+        #: over its actor instead of turning to face it.
+        self.top_down = False
         self._started_this_session = set()
         self._inside = set()
         self._cameras = (None, ())
@@ -240,15 +244,29 @@ class CutsceneRuntime:
 
     @staticmethod
     def _cutscene_yaw(entity):
-        return float(getattr(entity, "angle", entity.properties.get("yaw", 0.0)))
+        """*entity*'s facing in radians: an actor's ``angle`` property
+        (degrees, engine.monster_facing), else an ``angle`` attribute."""
+        props = getattr(entity, "properties", {}) or {}
+        if "angle" in props:
+            try:
+                return math.radians(float(props.get("angle") or 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+        return float(getattr(entity, "angle", props.get("yaw", 0.0)))
 
     @staticmethod
     def _set_cutscene_yaw(entity, yaw):
+        """Face *entity* along *yaw* (radians), through the engine's own
+        facing (so its billboard turns)."""
         yaw = float(yaw)
-        if hasattr(entity, "angle"):
+        props = getattr(entity, "properties", {}) or {}
+        if "angle" in props:
+            from .monster_facing import set_heading
+            set_heading(entity, yaw)
+        elif hasattr(entity, "angle"):
             entity.angle = yaw
         else:
-            entity.properties["yaw"] = yaw
+            props["yaw"] = yaw
 
     @staticmethod
     def _cutscene_lerp_angle(a, b, t):
@@ -330,6 +348,29 @@ class CutsceneRuntime:
             "look_at": left.get("look_at"),
         }
 
+    #: How close two spawned actors may stand.
+    SPAWN_SPACING = 48.0
+
+    def _clear_spawn(self, pos, spawned):
+        """*pos*, pushed clear of the actors this cutscene has spawned so far:
+        two never appear on top of each other."""
+        gap = self.SPAWN_SPACING
+        others = [(float(a.pos[0]), float(a.pos[2])) for a in spawned]
+
+        def free(x, z):
+            return all((x - ox) ** 2 + (z - oz) ** 2 >= gap * gap for ox, oz in others)
+        x, y, z = pos
+        if free(x, z):
+            return pos
+        for ring in range(1, 30):
+            steps = 6 * ring
+            for k in range(steps):
+                a = 2.0 * math.pi * k / steps
+                cx, cz = x + math.cos(a) * gap * ring, z + math.sin(a) * gap * ring
+                if free(cx, cz):
+                    return [cx, y, cz]
+        return pos
+
     def _start_json_cutscene(self, entity, filename, data):
         previous = self.state
         if previous is not None:
@@ -362,10 +403,12 @@ class CutsceneRuntime:
                 props["_cutscene_runtime"] = True
                 try:
                     actor = cls(
-                        pos=self._cutscene_vec3(definition.get("pos")),
+                        pos=self._clear_spawn(self._cutscene_vec3(definition.get("pos")), spawned),
                         properties=props,
                     )
-                    self._set_cutscene_yaw(actor, self._cutscene_number(definition.get("yaw", 0.0)))
+                    # Authored in degrees, as an actor's angle is.
+                    self._set_cutscene_yaw(actor, math.radians(
+                        self._cutscene_number(definition.get("yaw", 0.0))))
                     self.logic.editor_state.things.append(actor)
                     spawned.append(actor)
                 except Exception as exc:
@@ -405,9 +448,12 @@ class CutsceneRuntime:
             )
             camera_rows.append(row)
         camera_rows.sort(key=lambda row: self._cutscene_number(row.get("time", 0.0)))
+        # An actor track's facing is authored in degrees (an actor's angle);
+        # sampled in radians, the short way round, like the camera's.
         actor_tracks = {
             str(aid): sorted(
-                [row for row in rows or [] if isinstance(row, dict)],
+                [dict(row, yaw=math.radians(self._cutscene_number(row.get("yaw", 0.0))))
+                 for row in rows or [] if isinstance(row, dict)],
                 key=lambda row: self._cutscene_number(row.get("time", 0.0)),
             )
             for aid, rows in (data.get("actor_tracks") or {}).items()
@@ -453,6 +499,7 @@ class CutsceneRuntime:
         settings = data.get("settings") or {}
         self.state = {
             "active": True,
+            "top_down": bool(self.top_down or settings.get("camera") == "top_down"),
             "paused": False,
             "entity": entity,
             "json_cutscene": True,
@@ -733,7 +780,11 @@ class CutsceneRuntime:
                     target = (cs.get("actors") or {}).get(target_id)
                     if target is None:
                         target = self.logic.world_runtime.find_entity_by_id(target_id)
-                    if target is not None:
+                    if target is not None and cs.get("top_down"):
+                        # Top down: over the actor, at the shot's height.
+                        target_pos = self._cutscene_vec3(target.pos)
+                        cs["cam_pos"] = [target_pos[0], cs["cam_pos"][1], target_pos[2]]
+                    elif target is not None:
                         target_pos = self._cutscene_vec3(target.pos)
                         diff = np.asarray(target_pos, dtype=float) - np.asarray(cs["cam_pos"], dtype=float)
                         dist = np.linalg.norm(diff)

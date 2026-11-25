@@ -40,6 +40,13 @@ ACTOR_KINDS = [("+ Actor", "Monster", {"monster_type": "human", "triggered": Tru
 #: A panel edits the actors' properties in place and calls
 #: ``wizard.actors_changed(actors)`` after any change.
 ACTOR_PANELS = []
+#: A top-down game sets this (MiniWind does): a camera keyframe is where the
+#: camera is and how high -- it always looks straight down -- and "look at"
+#: an actor keeps the camera over it.
+TOP_DOWN_CAMERA = False
+#: The editor camera's pitch for looking straight down (a touch off -90).
+TOP_DOWN_PITCH = -89.9
+
 #: Entity types the wizard accepts as actors ("+ Selected", loading).
 ACTOR_TYPES = {"monster"}
 #: Entity type -> the class that makes it, for kinds registered with a class
@@ -88,6 +95,25 @@ def _v3(value):
         return [float(value.x), float(value.y), float(value.z)]
     values = list(value)
     return [float(values[0]), float(values[1]), float(values[2])]
+
+
+def _facing(actor):
+    """*actor*'s facing in degrees (0 = +Z, 90 = +X): its ``angle``
+    property, the one the game turns its head by (engine.monster_facing)."""
+    props = getattr(actor, "properties", {}) or {}
+    try:
+        return float(props.get("angle", getattr(actor, "angle", 0.0)) or 0.0) % 360.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _set_facing(actor, degrees):
+    """Turn *actor* to face *degrees*."""
+    props = getattr(actor, "properties", None)
+    if isinstance(props, dict):
+        props["angle"] = float(degrees) % 360.0
+    else:
+        actor.angle = float(degrees)
 
 
 def _is_actor(obj):
@@ -372,6 +398,7 @@ class CutsceneWizard(QtWidgets.QDialog):
 
         tabs.addTab(actors_page, "Actors && Keyframes")
         self._key_refs = []
+        self._pick = None
 
         # -----------------------------------------------------------------
         # Camera
@@ -579,6 +606,396 @@ class CutsceneWizard(QtWidgets.QDialog):
         if self._saved_signature is None:
             self._saved_signature = self._cutscene_signature()
 
+    # ------------------------------------------------------------------
+    # Authoring in the map: the views ask the open cutscene editor first
+    # (main_window.cutscene_author) -- hover and select tints, the right-click
+    # action menu, the target / destination click, and who-does-what lines.
+    # ------------------------------------------------------------------
+    def hideEvent(self, event):
+        if getattr(self.main_window, "cutscene_author", None) is self:
+            self.main_window.cutscene_author = None
+        self._pick = None
+        self._repaint_views()
+        super().hideEvent(event)
+
+    def _repaint_views(self):
+        for name in ("view_3d", "view_top", "view_front", "view_side"):
+            view = getattr(self.main_window, name, None)
+            if view is not None:
+                try:
+                    view.update()
+                except Exception:
+                    pass
+        for view in getattr(self.main_window, "views_2d", []) or []:
+            try:
+                view.update()
+            except Exception:
+                pass
+
+    def previewing(self):
+        """The preview is playing (the who-does-what lines step aside)."""
+        return bool(self._preview_rate)
+
+    def is_cast(self, obj):
+        aid = str(getattr(obj, "properties", {}).get("id", "") or "")
+        return bool(aid) and aid in self.actor_meta
+
+    def _aid(self, obj):
+        return str(getattr(obj, "properties", {}).get("id", "") or "")
+
+    def pick_armed(self):
+        return getattr(self, "_pick", None) is not None
+
+    def select_from_view(self, obj, add=False):
+        """A click on a cast actor in the map selects it -- and its group,
+        if it is in one -- in the cast; with *add* (Shift or Ctrl) adds it
+        to the selection or takes it out."""
+        aid = self._aid(obj)
+        if aid not in self.actor_meta:
+            return False
+        aids = self._current_actor_ids()
+        mates = self._group_of(aid)
+        if add:
+            aids = [a for a in aids if a not in mates] if aid in aids else aids + [m for m in mates if m not in aids]
+        else:
+            aids = mates
+        self._select_actor_ids(aids)
+        self._repaint_views()
+        return True
+
+    def sync_selection_from_editor(self):
+        """Whatever the editor selected among the cast is the cast selection."""
+        chosen = [self._aid(o) for o in self.main_window.state.selected_objects]
+        chosen = [a for a in chosen if a in self.actor_meta]
+        if chosen and set(chosen) != set(self._current_actor_ids()):
+            self._select_actor_ids(chosen)
+
+    def action_menu(self, obj, global_pos, parent=None):
+        """Right-click on a cast actor: what it (and every selected actor
+        with it) will do."""
+        aid = self._aid(obj)
+        if aid not in self.actor_meta:
+            return False
+        aids = self._current_actor_ids()
+        if aid not in aids:
+            self._select_actor_ids([aid])
+            aids = [aid]
+        who = self.actor_meta[aid]["name"] if len(aids) == 1 else f"{len(aids)} actors"
+        menu = QtWidgets.QMenu(parent or self)
+        try:
+            from .view_2d import CONTEXT_MENU_STYLE
+            menu.setStyleSheet(CONTEXT_MENU_STYLE)
+        except Exception:
+            pass
+        head = menu.addAction(f"{who} — at {self.key_time.value():g}s")
+        head.setEnabled(False)
+        menu.addSeparator()
+        attack = menu.addAction("ATTACK…")
+        attack.setToolTip("Then click the target (Shift: their whole team)")
+        move = menu.addAction("MOVE…")
+        move.setToolTip("Then click where to go")
+        say = menu.addAction("SAY…")
+        think = menu.addAction("THINK…")
+        face = menu.addAction("FACE…")
+        face.setToolTip("Then click an actor or a spot: they turn to face it")
+        menu.addSeparator()
+        when = menu.addAction("Set the time…")
+        edit = menu.addAction("Edit actor")
+        remove = menu.addAction("Remove from the cutscene")
+        chosen = menu.exec_(global_pos)
+        if chosen is None:
+            return True
+        if chosen is attack:
+            self._arm_pick("attack", aids)
+        elif chosen is move:
+            self._arm_pick("move", aids)
+        elif chosen is face:
+            self._arm_pick("face", aids)
+        elif chosen in (say, think):
+            kind = "say" if chosen is say else "think"
+            line = self._ask_line(kind, who)
+            if line is not None:
+                text, seconds = line
+                self.line_text.setText(text)
+                self.line_duration.setValue(seconds)
+                self._arm_pick(kind, aids, text=text)
+        elif chosen is when:
+            value, ok = QtWidgets.QInputDialog.getDouble(
+                self.main_window, "Keyframe time", "At (seconds):",
+                self.key_time.value(), 0.0, 3600.0, 2)
+            if ok:
+                self.key_time.setValue(value)
+        elif chosen is edit:
+            self.actor_tabs.setCurrentIndex(0)
+            self.show()
+            self.raise_()
+        elif chosen is remove:
+            self._remove_selected_actors()
+        self._repaint_views()
+        return True
+
+    def _ask_line(self, kind, who):
+        """``(text, seconds)`` for a SAY / THINK, asked in a small dialog: the
+        question above its box, how long it is shown below; None if cancelled."""
+        dialog = QtWidgets.QDialog(self.main_window)
+        dialog.setWindowTitle(kind.upper())
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.setSpacing(8)
+        layout.addWidget(QtWidgets.QLabel(f"What does {who} {kind}?"))
+        text = QtWidgets.QLineEdit(self.line_text.text())
+        text.setMinimumWidth(380)
+        text.selectAll()
+        layout.addWidget(text)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Shown for"))
+        seconds = QtWidgets.QDoubleSpinBox()
+        seconds.setRange(0.5, 60)
+        seconds.setDecimals(1)
+        seconds.setSuffix(" s")
+        seconds.setValue(float(self.line_duration.value()))
+        row.addWidget(seconds)
+        row.addStretch(1)
+        layout.addLayout(row)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                             | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec_() != QtWidgets.QDialog.Accepted or not text.text().strip():
+            return None
+        return text.text().strip(), float(seconds.value())
+
+    def _arm_pick(self, kind, aids, text=""):
+        self._pick = {"kind": kind, "aids": list(aids), "text": text}
+        prompt = {
+            "attack": "Click who to ATTACK — anyone in a group takes the group; "
+                      "Ctrl-click one actor. Right-click cancels.",
+            "move": "Click where to MOVE to — the ground, or an actor. Right-click cancels.",
+            "face": "Click what to FACE — an actor or a spot on the ground. Right-click cancels.",
+            "say": "Click who they SAY it to, or empty ground for no one.",
+            "think": "Click who they THINK about, or empty ground for no one.",
+        }[kind]
+        try:
+            self.main_window.show_toast(prompt)
+        except Exception:
+            pass
+
+    def cancel_pick(self):
+        if self._pick is not None:
+            self._pick = None
+            self._repaint_views()
+            return True
+        return False
+
+    def _group_of(self, aid):
+        """The cast members of *aid*'s editor group (Fio's entity groups),
+        or just *aid* when it is in none."""
+        try:
+            from .brush_groups import GROUP_KEY
+        except Exception:
+            GROUP_KEY = "brush_group"
+        self._refresh_actor_objects_from_state()
+        props = getattr(self.actor_objects.get(aid), "properties", {}) or {}
+        group = str(props.get(GROUP_KEY, "") or "")
+        if not group:
+            return [aid]
+        return [a for a in self.actor_meta
+                if str((getattr(self.actor_objects.get(a), "properties", {}) or {}).get(GROUP_KEY, "") or "") == group]
+
+    def pick_click(self, obj, point, shift=False, ctrl=False):
+        """The click an armed action waits for: *obj* (the entity clicked, or
+        None) and *point* (the world point, or None). An ATTACK on anyone in a
+        group takes the whole group; Ctrl-click takes just that one."""
+        pick, self._pick = self._pick, None
+        if pick is None:
+            return False
+        kind, aids = pick["kind"], [a for a in pick["aids"] if a in self.actor_meta]
+        when = float(self.key_time.value())
+        target = self._aid(obj) if obj is not None and self.is_cast(obj) else ""
+        if kind == "attack":
+            if not target or target in aids:
+                self.main_window.show_toast("No target: ATTACK cancelled.")
+                return True
+            targets = [target] if ctrl else [a for a in self._group_of(target) if a not in aids]
+            targets = targets or [target]
+            self.events.append({"time": when, "type": "fight",
+                                "duration": float(self.attack_duration.value()),
+                                "attackers": aids, "defenders": targets,
+                                "mutual": self.attack_mutual.isChecked()})
+        elif kind == "face":
+            import math
+            self._refresh_actor_objects_from_state()
+            toward = self.actor_objects.get(target) if target else None
+            spot = _v3(toward.pos) if toward is not None else point
+            if spot is None:
+                return True
+            for aid in aids:
+                actor = self.actor_objects.get(aid)
+                if actor is None or aid == target:
+                    continue
+                here = _v3(actor.pos)
+                dx, dz = spot[0] - here[0], spot[2] - here[2]
+                if abs(dx) + abs(dz) < 1e-6:
+                    continue
+                degrees = math.degrees(math.atan2(dx, dz)) % 360.0
+                if self._preview_actor_baseline.get(aid) is not None:
+                    # Scrubbed to a moment: the MOVE keyframe there turns,
+                    # and the placement keeps its own facing.
+                    for row in self.actor_tracks.get(aid, []):
+                        if abs(float(row.get("time", 0.0)) - when) < 1e-6:
+                            row["yaw"] = degrees
+                    _set_facing(actor, degrees)
+                else:
+                    _set_facing(actor, degrees)
+            try:
+                self.main_window.update_all_ui()
+            except Exception:
+                pass
+        elif kind == "move":
+            self._refresh_actor_objects_from_state()
+            dest_obj = self.actor_objects.get(target) if target else None
+            if dest_obj is None and point is None:
+                return True
+            centre = None
+            members = [self.actor_objects.get(a) for a in aids if self.actor_objects.get(a) is not None]
+            if len(members) > 1:
+                # A company keeps its shape: each goes to the point plus its
+                # place in the group.
+                ps = [_v3(m.pos) for m in members]
+                centre = [sum(p[i] for p in ps) / len(ps) for i in range(3)]
+            # One order for the company: drawn as one arrow to one pin.
+            order = str(uuid.uuid4()) if len(aids) > 1 else ""
+            pin = _v3(dest_obj.pos) if dest_obj is not None else [float(v) for v in point]
+            for aid in aids:
+                actor = self.actor_objects.get(aid)
+                if actor is None:
+                    continue
+                row = {"time": when, "yaw": _facing(actor), "action": "move"}
+                if order:
+                    row["order"], row["pin"] = order, pin
+                if dest_obj is not None and target != aid:
+                    row["pos"] = _v3(dest_obj.pos)
+                    row["target_id"] = target
+                else:
+                    dest = list(point)
+                    if centre is not None:
+                        here = _v3(actor.pos)
+                        dest = [dest[0] + here[0] - centre[0], dest[1], dest[2] + here[2] - centre[2]]
+                    row["pos"] = [float(v) for v in dest]
+                self.actor_tracks.setdefault(aid, []).append(row)
+                self.actor_tracks[aid].sort(key=lambda r: float(r.get("time", 0.0)))
+            self.key_time.setValue(when + 1.0)
+        else:
+            seconds = float(self.line_duration.value())
+            for aid in aids:
+                event = {"time": when, "type": kind, "actor": aid,
+                         "text": pick["text"], "duration": seconds}
+                if target and target != aid:
+                    event["to"] = target
+                self.events.append(event)
+            self.key_time.setValue(when + seconds)
+        self._refresh_actor_keys_list()
+        self._refresh_key_list()
+        self._refresh_event_list()
+        self._refresh_summary()
+        self._repaint_views()
+        return True
+
+    def _team_of(self, aid):
+        props = getattr(self.actor_objects.get(aid), "properties", {}) or {}
+        return str(props.get("team") or props.get("faction") or "")
+
+    def paint_view(self, painter, project, cursor=None, size=None):
+        """Draw the cast's tints and who-does-what in a view: *project* maps a
+        world point to the view's ``(x, y)``; *cursor* is the mouse there.
+        *size* (``(w, h)``, the 3D view's) adds the scrubber."""
+        from . import cutscene_intents
+        if not self.previewing():
+            self.sync_selection_from_editor()
+            cutscene_intents.paint_cast(painter, self, project, cursor)
+            cutscene_intents.paint(painter, self, project, self._current_actor_ids())
+        if size is not None:
+            cutscene_intents.paint_scrubber(painter, self, *size)
+
+    # -- the scrubber -----------------------------------------------------
+    def scrub(self, seconds):
+        """Show the cutscene at *seconds*: the actors where they will be then
+        (the camera stays yours). New keyframes go in at this time. The
+        actors go back to their places before anything is saved."""
+        if self._preview_rate:
+            self._preview_timer.stop()
+            self._preview_rate = 0.0
+            self.play_button.setText("Play")
+        self._preview_start(camera=False)
+        self._preview_time = max(0.0, float(seconds))
+        self.key_time.setValue(self._preview_time)
+        self._preview_apply(move_camera=False)
+        self._repaint_views()
+
+    def scrub_step(self, direction):
+        """To the previous (-1) or next (+1) keyframe."""
+        from . import cutscene_intents
+        now = float(self._preview_time if self._preview_actor_baseline
+                    else self.key_time.value())
+        times = sorted({t for t, _k in cutscene_intents.keyframe_times(self)[0]} | {0.0})
+        if direction > 0:
+            later = [t for t in times if t > now + 1e-6]
+            target = later[0] if later else max(times)
+        else:
+            earlier = [t for t in times if t < now - 1e-6]
+            target = earlier[-1] if earlier else 0.0
+        self.scrub(target)
+
+    #: How far one Left / Right press moves the scrubber.
+    SCRUB_STEP = 0.1
+
+    def scrub_key(self, key, shift=False):
+        """Left / Right: step the scrubber (Shift: to the previous / next
+        keyframe). True when the key was the scrubber's."""
+        direction = {QtCore.Qt.Key_Left: -1, QtCore.Qt.Key_Right: +1}.get(key)
+        if direction is None:
+            return False
+        if shift:
+            self.scrub_step(direction)
+        else:
+            now = float(self._preview_time if self._preview_actor_baseline
+                        else self.key_time.value())
+            self.scrub(max(0.0, now + direction * self.SCRUB_STEP))
+        return True
+
+    def scrubber_press(self, view, pos):
+        """A press in the 3D view: the scrubber's, or not (False)."""
+        from . import cutscene_intents
+        hit = cutscene_intents.scrubber_hit(self, view.width(), view.height(), pos)
+        if hit is None:
+            return False
+        kind, value = hit
+        if kind == "time":
+            self._scrubbing = True
+            self.scrub(value)
+        elif kind == "button":
+            if value == "start":
+                self.scrub(0.0)
+            elif value == "prev":
+                self.scrub_step(-1)
+            elif value == "next":
+                self.scrub_step(+1)
+            elif value == "play":
+                self._preview_play()
+        return True
+
+    def scrubber_drag(self, view, pos):
+        if not getattr(self, "_scrubbing", False):
+            return False
+        from . import cutscene_intents
+        self.scrub(cutscene_intents.scrub_time_at(self, view.width(), view.height(), pos.x()))
+        return True
+
+    def scrubber_release(self):
+        was = getattr(self, "_scrubbing", False)
+        self._scrubbing = False
+        return was
+
     def _cutscene_signature(self):
         """Return a stable representation of the authored cutscene state."""
         data = self._build_cutscene_data()
@@ -631,6 +1048,8 @@ class CutsceneWizard(QtWidgets.QDialog):
             self.move(frame.topLeft())
         self.raise_()
         self.activateWindow()
+        self.main_window.cutscene_author = self
+        self._repaint_views()
 
     # ------------------------------------------------------------------
     # Editor-side preview transport.
@@ -685,15 +1104,14 @@ class CutsceneWizard(QtWidgets.QDialog):
                         return list(lp), float(left.get("yaw", 0.0))
                     return list(rp), float(right.get("yaw", 0.0))
                 pos = [lp[i] + (rp[i] - lp[i]) * t for i in range(3)]
-                yaw = float(left.get("yaw", 0.0)) + (
-                    float(right.get("yaw", 0.0)) - float(left.get("yaw", 0.0))
-                ) * t
-                return pos, yaw
+                ly, ry = float(left.get("yaw", 0.0)), float(right.get("yaw", 0.0))
+                turn = (ry - ly + 180.0) % 360.0 - 180.0        # the short way round
+                return pos, ly + turn * t
         return None
 
-    def _preview_start(self):
+    def _preview_start(self, camera=True):
         self._refresh_actor_objects_from_state()
-        if self._preview_camera_baseline is None:
+        if camera and self._preview_camera_baseline is None:
             camera = self.main_window.view_3d.camera
             self._preview_camera_baseline = {
                 "pos": _v3(camera.pos),
@@ -705,11 +1123,11 @@ class CutsceneWizard(QtWidgets.QDialog):
             if aid not in self._preview_actor_baseline and actor is not None:
                 self._preview_actor_baseline[aid] = {
                     "pos": _v3(actor.pos),
-                    "yaw": float(getattr(actor, "angle", 0.0)),
+                    "yaw": _facing(actor),
                 }
         self._preview_duration = self._preview_end_time()
 
-    def _preview_apply(self):
+    def _preview_apply(self, move_camera=True):
         self._refresh_actor_objects_from_state()
         for aid, frames in self.actor_tracks.items():
             actor = self.actor_objects.get(aid)
@@ -718,9 +1136,9 @@ class CutsceneWizard(QtWidgets.QDialog):
                 continue
             pos, yaw = pose
             actor.pos = glm.vec3(*pos)
-            actor.angle = yaw
+            _set_facing(actor, yaw)
 
-        pose = self._preview_pose(self.camera_keys, self._preview_time)
+        pose = self._preview_pose(self.camera_keys, self._preview_time) if move_camera else None
         if pose is not None:
             pos, yaw = pose
             frames = sorted(self.camera_keys, key=lambda row: float(row.get("time", 0.0)))
@@ -813,7 +1231,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             actor = self.actor_objects.get(aid)
             if actor is not None:
                 actor.pos = glm.vec3(*baseline["pos"])
-                actor.angle = baseline["yaw"]
+                _set_facing(actor, baseline["yaw"])
         if self._preview_camera_baseline is not None:
             camera = self.main_window.view_3d.camera
             camera.pos = glm.vec3(*self._preview_camera_baseline["pos"])
@@ -962,8 +1380,39 @@ class CutsceneWizard(QtWidgets.QDialog):
         except Exception:
             return _v3(camera.pos)
 
+    #: How close two actors may stand: a new one is pushed clear of the rest.
+    ACTOR_SPACING = 64.0
+
+    def _clear_spot(self, pos, ignore=None):
+        """*pos*, or the nearest point to it (on rings around it) that no
+        other actor stands within :data:`ACTOR_SPACING` of."""
+        import math
+        others = []
+        for obj in self.main_window.state.things:
+            if obj is ignore or not _is_actor(obj):
+                continue
+            p = _v3(obj.pos)
+            others.append((p[0], p[2]))
+        gap = self.ACTOR_SPACING
+
+        def free(x, z):
+            return all((x - ox) ** 2 + (z - oz) ** 2 >= gap * gap for ox, oz in others)
+        x, y, z = pos
+        if free(x, z):
+            return [x, y, z]
+        for ring in range(1, 40):
+            steps = 6 * ring
+            for k in range(steps):
+                a = 2.0 * math.pi * k / steps
+                cx, cz = x + math.cos(a) * gap * ring, z + math.sin(a) * gap * ring
+                if free(cx, cz):
+                    return [cx, y, cz]
+        return [x, y, z]
+
     def _add_temporary_actor(self, actor, select=True):
-        """Put *actor* (made here, embedded in the cutscene) in the map and cast."""
+        """Put *actor* (made here, embedded in the cutscene) in the map and
+        cast -- never on top of another actor: it is pushed clear."""
+        actor.pos = glm.vec3(*self._clear_spot(_v3(actor.pos), ignore=actor))
         aid = str(actor.properties.get("id"))
         actor.properties["_cutscene_temporary"] = True
         self.main_window.state.things.append(actor)
@@ -1027,7 +1476,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             pos[0] += 64.0
             try:
                 twin = type(actor)(pos=pos, properties=props)
-                twin.angle = float(getattr(actor, "angle", 0.0))
+                _set_facing(twin, _facing(actor))
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(self, "Duplicate", f"Could not copy {name}: {exc}")
                 continue
@@ -1414,7 +1863,7 @@ class CutsceneWizard(QtWidgets.QDialog):
                     continue
                 source = dest_obj if dest_obj is not None and dest != aid else actor
                 row = {"time": when, "pos": _v3(source.pos),
-                       "yaw": float(getattr(actor, "angle", 0.0)), "action": "move"}
+                       "yaw": _facing(actor), "action": "move"}
                 if self.move_teleport.isChecked():
                     row["teleport"] = True
                 if dest_obj is not None and dest != aid:
@@ -1556,7 +2005,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         actor = self.actor_objects.get(aid)
         if here.isChecked() and actor is not None:
             row["pos"] = _v3(actor.pos)
-            row["yaw"] = float(getattr(actor, "angle", 0.0))
+            row["yaw"] = _facing(actor)
             row.pop("target_id", None)
         self.actor_tracks.get(aid, []).sort(key=lambda r: float(r.get("time", 0.0)))
         self._refresh_actor_keys_list()
@@ -1588,7 +2037,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             self.actor_tracks.setdefault(aid, []).append({
                 "time": t,
                 "pos": _v3(actor.pos),
-                "yaw": float(getattr(actor, "angle", 0.0)),
+                "yaw": _facing(actor),
             })
             self.actor_tracks[aid].sort(key=lambda x: x["time"])
         self._refresh_actor_lists()
@@ -1604,6 +2053,9 @@ class CutsceneWizard(QtWidgets.QDialog):
             "pitch": float(camera.pitch),
             "fov": float(getattr(camera, "fov", 90.0)),
         }
+        if TOP_DOWN_CAMERA:
+            # Where and how high: the camera always looks straight down.
+            frame["yaw"], frame["pitch"] = 0.0, TOP_DOWN_PITCH
         if self.camera_teleport.isChecked():
             frame["teleport"] = True
         aid = self.look_at.currentData()
@@ -1882,7 +2334,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         return {
             "type": str(props.get("type") or "monster"),
             "pos": _v3(actor.pos),
-            "yaw": float(getattr(actor, "angle", 0.0)),
+            "yaw": _facing(actor),
             "properties": props,
         }
 
@@ -2053,7 +2505,7 @@ class CutsceneWizard(QtWidgets.QDialog):
                         pos=definition.get("pos") or [0.0, 0.0, 0.0],
                         properties=actor_props,
                     )
-                    actor.angle = float(definition.get("yaw", 0.0))
+                    _set_facing(actor, float(definition.get("yaw", 0.0)))
                     self.main_window.state.things.append(actor)
                     self.actor_objects[aid] = actor
                     self.temporary_actor_ids.add(aid)
@@ -2137,6 +2589,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             "events": sorted(self.events, key=lambda x: x.get("time", 0)),
             "map": {"file": self._current_map_name()},
             "settings": {
+                **({"camera": "top_down"} if TOP_DOWN_CAMERA else {}),
                 "restore_actors": self.restore.isChecked(),
                 "stop_on_escape": self.stop_escape.isChecked(),
                 "trigger_mode": self.trigger_mode.currentData(),
@@ -2176,7 +2629,9 @@ class CutsceneWizard(QtWidgets.QDialog):
             from engine.fileio import write_text_atomic
             write_text_atomic(
                 str(path),
-                json.dumps(self._build_cutscene_data(), indent=2, ensure_ascii=False),
+                # Minified, as every cutscene in cutscenes/ is stored.
+                json.dumps(self._build_cutscene_data(), separators=(",", ":"),
+                           ensure_ascii=False),
                 encoding="utf-8",
             )
         except OSError as exc:

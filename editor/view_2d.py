@@ -4,7 +4,7 @@ import math
 import time
 import os
 from PyQt5.QtWidgets import QWidget, QMenu, QFileDialog, QApplication
-from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPolygonF, QPixmap
+from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QCursor, QFont, QPolygonF, QPixmap
 from PyQt5.QtCore import Qt, QRectF, QPointF, QPoint, QTimer
 from editor import model_wireframe
 from editor.things import (Thing, Light, PlayerStart, Speaker, ReflectionProbe, Prop, Monster,
@@ -1166,6 +1166,15 @@ class View2D(QWidget):
             self.main_window.properties_tab_widget.setCurrentIndex(0)
 
     def keyPressEvent(self, event):
+        # --- The cutscene editor: Left / Right step its scrubber ---
+        author = self._cutscene_author()
+        if author is not None:
+            if author.scrub_key(event.key(), bool(event.modifiers() & Qt.ShiftModifier)):
+                self.update()
+                return
+            if event.key() == Qt.Key_Escape and author.cancel_pick():
+                self.update()
+                return
         # --- Escape backs out of the innermost thing in progress ---
         if event.key() == Qt.Key_Escape:
             if self._components().drag is not None:
@@ -1543,10 +1552,40 @@ class View2D(QWidget):
         return bool(self.editor.show_logic_links and self.main_window.config.getboolean(
             'Display', 'animate_connections', fallback=False))
 
+    def _cutscene_author(self):
+        """The cutscene editor while it is open (see QtGameView's)."""
+        author = getattr(self.main_window, 'cutscene_author', None)
+        if author is None or not author.isVisible():
+            return None
+        return author
+
+    def _cutscene_point(self, screen_pos, author):
+        """The world point under *screen_pos*: this view's two axes, the third
+        from the first selected actor (the ground it stands on)."""
+        h_axis, v_axis = self.get_axes()
+        if h_axis is None:
+            return None
+        world = self.screen_to_world(screen_pos)
+        ax = {'x': 0, 'y': 1, 'z': 2}
+        point = [0.0, 0.0, 0.0]
+        aids = author._current_actor_ids()
+        actor = author.actor_objects.get(aids[0]) if aids else None
+        if actor is not None:
+            point = [float(v) for v in (actor.pos[0], actor.pos[1], actor.pos[2])]
+        point[ax[h_axis]] = float(world.x())
+        point[ax[v_axis]] = float(world.y())
+        return point
+
     def paintEvent(self, event):
         painter = QPainter(self)
         try:
             self._paint(painter)
+            author = self._cutscene_author()
+            if author is not None:
+                # The cutscene editor's layer: who does what.
+                from editor.cutscene_intents import projector_2d
+                cursor = self.mapFromGlobal(QCursor.pos())
+                author.paint_view(painter, projector_2d(self), (cursor.x(), cursor.y()))
         finally:
             # A paint that raises (a value in the map nothing could draw)
             # must not leave its painter open on the widget: Qt destroys an
@@ -3846,6 +3885,15 @@ class View2D(QWidget):
             return
 
         elif event.button() == Qt.LeftButton:
+            # --- A cutscene order waiting for its target or destination ---
+            author = self._cutscene_author()
+            if author is not None and author.pick_armed():
+                obj = self.get_object_at(event.pos())
+                author.pick_click(obj if author.is_cast(obj) else None,
+                                  self._cutscene_point(event.pos(), author),
+                                  ctrl=bool(event.modifiers() & Qt.ControlModifier))
+                self.update()
+                return
             # --- Clone-and-place: the click drops the copies being carried ---
             if self.main_window.clone_placement_active():
                 self.main_window.finish_clone_placement()
@@ -4273,6 +4321,20 @@ class View2D(QWidget):
             self.end_component_drag()
             self.update()
             return
+
+        author = self._cutscene_author()
+        if author is not None and event.button() == Qt.RightButton and not self.is_panning:
+            # The cutscene editor's orders: cancel a pending one, or the menu
+            # for a cast actor.
+            if author.cancel_pick():
+                self.update()
+                return
+            obj = self.get_object_at(event.pos())
+            if obj is not None and author.is_cast(obj):
+                author.action_menu(obj, event.globalPos(), self)
+                self.is_panning = False
+                self.update()
+                return
 
         if event.button() == Qt.RightButton and not self.is_panning:
             # A right-click while carrying clones throws them away rather than

@@ -48,6 +48,8 @@ def register():
     wizard.register_actor_kind("+ Creature", Creature, {"npc_role": "bandit"},
                                entity_type="creature")
     wizard.register_actor_panel(actor_panel)
+    # MiniWind is top down: cutscene cameras look straight down.
+    wizard.TOP_DOWN_CAMERA = True
 
 
 # ---------------------------------------------------------------------------
@@ -118,9 +120,7 @@ def remake_with_role(actor, role):
     props = {k: v for k, v in actor.properties.items()
              if k not in ROLE_FIELDS and k != "_io_connections"}
     props["npc_role"] = role
-    twin = type(actor)(pos=list(actor.pos), properties=props)
-    twin.angle = float(getattr(actor, "angle", 0.0))
-    return twin
+    return type(actor)(pos=list(actor.pos), properties=props)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +215,23 @@ def actor_panel(wizard, actors):
     temper.setCurrentIndex(max(0, temper.findData(str(first.get("aggression", "")).lower())))
     temper.activated.connect(lambda _i: apply(lambda p: p.update(aggression=temper.currentData())))
     form.addRow("Temperament", temper)
+
+    facing = QtWidgets.QSpinBox()
+    facing.setRange(0, 359)
+    facing.setWrapping(True)
+    facing.setSuffix("°")
+    facing.setSingleStep(15)
+    facing.setValue(int(round(float(first.get("angle", 0.0) or 0.0))) % 360)
+    facing.setToolTip("Which way they face when the cutscene starts (0° = +Z, 90° = +X). "
+                      "Or right-click an actor in the map → FACE… and click what to face.")
+    def turn(value):
+        import math
+        from engine.monster_facing import set_heading
+        for actor in actors:
+            set_heading(actor, math.radians(value % 360))
+        changed()
+    facing.valueChanged.connect(turn)
+    form.addRow("Facing", facing)
     outer.addWidget(who)
 
     fight = QtWidgets.QGroupBox("Combat")
