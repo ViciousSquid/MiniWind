@@ -41,7 +41,7 @@ class ContainerWindow(CallbackWindow):
         if picked is not None and drag.picked.get("owner") is self and hits.pointer:
             # Half a stack split off here rides beside the pointer.
             drag.draw_ghost(painter, self, (hits.pointer[0] + 22, hits.pointer[1] + 22),
-                            40, source=picked)
+                            56, source=picked)
 
     def _cell_at(self, p):
         for rect, source in reversed(screens.CONTAINER_DRAG["cells"]):
