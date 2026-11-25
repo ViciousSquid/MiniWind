@@ -14,7 +14,7 @@ from __future__ import annotations
 from PyQt5.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
-from . import drag, fonts, hits, spell_lock, trade_anim
+from . import cards, drag, fonts, hits, spell_lock, trade_anim
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
@@ -1349,6 +1349,74 @@ def _spellbook_page(session, step, page_size):
     st["row"] = max(0, min(page * page_size, max(0, len(spells) - 1)))
 
 
+#: Header-band tint per school of magic on a spell card.
+_SCHOOL_ACCENT = {"offensive": QColor(232, 131, 111), "defensive": QColor(127, 211, 155),
+                  "occult": QColor(176, 140, 240)}
+
+
+def _school_accent(school):
+    return _SCHOOL_ACCENT.get(str(school or "").lower(), QColor(185, 182, 196))
+
+
+def _spell_card_icon(spell, px):
+    try:
+        import game.item_icons as item_icons
+        return item_icons.spell_pixmap(spell.id, int(px))
+    except Exception:
+        return None
+
+
+def _spell_card(painter, session, spell, *, selected, locked, rect):
+    """The :class:`cards.Card` for *spell* in the spellbook grid: its school
+    tints the header, its rarity the frame; the level is a row of pips and
+    the magicka cost the one badge. The rest is in the tooltip and in the
+    detail column beside the cards."""
+    c = session.game.character
+    level = c.spell_level(spell.id)
+    now = spell.at_level(level)
+    cost = int(rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell))
+    power = _spell_power(now).rstrip(", ")
+    tip = [spell.name,
+           f"{spell.rarity.title()} · Level {level} of {spell.max_level}",
+           f"{cost} magicka" + (f" · {power}" if power else "")]
+    if level < spell.max_level:
+        nxt = spell.at_level(level + 1)
+        nxt_power = _spell_power(nxt).rstrip(", ")
+        tip.append(f"Level {level + 1}: " + (nxt_power or "stronger") +
+                   f" · {int(rpg_magic.cast_cost(c, nxt))} magicka")
+    px = int(min(rect.width(), rect.height()) * 0.7 * T.device_ratio(painter))
+    return cards.Card(
+        title=spell.name,
+        icon=_spell_card_icon(spell, max(32, px)),
+        subtitle=f"{sk.label(spell.school)} · {str(spell.delivery).title()}",
+        summary=power[:1].upper() + power[1:] if power else spell.desc,
+        accent=_school_accent(spell.school),
+        frame=_rarity_color(spell.rarity),
+        badges=("", f"{cost} mp"),
+        badge_colors=(None, T.MAGICKA.lighter(170)),
+        pips=(level, spell.max_level),
+        selected=selected,
+        hovered=hits.hovered(rect),
+        active=c.active_spell == spell.id,
+        locked=locked,
+        tooltip="\n".join(tip))
+
+
+def _spellbook_layout(inner, ty, count):
+    """(grid area, cards.Grid, detail column rect, nav_y) for the spellbook."""
+    top = ty + 10
+    nav_y = inner.bottom() - 52
+    if inner.width() >= 760:
+        detail_w = max(300, min(440, int(inner.width() * 0.31)))
+    else:
+        detail_w = max(200, int(inner.width() * 0.42))
+    area = QRect(inner.x(), top, max(1, inner.width() - detail_w - 20),
+                 max(1, nav_y - top - 8))
+    grid = cards.layout_grid(area, count, min_scale=0.68)
+    detail = QRect(area.right() + 21, top - 2, detail_w - 1, max(1, nav_y - top - 6))
+    return area, grid, detail, nav_y
+
+
 def _draw_spells(painter, session, w, h):
     from ..host import K_SPELLS
 
@@ -1361,113 +1429,119 @@ def _draw_spells(painter, session, w, h):
     ty = T.heading(painter, inner, "Spellbook",
                    f"{len(spells)} spells known    ·    Magicka {int(c.magicka)}/{int(c.max_magicka)}")
 
-    list_w = int(inner.width() * 0.5)
-    top = ty + 8
-    nav_y = inner.bottom() - 52
-    page_size = max(1, (nav_y - top - 6) // 24)
+    area, grid, detail, nav_y = _spellbook_layout(inner, ty, len(spells))
+    page_size = grid.page_size
+    st["cols"], st["page_size"] = grid.cols, page_size
     page = st["row"] // page_size
     first = page * page_size
     pages = max(1, (len(spells) + page_size - 1) // page_size)
-    fm = QFontMetrics(T.font(11, family="Segoe UI"))
-    # Worn metal armour greys every spell out: a row still highlights, but
+    # Worn metal armour greys every spell out: a card still highlights, but
     # cannot be selected, and its tooltip says why (game/ui/spell_lock.py).
     locked = spell_lock.locked(c)
+    pad = controls.gamepad()
     for i in range(first, min(first + page_size, len(spells))):
         spell = spells[i]
-        ry = top + (i - first) * 24
-        row_rect = QRect(inner.x(), ry - 2, list_w, 22)
-        if i == st["row"]:
-            painter.fillRect(row_rect, T.SELECT)
-        active = c.active_spell == spell.id
-        col = T.GOLD_BRIGHT if i == st["row"] else (T.MAGICKA.lighter(150) if active else T.INK)
+        rect = grid.slots[i - first]
+        card = _spell_card(painter, session, spell, selected=i == st["row"],
+                           locked=locked, rect=rect)
+        cards.draw_card(painter, rect, card)
         if locked:
-            col = spell_lock.GREY.lighter(130) if i == st["row"] else spell_lock.GREY
-            spell_lock.note(row_rect, True)
-            if i == st["row"] and controls.gamepad():
-                spell_lock.focus(row_rect, True)
-        cost = rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell)
-        painter.fillRect(QRect(inner.x() + 2, ry + 3, 3, 14), _rarity_color(spell.rarity))
-        label = fm.elidedText(("✦ " if active else "") + spell.name,
-                              Qt.ElideRight, max(1, list_w - 126))
-        T.text(painter, inner.x() + 10, ry + 14, label,
-               size=11, color=col, family="Segoe UI")
-        T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 60, 22),
-                  f"Lv {c.spell_level(spell.id)}", size=9, color=T.GOLD, align=T.ALIGN_RIGHT,
-                  family="Segoe UI")
-        T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 8, 22),
-                  f"{int(cost)} mp", size=9, color=T.DIM, align=T.ALIGN_RIGHT,
-                  family="Segoe UI")
-        _row_target(painter, row_rect,
-                    lambda s, sid=spell.id: _ready_spell(s, sid), f"spell:{spell.id}")
-        _SPELL_HITS["cells"].append((QRect(row_rect), ("spell", None, spell.id)))
+            spell_lock.note(rect, True)
+            if i == st["row"] and pad:
+                spell_lock.focus(rect, True)
+        else:
+            cards.note_tooltip(rect, card, focus=pad and i == st["row"])
+        hits.add(QRect(rect), lambda s, sid=spell.id: _ready_spell(s, sid),
+                 f"spell:{spell.id}")
+        _SPELL_HITS["cells"].append((QRect(rect), ("spell", None, spell.id)))
 
-    _SPELL_HITS["targets"].append((QRect(inner.x(), top - 2, list_w,
-                                         max(1, nav_y - top)), ("spells", None)))
+    _SPELL_HITS["targets"].append((QRect(area), ("spells", None)))
 
     if pages > 1:
-        button(painter, QRect(inner.x(), nav_y, 80, 26), "Previous",
+        gx = grid.bounds().x() if grid.slots else area.x()
+        gw = grid.bounds().width() if grid.slots else area.width()
+        button(painter, QRect(gx, nav_y, 90, 26), "Previous",
                lambda s, size=page_size: _spellbook_page(s, -1, size), enabled=page > 0)
-        button(painter, QRect(inner.x() + list_w - 64, nav_y, 64, 26), "Next",
+        button(painter, QRect(gx + gw - 90, nav_y, 90, 26), "Next",
                lambda s, size=page_size: _spellbook_page(s, 1, size), enabled=page < pages - 1)
-        T.text_in(painter, QRect(inner.x() + 82, nav_y, max(1, list_w - 148), 26),
-                  f"{page + 1}/{pages}", size=9, color=T.DIM, align=T.ALIGN_CENTER)
+        T.text_in(painter, QRect(gx + 92, nav_y, max(1, gw - 184), 26),
+                  f"Page {page + 1} of {pages}", size=10, color=T.DIM, align=T.ALIGN_CENTER)
 
     button(painter, QRect(inner.right() - 90, nav_y, 90, 26), "Close",
            lambda s: setattr(s, "open_screen", None))
 
+    # The selected spell in full, beside the cards.
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setBrush(QColor(14, 13, 20, 150))
+    painter.setPen(QPen(QColor(T.GILD.red(), T.GILD.green(), T.GILD.blue(), 140), 1))
+    painter.drawRoundedRect(QRectF(detail), 8, 8)
+    painter.restore()
+    col = detail.adjusted(12, 8, -12, -8)
+    hands_h = 118
+    hands_top = col.bottom() - hands_h
     if spells:
         spell = spells[st["row"]]
-        dx = inner.x() + list_w + 20
-        dw = inner.width() - list_w - 20
         level = c.spell_level(spell.id)
         now = spell.at_level(level)
-        T.text(painter, dx, ty + 18, spell.name, size=15, color=T.GOLD_BRIGHT, bold=True)
-        T.text(painter, dx, ty + 36, f"{spell.rarity.title()}  ·  Level {level} of "
-               f"{spell.max_level}", size=10, color=_rarity_color(spell.rarity),
-               bold=True, family="Segoe UI")
-        info = (f"School: {sk.label(spell.school)}\nDelivery: {spell.delivery}\n"
-                f"Element: {spell.element}\n"
+        name_font, _ok = cards.fitted_font(spell.name, col.width(), 22, 13)
+        painter.save()
+        painter.setFont(name_font)
+        painter.setPen(T.GOLD_BRIGHT)
+        painter.drawText(QRect(col.x(), col.y(), col.width(), 28),
+                         int(Qt.AlignLeft | Qt.AlignVCenter), spell.name)
+        painter.restore()
+        T.text_in(painter, QRect(col.x(), col.y() + 28, col.width(), 18),
+                  f"{spell.rarity.title()}  ·  Level {level} of {spell.max_level}",
+                  size=10, color=_rarity_color(spell.rarity), bold=True,
+                  align=T.ALIGN_LEFT, family="Segoe UI")
+        info = (f"{sk.label(spell.school)} · {str(spell.delivery).title()} · "
+                f"{str(spell.element).title()}\n"
                 f"Now: {_spell_power(now)}{int(rpg_magic.cast_cost(c, now))} magicka")
         if level < spell.max_level:
             nxt = spell.at_level(level + 1)
             info += (f"\nLevel {level + 1}: {_spell_power(nxt)}"
                      f"{int(rpg_magic.cast_cost(c, nxt))} magicka")
         info += f"\n\n{spell.desc}"
-        T.text_in(painter, QRect(dx, ty + 48, dw, max(1, nav_y - ty - 230)),
+        cost = c.spell_upgrade_cost(spell.id)
+        raise_y = hands_top - 38
+        info_bottom = raise_y - (24 if cost > 0 else 6)
+        T.text_in(painter, QRect(col.x(), col.y() + 52, col.width(),
+                                 max(1, info_bottom - col.y() - 52)),
                   info, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
         # Raise the spell with experience -- the same pool character levels
         # are paid from, so it is a real choice.
-        cost = c.spell_upgrade_cost(spell.id)
         if cost > 0:
-            button(painter, QRect(dx, nav_y - 164, min(dw, 260), 28),
+            T.text_in(painter, QRect(col.x(), raise_y - 20, col.width(), 18),
+                      f"Experience: {c.xp}  ·  U raises the selected spell", size=8,
+                      color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
+            button(painter, QRect(col.x(), raise_y, min(col.width(), 280), 28),
                    f"Raise to level {level + 1}  ({cost} XP)",
                    lambda s, sid=spell.id: _upgrade_spell(s, sid),
                    enabled=c.xp >= cost, primary=True)
-            T.text_in(painter, QRect(dx, nav_y - 184, dw, 18),
-                      f"Experience: {c.xp}  ·  U raises the selected spell", size=8,
-                      color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
         else:
-            T.text_in(painter, QRect(dx, nav_y - 158, dw, 20),
+            T.text_in(painter, QRect(col.x(), raise_y, col.width(), 28),
                       "Mastered: this spell is at its highest level.", size=9,
                       color=T.GOLD, align=T.ALIGN_LEFT, family="Segoe UI")
     else:
-        T.text(painter, inner.x() + list_w + 20, ty + 18,
-               "You know no spells yet. Learn them from a tutor, or find a spellbook.",
-               size=11, color=T.DIM, family="Segoe UI")
+        T.text_in(painter, QRect(area.x(), area.y() + 10, area.width(), 60),
+                  "You know no spells yet. Learn them from a tutor, or find a spellbook.",
+                  size=11, color=T.DIM, align=int(Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap),
+                  family="Segoe UI")
 
-    _draw_spell_hands(painter, session,
-                      QRect(inner.x() + list_w + 20, nav_y - 126,
-                            inner.width() - list_w - 20, 118),
+    _draw_spell_hands(painter, session, QRect(col.x(), hands_top, col.width(), hands_h),
                       spells[st["row"]].id if spells else None)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               (f"{controls.label('click')} a spell, then a shortcut bar slot · "
                f"{controls.label('tabs')} tabs · {controls.label('back')} close"
                if controls.gamepad() else
-               f"Drag a spell to the shortcut bar, or press 1-9 · {K_SPELLS.upper()}/Esc close"),
+               f"Drag a card to the shortcut bar, or press 1-9 · arrows choose · "
+               f"Enter readies · {K_SPELLS.upper()}/Esc close"),
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+    cards.flush_tooltip(painter)
     spell_lock.flush(painter)          # a greyed spell's tooltip, on top
 
 
@@ -1577,10 +1651,15 @@ def _handle_spells(session, key):
 
     spells = _spellbook_spells(session)
     st = _spellbook_selection(session, spells)
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % max(1, len(spells)); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % max(1, len(spells)); return True
+    # The cards are a grid: arrows (or WASD) move by card and by row, onto
+    # the next page past the edge; Page Up / Down turn a whole page.
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move:
+        st["row"] = cards.navigate(st["row"], move, len(spells), st.get("cols", 1),
+                                   st.get("page_size"))
+        return True
     if key in ("return", "enter") and spells:
         _ready_spell(session, spells[st["row"]].id); return True
     if key == "u" and spells:

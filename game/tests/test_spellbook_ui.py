@@ -145,7 +145,7 @@ def test_keyboard_selection_survives_unknown_spell_ids_and_stale_selection(sessi
     session.sel = {"spells": {"row": 999}}
     screens.handle_key(session, "enter")
     assert session.game.character.active_spell == "lightning"
-    screens.handle_key(session, "down")
+    screens.handle_key(session, "right")           # the last card wraps to the first
     screens.handle_key(session, "enter")
     assert session.game.character.active_spell == "flare"
 
