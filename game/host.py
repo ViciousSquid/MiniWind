@@ -1499,6 +1499,7 @@ class MiniwindGame:
                 hud.draw_npc_bow_charges(painter, session, viewport, w, h)
                 hud.draw_barks(painter, session, viewport, w, h)
                 hud.draw_thoughts(painter, session, viewport, w, h)
+                hud.draw_cast_icons(painter, session, viewport, w, h)
                 hud.draw_floats(painter, session, viewport, w, h)
                 hud.draw_fade(painter, session, w, h)
                 return
@@ -1573,6 +1574,7 @@ class MiniwindGame:
                     hud.draw_bubbles(painter, session, viewport, w, h)
                     hud.draw_barks(painter, session, viewport, w, h)
                     hud.draw_thoughts(painter, session, viewport, w, h)
+                    hud.draw_cast_icons(painter, session, viewport, w, h)
                     hud.draw_floats(painter, session, viewport, w, h)
                     hud.draw_player_block(painter, session, viewport, w, h)
                 # Roll boxes over a conversation, a search or a lock too:

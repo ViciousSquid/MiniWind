@@ -484,7 +484,7 @@ class NpcMagic:
                 p["_ward_magnitude"] = magnitude
                 p["_attack_anim"] = 0.2
                 self.warded[id(thing)] = thing
-                self._cast_sound(thing)
+                self._cast_sound(thing, spell)
                 fx = getattr(self.session, "magic_fx", None)
                 if fx is not None:
                     from .magic_fx import look_for
@@ -586,7 +586,7 @@ class NpcMagic:
                     return True
                 p["health"] = min(top, health + amount)
                 p["_attack_anim"] = 0.2
-                self._cast_sound(thing)
+                self._cast_sound(thing, spell)
                 self._journal(thing)
                 fx = getattr(self.session, "magic_fx", None)
                 if fx is not None:
@@ -649,7 +649,7 @@ class NpcMagic:
             if self._fizzles(thing, spell):
                 return []
             p["_attack_anim"] = 0.2
-            self._cast_sound(thing)
+            self._cast_sound(thing, spell)
             slow = getattr(self.session, "slow_time", None)
             if slow is not None:
                 slow(p.get("creature_level", 1))
@@ -671,7 +671,7 @@ class NpcMagic:
             self._loose(thing, target, target_pos, spell, damage,
                         _float(entry.get("speed", spell.projectile_speed), 900.0),
                         list(entry.get("color") or spell.color))
-            self._cast_sound(thing)
+            self._cast_sound(thing, spell)
             return []
         if spell.delivery == magic.SELF:
             if not spend(p, spell.base_cost):
@@ -691,7 +691,7 @@ class NpcMagic:
                 top = _float(p.get("max_health") or p.get("_max_health"), _float(p.get("health")))
                 p["health"] = min(top, _float(p.get("health")) + heal)
             p["_attack_anim"] = 0.2
-            self._cast_sound(thing)
+            self._cast_sound(thing, spell)
             self._journal(thing)
             fx = getattr(self.session, "magic_fx", None)
             if fx is not None and heal > 0:
@@ -716,16 +716,21 @@ class NpcMagic:
                 if not channelled and self._fizzles(thing, spell):
                     return True
                 self._loose(thing, target, target_pos, spell, damage, speed, colour)
-                self._cast_sound(thing)
+                self._cast_sound(thing, spell)
                 return True
         return False
 
     # -- internals ------------------------------------------------------------
-    def _cast_sound(self, thing) -> None:
-        """A cast that worked is heard, as the player's are (where the session
-        can play one: game.runtime.MiniwindSession.cast_sound)."""
+    def _cast_sound(self, thing, spell=None) -> None:
+        """A cast that worked is heard, as the player's are, and its icon
+        shown over the caster's head (where the session can:
+        game.runtime.MiniwindSession.cast_sound)."""
         hook = getattr(self.session, "cast_sound", None)
-        if hook is not None:
+        if hook is None:
+            return
+        try:
+            hook(thing, spell)
+        except TypeError:          # a session whose cast_sound takes no spell
             hook(thing)
 
     def _fizzles(self, thing, spell) -> bool:

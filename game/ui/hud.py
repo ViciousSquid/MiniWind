@@ -471,14 +471,80 @@ BIG_FLOATS = {"LUCK!": (255, 214, 90), "UNLUCKY!": (170, 215, 100)}
 _FLOAT_INK = (214, 200, 255)
 
 
+#: A cast spell's icon over its caster's head (logical px), and the gap
+#: between the head and it.
+CAST_ICON_SIZE = 40
+CAST_ICON_GAP = 6
+
+
+def _head_screen(glm, proj, view, thing, width, height):
+    """Where the top of *thing*'s head is on screen, or None."""
+    pos = thing.pos
+    head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
+    sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
+    if sp is None and thing.properties.get("is_player"):
+        # Seen from inside the player's own head (first person): over the
+        # middle of the view, where their head would be.
+        sp = (width * 0.5, height * 0.4)
+    return sp
+
+
+def draw_cast_icons(painter, session, viewport, width, height, now=None):
+    """The icon of a spell just cast, over its caster's head: 0.3 s fading
+    in, 1.5 s held, 0.25 s fading out (runtime.cast_icon_alpha). Drawn
+    before :func:`draw_floats`, whose words ("*fizzled*") sit above it."""
+    if viewport is None or not hasattr(session, "live_cast_icons"):
+        return
+    icons = session.live_cast_icons(now)
+    if not icons:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    from PyQt5.QtGui import QPainter
+    import game.rpg.magic as rpg_magic
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    s = CAST_ICON_SIZE
+    for thing, sid, alpha in icons[:16]:
+        sp = _head_screen(glm, proj, view, thing, width, height)
+        spell = rpg_magic.get(sid)
+        if sp is None or spell is None:
+            continue
+        pix = _spell_icon_pixmap(spell, s * 2)        # sharp on high-DPI screens
+        if pix is None:
+            continue
+        rect = QRectF(sp[0] - s / 2.0, sp[1] - CAST_ICON_GAP - s, s, s)
+        painter.setOpacity(max(0.0, min(1.0, float(alpha))))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 110))        # a soft shadow under it
+        painter.drawEllipse(rect.adjusted(-3, -1, 3, 5))
+        painter.drawPixmap(rect, pix, QRectF(pix.rect()))
+    painter.restore()
+
+
+def _cast_icon_lift(session):
+    """``{id(thing): px}``: how far a head's floating words rise to clear the
+    cast icon shown over it."""
+    try:
+        icons = session.live_cast_icons()
+    except Exception:
+        return {}
+    return {id(thing): CAST_ICON_SIZE + CAST_ICON_GAP for thing, _sid, _a in icons}
+
+
 def draw_floats(painter, session, viewport, width, height):
     """Words floating up from a head and fading, such as "+1 wheat" or
-    "*fizzled*" over a caster."""
+    "*fizzled*" over a caster -- above a cast spell's icon there."""
     if viewport is None:
         return
     floats = session.live_floats() if hasattr(session, "live_floats") else ()
     if not floats:
         return
+    lift = _cast_icon_lift(session)
     try:
         import glm
         proj, view = viewport.projection_matrix, viewport.view_matrix
@@ -493,15 +559,10 @@ def draw_floats(painter, session, viewport, width, height):
     painter.setFont(font)
     painter.setRenderHint(painter.Antialiasing, True)
     for thing, text, left, total in floats[:12]:
-        pos = thing.pos
-        head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
-        sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
-        if sp is None and thing.properties.get("is_player"):
-            # Seen from inside the player's own head (first person): over
-            # the middle of the view, where their head would be.
-            sp = (width * 0.5, height * 0.4)
+        sp = _head_screen(glm, proj, view, thing, width, height)
         if sp is None:
             continue
+        sp = (sp[0], sp[1] - lift.get(id(thing), 0))
         age = max(0.0, min(1.0, 1.0 - left / max(0.01, total)))
         alpha = int(255 * max(0.0, min(1.0, left / 0.5)))
         crit = text == CRIT_FLOAT_TEXT or text in BIG_FLOATS

@@ -483,6 +483,22 @@ def slow_time_seconds(level) -> float:
     return SLOW_TIME_SECONDS + max(0, level - SLOW_TIME_FROM_LEVEL) * SLOW_TIME_PER_LEVEL
 
 
+def cast_icon_alpha(age):
+    """A cast icon's opacity *age* seconds after the cast: fading in, held,
+    fading out; None once it is over."""
+    if age < 0.0:
+        return 0.0
+    if age < CAST_ICON_FADE_IN:
+        return age / CAST_ICON_FADE_IN
+    age -= CAST_ICON_FADE_IN
+    if age < CAST_ICON_HOLD:
+        return 1.0
+    age -= CAST_ICON_HOLD
+    if age < CAST_ICON_FADE_OUT:
+        return 1.0 - age / CAST_ICON_FADE_OUT
+    return None
+
+
 #: A fall of more than this many world units kills outright (the backstop
 #: for a map's hurt trigger at the edge of the world).
 FATAL_FALL = 2000.0
@@ -630,6 +646,11 @@ RESURRECTION_SOUND = "resurrection.mp3"
 #: Heard everywhere when Slow Time is cast (silent until the file is in
 #: assets/sounds).
 SLOW_TIME_SOUND = "slowtime.wav"
+#: A spell cast shows its icon over the caster's head: fading in, held, then
+#: fading out (seconds, real time).
+CAST_ICON_FADE_IN = 0.3
+CAST_ICON_HOLD = 1.5
+CAST_ICON_FADE_OUT = 0.25
 #: The pad's shake when a lock pick finds a pin's sweet spot: (low motor,
 #: high motor, milliseconds).
 LOCKPICK_SWEET_RUMBLE = (0.25, 0.7, 140)
@@ -6736,9 +6757,39 @@ class MiniwindSession(SettlementLaw):
         self.float_text(thing, FIZZLE_TEXT, FIZZLE_SECONDS)
         self._spell_sound(thing, FIZZLE_SOUND)
 
-    def cast_sound(self, thing) -> None:
-        """A caster's spell (an NPC's) worked: heard where it stands."""
+    def cast_sound(self, thing, spell=None) -> None:
+        """A caster's spell (an NPC's) worked: heard where it stands, and its
+        icon shown over the caster's head."""
         self._spell_sound(thing, SPELLCAST_SOUND)
+        if spell is not None:
+            self.show_cast(thing, spell)
+
+    def show_cast(self, thing, spell) -> None:
+        """*thing* cast *spell*: its icon over *thing*'s head for a moment
+        (:func:`cast_icon_alpha`). A new cast replaces the one shown."""
+        sid = getattr(spell, "id", spell)
+        if thing is None or not sid:
+            return
+        import time as _time
+        self.__dict__.setdefault("cast_icons", {})[id(thing)] = (
+            thing, str(sid), _time.monotonic())
+
+    def live_cast_icons(self, now=None):
+        """``[(thing, spell_id, alpha)]``: the cast icons up now."""
+        icons = self.__dict__.get("cast_icons")
+        if not icons:
+            return []
+        import time as _time
+        now = _time.monotonic() if now is None else now
+        out = []
+        for key, (thing, sid, start) in list(icons.items()):
+            alpha = cast_icon_alpha(now - start)
+            if alpha is None or (getattr(thing, "properties", None) or {}).get("dead"):
+                icons.pop(key, None)
+                continue
+            if alpha > 0.0:
+                out.append((thing, sid, alpha))
+        return out
 
     def _spell_sound(self, thing, sound) -> bool:
         """A spell's sound, from where its caster stands -- the player's as
@@ -9177,8 +9228,9 @@ class MiniwindSession(SettlementLaw):
 
     def _magic_cast_fx(self, spell, target=None) -> None:
         """The visible side of a cast the player just made -- and the sound
-        of it, from the player."""
+        of it, from the player, and its icon over the player's head."""
         self._spell_sound(self.player_actor, SPELLCAST_SOUND)
+        self.show_cast(self.player_actor, spell)
         pos = self._player_pos()
         if pos is None:
             return
@@ -9384,6 +9436,7 @@ class MiniwindSession(SettlementLaw):
             self.notify("Knock clears the sheared pick and opens the lock." if jammed
                         else "Knock opens the lock.", 4.0)
             self._spell_sound(self.player_actor, SPELLCAST_SOUND)
+            self.show_cast(self.player_actor, spell)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
@@ -9502,6 +9555,7 @@ class MiniwindSession(SettlementLaw):
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
         self._spell_sound(self.player_actor, RESURRECTION_SOUND)   # its own, not the cast's
+        self.show_cast(self.player_actor, spell)
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
         if p.get("multiplayer_player"):
