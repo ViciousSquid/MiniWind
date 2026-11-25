@@ -847,6 +847,15 @@ class LightingMixin:
 
             self._shadow_slot_sig[slot] = sig
 
+        # The lit passes sample these cube-maps next, in this same frame.
+        # Leave no face attached to the shadow FBO and hand the depth
+        # rendering to the driver first: Mesa 26's llvmpipe otherwise sampled
+        # the frame's freshly rendered (and freshly sized) cube-maps before
+        # that rendering had landed, so the first frame a shadow appeared in
+        # was drawn without it. One flush, only on frames that re-render.
+        gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_DEPTH_ATTACHMENT,
+                                  gl.GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, 0)
+        gl.glFlush()
         gl_state.glBindVertexArray(0)
         gl_state.glCullFace(gl.GL_BACK)
         if cull_was:
