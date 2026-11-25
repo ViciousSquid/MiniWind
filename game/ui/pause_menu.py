@@ -14,7 +14,7 @@ screen, in the manner of a classic RPG title menu:
 ``GAME`` is a dropdown (its arrow points down while folded, up while open)
 holding the three things done to a whole game.
 
-Its ``LOAD GAME`` and ``SAVE GAME`` open a page of three save slots, ``MUSIC``
+Its ``LOAD GAME`` and ``SAVE GAME`` open a page of three save-slot cards, ``MUSIC``
 switches the game's background music on and off on the spot, and anything
 destructive (starting over, loading, overwriting an occupied slot, leaving for
 the editor, quitting) asks a plain ``SURE?`` before it happens.
@@ -691,7 +691,10 @@ class PauseMenu:
                              py + fm.height() + 4, detail)
             row_y = max(row_y, py + fm.height() + 28)
 
-        self._draw_option_row(painter, w, h, row_y)
+        if self.page in ('load', 'save'):
+            self._draw_slot_cards(painter, w, h, row_y)
+        else:
+            self._draw_option_row(painter, w, h, row_y)
 
         # --- key hints ---
         painter.setFont(_text_font(max(9, min(12, w // 130))))
@@ -809,6 +812,62 @@ class PauseMenu:
         self._drop_rects = []
         if self.page == 'root' and self.expanded and drop_anchor is not None:
             self._draw_dropdown(painter, w, h, *drop_anchor)
+
+    def _draw_slot_cards(self, painter, w, h, row_y):
+        """The save / load page: a card per slot -- who was saved, where and
+        when, or Empty (greyed where it cannot be loaded) -- then BACK."""
+        from . import cards
+        items = self._items()
+        infos = self._slots()
+        hint_h = max(18, h // 25) + 16
+        back_pt = max(10, min(20, w // 64, h // 30))
+        painter.setFont(_display_font(back_pt))
+        back_h = painter.fontMetrics().height() + 18
+        top = row_y - int(h * 0.03)
+        room = max(60, h - hint_h - back_h - 16 - top)
+        scale = max(0.45, min(1.15, room / float(cards.SIZE[1]),
+                              (w - 48 - 2 * cards.GAP * 2) / (3.0 * cards.SIZE[0])))
+        cw, ch = int(cards.SIZE[0] * scale), int(cards.SIZE[1] * scale)
+        gap = max(cards.GAP, int(cw * 0.18))
+        x0 = (w - (SLOT_COUNT * cw + (SLOT_COUNT - 1) * gap)) // 2
+        for i in range(SLOT_COUNT):
+            info = infos[i] if i < len(infos) else None
+            rect = QRect(x0 + i * (cw + gap), top, cw, ch)
+            self._hit_rects.append((i, QRect(rect)))
+            if info:
+                map_name = os.path.splitext(os.path.basename(
+                    str(info.get('map', '')) or 'Unknown'))[0]
+                sub = info.get('summary') or map_name.replace('_', ' ').title()
+                summary = (map_name.replace('_', ' ').title() + " · " + _when(info)
+                           if info.get('summary') else _when(info))
+            else:
+                sub, summary = "Empty", ("Nothing saved here" if self.page == 'load'
+                                         else "Save here")
+            cards.draw_card(painter, rect, cards.Card(
+                title=f"Slot {i + 1}", glyph=str(i + 1), subtitle=sub, summary=summary,
+                accent=_ACCENT, selected=i == self.index,
+                greyed=not info and self.page == 'load'))
+        # BACK, centred under the cards, a word as on the other pages.
+        label = _shown(items[-1][1]) if items else ''
+        painter.setFont(_display_font(back_pt))
+        fm = painter.fontMetrics()
+        tw = fm.horizontalAdvance(label)
+        by = top + ch + 16
+        hit = QRect((w - tw) // 2 - 24, by, tw + 48, back_h)
+        self._hit_rects.append((SLOT_COUNT, hit))
+        selected = self.index == SLOT_COUNT
+        base = by + 9 + fm.ascent()
+        if selected:
+            painter.setPen(_TITLE_SHADOW)
+            painter.drawText((w - tw) // 2 + 2, base + 2, label)
+        painter.setPen(_CHIP_SEL_TEXT if selected else _CHIP_TEXT)
+        painter.drawText((w - tw) // 2, base, label)
+        if selected:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(_ACCENT))
+            painter.drawRect((w - tw) // 2, base + max(4, back_pt // 4), tw,
+                             max(2, back_pt // 8))
+        self._drop_rects = []
 
     def _game_labels(self):
         return [(key, _shown(label)) for key, label in self.GAME_ITEMS]

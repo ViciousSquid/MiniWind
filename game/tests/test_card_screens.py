@@ -285,3 +285,49 @@ def test_level_up_choices_are_cards(session, drawn, w, h, full):
     assert screens._levelup_state(session)["row"] == 2
     screens.handle_key(session, "right")
     assert screens._levelup_state(session)["row"] == 3
+
+
+# ----------------------------------------------------------------- save slots
+@pytest.mark.parametrize("page", ["load", "save"])
+@pytest.mark.parametrize("w,h", [(1280, 720), (1920, 1080), (1024, 600)])
+def test_save_slots_are_cards(qt_app, monkeypatch, page, w, h):
+    from PyQt5.QtCore import QEvent, Qt
+    from game.ui.pause_menu import SLOT_COUNT, PauseMenu
+    from .test_pause_menu import _Editor, _View
+    view = _View(_Editor([{"map": "maps/village.json", "saved_at": "2026-09-07T11:02:00",
+                           "summary": "Ada, level 3"}, None, None]))
+    view.width, view.height = (lambda: w), (lambda: h)
+    menu = PauseMenu(view)
+    menu.open()
+    menu.page = page
+    shown = []
+    real = cards.draw_card
+    monkeypatch.setattr(cards, "draw_card",
+                        lambda p, r, card: shown.append((QtCore.QRect(r), card))
+                        or real(p, r, card))
+    pixmap = QtGui.QPixmap(w, h)
+    painter = QtGui.QPainter(pixmap)
+    menu.draw(painter)
+    painter.end()
+    assert [card.title for _r, card in shown] == [f"Slot {i}" for i in (1, 2, 3)]
+    rects = [r for r, _c in shown]
+    _laid_out(rects, QtCore.QRect(0, 0, w, h))
+    first, empty = shown[0][1], shown[1][1]
+    assert first.subtitle == "Ada, level 3" and "2026-09-07 11:02" in first.summary
+    assert empty.subtitle == "Empty" and empty.greyed == (page == "load")
+    # Every card and BACK is a click target, in the menu's own order.
+    assert [i for i, _r in menu._hit_rects] == list(range(SLOT_COUNT + 1))
+    back = dict(menu._hit_rects)[SLOT_COUNT]
+    assert all(not r.intersects(back) for r in rects) and back.bottom() < h
+    rect = dict(menu._hit_rects)[2]
+    move = QtGui.QMouseEvent(QEvent.MouseMove, rect.center(), Qt.NoButton,
+                             Qt.NoButton, Qt.NoModifier)
+    menu.handle_mouse_move(move)
+    assert menu.index == 2
+    press = QtGui.QMouseEvent(QEvent.MouseButtonPress, rect.center(), Qt.LeftButton,
+                              Qt.LeftButton, Qt.NoModifier)
+    menu.handle_mouse_press(press)
+    if page == "save":
+        assert ("save", 3) in menu.editor.calls          # empty: saved at once
+    else:
+        assert menu.editor.calls == []                   # empty: nothing to load
