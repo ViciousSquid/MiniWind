@@ -138,8 +138,8 @@ def _draw_title_card(painter, session, width, height):
 
 #: The key hints after character creation (game/key_hints.py): the key's
 #: picture (logical px), the gap to the word under it, and that word's height
-#: (px, so it keeps to the 128 px key on any screen's DPI).
-KEY_HINT_SIZE = 128
+#: (px, so it keeps to the 64 px key on any screen's DPI).
+KEY_HINT_SIZE = 64
 KEY_HINT_GAP = 8
 KEY_HINT_FONT_PX = 30
 KEY_HINT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",

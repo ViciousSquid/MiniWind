@@ -3,7 +3,7 @@ Key hints after character creation: the I key over "Inventory", then the P
 key over "Spellbook".
 
 The moment a new character starts to play, the inventory key is shown in the
-middle of the screen -- the key's picture (128 x 128) with its word under it --
+middle of the screen -- the key's picture (64 x 64) with its word under it --
 fading in, held, then fading out. A character who starts with spells (some
 builds are given them; ``known_spells``) is then shown the spellbook key the
 same way, and a Mage always is -- never a Warrior or a Barbarian, who never have magic

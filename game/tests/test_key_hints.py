@@ -286,7 +286,7 @@ def test_the_key_is_drawn_in_the_middle_with_its_word_under_it(qt_app):
     painter.end()
 
     rect = hud.key_hint_rect(w, h)
-    assert (rect.width(), rect.height()) == (128, 128)
+    assert (rect.width(), rect.height()) == (64, 64)
     assert rect.center().x() == pytest.approx(w / 2) and rect.center().y() == pytest.approx(h / 2)
     # The keycap's slate fills the middle of the screen...
     centre = img.pixelColor(w // 2, h // 2)
