@@ -5,6 +5,8 @@ release unfreezes, so a closing window's world is collectable again."""
 import gc
 import weakref
 
+import pytest
+
 from engine import gc_policy
 
 
@@ -88,7 +90,9 @@ def test_paused_inside_a_load_leaves_the_load_in_charge():
     assert gc.isenabled()
 
 
+@pytest.mark.qt
 def test_an_undo_checkpoint_is_taken_with_the_collector_paused(monkeypatch):
+    pytest.importorskip("PyQt5", reason="EditorState is editor-tier")
     from editor.editor_state import EditorState
     state = EditorState()
     seen = []
