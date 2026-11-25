@@ -925,6 +925,11 @@ class MiniwindGame:
         cfg = dict(settings.properties) if settings is not None else {}
         from .multiplayer.lobby import active as active_party
         party_lobby = active_party()
+        if party_lobby is None:
+            # A save being loaded (pause menu, death screen, the launcher's
+            # CONTINUE): its character, after the map's store resets.
+            from .ui.pause_actions import apply_pending_store
+            apply_pending_store()
         if party_lobby is not None:
             cfg["coop_legacy_store"] = cfg.get("state_store","miniwind")
             cfg["state_store"] = "miniwind.coop." + party_lobby.state["campaign_id"]
