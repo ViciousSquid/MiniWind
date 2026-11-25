@@ -88,6 +88,7 @@ from . import mental_state
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
 from . import npc_stamina
+from . import strafe
 
 _current_session = None
 
@@ -927,8 +928,11 @@ class MiniwindSession(SettlementLaw):
         # Casters and archers keep their distance, but can be run down
         # (game/combat_tactics.py); everyone else is routed round walls.
         from .combat_tactics import CombatTactics
+        from engine.monster_constants import MONSTER_WALL_MARGIN
         self.tactics = CombatTactics(lambda: getattr(self, "_archery_clock", 0.0), self.nav,
-                                     self._tier_of, busy=lambda t: id(t) in self.archery.drawing)
+                                     self._tier_of, busy=lambda t: id(t) in self.archery.drawing,
+                                     blocked=lambda x, y, z: self._blocked_by_wall(
+                                         x, y, z, MONSTER_WALL_MARGIN))
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
         #: Farmers reaping with a scythe and tending livestock by day.
@@ -7812,6 +7816,7 @@ class MiniwindSession(SettlementLaw):
         # route is being followed) head for the next corner of a route.
         nav = getattr(self, "nav", None)
         key = id(npc)
+        routed = False
         if nav is not None and (p.get("_blocked_ticks") or nav.has_route(key)):
             way = nav.steer_actor(npc, pos, dest)
             wx, wz = way[0] - pos[0], way[2] - pos[2]
@@ -7819,10 +7824,30 @@ class MiniwindSession(SettlementLaw):
             if wd <= 1e-3:
                 return          # planning is queued, or the safe endpoint is reached
             dx, dz, dist = wx, wz, wd
+            routed = True
+        # Something small in the way is stepped round sideways (game/strafe.py),
+        # facing the goal all the while; a route is the fallback, not the first
+        # resort. A route being followed is left to steer.
+        resting = strafe.resting(p, delta) if p.get(strafe.REST) else False
+        if p.get(strafe.STATE) is not None:
+            if routed:
+                p.pop(strafe.STATE, None)
+            elif self._strafe_tick(npc, dx, dz, dist, speed, delta):
+                return
         step = min(speed * delta, dist)
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step
-        if not self._step_to(npc, nx, nz):
+        y = pos[1]
+        if not self._blocked_by_wall(nx, y, nz):
+            moved = True
+            npc.pos = [nx, y, nz]
+        elif routed or resting:
+            moved = self._slide_to(npc, nx, nz)
+        else:
+            moved = self._glance_or_strafe(npc, nx, nz, dx / dist, dz / dist, speed, delta)
+            if moved is None:
+                return          # it has begun a strafe
+        if not moved:
             # Nose against a wall with no way round it. Drop the destination so
             # the next decision pass picks something reachable instead of
             # grinding into the brush forever.
@@ -8143,21 +8168,23 @@ class MiniwindSession(SettlementLaw):
         return (id(grid), getattr(grid, 'navigation_revision', 0),
                 tuple((g.version, g.position_revision) for g in groups))
 
-    def _blocked_by_wall(self, x, y, z) -> bool:
+    def _blocked_by_wall(self, x, y, z, margin=None) -> bool:
         """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
 
         Answered by the engine's spatial grid — the same one the combat AI and
         the player's own physics use, so it is a cell lookup rather than a scan
         over every brush, cheap enough to run per walking NPC per tick. With no
         grid (no play session) nothing is solid, which keeps the schedule
-        testable off a live map.
+        testable off a live map. *margin* overrides the walker's
+        :data:`NPC_WALL_MARGIN` (the combat chase asks at the engine's own).
         """
         ai = getattr(self.logic, "monster_ai", None)
         if ai is None:
             return False
         try:
             return ai._monster_overlaps_wall(float(x), float(y), float(z),
-                                             NPC_WALL_MARGIN)
+                                             NPC_WALL_MARGIN if margin is None
+                                             else float(margin))
         except Exception:
             return False
 
@@ -8176,6 +8203,13 @@ class MiniwindSession(SettlementLaw):
         if not self._blocked_by_wall(nx, y, nz):
             npc.pos = [nx, y, nz]
             return True
+        return self._slide_to(npc, nx, nz)
+
+    def _slide_to(self, npc, nx, nz) -> bool:
+        """The slide half of :meth:`_step_to`, for a step to (nx, nz) already
+        found blocked: along whichever axis is clear. True if it moved."""
+        pos = npc.pos
+        y = pos[1]
         # Only count a slide if that axis actually changes position. When an
         # NPC heads straight into a wall, one of these candidates can be its
         # current position; treating that no-op as success clears _blocked_ticks
@@ -8187,6 +8221,59 @@ class MiniwindSession(SettlementLaw):
             npc.pos = [pos[0], y, nz]
             return True
         return False
+
+    def _glance_or_strafe(self, npc, nx, nz, fx, fz, speed, delta):
+        """A step to (nx, nz) along unit heading (fx, fz) was stopped. A
+        glancing contact slides on along the face, as before; one nearly
+        head-on probes for a strafe round the obstacle (game/strafe.py).
+
+        True if it slid; None if a strafe has begun (and taken its first
+        sidestep); False if neither side is open -- the caller falls back on
+        a route, and no new probe is made for a while.
+        """
+        pos = npc.pos
+        x, y, z = pos[0], pos[1], pos[2]
+        enough = strafe.STRAFE_SLIDE_FRACTION
+        if (fx * fx >= enough and abs(nx - x) > 1e-6
+                and not self._blocked_by_wall(nx, y, z)):
+            npc.pos = [nx, y, z]
+            return True
+        if (fz * fz >= enough and abs(nz - z) > 1e-6
+                and not self._blocked_by_wall(x, y, nz)):
+            npc.pos = [x, y, nz]
+            return True
+        p = npc.properties
+        final = p.get("_dest") or (nx, y, nz)
+        prefer = strafe.prefer_side(p, fx, fz, final[0] - x, final[2] - z)
+        choice = strafe.probe(self._blocked_by_wall, x, y, z, fx, fz,
+                              NPC_WALL_MARGIN, prefer)
+        if choice is None:
+            strafe.rest(p)
+            return False
+        strafe.begin(p, *choice, fx, fz)
+        self._strafe_tick(npc, fx, fz, 1.0, speed, delta)
+        return None
+
+    def _strafe_tick(self, npc, dx, dz, dist, speed, delta) -> bool:
+        """One tick of *npc*'s strafe, heading (dx, dz)/dist toward its goal.
+        True if the tick is spent (it sidestepped, or failed and falls back
+        on a route next tick); False if the strafe is over and it walks on."""
+        p = npc.properties
+        pos = npc.pos
+        spot = strafe.advance(p, self._blocked_by_wall, pos[0], pos[1], pos[2],
+                              dx / dist, dz / dist, speed * strafe.STRAFE_PACE * delta,
+                              delta, NPC_WALL_MARGIN)
+        if spot is True:
+            return False
+        if spot is False:
+            # Shut in that way too: a route round it from the next tick.
+            p["_blocked_ticks"] = int(p.get("_blocked_ticks", 0)) + 1
+            return True
+        npc.pos = [spot[0], pos[1], spot[1]]
+        p["_blocked_ticks"] = 0
+        # Sideways, but still looking where it is going.
+        face_heading(npc, dx, dz, delta)
+        return True
 
     # ============================================================== teleport
     def cave_entrances(self):
