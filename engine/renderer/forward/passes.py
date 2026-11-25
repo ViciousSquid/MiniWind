@@ -414,6 +414,8 @@ class PassesMixin:
             # Settled snow (0..1): a game sets ``snow_cover`` as it sets
             # ``sky_state``; none otherwise.
             snow_cover=float(getattr(self, 'snow_cover', 0.0) or 0.0),
+            # A game's district borders (game/districts.py), or None.
+            district_overlay=getattr(self, 'district_overlay', None),
         )
         # The terrain binds its own cube-maps (or placeholders) on the shadow
         # units: the next lit pass binds the renderer's again.

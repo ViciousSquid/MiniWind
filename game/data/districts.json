@@ -1,0 +1,28 @@
+{
+  "_comment": "The Vale's districts (game/districts.py). A point belongs to the district whose nearest seat scores lowest: distance from the point (moved by a gentle noise 'warp', so borders wander) to the seat, plus 'biome_bias' times how far the point is from the district's home biome (lowland, desert or snow), so districts keep to their own ground. A district may have several seats; seats of one district have no border between them. x and z are world units; 'bounds' is the land divided: min x, min z, max x, max z; 'terrain_seed' is the seed of the map's terrain they belong to (other maps have no districts). The borders are drawn by the terrain shader and stop at water. Run 'python -m game.tools.district_map' to see them on the world map. A mod's districts.json replaces any value it names (its 'districts' list replaces the whole list).",
+  "terrain_seed": 53092,
+  "bounds": [-40960.0, -40960.0, 40960.0, 40960.0],
+  "warp": 5000.0,
+  "warp_scale": 15000.0,
+  "seed": 1187,
+  "biome_bias": 11000.0,
+  "border": {"width": 30.0, "colour": [24, 22, 28], "alpha": 0.7, "cell": 160.0, "smoothing": 3},
+  "districts": [
+    {"id": "millbrook", "name": "Millbrook", "biome": "lowland", "seats": [[1000.0, 1500.0]],
+     "note": "The heart of the Vale: Millbrook and its windmill, the lakes of Mirrormere and Reedhollow, Hollin's Cross and the Old Mill."},
+    {"id": "greywood", "name": "Greywood", "biome": "desert", "seats": [[-14000.0, -6500.0]],
+     "note": "The scrub at the desert's edge: Greywood, Thornfield, Kingsfall Tower, Brackenford and Fenwick's Lodge."},
+    {"id": "ashby_reach", "name": "Ashby Reach", "biome": "desert", "seats": [[-9500.0, -24500.0]],
+     "note": "The northern desert: Ashby, Hunter's Rest, Heron Pool, Raven's Roost and the Gallows Crypt."},
+    {"id": "cairnmoor", "name": "Cairnmoor", "biome": "desert", "seats": [[-27000.0, 5000.0], [-19000.0, 27000.0]],
+     "note": "The western dunes: Cairnmoor Barrow, the Seven Sisters, Greyfen Tarn, the Drowned Chapel, the Bonepit, and Whisperdeep, where the Ember Wyrm sleeps."},
+    {"id": "elderbrook", "name": "Elderbrook", "biome": "lowland", "seats": [[1500.0, 23500.0]],
+     "note": "The pilgrims' south: Elderbrook, Kettlewick, the Moonwell, the Wanderer's Rest and the Webwood."},
+    {"id": "wyndham", "name": "Wyndham", "biome": "lowland", "seats": [[21000.0, 17500.0]],
+     "note": "The southeast: Wyndham Cross, Silkhollow, the Sunken Stones and the greenskin warcamp."},
+    {"id": "furrow_end", "name": "Furrow End", "biome": "lowland", "seats": [[24500.0, -3000.0]],
+     "note": "The eastern highlands and their farms: Furrow End, the Pilgrim's Lantern, the Ashen Circle and Rotfang Warren."},
+    {"id": "emberpeak", "name": "Emberpeak", "biome": "lowland", "seats": [[14000.0, -21500.0]],
+     "note": "The mountains above the sea: Emberpeak Pass, Frostcap Tor, Witch's Knoll and Stillwater Tarn."}
+  ]
+}

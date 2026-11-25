@@ -2114,6 +2114,7 @@ class MiniwindSession(SettlementLaw):
         self._show_prison_signs()      # the gaol is marked in the world
         self._refresh_roads(force=True)  # the road graph, built before anyone walks
         self._update_season()          # the wheat at its stage before grass is grown
+        self._install_districts()      # the overworld's districts and their borders
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -7350,6 +7351,44 @@ class MiniwindSession(SettlementLaw):
             pushers += [row for _d, row in near[:GRASS_PUSHERS - 1]]
         ter.set_grass_pushers(pushers)
         self._update_season(ter)
+
+    # -------------------------------------------------------------- districts
+    def _install_districts(self) -> None:
+        """The overworld's districts (game/districts.py), when this map is
+        the one they divide; their borders are drawn by the terrain shader
+        (:meth:`district_overlay`)."""
+        self.districts = None
+        try:
+            from . import districts
+            state = getattr(self.logic, "editor_state", None)
+            ter = fio.terrain(self.logic) if self.logic is not None else None
+            found = districts.load(
+                biome_weights=getattr(ter, "biome_weights_batch", None) if ter is not None else None,
+                water=districts.water_boxes(getattr(state, "brushes", None) or []))
+            if found.fits(getattr(state, "terrain_data", None)):
+                self.districts = found
+        except Exception as exc:              # never take the session down
+            print(f"[MiniWind] districts unavailable: {exc}")
+
+    def district_borders_enabled(self) -> bool:
+        """District borders drawn on the ground (GAME → "District borders",
+        or the console's ``districts on|off`` this session). On by default."""
+        over = self.__dict__.get("_district_borders")
+        return bool(over) if over is not None else self._game_flag("district_borders")
+
+    def district_overlay(self):
+        """What the terrain shader draws the borders from, or None."""
+        found = self.__dict__.get("districts")
+        if found is None or not self.district_borders_enabled():
+            return None
+        return found.overlay()
+
+    def district_at(self, pos):
+        """The district at *pos* (x, y, z), or None off the overworld."""
+        found = self.__dict__.get("districts")
+        if found is None or pos is None:
+            return None
+        return found.at(float(pos[0]), float(pos[2]))
 
     def _update_season(self, ter=None) -> None:
         """Grow the terrain's wheat to the clock's point in the farming year.

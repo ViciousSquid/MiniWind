@@ -403,6 +403,37 @@ def cmd_weather(ctx, args):
     return None
 
 
+def cmd_districts(ctx, args):
+    """districts [on|off] -- which district you stand in, and every district
+    (game/districts.py); ``on``/``off`` shows or hides the borders drawn on
+    the ground for this session (Settings › Game › District borders keeps
+    the choice)."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None or not hasattr(session, "district_borders_enabled"):
+        debug_log("Error", "districts: Play Mode only.")
+        return None
+    want = str(args or "").strip().lower()
+    if want in ("on", "off"):
+        session._district_borders = want == "on"
+        msg = f"District borders {'shown' if want == 'on' else 'hidden'}."
+        debug_log("Info", msg)
+        toast = getattr(ctx.main_window, "show_toast", None)
+        if toast is not None:
+            toast(msg)
+        return None
+    found = getattr(session, "districts", None)
+    if found is None:
+        debug_log("Info", "districts: this map has none (they divide the overworld).")
+        return None
+    here = session.district_at(session._player_pos()) if hasattr(session, "_player_pos") else None
+    debug_log("Info", f"districts: you are in {here.name if here else 'no district'}; borders "
+                      f"{'shown' if session.district_borders_enabled() else 'hidden'}.")
+    for d in found.districts:
+        seats = "; ".join(f"{x:+.0f}, {z:+.0f}" for x, z in d.seats)
+        debug_log("Info", f"  {d.name} ({d.biome}, seat {seats}): {d.note}")
+    return None
+
+
 def cmd_dragonfire(ctx, args):
     """dragonfire 1..4 -- the look of every fire, for this session.
 
@@ -826,6 +857,8 @@ COMMANDS = (
      "— Show/hide every head's view cone and blind spot (debug; settings.ini: [developer] view_cones)"),
     (("showsound",), cmd_showsound,
      "— Show/hide how far your noise carries, and shouts and fights near you (debug; settings.ini: [developer] show_sound)"),
+    (("districts", "district"), cmd_districts,
+     "[on|off] — Which district you are in, every district; show/hide their borders (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
      "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,

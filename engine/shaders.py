@@ -2078,6 +2078,19 @@ uniform highp vec4 uBiomeBounds;     // min x, min z, 1 / range x, 1 / range z
 // Settled snow over everything (a game's weather): 0 none .. 1 deep.
 uniform float uSnowCover;
 
+// District borders (a game's districts, game/districts.py): purely visual,
+// drawn here from the districts' seats. uDistrictSeats 0 turns them off.
+uniform int uDistrictSeats;
+uniform vec2 uDistrictSeat[24];
+uniform int uDistrictOf[24];         // each seat's district
+uniform int uDistrictBiome[16];      // each district's biome: 0 lowland, 1 desert, 2 snow
+uniform vec4 uDistrictWarp;          // warp, 1 / warp scale, biome bias, line width
+uniform uint uDistrictSeed;
+uniform vec4 uDistrictLine;          // colour, alpha
+uniform int uDistrictWaterCount;     // no border under these waters' surfaces
+uniform vec4 uDistrictWater[16];     // min x, min z, max x, max z
+uniform float uDistrictWaterTop[16];
+
 // Height texture layers. uHeightRange is the terrain's world-space height
 // range; uLayerHeights are the sand->grass, grass->rock and rock->snow
 // boundaries as fractions of it.
@@ -2136,6 +2149,69 @@ highp float noise(highp vec2 p) {
 }
 float fbm2(highp vec2 p) {
     return noise(p) * 0.6 + noise(p * 2.03 + 17.1) * 0.3 + noise(p * 4.1 + 5.3) * 0.1;
+}
+
+// The districts' warp noise: a 32-bit hash, exactly as game/districts.py.
+float districtHash(ivec2 i, uint salt) {
+    uint h = uint(i.x) * 374761393u + uint(i.y) * 668265263u + salt;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    return float(h & 0xFFFFFFu) / 16777215.0;
+}
+float districtNoise(highp vec2 p, uint salt) {
+    highp vec2 fl = floor(p);
+    highp vec2 f = p - fl;
+    highp vec2 u = f * f * (3.0 - 2.0 * f);
+    ivec2 i = ivec2(fl);
+    float a = districtHash(i, salt);
+    float b = districtHash(i + ivec2(1, 0), salt);
+    float c = districtHash(i + ivec2(0, 1), salt);
+    float d = districtHash(i + ivec2(1, 1), salt);
+    return a + (b - a) * u.x + (c - a) * u.y + (a - b - c + d) * u.x * u.y;
+}
+float districtFbm(highp vec2 p, uint salt) {
+    return ((districtNoise(p, salt) - 0.5) * 1.2
+          + (districtNoise(p * 2.03 + vec2(7.1, 3.3), salt + 2654435761u) - 0.5) * 0.6
+          + (districtNoise(p * 4.1 + vec2(1.7, 9.2), salt + 2u * 2654435761u) - 0.5) * 0.3) / 1.05;
+}
+// How strongly this fragment is a district border (0..1).
+float districtBorder(highp vec3 p) {
+    highp vec2 s = p.xz * uDistrictWarp.y;
+    highp vec2 wp = p.xz + uDistrictWarp.x * vec2(
+        districtFbm(s, uDistrictSeed),
+        districtFbm(s + vec2(31.7, -17.3), uDistrictSeed + 11u * 2654435761u));
+    // Without a biome map every point is every biome: no district is pulled.
+    float match[3] = float[3](1.0, 1.0, 1.0);
+    if (uBiomeEnabled == 1) {
+        highp vec2 uv = (p.xz - uBiomeBounds.xy) * uBiomeBounds.zw;
+        vec2 bw = (uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0)
+                ? texture(uBiomeMap, uv).rg : vec2(0.0);
+        match = float[3](clamp(1.0 - bw.x - bw.y, 0.0, 1.0), bw.x, bw.y);
+    }
+    float best = 1e20;
+    int bestD = -1;
+    for (int i = 0; i < uDistrictSeats; ++i) {
+        int d = uDistrictOf[i];
+        float e = distance(wp, uDistrictSeat[i]) + uDistrictWarp.z * (1.0 - match[uDistrictBiome[d]]);
+        if (e < best) { best = e; bestD = d; }
+    }
+    float second = 1e20;
+    for (int i = 0; i < uDistrictSeats; ++i) {
+        int d = uDistrictOf[i];
+        if (d == bestD) continue;
+        float e = distance(wp, uDistrictSeat[i]) + uDistrictWarp.z * (1.0 - match[uDistrictBiome[d]]);
+        second = min(second, e);
+    }
+    // The gap grows about two units for each unit away from the border.
+    float gap = second - best;
+    float aa = max(fwidth(gap), 1e-3);
+    float line = 1.0 - smoothstep(uDistrictWarp.w - aa, uDistrictWarp.w + aa, gap);
+    for (int i = 0; i < uDistrictWaterCount; ++i) {
+        vec4 r = uDistrictWater[i];
+        if (p.x >= r.x && p.x <= r.z && p.z >= r.y && p.z <= r.w && p.y < uDistrictWaterTop[i])
+            line = 0.0;
+    }
+    return line;
 }
 
 vec3 applyBiomes(vec3 base, highp vec3 p, float slope, float flatness) {
@@ -2308,6 +2384,11 @@ void main() {
         lie *= 1.0 - 0.75 * smoothstep(0.4, 0.7, faceSlope);
         vec3 snowLie = vec3(0.90, 0.93, 0.98) * mix(0.94, 1.03, sgrain);
         texColor = mix(texColor, snowLie, lie * 0.92);
+    }
+
+    // ---- District borders (purely visual; off when no seats) -----------
+    if (uDistrictSeats > 0) {
+        texColor = mix(texColor, uDistrictLine.rgb, uDistrictLine.a * districtBorder(FragPos));
     }
 
 // ---- Surface details ---------------------------------------------

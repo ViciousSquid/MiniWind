@@ -620,6 +620,10 @@ GAME_SETTINGS = (
      "Cloud, rain and storms come and go, and snow and blizzards in winter; "
      "rain puts fires out, and wet or snowy grass barely burns. Off: the sky "
      "stays clear.", True),
+    ("district_borders", "District borders",
+     "The borders between the Vale's districts are drawn on the ground as "
+     "thin dark lines. They are only a guide: crossing one changes nothing.",
+     True),
     ("torch_shadows", "Torch shadows",
      "Carried torches near you (the NEAR simulation distance) are dynamic "
      "lights that cast shadows. Costs some frame time; the renderer's shadow "
