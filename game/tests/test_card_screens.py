@@ -319,7 +319,8 @@ def test_level_up_choices_are_cards(session, drawn, w, h, full):
     assert [card.title for card in cards_] == [r[1] for r in screens._level_rows(c)]
     assert all(card.icon is not None and card.badges[1] == "+5" and not card.tooltip
                for card in cards_)
-    assert [card.desc for card in cards_] == [r[2] for r in screens._level_rows(c)]
+    # The description is in the pane beside the rows, not repeated on them.
+    assert all(not card.desc for card in cards_)
     # Click the third card, then confirm with the button.
     r = next(r for r, lab in targets if lab == "levelup:charisma")
     hits.click(r.center().x(), r.center().y())

@@ -545,14 +545,14 @@ def _cc_card(painter, field, item, rect, selected):
         k = classes.get(item)
         title, spec = k.label, k.specialisation
         summary = re.split(r"[:;,.]", k.desc, maxsplit=1)[0].strip()
-        desc = k.desc
+        desc = summary            # the full description is in the pane beside
         sub = spec + ("" if k.magic else " · no magic")
     else:
         b = birthsigns.get(item)
         title = b.label
         rest = b.desc[len(b.flavour):].strip() if b.desc.startswith(b.flavour) else b.desc
         summary = rest.split(". ")[0].rstrip(".")
-        desc = rest
+        desc = summary
         spec = {"warrior": "Combat", "mage": "Magic", "thief": "Stealth"}.get(item, "Magic")
         sub = ""
     return cards.Card(title=title, icon=icon, subtitle=sub, summary=summary, desc=desc,
@@ -1098,8 +1098,7 @@ def _quest_card(session, q, rect, *, selected, tracked):
            if q.chapter else
            str(q.giver).replace("_", " ").title() if q.giver else "")
     summary = "Completed" if complete else str(log.current_objective(q.id) or q.desc or "")
-    desc = summary if not q.desc or summary == q.desc else \
-        summary.rstrip(".") + ". " + str(q.desc)
+    desc = summary            # the quest's story is in the detail pane, not here
     return cards.Card(
         title=q.name, glyph="✓" if complete else "◈", subtitle=sub, summary=summary,
         desc=desc,
@@ -1492,8 +1491,9 @@ def _spell_card(painter, session, spell, *, selected, locked, rect, **overrides)
         title=spell.name,
         icon=_spell_card_icon(spell, cards.icon_px(painter, rect)),
         subtitle=f"{sk.label(spell.school)} · {str(spell.delivery).title()}",
-        summary=power[:1].upper() + power[1:] if power else spell.desc,
-        desc=(power[:1].upper() + power[1:] + ". " if power else "") + str(spell.desc or ""),
+        summary=power[:1].upper() + power[1:] if power else "",
+        # Only what it does; its description is in the pane beside the list.
+        desc=(power[:1].upper() + power[1:] + ".") if power else "",
         accent=_school_accent(spell.school),
         frame=_rarity_color(spell.rarity),
         badges=("", f"{cost} mp"),
@@ -2410,7 +2410,7 @@ def _draw_levelup(painter, session, w, h):
     for i, (choice, label, desc) in enumerate(rows):
         rect = grid.slots[i]
         cards.draw_card(painter, rect, _level_card(painter, c, choice, label, rect,
-                                                   st["row"] == i, desc))
+                                                   st["row"] == i))
         hits.add(QRect(rect), _levelup_pick(i), f"levelup:{choice}")
 
     # The highlighted choice: what it does, and what it would change.

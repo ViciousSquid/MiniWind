@@ -413,3 +413,18 @@ def test_every_known_spell_paints_at_both_screen_sizes(session):
                 break
             screens.handle_key(session, "pagedown")
         assert seen == set(magic.SPELLS)
+
+
+def test_a_spell_row_never_repeats_the_description_in_the_pane(session, monkeypatch):
+    """The pane beside the list has the spell's description; its row says only
+    what it does."""
+    drawn = []
+    real = cards.draw_card
+    monkeypatch.setattr(cards, "draw_card",
+                        lambda p, r, card: drawn.append(card) or real(p, r, card))
+    _paint(session, 1100, 578)
+    from game.rpg import magic
+    for card in drawn:
+        spell = next(sp for sp in (magic.get(sid) for sid in session.game.character.known_spells)
+                     if sp is not None and sp.name == card.title)
+        assert spell.desc not in (card.desc or "") and spell.desc not in (card.summary or "")
