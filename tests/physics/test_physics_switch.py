@@ -23,7 +23,7 @@ state = EditorState()
 state.brushes = [{'pos': [0.0, -50.0, 0.0], 'size': [2000.0, 100.0, 2000.0]}]
 state.things = [Prop(pos=[0.0, 200.0, 0.0], properties={
     'physics_enabled': True, 'no_collision': False,
-    'model_path': 'assets/models/Oil_Drum.obj', 'collision_shape': 'aabb'})]
+    'model_path': 'assets/models/Oak_Barrel.obj', 'collision_shape': 'aabb'})]
 logic = LogicThread(ThreadedGameState(), state)
 session = logic.session_runtime
 out = []

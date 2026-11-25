@@ -558,8 +558,43 @@ def test_a_brawl_never_runs_under_the_shortcut_bar():
     groups = hud._stack_roll_boxes(entries, 1280, 720, floor=610)
     shown = [e for g in groups for e in g]
     assert all(y >= 4 and y + layout["h"] <= 610 for _x, y, _sp, _b, layout, _p in shown)
-    assert len(shown) == 4                       # four 120 px boxes fit in 602 px
     assert any(b is mine[1] for _x, _y, _sp, b, _l, _p in shown)
+    rects = [_rect(e) for e in shown]
+    for i, (x, y, w, h) in enumerate(rects):     # nothing covers anything
+        for (x2, y2, w2, h2) in rects[i + 1:]:
+            assert min(x + w, x2 + w2) - max(x, x2) <= w * hud.ROLL_BOX_OVERLAP_OK or \
+                min(y + h, y2 + h2) - max(y, y2) <= h * hud.ROLL_BOX_OVERLAP_OK
+
+
+def test_the_players_attack_roll_sits_at_the_bottom_above_the_shortcut_bar():
+    """The player's own attack is not drawn over the fight: it is centred at
+    the foot of the screen, just above the bar (*floor*); their other rolls
+    stay over them, and everyone else's go to the column on the right."""
+    from ..ui import hud
+    attack = ((300.0, 200.0), {"result": {"label": "Roll to hit Bandit"}, "side": "you"},
+              _layout(280, 120))
+    save = ((300.0, 200.0), {"result": {"label": "Lockpicking"}, "side": "you"}, _layout(180, 90))
+    foe = ((700.0, 300.0), _box("Bandit rolls to hit you"), _layout(180, 120))
+    groups = hud._stack_roll_boxes([attack, save, foe], 1280, 720, floor=640,
+                                   dock="right", bottom=644 - hud.PLAYER_ATTACK_DOCK_GAP)
+    where = {e[3]["result"]["label"]: e for g in groups for e in g}
+    x, y, _sp, _b, lay, pointer = where["Roll to hit Bandit"]
+    assert x == (1280 - 280) // 2                                # centred
+    assert y + lay["h"] == 644 - hud.PLAYER_ATTACK_DOCK_GAP      # right above the bar
+    assert not pointer
+    sx, sy = where["Lockpicking"][:2]
+    assert sy + 90 < 200 and abs(sx + 90 - 300) < 120            # still over the player
+    assert where["Bandit rolls to hit you"][0] > 1280 - 12 - 300  # the right-hand column
+
+
+def test_the_players_attack_rolls_stack_up_from_the_foot_of_the_screen():
+    from ..ui import hud
+    one = ((300.0, 200.0), {"result": {"label": "Roll to hit Wolf"}, "side": "you"}, _layout(280, 120))
+    two = ((300.0, 200.0), {"result": {"label": "Roll to hit Wolf"}, "side": "you"}, _layout(280, 120))
+    (group,) = hud._stack_roll_boxes([one, two], 1280, 720)
+    (_x1, y1, *_), (_x2, y2, *_) = group
+    assert y2 == y1 + 120 + hud.ROLL_BOX_STACK_GAP                # the newest lowest
+    assert y2 + 120 == 720 - hud.PLAYER_ATTACK_DOCK_GAP            # no bar: the screen's foot
 
 
 def test_docked_rolls_are_one_column_of_one_width_on_the_right():

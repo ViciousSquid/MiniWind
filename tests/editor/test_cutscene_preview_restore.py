@@ -56,7 +56,7 @@ def test_preview_end_restores_real_actor_and_camera_and_consumes_baseline(
 ):
     wizard = cutscene_wizard
     actor = _actor("Actor", "actor", (10.0, 20.0, 30.0))
-    actor.angle = 5.0   # the facing the preview must hand back
+    actor.properties["angle"] = 5.0   # the facing the preview must hand back
     main_window.state.things.append(actor)
 
     wizard.actor_objects = {"actor": actor}
@@ -84,7 +84,7 @@ def test_preview_end_restores_real_actor_and_camera_and_consumes_baseline(
 
     wizard._preview_start()
     actor.pos = glm.vec3(900.0, 901.0, 902.0)
-    actor.angle = 93.0
+    actor.properties["angle"] = 93.0
     camera.pos = glm.vec3(903.0, 904.0, 905.0)
     camera.yaw = 94.0
     camera.pitch = 95.0
@@ -95,7 +95,7 @@ def test_preview_end_restores_real_actor_and_camera_and_consumes_baseline(
     wizard._preview_tick()
 
     assert list(actor.pos) == pytest.approx([10.0, 20.0, 30.0])
-    assert actor.angle == pytest.approx(5.0)
+    assert actor.properties["angle"] == pytest.approx(5.0)
     assert list(camera.pos) == pytest.approx(initial_camera["pos"])
     assert camera.yaw == pytest.approx(initial_camera["yaw"])
     assert camera.pitch == pytest.approx(initial_camera["pitch"])
@@ -112,7 +112,7 @@ def test_preview_play_pause_uses_the_real_qtimer_and_restores_state(
 ):
     wizard = cutscene_wizard
     actor = _actor("Actor", "actor", (10.0, 20.0, 30.0))
-    actor.angle = 5.0   # the facing the preview must hand back
+    actor.properties["angle"] = 5.0   # the facing the preview must hand back
     main_window.state.things.append(actor)
     wizard.actor_objects = {"actor": actor}
     wizard.actor_meta = {
@@ -136,7 +136,7 @@ def test_preview_play_pause_uses_the_real_qtimer_and_restores_state(
     assert wizard._preview_rate == 0.0
     assert not wizard._preview_timer.isActive()
     assert list(actor.pos) == pytest.approx([10.0, 20.0, 30.0])
-    assert actor.angle == pytest.approx(5.0)
+    assert actor.properties["angle"] == pytest.approx(5.0)
     assert wizard._preview_actor_baseline == {}
 
 

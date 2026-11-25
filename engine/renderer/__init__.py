@@ -8,10 +8,12 @@ The host (``QtGameView``) depends only on what this package exports:
 * the frame input (:data:`FRAME_INPUT`), :class:`RenderStats` and the
   selection descriptor (:class:`SelectionOverlay`, :class:`EffectBillboard`)
 * the registry: :func:`register_renderer`, :func:`create_renderer`,
-  :func:`available_renderers`, :data:`DEFAULT_RENDERER`
+  :func:`available_renderers`, :data:`DEFAULT_RENDERER`,
+  :func:`renderer_from_settings` (always Classic)
 
 Implementations live in subpackages and are reached through the registry:
-``forward`` is Fio's built-in renderer; ``core`` is optional infrastructure a
+``forward`` (Classic) is Fio's built-in renderer and the only one the host
+draws with; ``core`` is optional infrastructure a
 renderer may reuse. Importing this package needs no OpenGL.
 """
 
@@ -22,7 +24,8 @@ from .api import (
     contract_compatible, contract_violations, missing_members)
 from .registry import (
     RendererContractError, RendererInitError, DEFAULT_RENDERER, available_renderers, create_renderer, register_renderer,
-    renderer_factory, canonical_name)
+    renderer_factory, canonical_name, CLASSIC, classic_enforced, is_classic,
+    renderer_from_settings)
 
 __all__ = [
     'Renderer', 'RendererOptions', 'RENDERER_CONTRACT_VERSION', 'RENDERER_CONTRACT_VERSION_INFO',
@@ -32,4 +35,5 @@ __all__ = [
     'FRAME_INPUT', 'WATER_QUALITIES',
     'DEFAULT_RENDERER', 'register_renderer', 'create_renderer',
     'available_renderers', 'renderer_factory', 'canonical_name',
+    'CLASSIC', 'classic_enforced', 'is_classic', 'renderer_from_settings',
 ]

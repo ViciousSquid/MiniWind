@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import math
 
-from . import combat_loadout, npc_stamina
+from . import combat_loadout, npc_stamina, strafe
 
 #: Distances (min, max) each ranged style tries to fight from.
 KEEP_BAND = {combat_loadout.MAGIC: (300.0, 620.0), combat_loadout.BOW: (380.0, 820.0)}
@@ -108,10 +108,14 @@ class _State:
 class CombatTactics:
     """Per-session tactics (see the module doc)."""
 
-    def __init__(self, clock, nav=None, tier_of=None, busy=None):
+    def __init__(self, clock, nav=None, tier_of=None, busy=None, blocked=None):
         #: ``clock() -> seconds`` of unpaused play.
         self._clock = clock
         self._nav = nav
+        #: ``blocked(x, y, z) -> bool`` at the engine's chaser body margin
+        #: (:data:`~engine.monster_constants.MONSTER_WALL_MARGIN`): with it, a
+        #: chaser stopped by something small strafes round it (game/strafe.py).
+        self._blocked = blocked
         self._tier_of = tier_of
         #: ``busy(thing) -> bool``: mid-draw on a bow, so it stands still.
         self._busy = busy
@@ -136,7 +140,27 @@ class CombatTactics:
                                        [targets[i] for i in routed])
             for i, wp in zip(routed, sub or ()):
                 out[i] = wp
+        if routed and self._blocked is not None:
+            self._strafe(things, starts, targets, routed, out)
         return out
+
+    def _strafe(self, things, starts, targets, routed, out) -> None:
+        """Chasers heading straight for their foe (no route, no tactic) that
+        have run into something step round it sideways, still facing the foe
+        (Fio turns a chaser to its target, not to its waypoint)."""
+        from engine.monster_constants import MONSTER_MOVE_SPEED, MONSTER_WALL_MARGIN
+        now = self._clock()
+        for i in routed:
+            props = getattr(things[i], "properties", None)
+            if out[i] is not None or not isinstance(props, dict):
+                if isinstance(props, dict):
+                    props.pop(strafe.STATE, None)   # a route steers it now
+                continue
+            pace = float(props.get("_speed_scale", 1.0) or 1.0)
+            wp = strafe.chase(props, starts[i], targets[i], self._blocked,
+                              MONSTER_WALL_MARGIN, now, MONSTER_MOVE_SPEED * pace)
+            if wp is not None:
+                out[i] = wp
 
     def note_shot(self, thing) -> None:
         """A shot fell due for *thing* (the shot hook calls this)."""

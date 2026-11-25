@@ -318,7 +318,7 @@ def test_an_entity_parented_to_a_mover_is_left_to_its_parent(fio_session, monkey
 # A solid model in a group takes its collision with it
 # ---------------------------------------------------------------------------
 
-DRUM = "assets/models/Oil_Drum.obj"
+DRUM = "assets/models/Oak_Barrel.obj"
 CATWALK = "assets/models/catwalk_straight_160.obj"
 
 

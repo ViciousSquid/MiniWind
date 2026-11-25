@@ -1,10 +1,10 @@
 """
 The trade screen's motion: a bought or sold item flies across.
 
-When an item changes hands, a copy of its row lifts out of the column it was
-in and glides, in a shallow arc, to the row it becomes on the other side (or,
-when the other side has no row for it, to the foot of that column, where it
-fades into the stock). A row that only appears because of the trade stays
+When an item changes hands, a copy of its card (a row card) lifts out of the
+column it was in and glides, in a shallow arc, to the card it becomes on the
+other side (or, when the other side has none for it, to the next free place
+in that column, where it fades into the stock). A row that only appears because of the trade stays
 hidden until the card lands on it, so the item is seen to *move*, not to be
 in two places at once. The price floats up from the gold total.
 
@@ -101,12 +101,26 @@ def _ease(t):
     return t * t * (3.0 - 2.0 * t)
 
 
+def _draw_flying_card(painter, rect, flight):
+    """A flight drawn as the item's card (a row card in the list style),
+    lit as selected."""
+    import game.ui.cards as cards
+    import game.ui.theme as T
+    try:
+        import game.item_icons as item_icons
+        icon = item_icons.icon_pixmap(flight["item"], None, cards.icon_px(painter, rect.toRect()))
+    except Exception:
+        icon = None
+    cards.draw_card(painter, rect.toRect(), cards.Card(
+        title=flight["label"], icon=icon, badges=("", flight["price"]),
+        badge_colors=(None, T.GOLD_BRIGHT), selected=True))
+
+
 def draw(painter, now=None):
     """Paint every flight and gold floater in progress, dropping finished ones."""
     from PyQt5.QtCore import QRectF, Qt
-    from PyQt5.QtGui import QColor, QPen
+    from PyQt5.QtGui import QColor
     import game.ui.fonts as fonts
-    import game.ui.theme as T
 
     now = time.monotonic() if now is None else now
     with _lock:
@@ -143,16 +157,10 @@ def draw(painter, now=None):
         painter.drawRoundedRect(card.translated(3, 6 + 10 * math.sin(math.pi * t)), 4, 4)
 
         painter.setOpacity(alpha)
-        painter.setBrush(T.SELECT)
-        painter.setPen(QPen(T.GOLD_BRIGHT, 1.5))
-        painter.drawRoundedRect(card, 4, 4)
-        painter.setFont(fonts.dialogue_font(10))
-        painter.setPen(T.GOLD_BRIGHT)
-        painter.drawText(card.adjusted(8, 0, -8, 0),
-                         int(Qt.AlignVCenter | Qt.AlignLeft), f["label"])
-        painter.setPen(T.GOLD)
-        painter.drawText(card.adjusted(8, 0, -8, 0),
-                         int(Qt.AlignVCenter | Qt.AlignRight), f["price"])
+        # The trade screen's cards (game/ui/cards.py): the item's own card
+        # (a row card, or a portrait one in the grid style) flies, its
+        # price on it.
+        _draw_flying_card(painter, card, f)
 
     anchor = _gold_anchor
     if anchor is not None:

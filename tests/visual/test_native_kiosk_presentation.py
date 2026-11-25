@@ -401,7 +401,7 @@ def test_native_kiosk_is_only_a_presentation_surface(fio_session):
                                         "id": "ps", "primary": True}},
                         {"type": "prop", "pos": [0, 300, 0],
                          "properties": {"type": "prop", "id": "drum", "name": "drum",
-                                        "model_path": "assets/models/Oil_Drum.obj",
+                                        "model_path": "assets/models/Oak_Barrel.obj",
                                         "render_mode": "model", "physics_enabled": True,
                                         "no_collision": False, "scale": 1.0}}]}
     session = fio_session(level, size=SIZE)

@@ -10,16 +10,20 @@ raised and lit, its name shown above the bar.
 * click a slot (or press its number key) to select it; a weapon in it is
   taken in hand at once -- the main hand, or the off hand when the main hand
   is full -- and clicked again is put away. A spell (dragged here from the
-  spellbook) is readied in the left hand by a left click or its number key,
-  in the right hand by a right click or Shift and its number key; it then
-  casts on that hand's mouse button. Double-click anything else to use or
-  wear it;
+  spellbook) is taken up in the main hand and cast at once by a left
+  click or its number key, and whatever the main hand held takes its place
+  in the slot (the same key swaps them back); a right click or Shift and
+  its number key readies it in the off hand instead. It then casts on that
+  hand's mouse button. Double-click anything else to use or wear it;
 * drag a slot onto another to rearrange (the two swap); out over the world,
   it is dropped on the floor;
 * or click to pick something up -- anything but a weapon or spell, which a
   click readies -- and every slot lights up; a click on one puts it there.
   An item picked up in the character window or the spellbook is placed on
   the strip the same way;
+* right-click a stack of two or more to split it: its larger half is picked
+  up, and a click on an open chest or body puts that many in it (a right
+  click puts it back);
 * drag between the strip and the character window (C), a chest or a body:
   out of the strip into the pack takes it off the strip, onto the body wears
   it, into a container stores it; from any of them onto a slot puts it there
@@ -128,6 +132,19 @@ def _spell_of(stack):
         return magic.get(sid)
     except Exception:
         return None
+
+
+def _spellbook_hint(session):
+    """The plate an empty slot shows under the pointer, for a player who
+    knows a spell: the spellbook's key, and that its spells drag here."""
+    try:
+        if not getattr(session.game.character, "known_spells", None):
+            return ""
+        import game.host as host
+        key = str(getattr(host, "K_SPELLS", "p") or "p").upper()
+    except Exception:
+        return ""
+    return f"Spellbook ({key}): drag a spell here"
 
 
 def _bar_rect(rects):
@@ -244,10 +261,28 @@ class InventoryStrip(FloatingWindow):
         drag.set_zones(self, [(QRect(rect), ("strip", i)) for i, rect in enumerate(self._rects)])
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
-        # The selected slot's name, above the bar.
+        # The selected slot's name, above the bar -- not while the player's
+        # attack roll sits there (hud.player_attack_roll_shown).
         stack = self._slots[self.selected] if self.selected < len(self._slots) else None
-        if stack and dragged is None:
+        if (dragged is None and picked is None and 0 <= hovered < len(self._slots)
+                and not self._slots[hovered]):
+            # An empty slot under the pointer says where spells come from.
+            hint = _spellbook_hint(self.session)
+            if hint:
+                self._draw_name(painter, {"name": hint}, QColor(170, 200, 255))
+        elif stack and dragged is None and not self._roll_over_name():
             self._draw_name(painter, stack)
+        if (dragged is None and picked is None and 0 <= hovered < len(self._slots)
+                and self._slots[hovered] and _spell_of(self._slots[hovered]) is None
+                and getattr(self.session, "open_screen", None) is not None):
+            # With a menu open (the pointer free), a thing on the bar says
+            # what it is, as a card does: value, weight, how many.
+            from . import cards, screens
+            stack = self._slots[hovered]
+            cards.note_tooltip(self._rects[hovered], cards.Card(
+                title=str(stack.get("name") or stack.get("id")),
+                tooltip=screens._item_tip(stack)))
+            cards.flush_tooltip(painter)
         if self._locked and dragged is None:
             # A greyed spell says why: hovered by the pointer, or the slot a
             # gamepad has highlighted (the selected one).
@@ -259,7 +294,7 @@ class InventoryStrip(FloatingWindow):
             spell_lock.flush(painter)
         if mine:
             drag.draw_ghost(painter, self, hits.pointer, self._rects[0].width() - 8)
-        elif picked is not None:
+        elif picked is not None and not getattr(drag.picked.get("owner"), "draws_picked", False):
             # What a click picked up rides beside the pointer until placed.
             drag.draw_ghost(painter, self, (hits.pointer[0] + 22, hits.pointer[1] + 22)
                             if hits.pointer else None, 34, source=picked)
@@ -360,13 +395,19 @@ class InventoryStrip(FloatingWindow):
         if hot and not dragging:
             painter.fillRect(rect.adjusted(2, 2, -2, -2), QColor(255, 220, 160, 26))
 
-    def _draw_name(self, painter, stack):
+    def _roll_over_name(self) -> bool:
+        """Whether the player's attack roll is shown where the name goes."""
+        from . import hud
+        return hud.player_attack_roll_shown(self.session)
+
+    def _draw_name(self, painter, stack, colour=None):
         name = str(stack.get("name") or stack.get("id"))
-        try:
-            import game.rpg.items as items
-            colour = QColor(*items.RARITY_INFO[items.rarity_of(stack)]["rgb"])
-        except Exception:
-            colour = QColor(245, 240, 220)
+        if colour is None:
+            try:
+                import game.rpg.items as items
+                colour = QColor(*items.RARITY_INFO[items.rarity_of(stack)]["rgb"])
+            except Exception:
+                colour = QColor(245, 240, 220)
         painter.setFont(self.f_name)
         fm = painter.fontMetrics()
         tw = fm.horizontalAdvance(name) + 24
@@ -486,9 +527,17 @@ class InventoryStrip(FloatingWindow):
             return True
         if (i is not None and event.button() == Qt.RightButton
                 and _spell_of(stack) is not None):
-            # A spell's slot, right-clicked: readied in the right hand.
+            # A spell's slot, right-clicked: readied in the off hand.
             self.selected = i
-            hits.queue(lambda session: session.select_strip_slot(i, hand="right"))
+            hits.queue(lambda session: session.select_strip_slot(i, hand="off"))
+            return True
+        if (i is not None and event.button() == Qt.RightButton and stack
+                and drag.split_half(stack.get("qty", 1))):
+            # A stack, right-clicked: its larger half is picked up, to be put
+            # in a chest with a click there (a right click puts it back).
+            self.selected = i
+            drag.pick(self, ("strip", i, stack.get("id"),
+                             drag.split_half(stack.get("qty", 1))))
             return True
         if i is None or event.button() != Qt.LeftButton:
             return True               # the bar itself: swallowed, not a swing
@@ -523,7 +572,7 @@ class InventoryStrip(FloatingWindow):
         if not self._dragging:
             if _is_weapon(iid) or _spell_of(stack) is not None:
                 # A weapon goes in hand on the click itself; a spell in the
-                # left hand.
+                # main hand, and is cast.
                 hits.queue(lambda session: session.select_strip_slot(i))
                 self._last_click = (0.0, None)
                 return True

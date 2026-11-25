@@ -136,6 +136,92 @@ def _draw_title_card(painter, session, width, height):
     painter.restore()
 
 
+#: The key hints after character creation (game/key_hints.py): the key's
+#: picture (logical px), the gap to the word under it, and that word's height
+#: (px, so it keeps to the 64 px key on any screen's DPI).
+KEY_HINT_SIZE = 64
+KEY_HINT_GAP = 8
+KEY_HINT_FONT_PX = 30
+#: How far below the middle of the screen the hint sits (logical px).
+KEY_HINT_DROP = 100
+KEY_HINT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
+                                            "assets", "ui", "keys"))
+_KEY_IMAGES = {}
+
+
+def key_hint_image(letter):
+    """The keycap picture for *letter*: ``assets/ui/keys/key_<letter>.png``
+    when there is one, else the same keycap drawn by
+    :func:`game.tools.make_key_icons.draw_key`. Cached per letter."""
+    letter = str(letter)
+    if letter not in _KEY_IMAGES:
+        from PyQt5.QtGui import QImage
+        image = None
+        path = os.path.join(KEY_HINT_DIR, f"key_{letter.lower()}.png")
+        if os.path.exists(path):
+            loaded = QImage(path)
+            if not loaded.isNull():
+                image = loaded
+        if image is None:
+            try:
+                from ..tools.make_key_icons import draw_key
+                image = draw_key(letter)
+            except Exception:
+                image = None
+        _KEY_IMAGES[letter] = image
+    return _KEY_IMAGES[letter]
+
+
+def key_hint_rect(width, height):
+    """Where the key's picture goes: centred across the screen,
+    :data:`KEY_HINT_DROP` below its middle."""
+    s = KEY_HINT_SIZE
+    return QRectF((width - s) / 2.0, (height - s) / 2.0 + KEY_HINT_DROP, s, s)
+
+
+def draw_key_hints(painter, session, width, height, now=None):
+    """The key hint now due (game/key_hints.py): the key in the middle of the
+    screen, its word ("Inventory") centred under it, both at the hint's
+    fade. Nothing while a menu, conversation or the pause menu is up."""
+    import game.key_hints as key_hints
+    shown = key_hints.current(session, now)
+    if shown is None:
+        return
+    letter, caption, alpha = shown
+    draw_key_hint(painter, letter, caption, alpha, width, height)
+
+
+def draw_key_hint(painter, letter, caption, alpha, width, height):
+    """One key hint at opacity *alpha*."""
+    from PyQt5.QtGui import QPainter, QPainterPath, QBrush
+    import game.ui.fonts as fonts
+    rect = key_hint_rect(width, height)
+    painter.save()
+    painter.setOpacity(max(0.0, min(1.0, float(alpha))))
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    image = key_hint_image(letter)
+    if image is not None:
+        painter.drawImage(rect, image)
+    # The word under it: the game's medieval face (MedievalSharp, one
+    # weight, never bold), white with a dark outline and shadow.
+    font = fonts.dialogue_font_px(KEY_HINT_FONT_PX)
+    fm = QFontMetrics(font)
+    path = QPainterPath()
+    x = (width - fm.horizontalAdvance(caption)) / 2.0
+    y = rect.bottom() + KEY_HINT_GAP + fm.ascent()
+    path.addText(QPointF(x, y), font, caption)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(QColor(0, 0, 0, 120), 6.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.drawPath(path.translated(1.5, 2.0))          # soft drop shadow
+    painter.setPen(QPen(QColor(12, 12, 18, 235), 3.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.drawPath(path)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QBrush(QColor(255, 255, 255)))
+    painter.drawPath(path)
+    painter.restore()
+
+
 #: The bow-draw pie's radius, and how far it sits out from the player's head:
 #: tucked against its upper right edge, this fraction of the pie outside it.
 BOW_PIE_RADIUS = 14
@@ -322,6 +408,75 @@ def draw_bubbles(painter, session, viewport, width, height):
             _draw_bubble(painter, int(sp[0]), int(sp[1]), kind)
 
 
+#: Slow Time's tint at the edges of the screen: the spell icon's violet
+#: (runtime.SLOW_TIME_COLOUR); the alpha is the base its vignette builds on.
+SLOW_TIME_TINT = (166, 130, 234, 52)
+
+
+#: Slow Time's own edge effect: where the violet vignette starts (share of
+#: the half-diagonal; the middle stays clear), and the ring of clock ticks
+#: framing the view -- how many ticks, its inset from the edges (share of
+#: the shorter side), how bright, and how slowly it turns (degrees a second).
+SLOW_TIME_EDGE_FROM = 0.72
+SLOW_TIME_TICKS = 60
+SLOW_TIME_TICK_INSET = 0.05
+SLOW_TIME_TICK_ALPHA = 0.42
+SLOW_TIME_TICK_TURN = 2.5
+
+
+def draw_slow_time(painter, session, width, height, now=None):
+    """Slow Time at the edges of sight only -- the middle stays clear, and all
+    of it subtle: a thin violet vignette, breathing slowly, and a faint ring
+    of clock ticks framing the view (every fifth longer), turning slowly
+    with a soft glow drifting round it. Both fade in and out with the spell."""
+    tint = getattr(session, "slow_time_tint", None)
+    strength = tint() if tint is not None else 0.0
+    if strength <= 0.0:
+        return
+    import math
+    import time as _time
+    from PyQt5.QtGui import QRadialGradient, QPainter
+    t = _time.monotonic() if now is None else now
+    r, g, b, a = SLOW_TIME_TINT
+    breathe = 0.8 + 0.2 * math.sin(t * math.tau * 0.3)     # slow, gentle
+    w, h = int(width), int(height)
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    # The vignette: clear in the middle, the violet only at the very edges.
+    centre = QPointF(w / 2.0, h / 2.0)
+    reach = math.hypot(w, h) * 0.5
+    grad = QRadialGradient(centre, reach)
+    grad.setColorAt(0.0, QColor(r, g, b, 0))
+    grad.setColorAt(SLOW_TIME_EDGE_FROM, QColor(r, g, b, 0))
+    grad.setColorAt(0.9, QColor(r, g, b, int(min(255, a * 0.9) * strength * breathe)))
+    grad.setColorAt(1.0, QColor(r, g, b, int(min(255, a * 1.8) * strength * breathe)))
+    painter.fillRect(QRect(0, 0, w, h), grad)
+    # The clock: ticks on an ellipse just inside the edges, turning slowly.
+    inset = min(w, h) * SLOW_TIME_TICK_INSET
+    rx, ry = w / 2.0 - inset, h / 2.0 - inset
+    turn = math.radians(t * SLOW_TIME_TICK_TURN)
+    ink = QColor(min(255, r + 50), min(255, g + 50), min(255, b + 20))
+    for k in range(SLOW_TIME_TICKS):
+        ang = turn + math.tau * k / SLOW_TIME_TICKS
+        major = k % 5 == 0
+        length = min(w, h) * (0.03 if major else 0.014)
+        cx, cy = math.cos(ang), math.sin(ang)
+        # Outward along the ellipse's normal, so the ticks point at the edge.
+        nx, ny = cx / max(rx, 1.0), cy / max(ry, 1.0)
+        norm = math.hypot(nx, ny) or 1.0
+        nx, ny = nx / norm, ny / norm
+        x0, y0 = w / 2.0 + rx * cx, h / 2.0 + ry * cy
+        # A soft glow drifts slowly round the ring, brightening the ticks it
+        # passes and leaving the rest faint.
+        drift = 0.5 + 0.5 * math.cos(ang - t * 0.7)
+        c = QColor(ink)
+        c.setAlphaF(max(0.0, min(1.0, SLOW_TIME_TICK_ALPHA * strength
+                                 * (1.0 if major else 0.55) * (0.35 + 0.65 * drift ** 2))))
+        painter.setPen(QPen(c, 2.4 if major else 1.4, Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(QPointF(x0, y0), QPointF(x0 + nx * length, y0 + ny * length))
+    painter.restore()
+
+
 def draw_barks(painter, session, viewport, width, height):
     """What people are saying aloud, in a small plate over their heads: a
     guard's "Halt!", a traveller's greeting, a brigand's threat."""
@@ -335,11 +490,9 @@ def draw_barks(painter, session, viewport, width, height):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    import game.ui.fonts as fonts
-    font = fonts.dialogue_font(11)
-    fm = QFontMetrics(font)
     painter.save()
-    painter.setFont(font)
+    painter.setFont(_bark_font())
+    fm = painter.fontMetrics()           # as the words will be drawn, on this device
     painter.setRenderHint(painter.Antialiasing, True)
     for thing, text, left in barks[:8]:
         if _has_roll_box(session, thing):
@@ -350,9 +503,7 @@ def draw_barks(painter, session, viewport, width, height):
         if sp is None:
             continue
         alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
-        lines = _plate_lines(fm, text, PLATE_MAX_W - 16)
-        w = max(fm.horizontalAdvance(line) for line in lines) + 16
-        h = 6 + fm.height() * len(lines)
+        lines, w, h = _plate_box(fm, text, BARK_PAD_X)
         rect = QRect(int(sp[0] - w / 2), int(sp[1] - 4 - h), w, h)
         painter.setPen(QPen(QColor(168, 142, 84, alpha), 1))
         painter.setBrush(QColor(0, 0, 0, int(alpha * 0.72)))
@@ -375,14 +526,137 @@ BIG_FLOATS = {"LUCK!": (255, 214, 90), "UNLUCKY!": (170, 215, 100)}
 _FLOAT_INK = (214, 200, 255)
 
 
+#: A cast spell's icon over its caster's head (logical px), and the gap
+#: between the head and it.
+CAST_ICON_SIZE = 40
+CAST_ICON_GAP = 6
+#: The icon's glow: the halo's radius as a share of the icon, how much it
+#: breathes, and how strongly the picture is lit up over itself (emissive).
+CAST_ICON_GLOW = 1.5
+CAST_ICON_GLOW_PULSE = 0.06
+CAST_ICON_EMISSION = 0.6
+
+
+def _head_screen(glm, proj, view, thing, width, height):
+    """Where the top of *thing*'s head is on screen, or None."""
+    pos = thing.pos
+    head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
+    sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
+    if sp is None and thing.properties.get("is_player"):
+        # Seen from inside the player's own head (first person): over the
+        # middle of the view, where their head would be.
+        sp = (width * 0.5, height * 0.4)
+    return sp
+
+
+_BLOOMS = {}
+
+
+def _icon_bloom(pix):
+    """A soft, blurred copy of *pix* (shrunk and smoothly grown back), cached."""
+    key = pix.cacheKey()
+    bloom = _BLOOMS.get(key)
+    if bloom is None:
+        small = pix.scaled(max(1, pix.width() // 6), max(1, pix.height() // 6),
+                           Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        bloom = small.scaled(pix.width(), pix.height(), Qt.IgnoreAspectRatio,
+                             Qt.SmoothTransformation)
+        if len(_BLOOMS) > 64:
+            _BLOOMS.clear()
+        _BLOOMS[key] = bloom
+    return bloom
+
+
+def draw_cast_icons(painter, session, viewport, width, height, now=None):
+    """The icon of a spell just cast, glowing on top of its caster: 0.3 s
+    fading in, 1.5 s held, 0.25 s fading out (runtime.cast_icon_alpha).
+    Emissive -- a halo of the spell's colour round it and the picture lit
+    up additively, no shadow. Drawn before :func:`draw_floats`, whose words
+    ("*fizzled*") sit above it."""
+    if viewport is None or not hasattr(session, "live_cast_icons"):
+        return
+    icons = session.live_cast_icons(now)
+    if not icons:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    import math
+    import time as _time
+    from PyQt5.QtGui import QPainter, QRadialGradient
+    import game.rpg.magic as rpg_magic
+    t = _time.monotonic() if now is None else now
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    s = CAST_ICON_SIZE
+    for thing, sid, alpha in icons[:16]:
+        sp = _head_screen(glm, proj, view, thing, width, height)
+        spell = rpg_magic.get(sid)
+        if sp is None or spell is None:
+            continue
+        pix = _spell_icon_pixmap(spell, s * 2)        # sharp on high-DPI screens
+        if pix is None:
+            continue
+        a = max(0.0, min(1.0, float(alpha)))
+        cx, cy = sp[0], sp[1]
+        rect = QRectF(cx - s / 2.0, cy - s / 2.0, s, s)
+        colour = list(getattr(spell, "color", None) or (150, 200, 255))[:3]
+        glow = QColor(*[int(max(0, min(255, c))) for c in colour])
+        # The halo: the spell's light round it, breathing a little -- an aura
+        # of its colour, visible over a bright scene as well as a dark one.
+        pulse = 1.0 + CAST_ICON_GLOW_PULSE * math.sin(t * math.tau * 2.2 + id(thing) % 7)
+        r = s * CAST_ICON_GLOW * pulse
+        grad = QRadialGradient(QPointF(cx, cy), r)
+        for stop, share in ((0.0, 0.85), (0.38, 0.7), (0.6, 0.32), (0.82, 0.1), (1.0, 0.0)):
+            c = QColor(glow)
+            c.setAlphaF(share)
+            grad.setColorAt(stop, c)
+        painter.setOpacity(a)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(grad)
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+        # Its edge glows in the spell's light: a wide soft stroke, a bright one.
+        painter.setBrush(Qt.NoBrush)
+        for width_px, share in ((8.0, 0.45), (4.0, 0.7)):
+            c = QColor(glow.lighter(125))
+            c.setAlphaF(share)
+            painter.setPen(QPen(c, width_px, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawRoundedRect(rect, s * 0.14, s * 0.14)
+        # The picture, then lit from within: a blurred copy of it added over
+        # it, so its bright lines bloom.
+        painter.drawPixmap(rect, pix, QRectF(pix.rect()))
+        bloom = _icon_bloom(pix)
+        painter.setCompositionMode(QPainter.CompositionMode_Plus)
+        painter.setOpacity(a * CAST_ICON_EMISSION)
+        painter.drawPixmap(rect.adjusted(-s * 0.08, -s * 0.08, s * 0.08, s * 0.08), bloom,
+                           QRectF(bloom.rect()))
+        painter.drawPixmap(rect, pix, QRectF(pix.rect()))
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    painter.restore()
+
+
+def _cast_icon_lift(session, viewport=None, width=0, height=0):
+    """``{id(thing): px}``: how far a head's floating words rise to clear the
+    cast icon glowing on top of it."""
+    try:
+        icons = session.live_cast_icons()
+    except Exception:
+        return {}
+    return {id(thing): CAST_ICON_SIZE / 2.0 + CAST_ICON_GAP for thing, _sid, _a in icons}
+
+
 def draw_floats(painter, session, viewport, width, height):
     """Words floating up from a head and fading, such as "+1 wheat" or
-    "*fizzled*" over a caster."""
+    "*fizzled*" over a caster -- above a cast spell's icon there."""
     if viewport is None:
         return
     floats = session.live_floats() if hasattr(session, "live_floats") else ()
     if not floats:
         return
+    lift = _cast_icon_lift(session, viewport, width, height)
     try:
         import glm
         proj, view = viewport.projection_matrix, viewport.view_matrix
@@ -397,15 +671,10 @@ def draw_floats(painter, session, viewport, width, height):
     painter.setFont(font)
     painter.setRenderHint(painter.Antialiasing, True)
     for thing, text, left, total in floats[:12]:
-        pos = thing.pos
-        head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
-        sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
-        if sp is None and thing.properties.get("is_player"):
-            # Seen from inside the player's own head (first person): over
-            # the middle of the view, where their head would be.
-            sp = (width * 0.5, height * 0.4)
+        sp = _head_screen(glm, proj, view, thing, width, height)
         if sp is None:
             continue
+        sp = (sp[0], sp[1] - lift.get(id(thing), 0))
         age = max(0.0, min(1.0, 1.0 - left / max(0.01, total)))
         alpha = int(255 * max(0.0, min(1.0, left / 0.5)))
         crit = text == CRIT_FLOAT_TEXT or text in BIG_FLOATS
@@ -606,6 +875,22 @@ def shows_roll_boxes(session) -> bool:
     return session.open_screen is None or session.open_screen in ROLL_BOX_SCREENS
 
 
+def player_attack_roll_shown(session) -> bool:
+    """Whether the player's own attack roll is on screen at the bottom
+    (:data:`PLAYER_ATTACK_DOCK`): the shortcut bar hides the selected
+    slot's name meanwhile, so the box sits right above the bar."""
+    if PLAYER_ATTACK_DOCK != "bottom":
+        return False
+    try:
+        if not shows_roll_boxes(session):
+            return False
+        return any(_box_side(b) == "you" and _is_attack(b)
+                   and getattr(b.get("actor"), "pos", None) is not None
+                   for b in _screen_roll_boxes(session))
+    except Exception:
+        return False
+
+
 def _keep_clear_rects(session, width, height):
     """``[(x, y, w, h)]`` a roll box over its roller moves clear of: the
     open conversation's or screen's window (drawn over the boxes) and the
@@ -665,9 +950,14 @@ def draw_roll_boxes(painter, session, viewport, width, height):
     except Exception:
         pass
     floor = height
+    bottom = None
     try:
         if not layout.collapsed("strip"):
-            floor = int(layout.screen_rect("strip", width, height).top()) - 4
+            strip_top = int(layout.screen_rect("strip", width, height).top())
+            floor = strip_top - 4
+            # The player's own attack sits right above the bar: the bar hides
+            # the selected slot's name while it shows (player_attack_roll_shown).
+            bottom = strip_top - PLAYER_ATTACK_DOCK_GAP
     except Exception:
         floor = height
     dock_top = 8
@@ -678,7 +968,8 @@ def draw_roll_boxes(painter, session, viewport, width, height):
         dock_top = 8
     groups = _stack_roll_boxes(anchored, width, height, stack=stack, floor=floor,
                                dock=ROLL_STACK_DOCK, dock_top=dock_top,
-                               avoid=_keep_clear_rects(session, width, height))
+                               avoid=_keep_clear_rects(session, width, height),
+                               bottom=bottom)
     for group in groups:               # the lines first, under every box
         for bx, by, sp, box, lay, _pointer in group:
             if lay.get("docked"):
@@ -698,6 +989,12 @@ ROLL_BOX_STACK_GAP = 1      # stacked boxes sit locked together
 #: edge of the screen, out of the fight's way (the player's own stays over
 #: the player); None, each over its roller, stacked where they meet.
 ROLL_STACK_DOCK = "right"
+#: Where the player's own attack rolls go: "bottom", centred at the foot of
+#: the screen just above the shortcut bar, out of the fight's way; None,
+#: over the player like their other rolls.
+PLAYER_ATTACK_DOCK = "bottom"
+#: The gap between the bottom-docked rolls and the shortcut bar.
+PLAYER_ATTACK_DOCK_GAP = 6
 #: A docked box's width: the roller's name on one line, what they roll for
 #: on the next, so the column stays narrow however long the names.
 ROLL_DOCK_W = 210
@@ -715,7 +1012,7 @@ def _is_attack(box) -> bool:
 
 
 def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
-                      dock=None, dock_top=8, avoid=()):
+                      dock=None, dock_top=8, avoid=(), bottom=None):
     """Lay the boxes out: each right over its roller, a slight overlap
     allowed; boxes closer than that join one stack over their rollers, the
     attacker's roll always at the top (with *stack* off -- Settings > Game >
@@ -780,6 +1077,15 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
         # them -- even when one touched another's box before docking.
         order = [[i for i in m if _box_side(anchored[i][1]) == "you"] for m in order]
         order = [m for m in order if m]
+    if PLAYER_ATTACK_DOCK == "bottom":
+        # The player's own attacks: at the foot of the screen, not over them.
+        mine = [i for m in order for i in m
+                if _box_side(anchored[i][1]) == "you" and _is_attack(anchored[i][1])]
+        if mine:
+            base = bottom if bottom is not None else height - PLAYER_ATTACK_DOCK_GAP
+            groups.append(_bottom_dock(anchored, natural, width, base, mine, placed))
+            order = [[i for i in m if i not in mine] for m in order]
+            order = [m for m in order if m]
     for members in order:
         # Attacks on top, then the rest (saves), each in roll order.
         members.sort(key=lambda i: (not _is_attack(anchored[i][1]), i))
@@ -836,6 +1142,30 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
         placed.append((int(centre - widest / 2), int(chosen[1]), int(widest), int(total)))
         groups.append(group)
     return groups
+
+
+def _bottom_dock(anchored, natural, width, base, members, placed):
+    """The player's own attack rolls centred at the bottom of the screen,
+    the newest lowest, stacked up from *base* (just above the shortcut
+    bar); as many as fit. No pointer: they are the
+    player's."""
+    members = sorted(members)
+    room = base - 4
+    while len(members) > 1 and (sum(natural[i][3] for i in members)
+                                + ROLL_BOX_STACK_GAP * (len(members) - 1)) > room:
+        members.pop(0)                  # the oldest gives way
+    total = sum(natural[i][3] for i in members) + ROLL_BOX_STACK_GAP * (len(members) - 1)
+    y = int(max(4, base - total))
+    top, widest, group = y, 0, []
+    for i in members:
+        sp, box, lay = anchored[i]
+        w, h = lay["w"], lay["h"]
+        x = int(max(4, min(width - w - 4, width / 2 - w / 2)))
+        group.append((x, y, sp, box, lay, False))
+        widest = max(widest, w)
+        y += h + ROLL_BOX_STACK_GAP
+    placed.append((int(width / 2 - widest / 2), top, int(widest), int(y - top)))
+    return group
 
 
 def _docked_column(anchored, natural, width, height, top, placed):
@@ -1206,6 +1536,33 @@ def _plate_lines(fm, text, max_w, max_lines=2):
     return [fm.elidedText(l, Qt.ElideRight, max_w) for l in lines]
 
 
+#: Speech and thought plates: how many lines before the rest is cut short,
+#: and the room around the words (px).
+PLATE_MAX_LINES = 4
+PLATE_PAD_Y = 6
+BARK_PAD_X = 10
+THOUGHT_PAD_X = 14
+BARK_FONT_PT = 11
+THOUGHT_FONT_PT = 10
+#: Between a speech plate's top and the thought bubble above it (px).
+THOUGHT_OVER_BARK_GAP = 6
+
+
+def _plate_box(fm, text, pad_x):
+    """``(lines, w, h)`` of a speech or thought plate saying *text* in a font
+    measured by *fm*: wrapped to :data:`PLATE_MAX_W`, up to
+    :data:`PLATE_MAX_LINES` lines, with the padding round it."""
+    lines = _plate_lines(fm, text, PLATE_MAX_W - 2 * pad_x, max_lines=PLATE_MAX_LINES)
+    w = max(fm.horizontalAdvance(line) for line in lines) + 2 * pad_x
+    h = 2 * PLATE_PAD_Y + fm.lineSpacing() * len(lines)
+    return lines, w, h
+
+
+def _bark_font():
+    import game.ui.fonts as fonts
+    return fonts.dialogue_font(BARK_FONT_PT)
+
+
 #: Thought bubbles: a pale cloud trailing two small puffs down to the
 #: head, so a thought never reads as something said aloud (draw_barks).
 _THOUGHT_FILL = (232, 232, 244)
@@ -1227,12 +1584,16 @@ def draw_thoughts(painter, session, viewport, width, height):
     except Exception:
         return
     import game.ui.fonts as fonts
-    font = fonts.dialogue_font(10)
-    fm = QFontMetrics(font)
-    speaking = {id(thing) for thing, _t, _l in
+    # What each one is saying aloud: the thought goes above that plate.
+    speaking = {id(thing): text for thing, text, _l in
                 (session.live_barks() if hasattr(session, "live_barks") else ())}
     painter.save()
-    painter.setFont(font)
+    bark_fm = None
+    if speaking:
+        painter.setFont(_bark_font())
+        bark_fm = painter.fontMetrics()
+    painter.setFont(fonts.dialogue_font(THOUGHT_FONT_PT))
+    fm = painter.fontMetrics()           # as the words will be drawn, on this device
     painter.setRenderHint(painter.Antialiasing, True)
     r, g, b = _THOUGHT_FILL
     for thing, text, left in thoughts[:8]:
@@ -1244,10 +1605,14 @@ def draw_thoughts(painter, session, viewport, width, height):
         if sp is None:
             continue
         alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
-        cx, cy = int(sp[0]), int(sp[1]) - (30 if id(thing) in speaking else 0)
-        lines = _plate_lines(fm, text, PLATE_MAX_W - 22)
-        w = max(fm.horizontalAdvance(line) for line in lines) + 22
-        h = 6 + fm.height() * len(lines)
+        cx, cy = int(sp[0]), int(sp[1])
+        said = speaking.get(id(thing))
+        if said is not None and bark_fm is not None:
+            # Above the speech plate, however many lines it runs to (its
+            # bottom is 4 px over the head point, see draw_barks); the puffs
+            # end at cy.
+            cy -= 4 + _plate_box(bark_fm, said, BARK_PAD_X)[2] + THOUGHT_OVER_BARK_GAP
+        lines, w, h = _plate_box(fm, text, THOUGHT_PAD_X)
         rect = QRect(cx - w // 2, cy - 16 - h, w, h)
         painter.setPen(QPen(QColor(120, 116, 150, alpha), 1))
         painter.setBrush(QColor(r, g, b, int(alpha * 0.92)))

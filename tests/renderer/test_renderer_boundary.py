@@ -92,8 +92,8 @@ def test_importing_the_public_package_loads_no_gl():
     subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True)
 
 
-#: The renderers Fio ships, each a package of its own.
-BUILT_IN = ("forward", "hd_high")
+#: The renderers Fio ships, each a package of its own: Classic only.
+BUILT_IN = ("forward",)
 
 #: What drives a renderer and what the world is edited and simulated in: the
 #: viewport and its parts, the logic thread and its runtimes, the editor, the
@@ -116,10 +116,8 @@ def test_core_never_reaches_into_a_renderer():
                           tuple("engine.renderer." + name for name in BUILT_IN))
 
 
-@pytest.mark.parametrize("name", BUILT_IN)
-def test_a_built_in_renderer_imports_nothing_of_the_other(name):
-    others = tuple("engine.renderer." + other for other in BUILT_IN if other != name)
-    assert not _offenders(_package(name), others)
+def test_hd_high_is_not_a_package_any_more():
+    assert not (PACKAGE / "hd_high").exists()
 
 
 def _code_text(path):
@@ -148,12 +146,11 @@ def _code_text(path):
     return "\n".join(words)
 
 
-@pytest.mark.parametrize("name", BUILT_IN)
-def test_a_built_in_renderer_names_nothing_of_the_other(name):
-    """Not by import, and not by a name or a string it could look the other
+@pytest.mark.parametrize("name", BUILT_IN + ("core",))
+def test_no_renderer_names_the_removed_hd_high(name):
+    """Not by import, and not by a name or a string it could look HD_High
     up with while it runs."""
-    words = {"forward": ("hd_high", "HDHighRenderer", "HD_High"),
-             "hd_high": ("renderer.forward", "ForwardRenderer")}[name]
+    words = ("hd_high", "HDHighRenderer", "HD_High")
     for path in _package(name):
         text = _code_text(path)
         for word in words:
@@ -310,7 +307,7 @@ def test_nothing_outside_the_contract_is_read_from_a_renderer():
     and measure its internals, which is what they are for."""
     known = _protocol_members() | _options(ast.FunctionDef) | _options(ast.AnnAssign)
     # Names of the package itself, reached as ``engine.renderer.<name>``.
-    package = {"core", "api", "registry", "forward", "hd_high"} | {
+    package = {"core", "api", "registry", "forward"} | {
         name for name in ast.literal_eval(next(
             ast.unparse(node.value) for node in ast.parse(
                 (PACKAGE / "__init__.py").read_text(encoding="utf-8")).body
@@ -429,8 +426,6 @@ AUTHORED_ATTRIBUTES = {
 RESOURCE_BUILDERS = {
     # A model's draw groups, resolved once per loaded model.
     ("core/resources.py", "_model_draw_groups"): {"materials", "groups"},
-    # HD_High's own resolution of the same groups, with their surface values.
-    ("hd_high/core_ext.py", "model_draw_groups"): {"materials", "groups"},
     # A convex brush's mesh, built when its geometry handle is first resolved
     # (only when the table's geometry_version has moved).
     ("core/geometry.py", "tessellate_geo"): {"convex"},
@@ -443,7 +438,6 @@ RESOURCE_BUILDERS = {
 AUTHORED_KEYS = {"mtl_dir", "material", "textures", "is_trigger", "is_mover"}
 AUTHORED_KEY_READERS = {
     ("core/resources.py", "_model_draw_groups"),      # group['material']
-    ("hd_high/core_ext.py", "model_draw_groups"),     # the same, for HD_High
     ("core/resources.py", "_resolve_model_texture_path"),   # on a texture miss
 }
 

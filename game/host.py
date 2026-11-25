@@ -70,8 +70,8 @@ K_MAP = "m"
 K_QUEST = "q"          # show the current quest (objective + how to complete)
 #: Number keys that pick a slot on the inventory strip: '1' the first, and so
 #: on, as numbered under the slots. A weapon there is taken in hand at once;
-#: a spell is readied in the left hand (Shift: the right hand). Nine is
-#: plenty and leaves '0' free.
+#: a spell is taken up in the main hand and cast (Shift: readied in the off
+#: hand). Nine is plenty and leaves '0' free.
 WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 #: How long E stays ignored after it opened a screen, when the held-key
 #: snapshot never showed it down (a very quick tap), seconds.
@@ -831,6 +831,69 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
         host.on("render.pre_sprites", self._on_pre_sprites)
         host.on("render.pre_scene", self._on_pre_scene)
+        # Fio's cutscenes: lines said and thought on a keyframe, and the combat
+        # of a cutscene battle while the cutscene holds the game's own tick.
+        host.on("cutscene.line", self._on_cutscene_line)
+        host.on("cutscene.tick", self._on_cutscene_tick)
+        host.on("cutscene.played", self._on_cutscene_played)
+        host.on("cutscene.cast", self._on_cutscene_cast)
+        host.on("cutscene.order", self._on_cutscene_order)
+        host.on("cutscene.spawned", self._on_cutscene_spawned)
+        host.on("cutscene.started", self._on_cutscene_started)
+
+    @staticmethod
+    def _cutscene_session(ev):
+        return getattr(getattr(ev, "logic", None), "_miniwind", None)
+
+    def _on_cutscene_line(self, ev):
+        """A cutscene's SAY / THINK keyframe: the line over the actor's head."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.cutscene_line(ev.get("kind"), ev.get("actor"), ev.get("text"),
+                                  ev.get("seconds"))
+
+    def _on_cutscene_played(self, ev):
+        """A "play once" cutscene has played: the save remembers it, so it
+        stays played across level changes and loads."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.remember_cutscene(ev.get("id"))
+
+    def _on_cutscene_cast(self, ev):
+        """A cutscene CAST: the actor casts the spell; whoever it raises
+        fights on its side in its battle."""
+        session = self._cutscene_session(ev)
+        caster = ev.get("actor")
+        if session is None or caster is None:
+            return
+        raised = session.cutscene_cast(caster, ev.get("spell"), ev.get("target"))
+        runtime = getattr(ev.logic, "cutscene_runtime", None)
+        for newcomer in raised or ():
+            if runtime is not None:
+                runtime.join_side(newcomer, caster)
+
+    def _on_cutscene_order(self, ev):
+        """A cutscene rule's order the game carries out (FLEE)."""
+        session = self._cutscene_session(ev)
+        if session is not None and ev.get("order") == "flee" and ev.get("actor") is not None:
+            session.cutscene_flee(ev.get("actor"), ev.get("threat"))
+
+    def _on_cutscene_started(self, ev):
+        """A cutscene begins: the chatter that was up is dropped."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.cutscene_started()
+
+    def _on_cutscene_spawned(self, ev):
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.prepare_cutscene_actors(ev.get("actors") or [])
+
+    def _on_cutscene_tick(self, ev):
+        """A cutscene battle is on: run the game's combat for it."""
+        session = self._cutscene_session(ev)
+        if session is not None:
+            session.cutscene_tick(float(ev.get("delta") or 0.0))
 
     def _on_pre_scene(self, ev):
         """Update MiniWind's weather and grass wind before the world is drawn.
@@ -879,7 +942,8 @@ class MiniwindGame:
     def _on_post_scene(self, ev):
         """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
         flight and their fading flight paths (game/ui/arrows.py), and last the
-        fisheye lenses of heavy spell impacts, which bend all of it."""
+        fisheye lenses of heavy spell impacts and of a Slow Time caster's
+        bubble, which bend all of it."""
         if not ev.get("play_mode"):
             return
         host = getattr(self, "_host", None)
@@ -903,8 +967,24 @@ class MiniwindGame:
                 arrow_art.draw_paths(projection, view, paths)
             if arrows:
                 arrow_art.draw_arrows(projection, view, arrows)
+        stuck = getattr(getattr(session, "stuck_arrows", None), "drawn", ())
+        if stuck:
+            # Arrows left sticking out of barrels (game/stuck_arrows.py).
+            import game.ui.arrows as arrow_art
+            arrow_art.draw_stuck(projection, view, stuck)
+        grey = 0.0
+        slow = getattr(session, "slow_time_lenses", None)
+        bubbles = slow() if slow is not None else ()
+        if bubbles:
+            # Every Slow Time caster's fisheye bubble (game/slow_time.py),
+            # first among the lenses; the world outside all of them drained
+            # to greyscale while any lasts.
+            grey = float(session.slow_time_tint())
+            lenses = list(bubbles) + list(lenses or ())
+            if fx is None:
+                import game.ui.magic_gl as magic_gl
         if lenses:
-            magic_gl.draw_lenses(projection, view, lenses)
+            magic_gl.draw_lenses(projection, view, lenses, grey=grey)
         # Rain on the camera's glass, over everything in the world
         # (game/lens_water.py).
         water = getattr(session, "lens_water", None)
@@ -925,6 +1005,11 @@ class MiniwindGame:
         cfg = dict(settings.properties) if settings is not None else {}
         from .multiplayer.lobby import active as active_party
         party_lobby = active_party()
+        if party_lobby is None:
+            # A save being loaded (pause menu, death screen, the launcher's
+            # CONTINUE): its character, after the map's store resets.
+            from .ui.pause_actions import apply_pending_store
+            apply_pending_store()
         if party_lobby is not None:
             cfg["coop_legacy_store"] = cfg.get("state_store","miniwind")
             cfg["state_store"] = "miniwind.coop." + party_lobby.state["campaign_id"]
@@ -935,6 +1020,12 @@ class MiniwindGame:
         meadow.apply(fio.terrain(logic))      # the odd tuft about the land
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
+        # The story cutscenes already played stay played (Fio's triggers), and
+        # every cutscene camera looks straight down, as the game does.
+        runtime = getattr(logic, "cutscene_runtime", None)
+        if runtime is not None:
+            runtime.played.update(session.played_cutscenes())
+            runtime.top_down = True
         if party_lobby is not None:
             from .multiplayer.session import CoopSession
             CoopSession(session, party_lobby, cfg)
@@ -1013,6 +1104,12 @@ class MiniwindGame:
         inspector.cancel_focus_on_move(logic, ctx)
 
         just = self._just_pressed(ctx)
+        # The inventory / spellbook key hides its hint (game/key_hints.py), by
+        # the keys they are bound to now.
+        if just and getattr(session, "key_hints", None) is not None:
+            import game.key_hints as key_hints
+            key_hints.note_keys(session, just, {"inventory": K_INVENTORY,
+                                                "spells": K_SPELLS})
 
         # While a modal screen (character creation, inventory, journal…) or a
         # conversation is open, the *world* is frozen: hold MiniWind's own
@@ -1141,14 +1238,16 @@ class MiniwindGame:
         # Number keys pick a slot on the inventory strip; a weapon in it is
         # taken in hand at once -- the main hand, or the off hand when the
         # main hand is full -- and pressing it again puts it away. A spell
-        # there is readied in the left hand, or with Shift the right hand,
-        # and then casts on that hand's mouse button.
+        # there is taken up in the main hand and cast at once, whatever the
+        # main hand held going into its slot; with Shift it is readied in
+        # the off hand instead. Either way it then casts on that hand's
+        # mouse button.
         for slot in WEAPON_SLOT_KEYS:
             if slot in just:
                 down = getattr(ctx, "key_down", None)
                 shift = bool(down and down("shift"))
                 session.select_strip_slot(int(slot) - 1,
-                                          hand="right" if shift else None)
+                                          hand="off" if shift else None)
                 break
         if K_SNEAK in just:
             session.toggle_sneak()
@@ -1274,6 +1373,19 @@ class MiniwindGame:
         # loot, with the same key (whichever is nearer).
         container = session.nearest_container(player.pos, TALK_RADIUS)
         corpse = session.nearest_corpse(player.pos, TALK_RADIUS)
+        # Or a barrel with arrows stuck in it, when it is the nearest of them:
+        # E pulls them all out into the pack (game/stuck_arrows.py).
+        stuck = getattr(session, "stuck_arrows", None)
+        barrel = stuck.nearest(player.pos) if stuck is not None else None
+        if barrel is not None and all(
+                other is None or _dist2(player.pos, barrel.pos) < _dist2(player.pos, other.pos)
+                for other in (corpse, container)):
+            prompt = f"[{controls.label('interact')}] {stuck.prompt(barrel)}"
+            ctx.set_prompt(prompt, priority=5)
+            session.interact_prompt = prompt
+            if K_INTERACT in just or ctx.use_pressed:
+                stuck.pull(barrel)
+            return
         if corpse is not None and (container is None or _dist2(player.pos, corpse.pos)
                                    < _dist2(player.pos, container.pos)):
             prompt = f"[{controls.label('interact')}] Loot {session.corpse_name(corpse)}"
@@ -1393,6 +1505,14 @@ class MiniwindGame:
                 self._sync_loadout_window(session, viewport, w, h)
                 self._sync_strip_window(session, viewport, w, h, cutscene=True)
                 self._sync_hud_window(session, viewport, w, h, cutscene=True)
+                # What the cutscene's actors say and think, and its battle's
+                # drawn bows and floating words -- the story, not the HUD.
+                hud.draw_slow_time(painter, session, w, h)
+                hud.draw_npc_bow_charges(painter, session, viewport, w, h)
+                hud.draw_barks(painter, session, viewport, w, h)
+                hud.draw_thoughts(painter, session, viewport, w, h)
+                hud.draw_cast_icons(painter, session, viewport, w, h)
+                hud.draw_floats(painter, session, viewport, w, h)
                 hud.draw_fade(painter, session, w, h)
                 return
             # The non-modal loadout popup (weapons + spells) lives alongside the
@@ -1439,6 +1559,8 @@ class MiniwindGame:
                 if now - getattr(session, "_worldmap_checked_at", -1e9) >= 1.0:
                     session._worldmap_checked_at = now
                     worldmap.ensure_for(logic, viewport)
+                # Slow Time tints the world icy blue, under the HUD.
+                hud.draw_slow_time(painter, session, w, h)
                 # The HUD takes HUD_SHAKE of a screen shake (none, by default).
                 jolt = _hud_jolt(session, h)
                 painter.translate(*jolt)
@@ -1464,6 +1586,7 @@ class MiniwindGame:
                     hud.draw_bubbles(painter, session, viewport, w, h)
                     hud.draw_barks(painter, session, viewport, w, h)
                     hud.draw_thoughts(painter, session, viewport, w, h)
+                    hud.draw_cast_icons(painter, session, viewport, w, h)
                     hud.draw_floats(painter, session, viewport, w, h)
                     hud.draw_player_block(painter, session, viewport, w, h)
                 # Roll boxes over a conversation, a search or a lock too:
@@ -1476,6 +1599,10 @@ class MiniwindGame:
                 # "!" / "?" over heightened NPCs (a guard coming to arrest
                 # the player); shown in conversation too.
                 hud.draw_head_marks(painter, session, viewport, w, h)
+                # The key hints after character creation (I, then P), in the
+                # middle of the screen over the play view and the HUD, under
+                # any menu window; not drawn while one is up.
+                hud.draw_key_hints(painter, session, w, h)
             if not windowed:
                 if session.dialogue is not None:
                     dialogue_ui.draw(painter, session, w, h)
@@ -1744,6 +1871,7 @@ class MiniwindGame:
                 from .ui.pack_window import PackWindow
                 cur = PackWindow(session, viewport=viewport)
                 cur.place(w, h)
+                self._dress_scroll(session, cur, w, h)
                 wm.add(cur)
                 session._overlay_win = cur
                 session._overlay_key = key
@@ -1813,6 +1941,7 @@ class MiniwindGame:
                 win.title_font = _fonts.dialogue_font_px(13)
             except Exception:
                 pass
+            self._dress_scroll(session, win, w, h)
             wm.add(win)
             session._overlay_win = win
             session._overlay_key = key
@@ -1821,6 +1950,18 @@ class MiniwindGame:
             bw, bh = dialogue_ui.window_body_size(session)
             cur.set_body_size(bw, bh)
         return True
+
+    @staticmethod
+    def _dress_scroll(session, win, w, h):
+        """With ``[GAME] window_style = scroll`` the window is a parchment
+        scroll (game/ui/scroll.py); with the classic style it is untouched."""
+        try:
+            import game.ui.scroll as scroll
+            import game.ui.theme as T
+            if T.set_style(scroll.configured_style(session)) == "scroll":
+                scroll.dress(win, w, h)
+        except Exception as exc:
+            print(f"[MiniwindGame] scroll window failed: {exc}")
 
     @staticmethod
     def _dim_behind_creation(painter, session, w, h):

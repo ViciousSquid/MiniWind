@@ -10,7 +10,9 @@ picked up in finds what it was let go over with :func:`target_at`, and queues
 ``session.item_drop(source, target)`` through :mod:`game.ui.hits` for the game
 tick, exactly as its own drops are.
 
-A *source* is ``(kind, key, item id)`` and a *target* ``(kind, key)``; the
+A *source* is ``(kind, key, item id)`` -- or ``(kind, key, item id, n)``
+for *n* of a stack split off with a right click -- and a *target*
+``(kind, key)``; the
 kinds are ``pack``, ``equip``, ``quick``, ``strip`` and ``container``. A spell
 dragged out of the spellbook is ``("spell", None, spell id)``, and it can be
 let go on the strip; a strip slot holding one carries ``"spell:<id>"``.
@@ -64,6 +66,13 @@ def pick(owner, source) -> None:
     one of them puts it there."""
     global picked
     picked = {"owner": owner, "source": tuple(source)}
+
+
+def split_half(qty) -> int:
+    """How many a right click picks up off a stack of *qty* (to split it):
+    the larger half -- two of three -- and none from a single thing."""
+    qty = int(qty or 0)
+    return (qty + 1) // 2 if qty >= 2 else 0
 
 
 def unpick() -> None:
@@ -171,9 +180,43 @@ def draw_ghost(painter, owner, pointer, size=52, source=None) -> None:
         pm = None
     if pm is None or pm.isNull():
         return
+    split = len(source) > 3 and bool(source[3])
     painter.save()
-    painter.setOpacity(0.85)
+    if split:
+        # Half a stack on the pointer sits on a little tile of its own.
+        from PyQt5.QtCore import QRectF
+        from PyQt5.QtGui import QColor, QPen
+        painter.setRenderHint(painter.Antialiasing, True)
+        painter.setBrush(QColor(20, 18, 28, 220))
+        painter.setPen(QPen(QColor(214, 176, 108), 1.5))
+        painter.drawRoundedRect(QRectF(pointer[0] - pm.width() / 2 - 5,
+                                       pointer[1] - pm.height() / 2 - 5,
+                                       pm.width() + 10, pm.height() + 10), 5, 5)
+    painter.setOpacity(1.0 if split else 0.85)
     painter.drawPixmap(int(pointer[0] - pm.width() / 2), int(pointer[1] - pm.height() / 2), pm)
+    painter.restore()
+    if split:
+        _draw_count(painter, pointer, pm.width(), pm.height(), int(source[3]))
+
+
+def _draw_count(painter, pointer, w, h, n) -> None:
+    """How many of a split stack ride on the pointer: "×3" on the icon's
+    lower right corner."""
+    from PyQt5.QtCore import QRect, QRectF, Qt
+    from PyQt5.QtGui import QColor, QFontMetrics, QPen
+    import game.ui.fonts as fonts
+    text = f"×{n}"
+    font = fonts.dialogue_font_px(13)
+    tw = QFontMetrics(font).horizontalAdvance(text) + 10
+    box = QRect(int(pointer[0] + w / 2 - tw + 12), int(pointer[1] + h / 2 - 6), tw, 18)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setBrush(QColor(14, 13, 20, 230))
+    painter.setPen(QPen(QColor(214, 176, 108), 1))
+    painter.drawRoundedRect(QRectF(box), 4, 4)
+    painter.setFont(font)
+    painter.setPen(QColor(255, 236, 170))
+    painter.drawText(box, int(Qt.AlignCenter), text)
     painter.restore()
 
 

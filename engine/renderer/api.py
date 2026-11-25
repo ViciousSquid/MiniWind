@@ -118,14 +118,6 @@ FRAME_INPUT = {
     'camera_distance_cull': 'optional bool: override the main-view distance cull '
                             '(defaults to play_mode)',
     'time': 'seconds since the view started, for editor-time animation',
-    # The map's sky, for a renderer that lights from it
-    'hd_sky': 'optional dict: the map\'s HD sky settings, from its primary '
-              'PlayerStart (engine.hd_graphics.sky_settings), or None for the '
-              'defaults. Plain data; a renderer that does not light from a sky '
-              'ignores it',
-    'hd_preview': 'optional bool: whether the editor view is drawn with the HD '
-                  'look by a renderer that has one (View > HD preview; default '
-                  'True). Play is always drawn with it',
     # Player presentation
     'show_glasses': 'bool: draw player glasses (portals mirror them)',
     'spectator_glasses_active': 'bool: spectator appearances remain visible independently of normal player glasses',
@@ -365,11 +357,8 @@ class RendererOptions(Protocol):
     """
 
     # -- settings the editor shows or changes ----------------------------------
-    #: Whether this renderer has an HD look the editor view can be drawn
-    #: with or without (View > HD preview, the frame input's ``hd_preview``).
-    hd: bool
-    #: Whether this renderer was started for a low-power machine. The editor
-    #: reads it to choose which renderer the settings ask for there.
+    #: Whether this renderer was started for a low-power machine (its
+    #: reduced shaders).
     lowpower_mode: bool
     #: Whether screen-space reflections (water, wet decals) are drawn. The
     #: console's ``reflections`` sets it.

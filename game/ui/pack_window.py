@@ -9,12 +9,15 @@ uses InventoryWindow's equipment, pack and sheet, including drag and drop.
 from __future__ import annotations
 
 import math
+import re
 
 from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QColor, QLinearGradient, QBrush, QPen
 
 from .inventory_window import InventoryWindow, _fit, _item
-from . import drag, fonts, hits, screens
+from . import cards, drag, fonts, hits, screens
+from . import theme as T
+from .scroll import plaque
 
 #: The big cells of the pack grid, and its shape.
 CELL = 96
@@ -24,6 +27,10 @@ ROWS = 4
 #: The screens along the top: (label, open_screen).
 TABS = screens.STATISTICS_TABS
 PAGES = ("inventory", "skills", "fortune", "alignment")
+#: The tabs that are not open are drawn this opaque (the second under the
+#: pointer), so the open one stands out.
+TAB_DIM_OPACITY = 0.72
+TAB_HOVER_OPACITY = 0.92
 
 _STEEL_TOP = QColor(64, 66, 70, 245)
 _STEEL_BOT = QColor(30, 31, 34, 245)
@@ -32,6 +39,11 @@ _EDGE_HI = QColor(190, 194, 200)
 _TEXT = QColor(226, 228, 232)
 _DIM = QColor(130, 134, 140)
 _ON = QColor(240, 242, 246)
+_LABEL_BG = QColor(20, 21, 23, 230)
+#: On a parchment scroll (theme.parchment): inks.
+T.ink_colours(globals(), _EDGE=QColor(120, 84, 42), _EDGE_HI=QColor(150, 36, 22),
+              _TEXT=QColor(52, 34, 20), _DIM=QColor(104, 80, 56), _ON=QColor(140, 30, 18),
+              _LABEL_BG=QColor(214, 188, 140, 170))
 
 
 class PackWindow(InventoryWindow):
@@ -46,6 +58,8 @@ class PackWindow(InventoryWindow):
         self.key = "screen:statistics"
         self._body_height = 640
         self.selected_skill = None
+        self.fortune_page = 0
+        self._fortune_pages = 1
         self._skill_nodes = []
         self.screen = None
         self.viewport = viewport
@@ -105,7 +119,8 @@ class PackWindow(InventoryWindow):
         h = self.content_height()
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
-        painter.fillRect(QRect(x, y, w, h), QColor(14, 15, 17, 235))
+        if not T.inked():
+            painter.fillRect(QRect(x, y, w, h), QColor(14, 15, 17, 235))
         body = QRect(x, y + 52, w, h - 52)
         if self.screen in ("skills", "fortune", "alignment"):
             page = QRect(x + 10, y + 52, w - 20, h - 62)
@@ -161,6 +176,9 @@ class PackWindow(InventoryWindow):
 
     def _bevel(self, painter, rect, on=False, enabled=True):
         """A Deus Ex button: a steel plate with a light top edge."""
+        if T.inked():
+            plaque(painter, rect, on, enabled)
+            return
         g = QLinearGradient(0, rect.y(), 0, rect.bottom())
         g.setColorAt(0.0, QColor(92, 96, 104, 245) if on else _STEEL_TOP)
         g.setColorAt(1.0, _STEEL_BOT)
@@ -171,15 +189,24 @@ class PackWindow(InventoryWindow):
         painter.drawLine(rect.x() + 6, rect.y() + 2, rect.right() - 6, rect.y() + 2)
 
     def _draw_tabs(self, painter, bar):
+        if T.inked():
+            self._draw_bookmarks(painter, bar)
+            return
         exit_w = 90
         tab_w = (bar.width() - exit_w - 16) // len(TABS)
         painter.setFont(self.f_button)
         for i, (label, screen) in enumerate(TABS):
             r = QRect(bar.x() + i * tab_w, bar.y(), tab_w - 6, bar.height())
             on = screen == self.screen
+            # The open tab at full strength, the others a little dimmed.
+            painter.save()
+            if not on:
+                painter.setOpacity(painter.opacity() * (
+                    TAB_HOVER_OPACITY if hits.hovered(r) else TAB_DIM_OPACITY))
             self._bevel(painter, r, on)
             painter.setPen(_ON if on else _TEXT)
             _fit(painter, r, Qt.AlignCenter, label)
+            painter.restore()
             if not on:
                 self._buttons.append((QRect(r), self._set_page(screen) if screen in PAGES
                                       else self._open(screen)))
@@ -188,6 +215,28 @@ class PackWindow(InventoryWindow):
         painter.setPen(_TEXT)
         _fit(painter, r, Qt.AlignCenter, "Exit")
         self._buttons.append((QRect(r), self._close_action))
+
+    def _draw_bookmarks(self, painter, bar):
+        """The tabs on a scroll: ink-lettered tabs along the top of the page,
+        the open one a red ribbon bookmark hanging over the rule. The scroll's
+        wax seal closes it, so there is no Exit tab."""
+        n = len(TABS)
+        gap = 8
+        tab_w = (bar.width() - gap * (n - 1)) // n
+        painter.setFont(self.f_button)
+        for i, (label, screen) in enumerate(TABS):
+            r = QRect(bar.x() + i * (tab_w + gap), bar.y(), tab_w, bar.height())
+            on = screen == self.screen
+            hot = hits.hovered(r)
+            painter.save()
+            if not on:
+                painter.setOpacity(painter.opacity() * (
+                    TAB_HOVER_OPACITY if hot else TAB_DIM_OPACITY))
+            bookmark(painter, r, label, on, hot=hot)
+            painter.restore()
+            if not on:
+                self._buttons.append((QRect(r), self._set_page(screen) if screen in PAGES
+                                      else self._open(screen)))
 
     def _set_page(self, page):
         def act():
@@ -216,37 +265,64 @@ class PackWindow(InventoryWindow):
         c = self._character()
         if c is None:
             return
+        # A card per benefit (game/ui/cards.py), a row each: the number big
+        # in the picture's place, green for good, red for ill; the reason
+        # beside it, and in full in the card's tooltip (this page has no
+        # detail pane). More than a page of them turn with the arrows (or
+        # the mouse wheel).
+        benefits = list(fortune.benefits(c))
+        area = QRect(inner.x(), inner.y() + 34, inner.width(),
+                     max(1, inner.bottom() - inner.y() - 34))
+        grid = cards.layout(area, len(benefits), compact=True, grid_min_scale=0.6,
+                            fit_all=True)
+        size = max(1, grid.page_size)
+        self._fortune_pages = pages = max(1, (len(benefits) + size - 1) // size)
+        self.fortune_page = page = max(0, min(self.fortune_page, pages - 1))
+        pager_w = 150 if pages > 1 else 0
         painter.setFont(self.f_body)
         painter.setPen(_TEXT)
-        _fit(painter, QRect(inner.x(), inner.y(), inner.width(), 24),
+        _fit(painter, QRect(inner.x(), inner.y(), inner.width() - pager_w, 24),
              Qt.AlignLeft | Qt.AlignVCenter,
              f"Fortune {fortune.score(c)}  =  (Charisma {c.attrs.get('personality', 40)}"
              f" + Luck {c.attrs.get('luck', 40)}) / 2   ·   the fair of face and the "
              "lucky have an easier road, and here is exactly how.")
-        y = inner.y() + 34
-        row_h = 40
-        for name, value, why, good in fortune.benefits(c):
-            if y + row_h > inner.bottom():
-                break
-            band = QRect(inner.x(), y, inner.width(), row_h - 6)
-            painter.fillRect(band, QColor(26, 25, 24, 230))
-            mark = (QColor(110, 210, 120) if good else QColor(225, 105, 95)
-                    if good is False else _DIM)
-            painter.fillRect(QRect(band.x(), band.y(), 5, band.height()), mark)
-            painter.setFont(self.f_body)
+        if pages > 1:
+            right = QRect(inner.right() - 30, inner.y(), 30, 24)
+            left = QRect(right.x() - 70 - 30, inner.y(), 30, 24)
+            for r, glyph, step in ((left, "◂", -1), (right, "▸", 1)):
+                enabled = 0 <= page + step < pages
+                self._bevel(painter, r, enabled=enabled)
+                painter.setPen(_TEXT if enabled else _EDGE)
+                _fit(painter, r, Qt.AlignCenter, glyph)
+                if enabled:
+                    self._buttons.append((QRect(r), self._fortune_turn(step)))
             painter.setPen(_TEXT)
-            _fit(painter, QRect(band.x() + 16, band.y(), int(band.width() * 0.4), band.height()),
-                 Qt.AlignLeft | Qt.AlignVCenter, name)
-            painter.setPen(mark if good is not None else _TEXT)
-            _fit(painter, QRect(band.x() + int(band.width() * 0.4), band.y(),
-                                int(band.width() * 0.25), band.height()),
-                 Qt.AlignLeft | Qt.AlignVCenter, value)
-            painter.setFont(self.f_small)
-            painter.setPen(_DIM)
-            _fit(painter, QRect(band.x() + int(band.width() * 0.65), band.y(),
-                                int(band.width() * 0.35) - 10, band.height()),
-                 Qt.AlignLeft | Qt.AlignVCenter, why)
-            y += row_h
+            _fit(painter, QRect(left.right() + 1, inner.y(), 70, 24), Qt.AlignCenter,
+                 f"{page + 1} / {pages}")
+        shown = benefits[page * size:(page + 1) * size]
+        for (name, value, why, good), rect in zip(shown, grid.slots):
+            mark = (QColor(110, 210, 120) if good else QColor(225, 105, 95)
+                    if good is False else QColor(170, 168, 160))
+            why = str(why)
+            head = re.split(r"[:;]", why, maxsplit=1)[0].strip()
+            if " (" in head and "=" not in head:
+                head = head.split(" (", 1)[0]
+            rest = why[len(head):].lstrip(":; ").strip()
+            # The number in the middle; words after it go under the reason.
+            value = str(value)
+            big, _sp, more = value.partition(" ") if len(value) > 9 else (value, "", "")
+            card = cards.Card(title=name, glyph=big, subtitle=head,
+                              summary=" · ".join(t for t in (more, rest) if t),
+                              accent=mark, hovered=hits.hovered(rect),
+                              tooltip=f"{name}\n{value}\n{why}")
+            cards.draw_card(painter, rect, card)
+            cards.note_tooltip(rect, card)
+        cards.flush_tooltip(painter)
+
+    def _fortune_turn(self, step):
+        def act():
+            self.fortune_page = max(0, min(self.fortune_page + step, self._fortune_pages - 1))
+        return act
 
     def _draw_alignment(self, painter, rect):
         """Where the character stands from Villainous to Saintly, what it is
@@ -300,8 +376,8 @@ class PackWindow(InventoryWindow):
             for text, good in lines:
                 if y + 20 > inner.bottom():
                     break
-                painter.setPen(_TEXT if good is None else
-                               QColor(120, 210, 130) if good else QColor(230, 110, 100))
+                painter.setPen(_TEXT if good is None else T.legible(
+                    QColor(120, 210, 130) if good else QColor(230, 110, 100), 0.34))
                 box = QRect(cx, y, half, 40)
                 painter.drawText(box, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), text)
                 used = painter.fontMetrics().boundingRect(
@@ -367,6 +443,9 @@ class PackWindow(InventoryWindow):
         if (self.screen == "map" and self.expanded and self.map._rect is not None
                 and self.map._rect.contains(event.pos())):
             self.map.handle_wheel(event.pos(), event.angleDelta().y())
+        elif (self.screen == "fortune" and self.expanded
+              and self._full_rect().contains(event.pos())):
+            self._fortune_turn(-1 if event.angleDelta().y() > 0 else 1)()
 
     def _draw_grid(self, painter, rect):
         inner = self._panel(painter, rect, "Inventory")
@@ -394,7 +473,7 @@ class PackWindow(InventoryWindow):
                            source=("pack", None, iid) if iid else None, stack=stack)
             # The name along the bottom of the cell, as Deus Ex labels its own.
             label = QRect(r.x(), r.bottom() - 17, r.width(), 17)
-            painter.fillRect(label, QColor(20, 21, 23, 230))
+            painter.fillRect(label, _LABEL_BG)
             if iid:
                 d = _item(iid)
                 painter.setFont(self.f_small)
@@ -464,3 +543,47 @@ class PackWindow(InventoryWindow):
             painter.setPen(_TEXT)
             painter.drawText(QRect(r.x() + 10, r.y() + 30, r.width() - 20, r.height() - 36),
                              int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), body)
+
+
+# ------------------------------------------------------------ on parchment
+def bookmark(painter, rect, label, on, hot=False):
+    """A tab on a scroll: ink lettering under a pale tab; the open tab a red
+    ribbon bookmark, its swallowtail hanging below, its name in cream."""
+    from PyQt5.QtCore import QPointF, QRectF
+    from PyQt5.QtGui import QPainterPath
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    r = QRectF(rect)
+    if on:
+        path = QPainterPath()
+        tail = 9.0
+        path.moveTo(r.left(), r.top() - 4)
+        path.lineTo(r.right(), r.top() - 4)
+        path.lineTo(r.right(), r.bottom() + tail)
+        path.lineTo(r.center().x(), r.bottom() + 1)
+        path.lineTo(r.left(), r.bottom() + tail)
+        path.closeSubpath()
+        painter.fillPath(path.translated(1.5, 2), QColor(60, 20, 10, 70))
+        g = QLinearGradient(r.left(), 0, r.right(), 0)
+        g.setColorAt(0.0, QColor(118, 20, 14))
+        g.setColorAt(0.3, QColor(176, 42, 30))
+        g.setColorAt(0.7, QColor(160, 34, 24))
+        g.setColorAt(1.0, QColor(104, 16, 10))
+        painter.fillPath(path, QBrush(g))
+        painter.setPen(QPen(QColor(232, 186, 110, 150), 1, Qt.DashLine))
+        painter.drawLine(QPointF(r.left() + 4, r.top()), QPointF(r.left() + 4, r.bottom() + 4))
+        painter.drawLine(QPointF(r.right() - 4, r.top()), QPointF(r.right() - 4, r.bottom() + 4))
+        painter.setPen(QColor(252, 236, 206))
+    else:
+        g = QLinearGradient(0, r.top(), 0, r.bottom())
+        g.setColorAt(0.0, QColor(250, 238, 210, 150 if hot else 90))
+        g.setColorAt(1.0, QColor(226, 200, 150, 150 if hot else 90))
+        path = QPainterPath()
+        path.addRoundedRect(r.adjusted(0, 2, 0, 0), 5, 5)
+        painter.fillPath(path, QBrush(g))
+        painter.setPen(QPen(QColor(110, 74, 40, 170), 1.1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(path)
+        painter.setPen(QColor(150, 36, 22) if hot else QColor(58, 38, 22))
+    _fit(painter, rect, Qt.AlignCenter, label)
+    painter.restore()

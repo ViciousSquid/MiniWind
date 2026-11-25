@@ -159,6 +159,42 @@ def test_the_damage_filter_mitigates_before_health_drops(playing):
     assert playing.player_runtime.player_health == start - 10
 
 
+@pytest.mark.parametrize("mode", ["god_mode", "buddha_mode"])
+def test_a_hurt_that_ignores_god_mode_kills_through_god_and_buddha(playing, mode):
+    """A source with ``ignore_god_mode`` (the trigger under the edge of the
+    world) kills through both, for the game's filter too; the modes are back
+    on afterwards, and every other hurt still respects them."""
+    runtime = playing.player_runtime
+    setattr(runtime, mode, True)
+    seen = []
+    playing._player_damage_filter = lambda dmg, kind: seen.append(
+        (runtime.god_mode, runtime.buddha_mode)) or dmg
+    playing.trigger_runtime._apply_player_damage(1000, source={"ignore_god_mode": True},
+                                                 cause="trigger")
+    assert seen == [(False, False)]
+    assert runtime.player_health <= 0
+    assert getattr(runtime, mode) is True
+    runtime.player_health = 100
+    playing.trigger_runtime._apply_player_damage(1000, source={"hurt": True}, cause="trigger")
+    assert runtime.player_health > 0
+
+
+def test_a_fall_out_of_the_world_a_game_claims_is_not_a_respawn():
+    player = Player(0.0, 0.0)
+    player.kill_height = -1000.0
+    player.respawn_point = (5.0, 100.0, 5.0)
+    player.pos = glm.vec3(0.0, -5000.0, 0.0)
+    player.velocity = glm.vec3(0.0, -800.0, 0.0)
+    claimed = []
+    player.void_handler = lambda p: claimed.append(p) or True
+    assert player.leave_void()
+    assert claimed == [player]
+    assert player.pos.y == -5000.0 and player.velocity.y == 0.0     # held, not respawned
+    player.void_handler = lambda p: False                           # declined: respawned
+    assert player.leave_void()
+    assert tuple(player.pos) == (5.0, 100.0, 5.0)
+
+
 def test_the_default_damage_kind_is_physical(playing):
     seen = []
     playing._player_damage_filter = lambda dmg, kind: seen.append(kind) or dmg

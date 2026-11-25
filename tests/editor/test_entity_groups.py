@@ -413,7 +413,7 @@ def test_a_ctrl_v_paste_is_not_attached_to_the_originals_group(scene):
 def test_a_model_is_grouped_through_the_scene_hierarchy(scene, monkeypatch):
     from editor.things import Prop
     window, objects = scene
-    model = Prop.for_model('assets/models/Oil_Drum.obj', pos=[0, 0, 0])
+    model = Prop.for_model('assets/models/Oak_Barrel.obj', pos=[0, 0, 0])
     model.properties['name'] = 'drum'
     window.state.things.append(model)
     window.update_all_ui()

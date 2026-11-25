@@ -1,7 +1,9 @@
 """
 Crabs come for the dead.
 
-A body blown apart near water brings crabs out of it: more the bigger the
+A body blown apart near water brings blue crabs out of it, and one blown
+apart on the desert sand (the terrain's painted desert biome, which covers
+the west of the world) brings red crabs up out of the sand: more the bigger the
 body (a hen draws a couple, a man six, a bear twelve). Bodies falling by a
 feast already going join it, up to :data:`MAX_LIVE` crabs: crabs are a
 nuisance, and a real danger only when something huge, or many things, die
@@ -9,11 +11,17 @@ by the water together. They scuttle up
 from the water's edge, crowd the pieces and eat them -- bite by bite, chunks
 gone out of each piece until nothing is left (:meth:`GoreFX.bite`) -- then
 scuttle off out of sight and are gone. A brief feeding frenzy: only with
-gibs, only near water.
+gibs, only near water or on sand. Red and blue crabs are the same creature
+in another shell: one frenzy, one AI, the same counts, limits and timers;
+only where they come from differs. Where sand meets water the water wins:
+blue crabs.
 
 "Near water" means water you can see: a point within :data:`REACH` of the
 remains where a water surface lies above the ground (so the sea brush under
-the whole land does not count). Crabs walk sideways, as crabs do: each faces
+the whole land does not count). "On sand" is one look at the terrain's biome
+map under the remains (:func:`on_sand`): desert weight at least
+:data:`SAND_WEIGHT`, and the ground there the terrain itself, not a floor
+built over it. Crabs walk sideways, as crabs do: each faces
 across the way it is going.
 
 While they feed, crabs **attack anything near the feast** -- the player,
@@ -40,6 +48,17 @@ from .facing import face_heading
 
 #: How far from the remains water may be and still bring crabs.
 REACH = 650.0
+#: The two kinds: blue crabs come out of the water, red ones up out of the
+#: sand. The head each wears (assets/sprites/heads/).
+BLUE, RED = "blue", "red"
+HEADS = {BLUE: "crab01", RED: "crab02"}
+#: Desert weight in the terrain's biome map from which the ground is sand
+#: (where the painted sand takes over from the grass), and how far above
+#: the terrain a floor must stand not to be sand.
+SAND_WEIGHT = 0.5
+FLOOR_ABOVE = 8.0
+#: How far from the remains red crabs come up out of the sand.
+BURROW = (180.0, 360.0)
 #: Crabs per unit of body mass (a person is 1.0), and the bounds for one
 #: body: a hen draws a couple, a person six, a bear twelve, anything huge
 #: twenty.
@@ -136,15 +155,35 @@ class CrabFrenzy:
         return None
 
     # -- a body is blown apart ----------------------------------------------------------
+    def sources(self, session, pos):
+        """``[(kind, origin)]``: where crabs for remains at *pos* come from --
+        blue out of the water near it, red up out of the sand under it, both
+        where sand meets water -- or [] for neither."""
+        found = []
+        water = self.water_near(session, pos)
+        if water is not None:
+            found.append((BLUE, water))
+        if on_sand(session, pos):
+            a = self.rng.uniform(0.0, math.tau)
+            r = self.rng.uniform(*BURROW)
+            found.append((RED, (pos[0] + math.cos(a) * r, pos[1], pos[2] + math.sin(a) * r)))
+        return found
+
+    def source(self, session, pos):
+        """The first of :meth:`sources` (the water's, where both), or None."""
+        found = self.sources(session, pos)
+        return found[0] if found else None
+
     def gibbed(self, session, pos, mass=1.0) -> int:
-        """Remains at *pos* (a body of *mass*): if water is near, crabs come.
+        """Remains at *pos* (a body of *mass*): if water is near, blue crabs
+        come; on sand, red ones; where sand meets water, both, in turn.
         Returns how many."""
         live = sum(len(f["crabs"]) for f in self.feasts)
         room = MAX_LIVE - live
         if room <= 0:
             return 0
-        water = self.water_near(session, pos)
-        if water is None:
+        found = self.sources(session, pos)
+        if not found:
             return 0
         pieces = session.gore.hold(pos, FEAST_RADIUS, HOLD_SECONDS)
         if not pieces:
@@ -156,10 +195,15 @@ class CrabFrenzy:
         count = max(MIN_CRABS, min(MAX_CRABS, count, room))
         crabs = []
         for i in range(count):
-            # Out of the water's edge, spread along it.
+            kind, origin = found[i % len(found)]
+            # Out of the water's edge (or the sand), spread along it.
             ox, oz = self.rng.uniform(-110, 110), self.rng.uniform(-110, 110)
-            spot = [water[0] + ox, water[1], water[2] + oz]
-            thing = _make_crab(session, spot)
+            spot = [origin[0] + ox, origin[1], origin[2] + oz]
+            if kind == RED:
+                ground = fio.ground_height(session.logic, spot[0], spot[2])
+                if ground is not None:
+                    spot[1] = ground
+            thing = _make_crab(session, spot, kind)
             if thing is None:
                 continue
             crabs.append({"thing": thing, "wait": self.rng.uniform(*EMERGE), "piece": None,
@@ -369,6 +413,30 @@ class CrabFrenzy:
         return len(stale)
 
 
+def on_sand(session, pos) -> bool:
+    """Whether the ground at *pos* is desert sand: one bilinear look at the
+    terrain's biome map (desert weight :data:`SAND_WEIGHT` or more), and
+    the ground there the terrain itself, not a floor built over it."""
+    ter = fio.terrain(session.logic)
+    if (ter is None or not getattr(ter, "enabled", False)
+            or getattr(ter, "biome_map", None) is None):
+        return False
+    x, z = float(pos[0]), float(pos[2])
+    try:
+        from engine import terrain_biomes as tb
+        desert = float(ter.biome_weights_batch([x], [z])[0][tb.DESERT])
+    except Exception:
+        return False
+    if desert < SAND_WEIGHT:
+        return False
+    try:
+        surface = ter.get_height_at_safe(x, z)
+    except Exception:
+        surface = None
+    ground = fio.ground_height(session.logic, x, z)
+    return surface is None or ground is None or ground <= surface + FLOOR_ABOVE
+
+
 def _player_dead(session) -> bool:
     runtime = getattr(session.logic, "player_runtime", None)
     return bool(getattr(runtime, "player_dead", False))
@@ -381,17 +449,20 @@ def _piece_xz(session, piece):
     return x, z
 
 
-def _make_crab(session, pos):
-    """A frenzy crab at *pos*: a Creature with a crab's head, half size."""
+def _make_crab(session, pos, kind=BLUE):
+    """A frenzy crab of *kind* at *pos*: a Creature with that crab's head,
+    half size. The kinds differ in nothing else."""
     try:
         from .entities import Creature
         import game.rpg.heads as heads
     except Exception:
         return None
-    head = heads.animal_head("crab", session.rng)
+    head = HEADS.get(kind, HEADS[BLUE])
+    if not heads.is_any_head(head):
+        head = heads.animal_head("crab", session.rng)
     props = {"npc_role": "crab", "name": "Crab", "display_name": "Crab",
              "id": "crab-" + uuid.uuid4().hex, "aggression": "passive",
-             "roam": False, "respawn": False, "_frenzy": True}
+             "roam": False, "respawn": False, "_frenzy": True, "crab_kind": kind}
     if head and head != heads.PLACEHOLDER_HEAD:
         path = heads.any_head_path(head)
         size = heads.size_for(props, head)

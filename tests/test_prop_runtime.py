@@ -309,7 +309,7 @@ def test_aabb_collision_shape_skips_mesh_collision(real_logic):
 
 def _model_prop(**props):
     props = {'carry_enabled': True, 'render_mode': 'model',
-             'model_path': 'assets/models/Oil_Drum_Grey.obj',
+             'model_path': 'assets/models/Oak_Barrel.obj',
              'rotation': [0.0, 30.0, 0.0], **props}
     return Prop(pos=[0.0, 40.0, 55.0], properties=props)
 

@@ -702,6 +702,21 @@ class LogicTriggers:
 
     def _apply_player_damage(self, damage, damage_kind="physical", source=None,
                              cause=None):
+        if isinstance(source, dict) and source.get('ignore_god_mode'):
+            # A hurt that kills through god and buddha mode (a trigger with
+            # ``ignore_god_mode``, under the edge of the world): both are set
+            # aside for this one blow, for the game's damage filter too.
+            runtime = self.logic.player_runtime
+            saved = (runtime.god_mode, runtime.buddha_mode)
+            runtime.god_mode = runtime.buddha_mode = False
+            try:
+                return self._apply_player_damage_now(damage, damage_kind, source, cause)
+            finally:
+                runtime.god_mode, runtime.buddha_mode = saved
+        return self._apply_player_damage_now(damage, damage_kind, source, cause)
+
+    def _apply_player_damage_now(self, damage, damage_kind="physical", source=None,
+                                 cause=None):
         session = getattr(self.logic, "game_session", None)
         coop = getattr(session, "coop", None)
         if coop is not None:

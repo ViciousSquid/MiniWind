@@ -1,8 +1,8 @@
 """Golden frames of the stock maps, and the lit programs' final sources.
 
-The Classic renderer (``engine/renderer/forward``) is, by contract, the
-renderer Fio had before HD_High existed beside it: the same pixels from the
-same shaders. This module draws what that contract is checked against:
+The Classic renderer (``engine/renderer/forward``) is Fio's only renderer
+and, by contract, stays the renderer it was: the same pixels from the same
+shaders. This module draws what that contract is checked against:
 
 * :func:`capture_frames` -- each map in :data:`MAPS`, loaded by the real
   editor (``FioTestSession``: ``MainWindow``, the logic thread's projection,
@@ -13,10 +13,10 @@ same shaders. This module draws what that contract is checked against:
   fresh ``ForwardRenderer`` was finally compiled from, read back from the
   driver (``glGetShaderSource``), so a rewrite anywhere on the way is seen.
 
-``tools/hd_golden.py`` stores both under ``tests/visual/golden/`` and
+``tools/classic_golden.py`` stores both under ``tests/visual/golden/`` and
 ``tests/visual/test_classic_golden.py`` compares against them. Rasterisers differ
 in their last bit, so the stored frames are only compared on the driver that
-drew them (the manifest names it); ``tools/hd_golden.py --base`` compares two
+drew them (the manifest names it); ``tools/classic_golden.py --base`` compares two
 checkouts on whatever driver is present.
 """
 
@@ -63,15 +63,9 @@ def _default_camera(state):
             -120.0, -25.0)
 
 
-def capture_frames(app, names=None, size=SIZE, renderer=None, sky=None):
+def capture_frames(app, names=None, size=SIZE):
     """``{"<map>/<shot>": (h, w, 3) uint8}`` for each map in *names* (default
-    all of :data:`MAPS`). Needs a display with OpenGL.
-
-    *renderer* starts the editor with that renderer (``"HD_High"``) in place
-    of the shipped default (Classic); *sky* (a dict of ``hd_*`` properties)
-    is put on each map's primary PlayerStart first -- for looking at
-    HD_High, not
-    for the stored set."""
+    all of :data:`MAPS`), drawn by Classic. Needs a display with OpenGL."""
     import glm
     import numpy as np
     from PyQt5.QtCore import Qt
@@ -101,36 +95,26 @@ def capture_frames(app, names=None, size=SIZE, renderer=None, sky=None):
             # Before the map loads too: effects pick their phases as they are made.
             random.seed(1234)
             np.random.seed(1234)
-            settings = None
-            # Always named: the shipped settings.ini may ask for either
-            # renderer, and the stored set is Classic's.
-            renderer = renderer or "Classic"
-            if renderer:
-                # The editor reads its settings when the window is built.
-                import configparser
-                import tempfile
-                from tests.helpers import settings_isolation
-                settings_isolation.install()
-                handle, settings = tempfile.mkstemp(prefix="fio-golden-", suffix=".ini")
-                os.close(handle)
-                settings_isolation.fresh_copy(settings)
-                parser = configparser.ConfigParser()
-                parser.read(settings)
-                if not parser.has_section("Renderer"):
-                    parser.add_section("Renderer")
-                parser.set("Renderer", "renderer", renderer)
-                parser.set("Renderer", "lowpower_mode", "False")
-                with open(settings, "w") as out:
-                    parser.write(out)
-                settings_isolation.use(settings)
+            # The editor reads its settings when the window is built: the
+            # full shaders, not the low-power ones, whatever the machine.
+            import configparser
+            import tempfile
+            from tests.helpers import settings_isolation
+            settings_isolation.install()
+            handle, settings = tempfile.mkstemp(prefix="fio-golden-", suffix=".ini")
+            os.close(handle)
+            settings_isolation.fresh_copy(settings)
+            parser = configparser.ConfigParser()
+            parser.read(settings)
+            if not parser.has_section("Renderer"):
+                parser.add_section("Renderer")
+            parser.set("Renderer", "lowpower_mode", "False")
+            with open(settings, "w") as out:
+                parser.write(out)
+            settings_isolation.use(settings)
             session = FioTestSession(app, "%s/%s.json" % (MAP_DIR, name), size=size)
             try:
                 view = session.view
-                if sky:
-                    start = session.state.resolve_player_start()
-                    if start is not None:
-                        start.properties.update(sky)
-                        session.window.sync_sky_image_from_map()
                 view.sysmon.set_active(False)
                 # Occlusion results are read when the driver has them ready,
                 # which is a matter of timing: what is hidden would differ

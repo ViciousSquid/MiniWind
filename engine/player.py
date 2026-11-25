@@ -632,6 +632,10 @@ class Player:
         # respawn_point. The logic thread sets both from the level.
         self.kill_height = self.KILL_HEIGHT_DEFAULT
         self.respawn_point = None
+        #: A game's say over a fall out of the world: ``handler(player)`` ->
+        #: True when it dealt with it (the player died), and the player is
+        #: not put back at ``respawn_point``. None: always put back.
+        self.void_handler = None
 
     #: Seconds the view takes to move between the standing and ducked eye.
     DUCK_VIEW_TIME = 0.5
@@ -653,6 +657,12 @@ class Player:
         kill_height = getattr(self, 'kill_height', self.KILL_HEIGHT_DEFAULT)
         if finite and (pos.y >= kill_height or self.on_ground):
             return False
+        handler = getattr(self, 'void_handler', None)
+        if finite and handler is not None and handler(self):
+            # The game ended the fall (a death): held where it is, not put
+            # back at the start.
+            self.velocity = glm.vec3(0, 0, 0)
+            return True
         x, y, z = getattr(self, 'respawn_point', None) or self.RESPAWN_DEFAULT
         self.pos = glm.vec3(float(x), float(y), float(z))
         self.velocity = glm.vec3(0, 0, 0)

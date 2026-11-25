@@ -24,7 +24,12 @@ except ImportError:  # standalone player / Android: no PyQt5
     EDITOR_TIER = False
 
 
-DEFAULT_MODEL_PATH = 'assets/models/Oil_Drum.obj'
+#: The barrel -- the explosive barrel's model: an oak barrel
+#: (game/tools/make_oak_barrel.py).
+DEFAULT_MODEL_PATH = 'assets/models/Oak_Barrel.obj'
+#: The oil drums the barrel used to be. They are gone: a map that still names
+#: one gets the oak barrel in its place (see :func:`current_model_path`).
+RETIRED_BARREL_MODELS = frozenset(('Oil_Drum.obj', 'Oil_Drum_Grey.obj'))
 BALL_MODEL_PATH = 'assets/models/ball.obj'
 #: The same ball with a number on every face, like a large die.
 BALL_NUMBERS_MODEL_PATH = 'assets/models/ball_numbers.obj'
@@ -146,7 +151,7 @@ PROP_DEFAULTS = {
 #: (colliding with its actual triangles), Physics off and Gravity off, so it
 #: stays exactly where it is put and the player cannot walk through it. Not
 #: carryable. Model-specific presets below override this: the Ball is a
-#: physics Prop with gravity, and the Ball and Oil Barrel deliberately use
+#: physics Prop with gravity, and the Ball and Oak Barrel deliberately use
 #: their cheaper AABB. Existing map records do not pass through
 #: for_model(), so what they saved is unchanged.
 MODEL_PROP_DEFAULTS = {
@@ -171,12 +176,12 @@ LEGACY_MODEL_DEFAULTS = {
 #: Prop -- from the Presets list, by Browse..., or from the Asset Browser --
 #: applies its settings too; any other model changes only the model path.
 #:
-#: The Oil Barrel is the default model. It takes back what a Ball sets that
+#: The Oak Barrel is the default model. It takes back what a Ball sets that
 #: only makes sense for a ball, and leaves physics, solidity and carrying as
 #: the author has them. As a physics Prop it falls over when knocked hard
 #: enough and rolls on its side (``topples``), and stands up again in the
 #: player's hands.
-OIL_BARREL_SETTINGS = {
+BARREL_SETTINGS = {
     'model_path': DEFAULT_MODEL_PATH,
     'collision_shape': 'aabb',
     'rolls': False,
@@ -209,25 +214,24 @@ BALL_NUMBERS_SETTINGS = {
 }
 #: The Presets list of the Prop panel, in order.
 MODEL_PRESETS = {
-    'Oil Barrel': OIL_BARREL_SETTINGS,
+    'Oak Barrel': BARREL_SETTINGS,
     'Ball': BALL_SETTINGS,
 }
-#: The Oil Barrel's variants: its Variant list in the Prop panel, each a
-#: model file. Every variant is the Oil Barrel (its preset, its settings);
-#: only the look differs.
-OIL_BARREL_VARIANTS = {
-    'None': DEFAULT_MODEL_PATH,
-    'Grey': 'assets/models/Oil_Drum_Grey.obj',
-}
 _MODEL_SETTINGS = {settings['model_path']: settings for settings in (
-    OIL_BARREL_SETTINGS, BALL_SETTINGS, BALL_NUMBERS_SETTINGS)}
-for _path in OIL_BARREL_VARIANTS.values():
-    _MODEL_SETTINGS.setdefault(_path, {**OIL_BARREL_SETTINGS, 'model_path': _path})
+    BARREL_SETTINGS, BALL_SETTINGS, BALL_NUMBERS_SETTINGS)}
 
-#: The models that fall over unless a Prop says otherwise: the oil barrels.
-#: A map saved before barrels could fall over has no ``topples`` in it; its
-#: barrels take this.
-TOPPLING_MODELS = frozenset(OIL_BARREL_VARIANTS.values())
+#: The models that fall over unless a Prop says otherwise: the barrel. A map
+#: saved before barrels could fall over has no ``topples`` in it; its barrels
+#: take this.
+TOPPLING_MODELS = frozenset((DEFAULT_MODEL_PATH,))
+
+
+def current_model_path(model_path):
+    """*model_path*, or the oak barrel when it names a retired oil drum."""
+    path = str(model_path or '').replace('\\', '/')
+    if path.rsplit('/', 1)[-1] in RETIRED_BARREL_MODELS:
+        return DEFAULT_MODEL_PATH
+    return model_path
 
 
 def topples_by_default(model_path):
@@ -237,7 +241,7 @@ def topples_by_default(model_path):
 
 def _model_key(model_path):
     """*model_path* as the settings are keyed: forward slashes, from assets/."""
-    path = str(model_path or '').replace('\\', '/')
+    path = str(current_model_path(model_path) or '').replace('\\', '/')
     marker = path.rfind('assets/models/')
     return path[marker:] if marker >= 0 else path
 
@@ -252,31 +256,18 @@ def model_settings(model_path):
 
 
 def model_preset_name(model_path):
-    """The Presets entry showing *model_path*, or None for another model.
-    Every Oil Barrel variant is the Oil Barrel."""
+    """The Presets entry showing *model_path*, or None for another model."""
     key = _model_key(model_path)
-    if oil_barrel_variant(key) is not None:
-        return 'Oil Barrel'
     for name, settings in MODEL_PRESETS.items():
         if settings['model_path'] == key:
             return name
     return None
 
 
-def oil_barrel_variant(model_path):
-    """The Oil Barrel variant *model_path* is ('None', 'Grey'), or None when
-    it is not an Oil Barrel."""
-    key = _model_key(model_path)
-    for name, path in OIL_BARREL_VARIANTS.items():
-        if path == key:
-            return name
-    return None
-
-
 def is_preset_only_model(model_path):
-    """Whether *model_path* is reached only through a preset (the Oil Barrel
-    and its variants): the asset browser does not list it."""
-    return oil_barrel_variant(model_path) is not None
+    """Whether *model_path* is reached only through a preset (the Oak
+    Barrel): the asset browser does not list it."""
+    return _model_key(model_path) == DEFAULT_MODEL_PATH
 
 
 def legacy_model_properties(properties):
@@ -351,6 +342,10 @@ class Prop(_ThingBase):
             and not self.properties.get('model_path')
         ):
             self.properties['model_path'] = self.DEFAULT_MODEL_PATH
+        # The oil drums are gone: a map naming one gets the oak barrel.
+        if self.properties.get('model_path'):
+            self.properties['model_path'] = current_model_path(
+                self.properties['model_path'])
 
         # A barrel falls over; anything else does not, unless it is told to.
         if 'topples' not in self.properties:

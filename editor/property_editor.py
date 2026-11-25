@@ -20,7 +20,7 @@ from engine.effect_entity import (EFFECT_TYPES, EMITTER_NONE, EMITTER_PRESETS,
                                   PARTICLES_DEFAULT_EMITTER,
                                   PARTICLES_DEFAULT_SIZE)
 from engine.explosions import returns_after_explosion
-from engine.prop_entity import (MODEL_PRESETS, OIL_BARREL_VARIANTS, oil_barrel_variant,
+from engine.prop_entity import (MODEL_PRESETS,
                                  model_preset_name, model_settings,
                                  normalise_collect_type)
 from editor.things import (Thing, Light, Effect, Prop, Monster, Speaker,
@@ -1731,6 +1731,32 @@ class PropertyEditor(QWidget):
         )
         self._widgets['damage_spin'] = dmg_spin
 
+        # What the death screen says when this trigger kills the player
+        # (empty: the game picks its own words for a trap).
+        death_edit = QLineEdit(str(brush.get('death_message', '') or ''))
+        death_edit.setPlaceholderText("e.g. Fell off the edge of the world")
+        death_edit.setToolTip("Shown on the death screen when this trigger kills "
+                              "the player. Leave empty for the game's own words.")
+        death_edit.editingFinished.connect(
+            lambda: self.update_object_prop(
+                'death_message', death_edit.text().strip())
+        )
+        dmg_layout.addLayout(
+            _hbox(QLabel("Death Message:"), death_edit)
+        )
+        self._widgets['death_message_edit'] = death_edit
+
+        god_cb = _make_checkbox(
+            "Kills through god / buddha mode",
+            brush.get('ignore_god_mode', False),
+            lambda on: self.update_object_prop('ignore_god_mode', bool(on)),
+            _Style.CHECKBOX
+        )
+        god_cb.setToolTip("This trigger's damage ignores god and buddha mode "
+                          "(e.g. under the edge of the world).")
+        dmg_layout.addWidget(god_cb)
+        self._widgets['ignore_god_mode_cb'] = god_cb
+
         # A trigger that detects Props cannot currently deal player damage.
         # Keep the Damage section visible so its configuration is preserved, but
         # disable it while the Props filter is selected.
@@ -2563,8 +2589,6 @@ class PropertyEditor(QWidget):
                 self._widgets['prop_sprite_size_inputs'] = sprite_inputs
 
                 model_path_row = form.getWidgetPosition(model_path_widget)[0]
-                variant_combo = self._prop_variant_combo
-                variant_row = form.getWidgetPosition(variant_combo)[0]
                 scale_row = scale_before
                 rotation_row = rotation_before
                 tint_row = tint_before
@@ -2586,7 +2610,7 @@ class PropertyEditor(QWidget):
                     # replaced, and nothing is added to a billboard Prop.
                     if is_model:
                         # A Prop model representation always has a concrete mesh:
-                        # with none chosen yet it is the Oil Barrel -- the whole
+                        # with none chosen yet it is the Oak Barrel -- the whole
                         # preset, as if picked from Presets (Browse changes it).
                         default_model = getattr(
                             type(thing), 'DEFAULT_MODEL_PATH', '')
@@ -2596,8 +2620,7 @@ class PropertyEditor(QWidget):
                                 self.update_object_prop(key, value)
                             preset_combo = self._widgets.get('prop_model_preset_combo')
                             if preset_combo is not None:
-                                preset_combo.setCurrentText('Oil Barrel')
-                            variant_combo.setCurrentText('None')
+                                preset_combo.setCurrentText('Oak Barrel')
                     else:
                         # Restore the Prop's resolved visual asset rather than a
                         # generic placeholder: weapon -> gun1, key -> its key,
@@ -2620,21 +2643,13 @@ class PropertyEditor(QWidget):
                         self._set_form_row_visible(form, row, is_model)
                     for row in (sprite_path_row, sprite_size_row):
                         self._set_form_row_visible(form, row, not is_model)
-                    refresh_variant_row()
                     self._refresh_animation_tab(thing)
-
-                def refresh_variant_row():
-                    shown = (thing.properties.get('render_mode', 'model') != 'billboard'
-                             and oil_barrel_variant(thing.properties.get('model_path'))
-                             is not None)
-                    self._set_form_row_visible(form, variant_row, shown)
 
                 mode_combo.currentTextChanged.connect(set_representation)
                 for row in (model_path_row, scale_row, rotation_row, tint_row):
                     self._set_form_row_visible(form, row, model_mode)
                 for row in (sprite_path_row, sprite_size_row):
                     self._set_form_row_visible(form, row, not model_mode)
-                refresh_variant_row()
 
                 # Collection type can own the sprite path, so the appearance row
                 # is further narrowed by _refresh_prop_collection_appearance().
@@ -2687,8 +2702,6 @@ class PropertyEditor(QWidget):
         if isinstance(thing, PlayerStart):
             self._build_player_start_primary(form, thing)
             self._build_player_start_sky_image(form, thing)
-            from editor.hd_sky_panel import build_hd_sky_section
-            build_hd_sky_section(self, form, thing, CollapsibleSection)
 
         if isinstance(thing, LevelChanger):
             self._build_destination_spawn(form, thing)
@@ -2987,7 +3000,7 @@ class PropertyEditor(QWidget):
                 "objects rest on its real surface and are stopped by its real "
                 "sides. Costs more, in proportion to the model's triangles.\n"
                 "Newly placed custom models use Mesh by default; the Ball and "
-                "Oil Barrel presets and older maps keep AABB."
+                "Oak Barrel presets and older maps keep AABB."
             ),
         )
         reverse_shape_labels = {label: value for value, label in shape_labels.items()}
@@ -4678,11 +4691,9 @@ class PropertyEditor(QWidget):
         if self._populating or thing.primary:
             return
         sky_image = self.editor.sky_image_path_from_map()
-        hd_sky = self.editor.hd_sky_properties_from_map()
         self.editor.save_state()
         self.editor.state.set_primary_player_start(thing)
         self.editor.canonicalize_sky_image_ownership(sky_image)
-        self.editor.canonicalize_hd_sky_ownership(hd_sky)
         self.editor.mark_as_modified()
         self.editor.update_all_ui()
 
@@ -6907,7 +6918,7 @@ class PropertyEditor(QWidget):
         """Presets: the built-in models by name, and Browse... for any other.
 
         A model that brings settings with it (``engine.prop_entity``'s
-        :func:`model_settings` -- the Ball, the numbered Ball, the Oil Barrel)
+        :func:`model_settings` -- the Ball, the numbered Ball, the Oak Barrel)
         applies them when chosen either way, and the panel is rebuilt to show
         them. Another model is listed by its file name.
         """
@@ -6917,13 +6928,13 @@ class PropertyEditor(QWidget):
         combo = QComboBox()
         combo.addItems(list(MODEL_PRESETS))
         current = thing.properties.get('model_path', '') or ''
-        preset = model_preset_name(current) if current else 'Oil Barrel'
+        preset = model_preset_name(current) if current else 'Oak Barrel'
         if preset is None:
             combo.addItem(os.path.basename(current.replace('\\', '/')))
             combo.setCurrentIndex(combo.count() - 1)
         else:
             combo.setCurrentText(preset)
-        combo.setToolTip(current or MODEL_PRESETS['Oil Barrel']['model_path'])
+        combo.setToolTip(current or MODEL_PRESETS['Oak Barrel']['model_path'])
         btn = QPushButton("Browse...")
         btn.setToolTip("Load another model (.obj or .glb)")
 
@@ -6965,25 +6976,6 @@ class PropertyEditor(QWidget):
         self._widgets['prop_model_preset_combo'] = combo
         self._widgets['prop_model_browse_button'] = btn
 
-        # The Oil Barrel's look, always the first row under the model: shown
-        # for an Oil Barrel only (the oil drum models are reached this way and
-        # not through the asset browser).
-        variant_combo = QComboBox()
-        variant_combo.addItems(list(OIL_BARREL_VARIANTS))
-        variant_combo.setToolTip("Which Oil Barrel: the standard drum, or the grey one.")
-        variant_combo.setCurrentText(oil_barrel_variant(current) or 'None')
-
-        def on_variant(index):
-            path = OIL_BARREL_VARIANTS.get(variant_combo.itemText(index))
-            if path:
-                # The same barrel in another finish: only the model changes.
-                self.update_object_prop('model_path', path)
-                combo.setToolTip(path)
-
-        variant_combo.activated.connect(on_variant)
-        layout.addRow("Variant:", variant_combo)
-        self._widgets['prop_model_variant_combo'] = variant_combo
-        self._prop_variant_combo = variant_combo
         return widget
 
     def add_vector3_widget(self, layout, thing, key):

@@ -135,7 +135,10 @@ def _level():
 
 
 @pytest.fixture
-def flat():
+def flat(monkeypatch):
+    # Fio draws with Classic only (registry.ENFORCE_CLASSIC); the host's swap
+    # machinery is exercised with stand-ins only with that lifted here.
+    monkeypatch.setattr(registry, "ENFORCE_CLASSIC", False)
     saved = dict(registry._factories)
     registry.register_renderer("Flat", FlatRenderer)
     yield

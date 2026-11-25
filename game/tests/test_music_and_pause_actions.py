@@ -348,6 +348,40 @@ def test_loading_puts_the_store_back_before_play_restarts(actions):
     assert "stray_key" not in values
 
 
+def test_the_character_survives_the_map_and_play_store_resets(actions):
+    """Opening the save's map and starting Play wipe every store (Fio's
+    LogicState.reset_stores); the save's character is laid back down as play
+    starts, so a loaded save is not met with character creation."""
+    store = pause_actions._global_store()
+    store.set("_character", json.dumps({"name": "Aldric", "level": 7}), store="miniwind")
+    actions.pause_menu_save_slot(1)
+    store.set("_character", json.dumps({"name": "Somebody else"}), store="miniwind")
+    seen = []
+
+    def load_like_the_editor(name):
+        for key in store.keys(store="miniwind"):     # open_level_file / Play
+            store.delete(key, store="miniwind")
+        assert pause_actions.apply_pending_store()   # MiniwindGame.on_play_start
+        seen.append(store.get("_character", None, store="miniwind"))
+
+    actions.window.console_handler.cmd_load = load_like_the_editor
+    assert actions.pause_menu_load_slot(1)
+    assert json.loads(seen[-1]) == {"name": "Aldric", "level": 7}
+    assert not pause_actions.apply_pending_store()   # nothing left over
+
+
+def test_a_failed_load_leaves_nothing_for_the_next_play(actions):
+    actions.pause_menu_save_slot(1)
+
+    def fails(name):
+        raise RuntimeError("map would not open")
+
+    actions.window.console_handler.cmd_load = fails
+    with pytest.raises(RuntimeError):
+        actions.pause_menu_load_slot(1)
+    assert not pause_actions.apply_pending_store()
+
+
 def test_saves_are_delta_saves(actions):
     assert actions.pause_menu_save_slot(1)
     assert actions.view.logic_thread.session_runtime.modes == ["delta"]

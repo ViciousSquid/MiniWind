@@ -38,6 +38,27 @@ def _global_store():
     return get_manager().global_store
 
 
+#: The store of a save being loaded, ``(store name, values)``, from the moment
+#: :meth:`PauseActions.load_named` reads it until that load has finished.
+#: Opening the save's map and starting Play each reset every store to the map's
+#: authored values (Fio's ``LogicState.reset_stores``), which wiped the
+#: character written just before them: the save's world came back but the game
+#: asked for a new character. The game lays it back down as play starts
+#: (:func:`apply_pending_store`, from ``MiniwindGame.on_play_start``), after
+#: those resets and before the new session reads the character.
+_pending_store = None
+
+
+def apply_pending_store():
+    """Put the store of the save being loaded back; True when there was one."""
+    global _pending_store
+    pending, _pending_store = _pending_store, None
+    if pending is None:
+        return False
+    PauseActions._replace_store(*pending)
+    return True
+
+
 def read_slot_header(path):
     """``{'map', 'saved_at', 'summary'}`` for the save at *path*, or None.
 
@@ -244,16 +265,24 @@ class PauseActions:
         except Exception as exc:
             self._toast(f"{label.capitalize()} cannot be read ({exc}).", error=True)
             return False
+        global _pending_store
         with self._busy(f"Loading {label}",
                         "Stopping the game" if self._playing() else "Reading the save"):
             if isinstance(block, dict) and isinstance(block.get('values'), dict):
                 if self._playing():
                     self.window._exit_play_mode()
-                self._replace_store(str(block.get('store') or DEFAULT_STORE),
-                                    block['values'])
+                saved = (str(block.get('store') or DEFAULT_STORE),
+                         dict(block['values']))
+                self._replace_store(*saved)
+                # Opening the map and starting play reset the stores; play's
+                # start puts this one back (see _pending_store).
+                _pending_store = saved
             # Without a MiniWind block (a console save) the world alone is
             # restored, onto the running session as the console would.
-            self._console().cmd_load(self._campaign_save_name(name))
+            try:
+                self._console().cmd_load(self._campaign_save_name(name))
+            finally:
+                _pending_store = None
         return True
 
     # ------------------------------------------------------------ autosave

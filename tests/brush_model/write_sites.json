@@ -9,6 +9,7 @@
  },
  "pos": {
   "editor/component_edit.py": 1,
+  "editor/cutscene_wizard.py": 3,
   "editor/main_window.py": 2,
   "editor/things.py": 1,
   "editor/view_2d.py": 4,

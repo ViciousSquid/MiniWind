@@ -35,7 +35,8 @@ from engine.game_input import modal_escape_active as _game_modal_escape_active
 from engine.game_input import owns_number_keys as _game_owns_number_keys
 
 from engine.renderer import (
-    DEFAULT_RENDERER, available_renderers, canonical_name, create_renderer)
+    CLASSIC, DEFAULT_RENDERER, available_renderers, canonical_name,
+    classic_enforced, create_renderer, renderer_from_settings)
 from editor.selection_overlay import describe_selection
 _HUD_FONT_FILES = {
     1: "Rushfordclean-rgz89.otf",
@@ -261,12 +262,6 @@ class QtGameView(QOpenGLWidget):
         self.renderer = None
         #: Panorama selected by the earliest-created PlayerStart in the open map.
         self.sky_image_path = ""
-        #: The map's HD sky (engine.hd_graphics.sky_settings), from the
-        #: Primary PlayerStart like the panorama; None is the defaults.
-        self.hd_sky_settings = None
-        #: View > HD preview: whether the editor view draws HD in an HD
-        #: tier (Play always does).
-        self.hd_preview = True
         #: Registry name of the renderer initializeGL creates and switch_renderer replaces.
         self._renderer_mode = DEFAULT_RENDERER
 
@@ -706,23 +701,10 @@ class QtGameView(QOpenGLWidget):
         gl.glClearColor(*self.view_distance.fog_color, 1.0)
         self._log_gl_context()
         config = self.editor.config
-        # Classic unless settings.ini asks for HD_High ([Renderer] renderer).
-        # A renderer that cannot start here leaves Classic running.
-        wanted = self._configured_renderer(config)
-        self._renderer_mode = DEFAULT_RENDERER
-        self.renderer = None
-        if wanted != DEFAULT_RENDERER:
-            try:
-                candidate = create_renderer(wanted, config)
-                if candidate.ready:
-                    self.renderer, self._renderer_mode = candidate, wanted
-                else:
-                    candidate.cleanup()
-            except Exception as exc:
-                print(f"[QtGameView] Renderer '{wanted}' failed to start ({exc}); "
-                      f"using {DEFAULT_RENDERER}.")
-        if self.renderer is None:
-            self.renderer = create_renderer(DEFAULT_RENDERER, config)
+        # Always Classic: whatever [Renderer] renderer says in settings.ini
+        # (an older file may still name HD_High), Classic is what draws.
+        self._renderer_mode = self._configured_renderer(config)
+        self.renderer = create_renderer(self._renderer_mode, config)
         if not self.renderer.ready:
             debug_log("Error", "3D view: the renderer's shaders did not build, so "
                                "the view stays empty; the error is in the "
@@ -1712,10 +1694,6 @@ class QtGameView(QOpenGLWidget):
         _pmgr = self.logic_thread.plugins if self.logic_thread is not None else None
         # The map's Primary PlayerStart owns the panorama in both editor and Play.
         self.renderer.set_background_image(self.sky_image_path)
-        # The map's HD sky rides in the frame input like everything else a
-        # renderer is told: plain data, for a renderer that lights from it.
-        self._render_config["hd_sky"] = self.hd_sky_settings
-        self._render_config["hd_preview"] = self.hd_preview
         if _pmgr is not None and _pmgr.has_listeners("render.pre_scene"):
             _pmgr.emit("render.pre_scene", viewport=self, renderer=self.renderer,
                        projection=self.projection_matrix, view=self.view_matrix,
@@ -1950,6 +1928,14 @@ class QtGameView(QOpenGLWidget):
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
         if self.play_mode:
             self.hud._draw_underwater_overlay(painter, render_state)
+        else:
+            author = self._cutscene_author()
+            if author is not None:
+                # The cutscene editor's layer: who does what, and its scrubber.
+                from editor.cutscene_intents import projector_3d
+                cursor = self.mapFromGlobal(QCursor.pos())
+                author.paint_view(painter, projector_3d(self), (cursor.x(), cursor.y()),
+                                  size=(self.width(), self.height()))
         # The FPS counter is an editor's readout: a game launched to play
         # (kiosk mode) keeps it off its screen; F3's sysmon still shows it.
         if (self.editor.config.getboolean('Display', 'show_fps', fallback=False)
@@ -2335,17 +2321,10 @@ class QtGameView(QOpenGLWidget):
 
     @staticmethod
     def _configured_renderer(config):
-        """The registry name of the renderer settings.ini asks to start
-        with; Classic (the default renderer) on a low-power machine."""
-        from engine import hd_graphics
-        from engine import shaders as engine_shaders
-        try:
-            is_low_power, _ = engine_shaders.detect_low_power_arm()
-            lowpower = config.getboolean('Renderer', 'lowpower_mode', fallback=is_low_power)
-        except Exception:
-            lowpower = False
-        name = hd_graphics.REGISTRY_NAME[hd_graphics.renderer_from(config, lowpower=lowpower)]
-        return name if name in available_renderers() else DEFAULT_RENDERER
+        """The registry name of the renderer this view draws with: Classic,
+        always (engine.renderer.renderer_from_settings). A settings.ini that
+        names another renderer -- HD_High included -- still gets Classic."""
+        return renderer_from_settings(config)
 
     @property
     def renderer_mode(self):
@@ -2354,6 +2333,12 @@ class QtGameView(QOpenGLWidget):
 
     def switch_renderer(self, mode: str):
         """Replace the active renderer with the one registered as *mode*, live.
+
+        Classic is the only renderer the host draws with: while
+        ``engine.renderer.registry.ENFORCE_CLASSIC`` holds (always, outside
+        the tests of this machinery), a request for any other -- HD_High, or
+        a renderer a plugin registered -- is refused, leaves the current
+        renderer running and returns False.
 
         Works in the editor and in play: the frame input is rebuilt every
         frame, so a renderer needs nothing from its predecessor. The new
@@ -2366,6 +2351,10 @@ class QtGameView(QOpenGLWidget):
         active renderer afterwards.
         """
         mode = canonical_name(mode)         # "Classic" is the Forward renderer
+        if classic_enforced() and mode != DEFAULT_RENDERER:
+            print(f"[QtGameView] Renderer '{mode}' is not available; Fio draws "
+                  f"with {CLASSIC} only.")
+            return False
         if self.renderer is not None and mode == self._renderer_mode:
             return True
         if mode not in available_renderers():
@@ -2483,6 +2472,62 @@ class QtGameView(QOpenGLWidget):
     # keeps, so nothing here touches the render loop or the wider scene.
 
 
+    def _cutscene_author(self):
+        """The cutscene editor, while it is open over this editor view (never
+        in Play): the views ask it first about clicks, and it draws."""
+        if self.play_mode:
+            return None
+        author = getattr(self.editor, 'cutscene_author', None)
+        if author is None or not author.isVisible():
+            return None
+        return author
+
+    def _cutscene_ground(self, mx, my):
+        """The world point under the mouse on the terrain, or None."""
+        distance = self.picking.terrain_pick_distance(mx, my)
+        if distance is None:
+            return None
+        origin, direction = self.picking.get_ray_from_mouse(mx, my)
+        hit = origin + direction * float(distance)
+        return [float(hit.x), float(hit.y), float(hit.z)]
+
+    def _cutscene_press(self, event):
+        """Cutscene authoring, RTS style: click (Shift/Ctrl: add) to select
+        actors, right-click one for its orders, then click the target or the
+        destination; the scrubber steps through the cutscene."""
+        author = self._cutscene_author()
+        if author is None:
+            return False
+        mods = QApplication.keyboardModifiers()
+        if event.button() == Qt.LeftButton:
+            if author.scrubber_press(self, event.pos()):
+                self.update()
+                return True
+            if author.pick_armed():
+                obj = self.picking.get_object_at_3d(event.x(), event.y())
+                author.pick_click(obj, self._cutscene_ground(event.x(), event.y()),
+                                  ctrl=bool(mods & Qt.ControlModifier))
+                self.update()
+                return True
+            obj = self.picking.get_object_at_3d(event.x(), event.y())
+            if obj is not None and author.is_cast(obj):
+                author.select_from_view(
+                    obj, add=bool(mods & (Qt.ShiftModifier | Qt.ControlModifier)))
+                self.update()
+                return True
+            return False
+        if event.button() == Qt.RightButton:
+            if author.pick_armed():
+                author.cancel_pick()
+                self.update()
+                return True
+            obj = self.picking.get_object_at_3d(event.x(), event.y())
+            if obj is not None and author.is_cast(obj):
+                author.action_menu(obj, event.globalPos(), self)
+                self.update()
+                return True
+        return False
+
     def mousePressEvent(self, event):
         if self.pointer.party_press(event):
             return
@@ -2521,6 +2566,9 @@ class QtGameView(QOpenGLWidget):
             if self._level_complete_btn_rect.contains(event.pos()):
                 self.hud._confirm_level_complete()
                 return
+
+        if self._cutscene_press(event):
+            return
 
         if self.terrain_sculpt_active and not self.play_mode and event.button() == Qt.LeftButton:
             self._terrain_brush_mouse_pos = event.pos()
@@ -2844,6 +2892,11 @@ class QtGameView(QOpenGLWidget):
         if _play_menu_open(self):
             self.play_menu.handle_mouse_move(event)
             return
+        author = self._cutscene_author()
+        if author is not None:
+            if author.scrubber_drag(self, event.pos()):
+                return
+            self.update()               # the hover tint follows the mouse
         if (not self.play_mode and self._editor_right_mouse_held
                 and not (event.buttons() & Qt.RightButton)):
             # The release went somewhere else (another window, another app):
@@ -2972,6 +3025,9 @@ class QtGameView(QOpenGLWidget):
         return self.hovered_face_info
 
     def mouseReleaseEvent(self, event):
+        author = self._cutscene_author()
+        if author is not None and event.button() == Qt.LeftButton and author.scrubber_release():
+            return
         self.pointer.party_release(event)
         if _play_menu_open(self):
             release = getattr(self.play_menu, 'handle_mouse_release', None)
@@ -3206,6 +3262,16 @@ class QtGameView(QOpenGLWidget):
             return
         if self.play_mode and event.key() == Qt.Key_Home:
             self.return_camera_to_player()
+        author = self._cutscene_author()
+        if author is not None:
+            # The cutscene editor: Left / Right step its scrubber, Escape
+            # drops a pending order.
+            if author.scrub_key(event.key(), bool(event.modifiers() & Qt.ShiftModifier)):
+                self.update()
+                return
+            if event.key() == Qt.Key_Escape and author.cancel_pick():
+                self.update()
+                return
         if event.key() == Qt.Key_Escape and self.gizmo.dragging:
             self.gizmo.cancel()
             event.accept()
@@ -3246,6 +3312,15 @@ class QtGameView(QOpenGLWidget):
                 return
 
         if self.play_mode and not self.console_overlay_active:
+            lt = self.logic_thread
+            if (event.key() == Qt.Key_Escape and lt is not None
+                    and lt.cutscene_runtime.state is not None):
+                # A cutscene owns Escape: it ends one that lets itself be
+                # stopped; never the pause menu over a story scene.
+                with lt._tick_lock:
+                    lt.cutscene_runtime.skip()
+                event.accept()
+                return
             if event.key() == Qt.Key_Escape and _game_modal_escape_active(self.logic_thread):
                 # Let the parent MainWindow route Escape into the running game's
                 # modal input. Otherwise QtGameView opens Fio's pause menu first,

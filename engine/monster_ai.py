@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - exercised by the head-less player
     def debug_log(category, message):
         print(f"[{category}] {message}")
 from .change_journal import JOURNAL, STATE, set_positions, touch
-from . import monster_table
+from . import actor_time, monster_table
 from .monster_constants import (MONSTER_EYE_RISE, monster_body_rise,
                                 monster_eye_rise)
 from . import monster_facing
@@ -431,6 +431,12 @@ class MonsterAI:
         path = self._fallback_reason()
         self.table.path = path
         row_delta, sit_out = self._offscreen_rows(monster_things, delta, player_pos, rect)
+        if getattr(self.lt, "actor_time_rates", None):
+            # A monster whose own clock is altered (engine/actor_time.py) --
+            # a Slow Time caster the slowed world does not slow -- takes its
+            # rate times the tick.
+            row_delta, sit_out = actor_time.row_deltas(self.lt, monster_things, delta,
+                                                       row_delta, sit_out)
         if path == 'dense':
             self._update_dense(monster_things, delta if row_delta is None else row_delta,
                                player_pos, sit_out)
@@ -1330,7 +1336,7 @@ all accumulated time when it runs, so simulation time is not lost.
                         slide_x = glm.vec3(thing_pos.x + step.x, thing_pos.y, thing_pos.z)
                         slide_z = glm.vec3(thing_pos.x, thing_pos.y, thing_pos.z + step.z)
                         if not self._monster_overlaps_wall(slide_x.x, slide_x.y, slide_x.z, MONSTER_WALL_MARGIN):
-                            thing.pos = [slide_x.x, slide_x.y, slide_z.z]
+                            thing.pos = [slide_x.x, slide_x.y, slide_x.z]
                         elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                             thing.pos = [slide_z.x, slide_z.y, slide_z.z]
                         # else: blocked on both axes – no movement
@@ -2015,7 +2021,7 @@ the scalar fallback for callers that do not have the dense table.
                 slide_x = glm.vec3(thing_pos.x + step.x, thing_pos.y, thing_pos.z)
                 slide_z = glm.vec3(thing_pos.x, thing_pos.y, thing_pos.z + step.z)
                 if not self._monster_overlaps_wall(slide_x.x, slide_x.y, slide_x.z, MONSTER_WALL_MARGIN):
-                    monster.pos = [slide_x.x, slide_x.y, slide_z.z]
+                    monster.pos = [slide_x.x, slide_x.y, slide_x.z]
                 elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                     monster.pos = [slide_z.x, slide_z.y, slide_z.z]
 
@@ -2241,7 +2247,7 @@ the scalar fallback for callers that do not have the dense table.
             slide_x = glm.vec3(m_pos.x + step.x, m_pos.y, m_pos.z)
             slide_z = glm.vec3(m_pos.x, m_pos.y, m_pos.z + step.z)
             if not self._monster_overlaps_wall(slide_x.x, slide_x.y, slide_x.z, MONSTER_WALL_MARGIN):
-                monster.pos = [slide_x.x, slide_x.y, slide_z.z]
+                monster.pos = [slide_x.x, slide_x.y, slide_x.z]
                 state['patrol_blocked_count'] = 0
             elif not self._monster_overlaps_wall(slide_z.x, slide_z.y, slide_z.z, MONSTER_WALL_MARGIN):
                 monster.pos = [slide_z.x, slide_z.y, slide_z.z]

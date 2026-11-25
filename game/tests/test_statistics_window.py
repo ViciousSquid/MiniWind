@@ -212,3 +212,46 @@ def test_quest_map_request_focuses_the_same_statistics_window(ui):
     assert window.screen == "map"
     assert window.map.centre == (30., 40.)
     assert window.map.focus == (30., 40., "The Lost Ring")
+
+
+def test_fortune_shows_a_card_per_benefit_with_its_reason_in_a_tooltip(ui, monkeypatch):
+    import game.rpg.fortune as fortune
+    from game.ui import cards
+    _game, session, _view, window = ui
+    _tab(ui, "fortune")
+    drawn, tips = [], []
+    real = cards.draw_card
+    monkeypatch.setattr(cards, "draw_card",
+                        lambda p, r, card: drawn.append((QtCore.QRect(r), card))
+                        or real(p, r, card))
+    monkeypatch.setattr(cards, "draw_tooltip", lambda p, text, pos: tips.append(text))
+    _paint(window)
+    benefits = fortune.benefits(session.game.character)
+    rects = [r for r, _c in drawn]
+    # A row card per benefit, one per line, the first page of them.
+    assert len(rects) >= 4 and len({(r.x(), r.width()) for r in rects}) == 1
+    for i, a in enumerate(rects):
+        assert window.window_rect.contains(a) and a.width() > 3 * a.height()
+        assert all(not a.intersects(b) for b in rects[i + 1:])
+    titles = [card.title for _r, card in drawn]
+    # The rest a page (the arrow, or the mouse wheel) further on.
+    first_page = list(drawn)
+    while window.fortune_page < window._fortune_pages - 1:
+        arrow = max((r for r, _a in window._buttons if r.height() == 24),
+                    key=lambda r: r.x())
+        assert window.handle_mouse_press(_Press(arrow.center()))
+        drawn.clear()
+        _paint(window)
+        titles += [card.title for _r, card in drawn]
+    assert titles == [b[0] for b in benefits]
+    wheel = SimpleNamespace(pos=lambda: window.window_rect.center(),
+                            angleDelta=lambda: QtCore.QPoint(0, 120))
+    while window.fortune_page:
+        window.handle_wheel(wheel)                     # back up to the first page
+    drawn.clear()
+    _paint(window)
+    assert [c.title for _r, c in drawn] == [c.title for _r, c in first_page]
+    rect, card = drawn[3]
+    monkeypatch.setattr(hits, "pointer", (rect.center().x(), rect.center().y()))
+    _paint(window)
+    assert tips and tips[-1] == card.tooltip and benefits[3][2] in tips[-1]

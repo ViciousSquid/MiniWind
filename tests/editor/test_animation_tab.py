@@ -27,7 +27,7 @@ def _select(main_window, thing):
 
 def _model_prop():
     from editor.things import Prop
-    return Prop.for_model('assets/models/Oil_Drum.obj', pos=[0, 0, 0])
+    return Prop.for_model('assets/models/Oak_Barrel.obj', pos=[0, 0, 0])
 
 
 def _open_animation(main_window, prop):

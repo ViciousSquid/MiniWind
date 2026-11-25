@@ -95,6 +95,9 @@ class ViewOverhead:
                 armed, shooting = pose()
             except Exception:
                 pass
+        gone = getattr(sess, "player_body_gone", None)
+        if gone is not None and gone():
+            return          # blown apart: no body, and nothing in its hands
         ctrl = view._overhead_sprite_ctrl
         ctrl.update(gpos, angle, time.perf_counter(), armed=armed, shooting=shooting)
         flash = 0.0

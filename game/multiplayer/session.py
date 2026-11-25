@@ -16,7 +16,7 @@ import time
 import types
 from dataclasses import dataclass, field
 
-from .. import fio
+from .. import fio, slow_time
 from ..rpg import equipment, heads
 from ..rpg.character import Character
 from ..sim import perception
@@ -53,7 +53,15 @@ class PlayerContext:
 
 
 class PlayerLogic:
-    """Explicit player ownership over shared world runtimes."""
+    """Explicit player ownership over shared world runtimes.
+
+    Reads the adapter does not own fall through to the world. Writes stay on
+    the adapter -- except :data:`WORLD_OWNED`, state the logic thread reads
+    from the world itself (its speed, the actors' clock rates): written
+    through an adapter, those would land where nothing ever reads them."""
+
+    #: Attributes a write through the adapter sets on the world.
+    WORLD_OWNED = frozenset(("time_scale", "actor_time_rates"))
 
     def __init__(self, world, physics):
         object.__setattr__(self, "world", world)
@@ -83,6 +91,12 @@ class PlayerLogic:
 
     def __getattr__(self, name):
         return getattr(self.world, name)
+
+    def __setattr__(self, name, value):
+        if name in PlayerLogic.WORLD_OWNED:
+            setattr(self.world, name, value)
+        else:
+            object.__setattr__(self, name, value)
 
 
 class CoopSession:
@@ -619,12 +633,17 @@ class CoopSession:
         else:
             selected = list(self.players.values())
         before = {p.player_id: tuple(p.physics.pos) for p in selected}
+        # Slow Time (game/slow_time.py): a caster moves by their own clock --
+        # on the host twice the slowed world's tick, on a client (which ticks
+        # at its own speed) half for everyone else while the host's world is
+        # slowed -- so a prediction matches what the host simulates.
+        slow = slow_time.registry(self.logic)
         for context in selected:
             if time.monotonic() - context.last_input > self.INPUT_TIMEOUT:
                 context.frame = InputFrame()
             if context.session.game.character.is_dead or not context.connected:
                 continue
-            step = min(0.05, max(0.0, delta))
+            step = min(0.05, max(0.0, delta)) * slow.movement_rate(context.physics)
             self._move_player(context, context.frame, step)
             context.simulated_sequence = context.sequence
             if not self.authority:
@@ -1113,8 +1132,11 @@ class CoopSession:
             if proximity:
                 self._record_visits(context)
         if not primary:
-            session.game.tick(delta, session._sprint(delta))
-            session._update_bow_draw(delta)
+            # A Slow Time caster's own timers -- cooldowns, swings, the bow
+            # draw, stamina -- run at their clock's rate, as the root's do.
+            pdelta = delta * fio.actor_time_rate(self.logic, context.physics)
+            session.game.tick(pdelta, session._sprint(pdelta))
+            session._update_bow_draw(pdelta)
             session._update_encumbrance()
             session._update_visibility()
             session._announce_skill_raises()
@@ -1126,7 +1148,7 @@ class CoopSession:
                 "_attack_anim_time",
                 "_offhand_anim_time",
             ):
-                setattr(session, name, max(0.0, getattr(session, name, 0.0) - delta))
+                setattr(session, name, max(0.0, getattr(session, name, 0.0) - pdelta))
             if proximity:
                 session._tick_pickups()
                 session._tick_spellbooks()
@@ -1216,7 +1238,6 @@ class CoopSession:
             "flour_supply",
         ):
             setattr(session, name, getattr(self.root, name))
-        session._world_bounds = getattr(self.root, "_world_bounds", None)
         session._rebuild_type_index(fio.things(self.logic))
         session.logic.trigger_runtime.rebuild_trigger_index(
             getattr(self.logic.editor_state, "brushes", [])

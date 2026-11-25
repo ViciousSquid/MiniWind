@@ -5,8 +5,9 @@ Both are parchment pages, like the level-up page. The training sheet follows
 the old tomes: the skill's name between flourishes, what it governs, its
 emblem, then *Trainer skill* (the teacher's rank), *Current skill* (yours),
 and *Times trained this level* as five stars -- with what a lesson costs and
-the button to buy one. The tutor's page lists the spells for sale down the
-left, with the chosen one's school, power and price on the right.
+the button to buy one. The tutor's page shows the spells for sale as cards
+down the left (game/ui/cards.py), with the chosen one's school, power and
+price on the right.
 
 Each page is a ``draw(painter, session, w, h)`` / ``handle_key(session, key)``
 pair, dispatched from :mod:`game.ui.screens` as ``"training"`` and
@@ -22,7 +23,7 @@ import os
 from PyQt5.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QPen, QPixmap, QPolygonF
 
-from . import fonts
+from . import cards, fonts, hits
 from . import theme as T
 from ..rpg import guilds, magic as rpg_magic, skills as sk, training
 
@@ -299,35 +300,30 @@ def draw_tutor(painter, session, w, h):
               color=_INK_SOFT, align=T.ALIGN_CENTER, family="Segoe UI")
     top = inner.y() + 70
 
-    list_w = int(inner.width() * 0.5)
-    row_h = 40
+    # The spells for sale as cards down the left, a row each (game/ui/cards.py), the
+    # chosen one in full on the right -- so the cards carry no tooltip.
+    list_w = int(inner.width() * (0.56 if cards.LAYOUT == "list" else 0.5))
     foot_y = inner.bottom() - 34
-    shown = max(1, (foot_y - 10 - top) // row_h)
-    first = max(0, min(st["row"] - shown + 1, len(spells) - shown)) if st["row"] >= shown else 0
-    for i in range(first, min(len(spells), first + shown)):
+    area = QRect(inner.x(), top + 30, list_w, max(1, foot_y - 12 - top - 30))
+    grid = cards.layout(area, len(spells), grid_min_scale=0.6, fit_all=True)
+    st["cols"], st["page_size"] = grid.cols, grid.page_size
+    page, first, pages = s._card_page(st["row"], grid.page_size, len(spells))
+    s._card_pager(painter, QRect(inner.x() + list_w - 120, top, 120, 24), page, pages,
+                  _tutor_turn)
+    T.text_in(painter, QRect(inner.x(), top, list_w - 130, 24),
+              f"{len(spells)} spells for sale", size=10, color=_INK_SOFT,
+              align=int(Qt.AlignLeft | Qt.AlignVCenter), family="Segoe UI")
+    for i in range(first, min(len(spells), first + grid.page_size)):
         spell = spells[i]
-        ry = top + (i - first) * row_h
-        r = QRect(inner.x(), ry, list_w, row_h - 4)
-        chosen = i == st["row"]
+        rect = grid.slots[i - first]
         known = spell.id in c.known_spells
-        if chosen:
-            painter.fillRect(r, QColor(122, 40, 30, 60))
-        painter.fillRect(QRect(r.x(), r.y() + 4, 4, r.height() - 8), s._rarity_color(spell.rarity))
-        pm = _icon(spell.id) or _icon(f"_{spell.school}")
-        if pm is not None:
-            painter.drawPixmap(QRect(r.x() + 10, r.y() + 2, r.height() - 4, r.height() - 4), pm)
-        ink = _INK_SOFT if known else _INK
-        T.text_in(painter, r.adjusted(r.height() + 12, 0, -70, -r.height() // 2 + 2),
-                  spell.name, size=13, color=ink, align=int(Qt.AlignLeft | Qt.AlignBottom),
-                  family=fonts.dialogue_family())
-        T.text_in(painter, r.adjusted(r.height() + 12, r.height() // 2, -70, 0),
-                  f"{sk.label(spell.school)}  ·  {spell.rarity.title()}", size=8,
-                  color=_INK_SOFT, align=int(Qt.AlignLeft | Qt.AlignTop), family="Segoe UI")
-        price = "known" if known else \
-            f"{session._teacher_price(training.spell_price(c, p, spell))} g"
-        T.text_in(painter, r.adjusted(0, 0, -6, 0), price, size=11, color=ink,
-                  align=int(Qt.AlignRight | Qt.AlignVCenter), family="Segoe UI")
-        s._row_target(painter, r, _pick("tutor", i), f"tutor:{spell.id}")
+        price = session._teacher_price(training.spell_price(c, p, spell))
+        cards.draw_card(painter, rect, cards.dimmed(s._spell_card(
+            painter, session, spell, selected=i == st["row"], locked=False, rect=rect,
+            badges=("known" if known else "", f"{price} g" if not known else ""),
+            badge_colors=(T.DIM, T.GOLD_BRIGHT), greyed=known, active=False,
+            pips=None, tooltip=""), True))
+        hits.add(QRect(rect), _pick("tutor", i), f"tutor:{spell.id}")
 
     spell = spells[st["row"]]
     dx = inner.x() + list_w + 24
@@ -364,14 +360,25 @@ def draw_tutor(painter, session, w, h):
     s.button(painter, QRect(inner.right() - 140, foot_y, 140, 32), "Leave", _close)
 
 
+def _tutor_turn(session, step):
+    """The tutor's page arrows: onto the first card of the next page."""
+    spells = _for_sale(session)
+    st = _state(session, "tutor")
+    size = max(1, st.get("page_size", 1))
+    st["row"] = max(0, min((st["row"] // size + step) * size, max(0, len(spells) - 1)))
+
+
 def handle_tutor(session, key):
     spells = _for_sale(session)
     st = _state(session, "tutor")
     n = max(1, len(spells))
-    if key in ("up", "w", "left", "a"):
-        st["row"] = (st["row"] - 1) % n; return True
-    if key in ("down", "s", "right", "d", "tab"):
-        st["row"] = (st["row"] + 1) % n; return True
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "tab": "right",
+            "pageup": "pageup", "pagedown": "pagedown"}.get(key)
+    if move:
+        st["row"] = cards.navigate(st["row"], move, len(spells), st.get("cols", 1),
+                                   st.get("page_size"))
+        return True
     if key in ("return", "enter", "space") and spells:
         session.learn_from_teacher(spells[st["row"] % n].id); return True
     if key in ("escape", "esc", "q"):

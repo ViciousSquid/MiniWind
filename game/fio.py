@@ -163,6 +163,39 @@ def world_paused(logic) -> bool:
     return bool(session is not None and session.world_paused)
 
 
+def set_actor_time_rate(logic, entity, rate) -> None:
+    """Run *entity*'s own clock at *rate* times the world's (engine/actor_time.py):
+    its movement, attacks and animations, on the player's tick and the monster
+    AI's. 1 puts it back in step."""
+    if logic is None:
+        return
+    from engine import actor_time
+    actor_time.set_rate(logic, entity, rate)
+
+
+def clear_actor_time_rate(logic, entity=None) -> None:
+    """Put *entity*'s clock (or every altered one) back in step with the world."""
+    if logic is None:
+        return
+    from engine import actor_time
+    actor_time.clear(logic, entity)
+
+
+def actor_time_rates(logic) -> dict:
+    """The altered clocks (``id(entity)`` -> ``(entity, rate)``); empty when none."""
+    found = getattr(logic, "actor_time_rates", None)
+    return found if found else {}
+
+
+def actor_time_rate(logic, entity) -> float:
+    """How fast *entity*'s own clock runs against the world's (1.0: in step)."""
+    found = getattr(logic, "actor_time_rates", None)
+    if not found or entity is None:
+        return 1.0
+    entry = found.get(id(entity))
+    return entry[1] if entry is not None and entry[0] is entity else 1.0
+
+
 def rebuild_entity_caches(logic) -> None:
     """Re-index the world after entities were added or removed in play."""
     runtime = getattr(logic, "world_runtime", None)
@@ -208,6 +241,38 @@ def clear_projectile_deflector(logic, hook):
     runtime = getattr(logic, "combat_runtime", None)
     if runtime is not None and getattr(runtime, "projectile_deflector", None) == hook:
         runtime.projectile_deflector = None
+
+
+def set_projectile_catcher(logic, catcher):
+    """Install the game's catcher of projectiles -- Props they stick in
+    (``LogicCombat.projectile_catcher``); None clears it."""
+    runtime = getattr(logic, "combat_runtime", None)
+    if runtime is not None:
+        runtime.projectile_catcher = catcher
+
+
+def clear_projectile_catcher(logic, catcher):
+    runtime = getattr(logic, "combat_runtime", None)
+    if runtime is not None and getattr(runtime, "projectile_catcher", None) is catcher:
+        runtime.projectile_catcher = None
+
+
+def set_prop_use_claim(logic, claim):
+    """Let the game take the use press before Props are collected or picked
+    up (``PropSession.use_claim``; None clears it)."""
+    runtime = getattr(logic, "prop_runtime", None)
+    if runtime is not None:
+        runtime.use_claim = claim
+
+
+def explosion_runtime(logic):
+    """The explosive Props' runtime (``ExplosionRuntime``), or None."""
+    return getattr(logic, "explosion_runtime", None)
+
+
+def prop_runtime(logic):
+    """The Prop registry (``PropSession``), or None."""
+    return getattr(logic, "prop_runtime", None)
 
 
 def projectile_tag(logic, row) -> int:

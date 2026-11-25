@@ -389,3 +389,36 @@ def test_character_creation_in_its_window_takes_the_mouse(session):
     assert cc["head"] == head + 1
     _click_in_window(session, window, "Next")
     assert screens._CC_STEPS[cc["step"]] == "fortune"
+
+
+def test_the_fortune_can_be_re_rolled_five_times_then_it_is_set(session, monkeypatch):
+    """The first roll is free; five re-rolls follow, by key or by the button,
+    and the stats of the fifth are the character's."""
+    monkeypatch.setattr(screens, "_roll_settled", lambda s: True)
+    session.open_screen = "charcreate"
+    cc = screens._cc(session)
+    for letter in "Ada":
+        screens.handle_key(session, letter.lower())
+    screens.handle_key(session, "return")                # the dice fall as you arrive
+    assert screens._CC_STEPS[cc["step"]] == "fortune" and cc["rolls"]
+    seen = [dict(cc["rolls"])]
+    for n in range(screens.MAX_REROLLS):
+        assert screens._rerolls_left(cc) == screens.MAX_REROLLS - n
+        cc["roll_t"] = 0.0                               # the dice have settled
+        if n % 2:
+            screens.handle_key(session, "r")
+        else:
+            _click(session, "Re-roll")
+        seen.append(dict(cc["rolls"]))
+    assert cc["rerolls"] == screens.MAX_REROLLS and screens._rerolls_left(cc) == 0
+    fifth = dict(cc["rolls"])
+    screens.handle_key(session, "r")
+    screens.handle_key(session, "space")
+    screens._cc_roll(session)
+    assert cc["rolls"] == fifth and cc["rerolls"] == screens.MAX_REROLLS
+    cc["roll_t"] = 0.0
+    labels = _labels(session)
+    assert "Re-roll" not in labels and "Fate is set" not in labels   # disabled
+    screens.handle_key(session, "escape")                # back and forth keeps them
+    screens.handle_key(session, "return")
+    assert cc["rolls"] == fifth

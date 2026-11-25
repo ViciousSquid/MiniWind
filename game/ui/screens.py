@@ -11,10 +11,12 @@ they need nothing beyond a QPainter and the session. Selection lives in
 
 from __future__ import annotations
 
+import re
+
 from PyQt5.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
-from . import drag, fonts, hits, spell_lock, trade_anim
+from . import cards, drag, fonts, hits, spell_lock, trade_anim
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
@@ -84,8 +86,8 @@ _SCREEN_BODY_SIZE = {
     "journal": (700, 470),
     "spells": (700, 470),
     "levelup": (820, 600),
-    "trade": (760, 520),
-    "container": (760, 500),
+    "trade": (960, 600),
+    "container": (900, 560),
     "quest": (880, 540),
     "lockpicking": (820, 560),
     "training": (760, 600),
@@ -108,6 +110,25 @@ _QUEST_HITS = {"rows": [], "toggle": None, "toggle_qid": None,
 _SPELL_HITS = {"cells": [], "targets": []}
 
 
+#: The screens' boxes and button plates (dark on the classic panels).
+_BTN = QColor(34, 30, 44, 235)
+_BTN_HOT = QColor(96, 70, 34, 240)
+_BTN_PRIMARY = QColor(62, 48, 30, 235)
+_BTN_OFF = QColor(24, 22, 30, 200)
+_BOX = QColor(12, 12, 16, 220)
+_HEAD_BOX = QColor(18, 18, 24)
+_TICK_BOX = QColor(34, 30, 44, 235)
+_PANE = QColor(14, 13, 20, 150)
+_HAND_BOX = QColor(30, 28, 36, 245)
+#: On a parchment scroll (theme.parchment): pale wells ruled in ink.
+T.ink_colours(globals(),
+              _BTN=QColor(246, 232, 200, 210), _BTN_HOT=QColor(236, 196, 128, 230),
+              _BTN_PRIMARY=QColor(240, 214, 160, 220), _BTN_OFF=QColor(236, 222, 190, 110),
+              _BOX=QColor(250, 240, 214, 150), _HEAD_BOX=QColor(232, 212, 170, 200),
+              _TICK_BOX=QColor(250, 240, 214, 200), _PANE=QColor(255, 246, 222, 70),
+              _HAND_BOX=QColor(250, 240, 214, 160))
+
+
 def button(painter, rect, label, action, enabled=True, primary=False):
     """A clickable button: gilded frame, MedievalSharp label, lit on hover.
 
@@ -115,11 +136,15 @@ def button(painter, rect, label, action, enabled=True, primary=False):
     button draws dimmed and does nothing.
     """
     hot = enabled and hits.hovered(rect)
+    if T.inked():
+        _inked_button(painter, rect, label, hot, enabled, primary)
+        if enabled:
+            hits.add(QRect(rect), action, label)
+        return
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
-    fill = (QColor(96, 70, 34, 240) if hot else
-            QColor(62, 48, 30, 235) if primary else QColor(34, 30, 44, 235))
-    painter.setBrush(fill if enabled else QColor(24, 22, 30, 200))
+    fill = (_BTN_HOT if hot else _BTN_PRIMARY if primary else _BTN)
+    painter.setBrush(fill if enabled else _BTN_OFF)
     painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD if enabled else T.DIM, 1.5))
     painter.drawRoundedRect(rect, 5, 5)
     painter.setFont(fonts.dialogue_font(12))
@@ -129,6 +154,19 @@ def button(painter, rect, label, action, enabled=True, primary=False):
     painter.restore()
     if enabled:
         hits.add(QRect(rect), action, label)
+
+
+def _inked_button(painter, rect, label, hot, enabled, primary):
+    """A button on a parchment scroll: an ink-outlined plaque; the primary
+    one sealed in red wax down its left end."""
+    from .scroll import plaque
+    plaque(painter, rect, on=hot, enabled=enabled)
+    painter.save()
+    painter.setFont(fonts.dialogue_font(12))
+    painter.setPen(QColor(150, 36, 22) if (primary or hot) and enabled
+                   else T.INK if enabled else QColor(120, 98, 74, 170))
+    painter.drawText(rect, T.ALIGN_CENTER, label)
+    painter.restore()
 
 
 def _row_target(painter, rect, action, label=None):
@@ -241,29 +279,32 @@ def _draw_charcreate(painter, session, w, h):
         hint = "Type a name    ←/→ head    ↑/↓ switch hand    Enter next"
     elif step == "fortune":
         _draw_fortune(painter, inner, ty, s)
-        hint = "R or Space re-roll    Enter next    Esc back"
+        hint = ("R or Space re-roll    Enter next    Esc back" if _rerolls_left(s)
+                else "Enter next    Esc back")
     elif step == "class":
         ids = classes.CREATION_CLASS_IDS
         k = classes.get(ids[s["class"]])
-        list_w = int(inner.width() * 0.42)
+        list_w = int(inner.width() * 0.5)
         _cc_list(painter, inner.x(), ty, list_w, ids, s["class"],
-                 lambda i: classes.get(i).label, field="class")
+                 lambda i: classes.get(i).label, field="class",
+                 h=inner.bottom() - 64 - ty, state=s)
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
         majors = ", ".join(sk.label(m) for m in k.major_skills if sk.is_shown(m))
         no_magic = "" if k.magic else f"\n\n{classes.NO_MAGIC_NOTE}"
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    k.label, k.desc + f"\n\nSpecialisation: {k.specialisation}"
                    f"\nFavoured: {favs}\nMajor skills: {majors}{no_magic}")
-        hint = "↑/↓ choose class    Enter next    Esc back"
+        hint = "Arrows or click choose a class    Enter next    Esc back"
     elif step == "birthsign":
         ids = birthsigns.CREATION_BIRTHSIGN_IDS
         b = birthsigns.get(ids[s["birthsign"]])
-        list_w = int(inner.width() * 0.42)
+        list_w = int(inner.width() * 0.5)
         _cc_list(painter, inner.x(), ty, list_w, ids, s["birthsign"],
-                 lambda i: birthsigns.get(i).label, field="birthsign")
+                 lambda i: birthsigns.get(i).label, field="birthsign",
+                 h=inner.bottom() - 64 - ty, state=s)
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    b.label, b.desc)
-        hint = "↑/↓ choose birthsign    Enter next    Esc back"
+        hint = "Arrows or click choose a birthsign    Enter next    Esc back"
     else:  # confirm
         name = " ".join(p.capitalize() for p in s["name"].split()) or "Adventurer"
         k = classes.get(classes.CREATION_CLASS_IDS[s["class"]])
@@ -309,11 +350,26 @@ def _cc_bio(s):
     return bios.bio_from_rolls(s.get("rolls") or {})
 
 
+#: How many times the player may re-roll their fortune at character creation;
+#: the stats of the last re-roll are theirs.
+MAX_REROLLS = 5
+
+
+def _rerolls_left(s) -> int:
+    """Re-rolls still allowed (none before the first roll is made)."""
+    if not s.get("rolls"):
+        return MAX_REROLLS
+    return max(0, MAX_REROLLS - int(s.get("rerolls", 0) or 0))
+
+
 def _cc_roll(session):
     """Roll (or re-roll) 3d6 for STRENGTH, ENDURANCE and CHARISMA. The dice
-    tumble on screen for a moment before they settle (see _draw_fortune)."""
+    tumble on screen for a moment before they settle (see _draw_fortune).
+    After :data:`MAX_REROLLS` re-rolls the stats are set: nothing happens."""
     import time
     s = _cc(session)
+    if s.get("rolls") and _rerolls_left(s) <= 0:
+        return
     rng = getattr(session, "rng", None)
     s["rolls"] = {a: _cha.roll_3d6(rng) for a, _label in _cha.ROLLED}
     s["roll_t"] = time.monotonic()
@@ -393,7 +449,7 @@ def _draw_fortune(painter, inner, ty, s):
     # The bio, once the dice are down.
     by = top + 3 * row_h + 6
     box = QRect(inner.x(), by, inner.width(), inner.bottom() - 70 - by)
-    painter.setBrush(QColor(12, 12, 16, 220))
+    painter.setBrush(_BOX)
     painter.setPen(QPen(T.GILD, 1))
     painter.drawRect(box)
     if all_settled and rolls:
@@ -406,12 +462,15 @@ def _draw_fortune(painter, inner, ty, s):
     else:
         T.text_in(painter, box, "The dice are rolling…", size=12, color=T.DIM,
                   align=T.ALIGN_CENTER)
-    n = int(s.get("rerolls", 0) or 0)
+    left = _rerolls_left(s)
     button(painter, QRect(inner.x() + inner.width() // 2 - 90, inner.bottom() - 60, 180, 32),
-           "Re-roll" if rolls else "Roll", _cc_roll, enabled=all_settled)
-    if n:
+           ("Re-roll" if rolls else "Roll") if left or not rolls else "Fate is set",
+           _cc_roll, enabled=all_settled and (left > 0 or not rolls))
+    if rolls:
+        note = (f"{left} re-roll{'s' if left != 1 else ''} left" if left
+                else "No re-rolls left: these are yours")
         T.text_in(painter, QRect(inner.x(), inner.bottom() - 60, inner.width() // 2 - 100, 32),
-                  f"re-rolled {n}×", size=9, color=T.DIM, align=T.ALIGN_RIGHT)
+                  note, size=9, color=T.DIM, align=T.ALIGN_RIGHT)
 
 
 def _cc_next(session):
@@ -446,7 +505,7 @@ def _draw_identity(painter, inner, ty, s):
     fx = inner.x() + 90
     fw = inner.width() - 90
     box = QRect(fx, ty + 2, fw, 30)
-    painter.setBrush(QColor(12, 12, 16))
+    painter.setBrush(_BOX)
     painter.setPen(QPen(T.GILD, 1))
     painter.drawRect(box)
     caret = "_" if (int(__import__("time").time() * 2) % 2 == 0) else " "
@@ -459,7 +518,7 @@ def _draw_identity(painter, inner, ty, s):
     size = min(hh, int(inner.width() * 0.5))
     cx = inner.x() + inner.width() // 2
     box = QRect(cx - size // 2, hy, size, size)
-    painter.setBrush(QColor(18, 18, 24))
+    painter.setBrush(_HEAD_BOX)
     painter.setPen(QPen(T.GILD, 1))
     painter.drawRect(box)
     pm = _head_pixmap(s["head"])
@@ -491,19 +550,69 @@ def _draw_identity(painter, inner, ty, s):
            _cc_toggle_hand)
 
 
-def _cc_list(painter, x, y, w, ids, sel, labeller, field=None):
-    row_h = 26
-    for i, item in enumerate(ids):
-        ry = y + i * row_h
+#: A picture for each class and birthsign card: ("item" | "spell", id).
+_CC_ICONS = {
+    "class": {"warrior": ("item", "iron_longsword"), "archer": ("item", "hunting_bow"),
+              "mage": ("spell", "firebolt"), "healer": ("spell", "heal"),
+              "necromancer": ("spell", "_occult"), "thief": ("item", "lockpick")},
+    "birthsign": {"warrior": ("item", "iron_battleaxe"), "mage": ("spell", "_spell"),
+                  "thief": ("item", "adventurers_keepsake"),
+                  "lord": ("spell", "heal_minor"), "shadow": ("spell", "invisibility_minor")},
+}
+#: Header tint per specialisation (a birthsign takes its namesake's).
+_SPEC_ACCENT = {"Combat": QColor(214, 120, 96), "Magic": QColor(150, 140, 240),
+                "Stealth": QColor(120, 196, 140)}
+
+
+def _cc_card(painter, field, item, rect, selected):
+    """The :class:`cards.Card` for a class or birthsign: its picture, its
+    specialisation and the gist in a line; the detail beside the cards says
+    the rest (so no tooltip)."""
+    kind, pic = _CC_ICONS.get(field, {}).get(item, ("item", ""))
+    px = cards.icon_px(painter, rect)
+    icon = None
+    try:
+        import game.item_icons as item_icons
+        icon = (item_icons.spell_pixmap(pic, px) if kind == "spell"
+                else item_icons.icon_pixmap(pic, None, px)) if pic else None
+    except Exception:
+        icon = None
+    if field == "class":
+        k = classes.get(item)
+        title, spec = k.label, k.specialisation
+        summary = re.split(r"[:;,.]", k.desc, maxsplit=1)[0].strip()
+        desc = summary            # the full description is in the pane beside
+        sub = spec + ("" if k.magic else " · no magic")
+    else:
+        b = birthsigns.get(item)
+        title = b.label
+        rest = b.desc[len(b.flavour):].strip() if b.desc.startswith(b.flavour) else b.desc
+        summary = rest.split(". ")[0].rstrip(".")
+        desc = summary
+        spec = {"warrior": "Combat", "mage": "Magic", "thief": "Stealth"}.get(item, "Magic")
+        sub = ""
+    return cards.Card(title=title, icon=icon, subtitle=sub, summary=summary, desc=desc,
+                      accent=_SPEC_ACCENT.get(spec), selected=selected,
+                      hovered=hits.hovered(rect), glyph=title[:1])
+
+
+def _cc_list(painter, x, y, w, ids, sel, labeller, field=None, h=420, state=None):
+    """The class or birthsign choices as cards in (x, y, w, h), a row each
+    (game/ui/cards.py); the list's shape is kept in *state*
+    (``cols_<field>``) for the arrow keys."""
+    area = QRect(x, y + 6, w, max(1, int(h) - 6))
+    grid = cards.layout(area, len(ids), grid_min_scale=0.6, fit_all=True,
+                        row_min_scale=0.6)
+    if state is not None and field:
+        state[f"cols_{field}"], state[f"size_{field}"] = grid.cols, grid.page_size
+    first = (sel // max(1, grid.page_size)) * grid.page_size
+    for i in range(first, min(first + grid.page_size, len(ids))):
+        item = ids[i]
+        rect = grid.slots[i - first]
+        cards.draw_card(painter, rect, cards.dimmed(
+            _cc_card(painter, field, item, rect, i == sel), 0 <= sel < len(ids)))
         if field is not None:
-            _row_target(painter, QRect(x, ry, w, row_h - 2), _cc_set(field, i),
-                        labeller(item))
-        if i == sel:
-            painter.fillRect(QRect(x, ry, w, row_h - 2), T.SELECT)
-            painter.setPen(T.GILD)
-            painter.drawRect(QRect(x, ry, w, row_h - 2))
-        T.text_in(painter, QRect(x + 10, ry, w - 12, row_h - 2), labeller(item),
-                  size=12, color=T.GOLD_BRIGHT if i == sel else T.INK, align=T.ALIGN_LEFT)
+            hits.add(QRect(rect), _cc_set(field, i), labeller(item))
 
 
 def _cc_detail(painter, x, y, w, title, body):
@@ -546,10 +655,12 @@ def _handle_charcreate(session, key):
     elif step in ("class", "birthsign"):
         ids = (classes.CREATION_CLASS_IDS if step == "class"
                else birthsigns.CREATION_BIRTHSIGN_IDS)
-        if key in ("up", "w"):
-            s[step] = (s[step] - 1) % len(ids); return True
-        if key in ("down", "s"):
-            s[step] = (s[step] + 1) % len(ids); return True
+        move = {"up": "up", "w": "up", "down": "down", "s": "down",
+                "left": "left", "a": "left", "right": "right", "d": "right"}.get(key)
+        if move:
+            s[step] = cards.navigate(s[step], move, len(ids), s.get(f"cols_{step}", 1),
+                                     s.get(f"size_{step}"))
+            return True
     if key in ("return", "enter"):
         if s["step"] == 0 and not s["name"].strip():
             return True                       # a name is required
@@ -612,7 +723,7 @@ def _draw_tutorial_box(painter, rect, s):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     box = QRect(rect.x(), rect.y() + (rect.height() - 18) // 2, 18, 18)
-    painter.setBrush(QColor(34, 30, 44, 235))
+    painter.setBrush(_TICK_BOX)
     painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD, 1.5))
     painter.drawRoundedRect(box, 3, 3)
     if on:
@@ -831,7 +942,7 @@ def _draw_inventory(painter, session, w, h):
         if i == st["row"]:
             ncol = T.GOLD_BRIGHT
         elif rpg_items.rarity_of(stack) != rpg_items.COMMON:
-            ncol = QColor(*rpg_items.rarity_rgb(stack))
+            ncol = T.legible(QColor(*rpg_items.rarity_rgb(stack)))
         else:
             ncol = T.INK
         T.text(painter, inner.x() + 8, ry + 16, name + qty, size=11,
@@ -991,7 +1102,7 @@ def _draw_character(painter, session, w, h):
                family="Segoe UI")
     if c.bounty:
         T.text(painter, inner.x(), gy + 16, f"Bounty: {c.bounty} gold", size=10,
-               color=QColor(220, 100, 90), family="Segoe UI")
+               color=T.legible(QColor(220, 100, 90), 0.4), family="Segoe UI")
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               "C/Esc close", size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
 
@@ -1005,6 +1116,67 @@ def _handle_character(session, key):
 # ===========================================================================
 # Journal
 # ===========================================================================
+#: A quest card: tall enough to show its objective under the mark.
+_QUEST_CARD = (150, 200)
+_QUEST_MIN_SCALE = 0.92
+_QUEST_DONE = QColor(120, 190, 130)
+_QUEST_ACTIVE = QColor(214, 176, 108)
+_QUEST_TRACKED = QColor(120, 160, 245)
+
+
+def _quest_card(session, q, rect, *, selected, tracked, index=0):
+    """The :class:`cards.Card` for quest *q*: a mark (◈ under way, ✓ done),
+    who it is from or its chapter, and the objective now. The tracked quest
+    glows, with ▸ on it; a finished one is greyed. The journal's detail pane
+    beside the cards says the rest, so a card has no tooltip."""
+    log = session.game.quests
+    complete = log.is_complete(q.id)
+    sub = (f"Chapter {q.chapter}" + (f": {q.chapter_title}" if q.chapter_title else "")
+           if q.chapter else
+           str(q.giver).replace("_", " ").title() if q.giver else "")
+    summary = "Completed" if complete else str(log.current_objective(q.id) or q.desc or "")
+    desc = summary            # the quest's story is in the detail pane, not here
+    return cards.Card(
+        # A manuscript entry: no picture, an illuminated initial, blue, red,
+        # green and orange in turn down the page (only the active quest's in
+        # colour: the rest are in grey ink).
+        illuminate=cards.PIGMENT_CYCLE[index % len(cards.PIGMENT_CYCLE)],
+        title=q.name, glyph="✓" if complete else "◈", subtitle=sub, summary=summary,
+        desc=desc,
+        accent=_QUEST_DONE if complete else _QUEST_TRACKED if tracked else _QUEST_ACTIVE,
+        selected=selected, hovered=hits.hovered(rect), active=tracked and not complete,
+        mark="▸", greyed=complete)
+
+
+def _quest_grid(area, count):
+    if cards.LAYOUT == "list":
+        return cards.layout(area, count)
+    return cards.layout_grid(area, count, _QUEST_CARD, cards.GAP,
+                             min_scale=_QUEST_MIN_SCALE, fit_all=True)
+
+
+def _quest_turn(key):
+    """A quest list's page arrows (the journal's or the quest window's)."""
+    def turn(session, step):
+        log = session.game.quests
+        n = len(log.active_quests()) + len(log.completed_quests())
+        st = _sel(session).setdefault(key, {"row": 0})
+        size = max(1, st.get("page_size", 1))
+        st["row"] = max(0, min((st["row"] // size + step) * size, max(0, n - 1)))
+    return turn
+
+
+def _quest_move(st, key, n):
+    """Arrow keys in a list (or grid) of quest cards; True when it was one."""
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move is None:
+        return False
+    st["row"] = cards.navigate(st["row"], move, n, st.get("cols", 1), st.get("page_size"))
+    return True
+
+
 def _draw_journal(painter, session, w, h):
     log = session.game.quests
     active = log.active_quests()
@@ -1016,24 +1188,28 @@ def _draw_journal(painter, session, w, h):
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, "Journal",
                    f"{len(active)} active · {len(done)} completed")
+    tracked = getattr(session, "tracked_quest_id", lambda: "")()
 
-    list_w = int(inner.width() * 0.4)
-    for i, q in enumerate(allq):
-        ry = ty + 8 + i * 24
-        _row_target(painter, QRect(inner.x(), ry - 2, list_w, 22),
-                    lambda s, row=i: _sel(s)["journal"].update(row=row),
-                    f"journal:{q.id}")
-        if i == st["row"]:
-            painter.fillRect(QRect(inner.x(), ry - 2, list_w, 22), T.SELECT)
-        complete = log.is_complete(q.id)
-        col = QColor(120, 190, 130) if complete else (T.GOLD_BRIGHT if i == st["row"] else T.INK)
-        prefix = "✓ " if complete else "◈ "
-        T.text(painter, inner.x() + 8, ry + 14, prefix + q.name, size=11, color=col,
-               family="Segoe UI")
+    # The quests as cards on the left, the selected one in full on the right.
+    list_w = int(inner.width() * 0.48)
+    area = QRect(inner.x(), ty + 30, list_w, max(1, inner.bottom() - 22 - ty - 30))
+    grid = _quest_grid(area, len(allq))
+    st["cols"], st["page_size"] = grid.cols, grid.page_size
+    page, first, pages = _card_page(st["row"], grid.page_size, len(allq))
+    _card_pager(painter, QRect(inner.x() + list_w - 120, ty + 2, 120, 24), page, pages,
+                _quest_turn("journal"))
+    for i in range(first, min(first + grid.page_size, len(allq))):
+        q = allq[i]
+        rect = grid.slots[i - first]
+        cards.draw_card(painter, rect, cards.dimmed(_quest_card(
+            session, q, rect, selected=i == st["row"], tracked=bool(tracked) and q.id == tracked,
+            index=i), True))
+        hits.add(QRect(rect), lambda s, row=i: _sel(s)["journal"].update(row=row),
+                 f"journal:{q.id}")
 
+    dx = inner.x() + list_w + 20
     if allq:
         q = allq[st["row"]]
-        dx = inner.x() + list_w + 20
         T.text(painter, dx, ty + 18, q.name, size=15, color=T.GOLD_BRIGHT, bold=True)
         entries = log.journal_entries(q.id)
         body = "\n\n".join(f"• {e}" for e in entries) or q.desc
@@ -1041,27 +1217,25 @@ def _draw_journal(painter, session, w, h):
             body += "\n\n(Quest complete.)"
         else:
             body += f"\n\nObjective: {log.current_objective(q.id)}"
-        T.text_in(painter, QRect(dx, ty + 34, inner.width() - list_w - 20, inner.height() - 80),
+        T.text_in(painter, QRect(dx, ty + 34, inner.right() - dx, inner.height() - 80),
                   body, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
     else:
-        T.text(painter, inner.x() + list_w + 20, ty + 18,
-               "Your journal is empty. Talk to the folk of Miniwind to find work.",
-               size=11, color=T.DIM, family="Segoe UI")
+        T.text_in(painter, QRect(inner.x(), ty + 8, inner.width(), 40),
+                  "Your journal is empty. Talk to the folk of Miniwind to find work.",
+                  size=11, color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "↑/↓ select   J/Esc close", size=9, color=T.DIM,
+              "Arrows or click select   J/Esc close", size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
 
 
 def _handle_journal(session, key):
     allq = session.game.quests.active_quests() + session.game.quests.completed_quests()
     st = _sel(session).setdefault("journal", {"row": 0})
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % max(1, len(allq)); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % max(1, len(allq)); return True
+    if _quest_move(st, key, len(allq)):
+        return True
     if key in ("j", "escape", "esc"):
         session.open_screen = None
     return True
@@ -1112,8 +1286,8 @@ def _objective_rows(session, q):
 
 
 def _draw_quest(painter, session, w, h):
-    """The quest journal: a clickable list of every quest the player
-    knows (active, then completed) down the left, the selected quest's story and
+    """The quest journal: a card for every quest the player knows (active,
+    then completed) on the left, the selected quest's story and
     objectives on the right, and a "Make Active Quest" box that pins the quest
     so only its arrow shows. Mouse-driven (see :func:`handle_click`); the arrow
     keys and Enter still work."""
@@ -1146,40 +1320,32 @@ def _draw_quest(painter, session, w, h):
         return
 
     top = ty + 12
-    list_w = int(inner.width() * 0.34)
+    list_w = int(inner.width() * 0.42)
     lx = inner.x() + 6
     col_x = inner.x() + list_w + 18
     col_w = inner.right() - col_x - 6
 
-    # Divider between the list and the detail pane.
+    # Divider between the cards and the detail pane.
     painter.setPen(QPen(T.GILD, 1))
     painter.drawLine(col_x - 9, top, col_x - 9, inner.bottom() - 8)
 
-    # --- left column: the clickable quest list -----------------------------
-    row_h = 22
-    yy = top
-    idx = 0
-    for group_title, group, dim in (("ACTIVE", active, False),
-                                    ("COMPLETED", completed, True)):
-        if not group:
-            continue
-        T.text(painter, lx, yy + 12, group_title, size=8, color=T.GOLD,
-               bold=True, family="Segoe UI")
-        yy += 20
-        for q in group:
-            r = QRect(lx, yy - 2, list_w - 10, row_h)
-            selected = (idx == st["row"])
-            if selected:
-                painter.fillRect(r, T.SELECT)
-            is_tracked = bool(tracked) and q.id == tracked
-            color = (T.GOLD_BRIGHT if selected else (T.DIM if dim else T.INK))
-            label = ("▸ " if is_tracked else "    ") + q.name
-            T.text_in(painter, r.adjusted(4, 0, -4, 0), label, size=10,
-                      color=color, align=T.ALIGN_LEFT, family="Segoe UI")
-            _QUEST_HITS["rows"].append((QRect(r), idx))
-            yy += row_h
-            idx += 1
-        yy += 10
+    # --- left: every quest as a card, active first (game/ui/cards.py) -----
+    area = QRect(lx, top + 28, list_w - 10, max(1, inner.bottom() - 22 - top - 28))
+    grid = _quest_grid(area, len(known))
+    st["cols"], st["page_size"] = grid.cols, grid.page_size
+    page, first, pages = _card_page(st["row"], grid.page_size, len(known))
+    T.text_in(painter, QRect(lx, top, list_w - 140, 22),
+              f"{len(active)} active · {len(completed)} completed", size=9,
+              color=T.GOLD, align=T.ALIGN_LEFT, family="Segoe UI")
+    _card_pager(painter, QRect(lx + list_w - 130, top, 120, 22), page, pages,
+                _quest_turn("quest"))
+    for idx in range(first, min(first + grid.page_size, len(known))):
+        q = known[idx]
+        r = grid.slots[idx - first]
+        cards.draw_card(painter, r, cards.dimmed(_quest_card(
+            session, q, r, selected=idx == st["row"],
+            tracked=bool(tracked) and q.id == tracked, index=idx), True))
+        _QUEST_HITS["rows"].append((QRect(r), idx))
 
     # --- right column: the selected quest's detail -------------------------
     q = known[max(0, min(st["row"], len(known) - 1))]
@@ -1230,7 +1396,7 @@ def _draw_quest(painter, session, w, h):
     if is_active_q:
         box = QRect(col_x, inner.bottom() - 34, 16, 16)
         painter.setPen(QPen(T.GILD, 1))
-        painter.setBrush(QColor(30, 28, 40))
+        painter.setBrush(_TICK_BOX)
         painter.drawRect(box)
         if is_tracked:
             painter.setPen(QPen(T.GOLD_BRIGHT, 2))
@@ -1248,7 +1414,7 @@ def _draw_quest(painter, session, w, h):
         if tpos is not None:
             mrect = QRect(inner.right() - 132, box.y() - 6, 126, 26)
             hot = hits.hovered(mrect)
-            painter.setBrush(QColor(96, 70, 34, 240) if hot else QColor(62, 48, 30, 235))
+            painter.setBrush(_BTN_HOT if hot else _BTN_PRIMARY)
             painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD, 1.5))
             painter.drawRoundedRect(mrect, 5, 5)
             painter.setFont(fonts.dialogue_font(11))
@@ -1267,11 +1433,8 @@ def _handle_quest(session, key):
     active, completed = _known_quests(session)
     known = active + completed
     st = _sel(session).setdefault("quest", {"row": 0})
-    n = max(1, len(known))
-    if key in ("up", "w", "left", "a"):
-        st["row"] = (st["row"] - 1) % n; return True
-    if key in ("down", "s", "right", "d"):
-        st["row"] = (st["row"] + 1) % n; return True
+    if _quest_move(st, key, len(known)):
+        return True
     if key in ("return", "enter", "space") and known:
         # Pin the highlighted quest as the active one (only its arrow shows);
         # pressing again on the pinned quest clears it. Only active quests can
@@ -1330,6 +1493,78 @@ def _spellbook_page(session, step, page_size):
     st["row"] = max(0, min(page * page_size, max(0, len(spells) - 1)))
 
 
+#: Header-band tint per school of magic on a spell card.
+_SCHOOL_ACCENT = {"offensive": QColor(232, 131, 111), "defensive": QColor(127, 211, 155),
+                  "occult": QColor(176, 140, 240)}
+
+
+def _school_accent(school):
+    return _SCHOOL_ACCENT.get(str(school or "").lower(), QColor(185, 182, 196))
+
+
+def _spell_card_icon(spell, px):
+    try:
+        import game.item_icons as item_icons
+        return item_icons.spell_pixmap(spell.id, int(px))
+    except Exception:
+        return None
+
+
+def _spell_card(painter, session, spell, *, selected, locked, rect, **overrides):
+    """The :class:`cards.Card` for *spell* in the spellbook: its school
+    tints the accent, its rarity the frame; the level is a row of pips and
+    the magicka cost the one badge. The rest is in the detail column beside
+    the cards. *overrides* replace any of the card's fields (a tutor's card
+    shows its price instead of the cost)."""
+    c = session.game.character
+    level = c.spell_level(spell.id)
+    now = spell.at_level(level)
+    cost = int(rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell))
+    power = _spell_power(now).rstrip(", ")
+    tip = [spell.name,
+           f"{spell.rarity.title()} · Level {level} of {spell.max_level}",
+           f"{cost} magicka" + (f" · {power}" if power else "")]
+    if level < spell.max_level:
+        nxt = spell.at_level(level + 1)
+        nxt_power = _spell_power(nxt).rstrip(", ")
+        tip.append(f"Level {level + 1}: " + (nxt_power or "stronger") +
+                   f" · {int(rpg_magic.cast_cost(c, nxt))} magicka")
+    fields = dict(
+        title=spell.name,
+        icon=_spell_card_icon(spell, cards.icon_px(painter, rect)),
+        subtitle=f"{sk.label(spell.school)} · {str(spell.delivery).title()}",
+        summary=power[:1].upper() + power[1:] if power else "",
+        # Only what it does; its description is in the pane beside the list.
+        desc=(power[:1].upper() + power[1:] + ".") if power else "",
+        accent=_school_accent(spell.school),
+        frame=_rarity_color(spell.rarity),
+        badges=("", f"{cost} mp"),
+        badge_colors=(None, T.MAGICKA.lighter(170)),
+        pips=(level, spell.max_level),
+        selected=selected,
+        hovered=hits.hovered(rect),
+        active=c.active_spell == spell.id,
+        locked=locked,
+        tooltip="\n".join(tip))
+    fields.update(overrides)
+    return cards.Card(**fields)
+
+
+def _spellbook_layout(inner, ty, count):
+    """(list area, cards.Grid, detail column rect, nav_y) for the spellbook."""
+    top = ty + 10
+    nav_y = inner.bottom() - 52
+    if inner.width() >= 760:
+        detail_w = max(300, min(440, int(inner.width() * 0.31)))
+    else:
+        detail_w = max(200, int(inner.width() * 0.42))
+    area = QRect(inner.x(), top, max(1, inner.width() - detail_w - 20),
+                 max(1, nav_y - top - 8))
+    grid = cards.layout(area, count, grid_min_scale=0.68)
+    detail = QRect(area.right() + 21, top - 2, detail_w - 1, max(1, nav_y - top - 6))
+    return area, grid, detail, nav_y
+
+
 def _draw_spells(painter, session, w, h):
     from ..host import K_SPELLS
 
@@ -1342,113 +1577,119 @@ def _draw_spells(painter, session, w, h):
     ty = T.heading(painter, inner, "Spellbook",
                    f"{len(spells)} spells known    ·    Magicka {int(c.magicka)}/{int(c.max_magicka)}")
 
-    list_w = int(inner.width() * 0.5)
-    top = ty + 8
-    nav_y = inner.bottom() - 52
-    page_size = max(1, (nav_y - top - 6) // 24)
+    area, grid, detail, nav_y = _spellbook_layout(inner, ty, len(spells))
+    page_size = grid.page_size
+    st["cols"], st["page_size"] = grid.cols, page_size
     page = st["row"] // page_size
     first = page * page_size
     pages = max(1, (len(spells) + page_size - 1) // page_size)
-    fm = QFontMetrics(T.font(11, family="Segoe UI"))
-    # Worn metal armour greys every spell out: a row still highlights, but
+    # Worn metal armour greys every spell out: a card still highlights, but
     # cannot be selected, and its tooltip says why (game/ui/spell_lock.py).
     locked = spell_lock.locked(c)
+    pad = controls.gamepad()
     for i in range(first, min(first + page_size, len(spells))):
         spell = spells[i]
-        ry = top + (i - first) * 24
-        row_rect = QRect(inner.x(), ry - 2, list_w, 22)
-        if i == st["row"]:
-            painter.fillRect(row_rect, T.SELECT)
-        active = c.active_spell == spell.id
-        col = T.GOLD_BRIGHT if i == st["row"] else (T.MAGICKA.lighter(150) if active else T.INK)
+        rect = grid.slots[i - first]
+        card = _spell_card(painter, session, spell, selected=i == st["row"],
+                           locked=locked, rect=rect)
+        cards.draw_card(painter, rect, cards.dimmed(card, True))
+        # No card tooltip here: the pane on the right shows the selected
+        # spell in full. Only a greyed card says why (metal armour).
         if locked:
-            col = spell_lock.GREY.lighter(130) if i == st["row"] else spell_lock.GREY
-            spell_lock.note(row_rect, True)
-            if i == st["row"] and controls.gamepad():
-                spell_lock.focus(row_rect, True)
-        cost = rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell)
-        painter.fillRect(QRect(inner.x() + 2, ry + 3, 3, 14), _rarity_color(spell.rarity))
-        label = fm.elidedText(("✦ " if active else "") + spell.name,
-                              Qt.ElideRight, max(1, list_w - 126))
-        T.text(painter, inner.x() + 10, ry + 14, label,
-               size=11, color=col, family="Segoe UI")
-        T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 60, 22),
-                  f"Lv {c.spell_level(spell.id)}", size=9, color=T.GOLD, align=T.ALIGN_RIGHT,
-                  family="Segoe UI")
-        T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 8, 22),
-                  f"{int(cost)} mp", size=9, color=T.DIM, align=T.ALIGN_RIGHT,
-                  family="Segoe UI")
-        _row_target(painter, row_rect,
-                    lambda s, sid=spell.id: _ready_spell(s, sid), f"spell:{spell.id}")
-        _SPELL_HITS["cells"].append((QRect(row_rect), ("spell", None, spell.id)))
+            spell_lock.note(rect, True)
+            if i == st["row"] and pad:
+                spell_lock.focus(rect, True)
+        hits.add(QRect(rect), lambda s, sid=spell.id: _ready_spell(s, sid),
+                 f"spell:{spell.id}")
+        _SPELL_HITS["cells"].append((QRect(rect), ("spell", None, spell.id)))
 
-    _SPELL_HITS["targets"].append((QRect(inner.x(), top - 2, list_w,
-                                         max(1, nav_y - top)), ("spells", None)))
+    _SPELL_HITS["targets"].append((QRect(area), ("spells", None)))
 
     if pages > 1:
-        button(painter, QRect(inner.x(), nav_y, 80, 26), "Previous",
+        gx = grid.bounds().x() if grid.slots else area.x()
+        gw = grid.bounds().width() if grid.slots else area.width()
+        button(painter, QRect(gx, nav_y, 90, 26), "Previous",
                lambda s, size=page_size: _spellbook_page(s, -1, size), enabled=page > 0)
-        button(painter, QRect(inner.x() + list_w - 64, nav_y, 64, 26), "Next",
+        button(painter, QRect(gx + gw - 90, nav_y, 90, 26), "Next",
                lambda s, size=page_size: _spellbook_page(s, 1, size), enabled=page < pages - 1)
-        T.text_in(painter, QRect(inner.x() + 82, nav_y, max(1, list_w - 148), 26),
-                  f"{page + 1}/{pages}", size=9, color=T.DIM, align=T.ALIGN_CENTER)
+        T.text_in(painter, QRect(gx + 92, nav_y, max(1, gw - 184), 26),
+                  f"Page {page + 1} of {pages}", size=10, color=T.DIM, align=T.ALIGN_CENTER)
 
     button(painter, QRect(inner.right() - 90, nav_y, 90, 26), "Close",
            lambda s: setattr(s, "open_screen", None))
 
+    # The selected spell in full, beside the cards.
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setBrush(_PANE)
+    painter.setPen(QPen(QColor(T.GILD.red(), T.GILD.green(), T.GILD.blue(), 140), 1))
+    painter.drawRoundedRect(QRectF(detail), 8, 8)
+    painter.restore()
+    col = detail.adjusted(12, 8, -12, -8)
+    hands_h = 118
+    hands_top = col.bottom() - hands_h
     if spells:
         spell = spells[st["row"]]
-        dx = inner.x() + list_w + 20
-        dw = inner.width() - list_w - 20
         level = c.spell_level(spell.id)
         now = spell.at_level(level)
-        T.text(painter, dx, ty + 18, spell.name, size=15, color=T.GOLD_BRIGHT, bold=True)
-        T.text(painter, dx, ty + 36, f"{spell.rarity.title()}  ·  Level {level} of "
-               f"{spell.max_level}", size=10, color=_rarity_color(spell.rarity),
-               bold=True, family="Segoe UI")
-        info = (f"School: {sk.label(spell.school)}\nDelivery: {spell.delivery}\n"
-                f"Element: {spell.element}\n"
+        name_font, _ok = cards.fitted_font(spell.name, col.width(), 22, 13)
+        painter.save()
+        painter.setFont(name_font)
+        painter.setPen(T.GOLD_BRIGHT)
+        painter.drawText(QRect(col.x(), col.y(), col.width(), 28),
+                         int(Qt.AlignLeft | Qt.AlignVCenter), spell.name)
+        painter.restore()
+        T.text_in(painter, QRect(col.x(), col.y() + 28, col.width(), 18),
+                  f"{spell.rarity.title()}  ·  Level {level} of {spell.max_level}",
+                  size=10, color=_rarity_color(spell.rarity), bold=True,
+                  align=T.ALIGN_LEFT, family="Segoe UI")
+        info = (f"{sk.label(spell.school)} · {str(spell.delivery).title()} · "
+                f"{str(spell.element).title()}\n"
                 f"Now: {_spell_power(now)}{int(rpg_magic.cast_cost(c, now))} magicka")
         if level < spell.max_level:
             nxt = spell.at_level(level + 1)
             info += (f"\nLevel {level + 1}: {_spell_power(nxt)}"
                      f"{int(rpg_magic.cast_cost(c, nxt))} magicka")
         info += f"\n\n{spell.desc}"
-        T.text_in(painter, QRect(dx, ty + 48, dw, max(1, nav_y - ty - 230)),
+        cost = c.spell_upgrade_cost(spell.id)
+        raise_y = hands_top - 38
+        info_bottom = raise_y - (24 if cost > 0 else 6)
+        T.text_in(painter, QRect(col.x(), col.y() + 52, col.width(),
+                                 max(1, info_bottom - col.y() - 52)),
                   info, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
         # Raise the spell with experience -- the same pool character levels
         # are paid from, so it is a real choice.
-        cost = c.spell_upgrade_cost(spell.id)
         if cost > 0:
-            button(painter, QRect(dx, nav_y - 164, min(dw, 260), 28),
+            T.text_in(painter, QRect(col.x(), raise_y - 20, col.width(), 18),
+                      f"Experience: {c.xp}  ·  U raises the selected spell", size=8,
+                      color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
+            button(painter, QRect(col.x(), raise_y, min(col.width(), 280), 28),
                    f"Raise to level {level + 1}  ({cost} XP)",
                    lambda s, sid=spell.id: _upgrade_spell(s, sid),
                    enabled=c.xp >= cost, primary=True)
-            T.text_in(painter, QRect(dx, nav_y - 184, dw, 18),
-                      f"Experience: {c.xp}  ·  U raises the selected spell", size=8,
-                      color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
         else:
-            T.text_in(painter, QRect(dx, nav_y - 158, dw, 20),
+            T.text_in(painter, QRect(col.x(), raise_y, col.width(), 28),
                       "Mastered: this spell is at its highest level.", size=9,
                       color=T.GOLD, align=T.ALIGN_LEFT, family="Segoe UI")
     else:
-        T.text(painter, inner.x() + list_w + 20, ty + 18,
-               "You know no spells yet. Learn them from a tutor, or find a spellbook.",
-               size=11, color=T.DIM, family="Segoe UI")
+        T.text_in(painter, QRect(area.x(), area.y() + 10, area.width(), 60),
+                  "You know no spells yet. Learn them from a tutor, or find a spellbook.",
+                  size=11, color=T.DIM, align=int(Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap),
+                  family="Segoe UI")
 
-    _draw_spell_hands(painter, session,
-                      QRect(inner.x() + list_w + 20, nav_y - 126,
-                            inner.width() - list_w - 20, 118),
+    _draw_spell_hands(painter, session, QRect(col.x(), hands_top, col.width(), hands_h),
                       spells[st["row"]].id if spells else None)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               (f"{controls.label('click')} a spell, then a shortcut bar slot · "
                f"{controls.label('tabs')} tabs · {controls.label('back')} close"
                if controls.gamepad() else
-               f"Drag a spell to the shortcut bar, or press 1-9 · {K_SPELLS.upper()}/Esc close"),
+               f"Drag a card to the shortcut bar, or press 1-9 · arrows choose · "
+               f"Enter readies · {K_SPELLS.upper()}/Esc close"),
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+    cards.flush_tooltip(painter)
     spell_lock.flush(painter)          # a greyed spell's tooltip, on top
 
 
@@ -1459,7 +1700,7 @@ _RARITY_COLORS = {"common": QColor(190, 186, 176), "uncommon": QColor(120, 210, 
 
 
 def _rarity_color(rarity):
-    return _RARITY_COLORS.get(str(rarity), _RARITY_COLORS["common"])
+    return T.legible(_RARITY_COLORS.get(str(rarity), _RARITY_COLORS["common"]), 0.36)
 
 
 def _spell_power(spell) -> str:
@@ -1495,8 +1736,9 @@ def _upgrade_spell(session, spell_id):
 def _draw_spell_hands(painter, session, area, selected):
     """What each hand holds, and the mouse button that uses it: the left
     button the left hand, the right button the right hand. Only shown here --
-    a spell is readied from the shortcut bar (its number key, Shift for the
-    right hand), so the selected spell's slot on the bar is named too."""
+    a spell is taken up from the shortcut bar (its number key casts it from
+    the main hand, Shift readies it in the off hand), so the selected spell's
+    slot on the bar is named too."""
     c = session.game.character
     width = (area.width() - 12) // 2
     for i, physical in enumerate(("left", "right")):
@@ -1509,7 +1751,7 @@ def _draw_spell_hands(painter, session, area, selected):
                 item = eq.weapon(c)                 # both hands on it
         rect = QRect(area.x() + i * (width + 12), area.y(), width, 78)
         painter.save()
-        painter.setBrush(QColor(30, 28, 36, 245))
+        painter.setBrush(_HAND_BOX)
         painter.setPen(QPen(T.GILD, 1.5))
         painter.drawRoundedRect(rect, 5, 5)
         mouse = "LMB" if physical == "left" else "RMB"
@@ -1520,15 +1762,15 @@ def _draw_spell_hands(painter, session, area, selected):
         T.text_in(painter, rect.adjusted(6, 30, -6, -6),
                   spell.name if spell else item.name if item else "Empty",
                   size=10, color=(spell_lock.GREY if locked else
-                                  QColor(*spell.color) if spell else T.INK),
+                                  T.legible(QColor(*spell.color)) if spell else T.INK),
                   align=int(Qt.AlignCenter | Qt.TextWordWrap))
         if locked:
             spell_lock.veil(painter, rect, 5)
             spell_lock.note(rect, True)
         painter.restore()
     slot = _strip_slot_of(session, selected)
-    note = (f"On the shortcut bar as {slot + 1}: press {slot + 1} for the left hand, "
-            f"Shift+{slot + 1} for the right" if slot is not None else
+    note = (f"On the shortcut bar as {slot + 1}: press {slot + 1} to take it in your main "
+            f"hand and cast it, Shift+{slot + 1} for the off hand" if slot is not None else
             "Not on the shortcut bar: drag it there, or press 1-9")
     T.text_in(painter, QRect(area.x(), area.y() + 84, area.width(), 30), note,
               size=9, color=T.DIM, align=int(Qt.AlignCenter | Qt.TextWordWrap),
@@ -1557,10 +1799,15 @@ def _handle_spells(session, key):
 
     spells = _spellbook_spells(session)
     st = _spellbook_selection(session, spells)
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % max(1, len(spells)); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % max(1, len(spells)); return True
+    # The cards are a list (or a grid): arrows (or WASD) move by card and
+    # by row, onto the next page past the edge; Page Up / Down turn a page.
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move:
+        st["row"] = cards.navigate(st["row"], move, len(spells), st.get("cols", 1),
+                                   st.get("page_size"))
+        return True
     if key in ("return", "enter") and spells:
         _ready_spell(session, spells[st["row"]].id); return True
     if key == "u" and spells:
@@ -1570,6 +1817,149 @@ def _handle_spells(session, key):
     if key in (K_SPELLS, "escape", "esc"):
         session.open_screen = None
     return True
+
+
+# ===========================================================================
+# Item cards -- the container and trade screens show their things as cards
+# (game/ui/cards.py): the item's picture, its category tinting the header,
+# its rarity the frame, the stack count on the picture. Value, weight and
+# the rest are in the card's tooltip (these screens have no detail pane).
+# ===========================================================================
+#: Header-band tint per item category.
+_CATEGORY_ACCENT = {
+    rpg_items.WEAPON: QColor(214, 120, 96), rpg_items.ARMOUR: QColor(128, 160, 205),
+    rpg_items.AMMO: QColor(196, 168, 112), rpg_items.POTION: QColor(214, 110, 190),
+    rpg_items.INGREDIENT: QColor(120, 196, 120), rpg_items.BOOK: QColor(186, 140, 96),
+    rpg_items.SCROLL: QColor(220, 206, 160), rpg_items.KEY: QColor(232, 196, 96),
+    rpg_items.GOLD: QColor(240, 200, 80), rpg_items.MISC: QColor(170, 168, 160),
+}
+
+
+def _item_category(stack):
+    d = rpg_items.get(stack.get("id"))
+    return d.category if d is not None else str(stack.get("type", "misc"))
+
+
+def _item_card_icon(item_id, stack, px):
+    try:
+        import game.item_icons as item_icons
+        return item_icons.icon_pixmap(item_id, stack, int(px))
+    except Exception:
+        return None
+
+
+def _item_stat(d):
+    """An item's headline numbers in a line ("Melee · Blade · 8 damage"),
+    or ""."""
+    if d is None:
+        return ""
+    if d.category == rpg_items.WEAPON:
+        return (f"{str(d.get('kind', 'melee')).title()} · "
+                f"{sk.label(d.get('skill', 'blade'))} · {d.get('damage', 0)} damage")
+    if d.category == rpg_items.ARMOUR:
+        return (f"{str(d.get('armor_class', 'light')).title()} armour · "
+                f"{d.get('armor_rating', 0)} rating")
+    if d.category == rpg_items.AMMO:
+        return f"Ammunition · +{d.get('damage', 0)} damage"
+    return ""
+
+
+def _item_desc(stack):
+    """A row card's description of an item: its numbers, then its words."""
+    d = rpg_items.get(stack.get("id"))
+    words = str(stack.get("description") or (d.desc if d else "") or "").strip()
+    stat = _item_stat(d)
+    return " — ".join(t for t in (stat, words) if t)
+
+
+def _item_tip(stack, qty=None, extra=()):
+    """The tooltip lines for an item stack: name, kind and rarity, what it
+    does, value and weight, the count, and whether it is stolen."""
+    iid = stack.get("id")
+    d = rpg_items.get(iid)
+    name = stack.get("name") or (d.name if d else str(iid))
+    qty = int(stack.get("qty", 1) or 1) if qty is None else int(qty)
+    cat = _item_category(stack)
+    rarity = rpg_items.rarity_of(stack)
+    lines = [name, cat.title() + ("" if rarity == rpg_items.COMMON else f" · {rarity.title()}")]
+    stat = _item_stat(d)
+    if stat:
+        lines.append(stat)
+    desc = str(stack.get("description") or (d.desc if d else "") or "").strip()
+    if desc:
+        first = desc.split(". ")[0].rstrip(".") + "."
+        lines.append(first if len(first) <= 60 else first[:57].rstrip() + "...")
+    value = stack.get("value", d.value if d else 0)
+    weight = stack.get("weight", d.get("weight") if d else 0) or 0
+    lines.append(f"Value {int(value or 0)} g · Weight {float(weight):g}")
+    if qty > 1:
+        lines.append(f"Quantity {qty}")
+    import game.sim.ownership as own
+    if own.is_stolen(stack):
+        who = stack.get(own.STOLEN_FROM)
+        lines.append("Stolen" + (f" from {who}" if who else ""))
+    lines.extend(extra)
+    return "\n".join(lines)
+
+
+def _item_card(painter, stack, rect, *, selected=False, qty=None, active=False,
+               greyed=False, badges=(), badge_colors=(), extra=()):
+    """The :class:`cards.Card` for an item *stack* drawn in *rect*."""
+    iid = stack.get("id")
+    d = rpg_items.get(iid)
+    qty = int(stack.get("qty", 1) or 1) if qty is None else int(qty)
+    cat = _item_category(stack)
+    rarity = rpg_items.rarity_of(stack)
+    return cards.Card(
+        title=str(stack.get("name") or (d.name if d else iid)),
+        icon=_item_card_icon(iid, stack, cards.icon_px(painter, rect)),
+        subtitle=cat.title(),
+        desc=_item_desc(stack),
+        accent=_CATEGORY_ACCENT.get(cat, _CATEGORY_ACCENT[rpg_items.MISC]),
+        frame=(T.legible(QColor(*rpg_items.rarity_rgb(stack)), 0.45)
+               if rarity != rpg_items.COMMON
+               else None),
+        quantity=qty,
+        badges=badges, badge_colors=badge_colors,
+        selected=selected, hovered=hits.hovered(rect), active=active, greyed=greyed,
+        tooltip=_item_tip(stack, qty, extra))
+
+
+def _card_page(index, page_size, count):
+    """(page, first index on it, pages) for the card at *index*."""
+    page_size = max(1, int(page_size))
+    pages = max(1, (count + page_size - 1) // page_size)
+    page = max(0, min(int(index), max(0, count - 1))) // page_size
+    return page, page * page_size, pages
+
+
+def _card_pager(painter, rect, page, pages, turn):
+    """"◂  2 / 3  ▸" in *rect* (right-aligned): *turn(session, step)* is
+    called by the arrows. Nothing when there is one page."""
+    if pages <= 1:
+        return
+    bw = 26
+    right = QRect(rect.right() - bw + 1, rect.y(), bw, rect.height())
+    left = QRect(right.x() - 60 - bw, rect.y(), bw, rect.height())
+    button(painter, left, "◂", lambda s: turn(s, -1), enabled=page > 0)
+    button(painter, right, "▸", lambda s: turn(s, 1), enabled=page < pages - 1)
+    T.text_in(painter, QRect(left.right() + 1, rect.y(), 60, rect.height()),
+              f"{page + 1} / {pages}", size=9, color=T.DIM, align=T.ALIGN_CENTER,
+              family="Segoe UI")
+
+
+def _split_shown(side_kind, index, stack):
+    """How many of a card's stack are still in it while half of it is picked
+    up (a right click split it); the stack's own count otherwise."""
+    qty = int(stack.get("qty", 1) or 1)
+    picked = drag.picked_source()
+    if picked is None or len(picked) < 4 or not picked[3]:
+        return qty
+    if side_kind == "container" and picked[0] == "container" and picked[1] == index:
+        return max(0, qty - int(picked[3]))
+    if side_kind == "pack" and picked[0] in ("pack", "strip") and picked[2] == stack.get("id"):
+        return max(0, qty - int(picked[3]))
+    return qty
 
 
 # ===========================================================================
@@ -1588,84 +1978,91 @@ def _draw_trade(painter, session, w, h):
     # subtitle line).
     from PyQt5.QtCore import QPoint
     from PyQt5.QtGui import QFontMetrics
-    gold_w = QFontMetrics(T.font(10, italic=True, family="Segoe UI")).horizontalAdvance(gold_text)
+    gold_w = QFontMetrics(fonts.dialogue_font_px(13)).horizontalAdvance(gold_text)
     trade_anim.begin_frame()
     trade_anim.record_gold(QPoint(inner.x() + gold_w + 10, inner.y() + 48))
 
-    # buy list = merchant stock; sell list = player inventory (sellable)
+    # buy cards = merchant stock; sell cards = player inventory (sellable)
     stock = _merchant_stock(npc)
     sell = _sell_list(c)
     col_w = (inner.width() - 24) // 2
-    rows_bottom = inner.bottom() - 70          # room for the buttons below
+    head_y = ty + 4
+    grid_top = head_y + 30
+    by = inner.bottom() - 58                    # the buttons below the cards
+    pad = controls.gamepad()
 
-    # Each row shows the item's thumbnail: half the size of its inventory
-    # icon (game/ui/inventory_window.py). A list longer than the column scrolls
-    # to keep the selected row in view.
-    row_h = TRADE_THUMB + 6
-    list_top = ty + 22
-    fits = max(1, (rows_bottom - list_top) // row_h)
-    tops = st.setdefault("tops", [0, 0])
+    def _area(cx):
+        return QRect(cx + 4, grid_top, col_w - 8, max(1, by - 10 - grid_top))
+
+    left_x, right_x = inner.x(), inner.x() + col_w + 24
+    # Both sides' cards at one size: the smaller of the two that fit.
+    size = cards.smaller(*(cards.layout(_area(cx), len(lst), compact=True,
+                                        grid_min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
+                           for cx, lst in ((left_x, stock), (right_x, sell))))
     for side, (title, lst, buying) in enumerate([("Buy", stock, True), ("Sell", sell, False)]):
-        cx = inner.x() + side * (col_w + 24)
-        if st["side"] == side:
-            row = min(st["row"], max(0, len(lst) - 1))
-            tops[side] = min(max(tops[side], row - fits + 1), row)
-        tops[side] = max(0, min(tops[side], max(0, len(lst) - fits)))
-        top = tops[side]
-        T.text(painter, cx, ty + 4, title, size=13,
-               color=T.GOLD_BRIGHT if st["side"] == side else T.DIM, bold=True)
+        cx = left_x if side == 0 else right_x
+        active = st["side"] == side
+        T.text_in(painter, QRect(cx + 6, head_y, col_w - 140, 24), title, size=13,
+                  color=T.GOLD_BRIGHT if active else T.DIM, bold=True,
+                  align=T.ALIGN_LEFT)
+        grid = cards.layout(_area(cx), len(lst), compact=True, size=size)
+        st.setdefault("cols", [1, 1])[side] = grid.cols
+        st.setdefault("sizes", [1, 1])[side] = grid.page_size
+        rows = st.setdefault("rows", [0, 0])
+        if active:
+            rows[side] = st["row"]
+        rows[side] = max(0, min(rows[side], max(0, len(lst) - 1)))
+        page, first, pages = _card_page(rows[side], grid.page_size, len(lst))
+        _card_pager(painter, QRect(cx + col_w - 120, head_y, 116, 24), page, pages,
+                    _trade_turn(side))
         if not lst:
-            T.text(painter, cx + 8, ty + 36, "Nothing to sell" if side else
+            T.text(painter, cx + 10, grid_top + 16, "Nothing to sell" if side else
                    "Nothing for sale", size=10, color=T.DIM, family="Segoe UI")
         shown = 0
-        for i, entry in enumerate(lst[top:top + fits], start=top):
-            ry = list_top + (i - top) * row_h
-            shown = i - top + 1
+        for i in range(first, min(first + grid.page_size, len(lst))):
+            entry = lst[i]
+            rect = grid.slots[i - first]
+            shown = i - first + 1
             iid = entry["id"] if isinstance(entry, dict) else entry
             d = rpg_items.get(iid)
             price = session._price(d.value if d else 0, buying, npc=npc,
                                    item_id=d.id if d else None)
-            selected = st["side"] == side and st["row"] == i
-            row = QRect(cx, ry, col_w, row_h - 2)
-            trade_anim.record_row(side, iid, row)
-            _row_target(painter, row, _trade_select(side, i),
-                        f"{'sell' if side else 'buy'}:{iid}")
+            selected = active and st["row"] == i
+            trade_anim.record_row(side, iid, QRect(rect))
+            hits.add(QRect(rect), _trade_select(side, i),
+                     f"{'sell' if side else 'buy'}:{iid}")
             if trade_anim.landing_hidden(side, iid):
                 continue            # its item is still flying in
-            if selected:
-                painter.fillRect(row, T.SELECT)
-            nm = (d.name if d else iid)
-            if not buying and isinstance(entry, dict) and entry.get("qty", 1) > 1:
-                nm += f" ×{entry['qty']}"
+            stack = entry if isinstance(entry, dict) and not buying else \
+                (rpg_items.make(iid) or {"id": iid, "name": iid})
             left = session.stock_left(entry) if buying else None
-            if left == 0:
-                nm += "  (sold out)"
-            elif left is not None:
-                nm += f" ×{left}"
-            colour = T.GOLD_BRIGHT if selected else T.INK
-            pm = _trade_thumb(iid, entry if isinstance(entry, dict) else None)
-            if pm is not None and not pm.isNull():
-                if left == 0:
-                    painter.setOpacity(0.45)
-                painter.drawPixmap(cx + 4 + (TRADE_THUMB - pm.width()) // 2,
-                                   ry + (row_h - 2 - pm.height()) // 2, pm)
-                painter.setOpacity(1.0)
-            T.text(painter, cx + TRADE_THUMB + 12, ry + row_h // 2 + 4, nm, size=10,
-                   color=T.DIM if left == 0 else colour, family="Segoe UI")
-            T.text_in(painter, QRect(cx, ry, col_w - 8, row_h - 2), f"{price}g", size=9,
-                      color=T.GOLD, align=T.ALIGN_RIGHT, family="Segoe UI")
-        # Where a new row would appear: a card with no row to land on (an
-        # item sold into stock the merchant does not list) lands here.
-        trade_anim.record_column(side, QRect(cx, list_top + shown * row_h, col_w, row_h - 2))
-        # More above or below the rows shown.
-        if top > 0:
-            T.text_in(painter, QRect(cx, list_top - 18, col_w - 8, 16), "▲ more", size=8,
-                      color=T.DIM, align=T.ALIGN_RIGHT, family="Segoe UI")
-        if top + fits < len(lst):
-            T.text_in(painter, QRect(cx, list_top + fits * row_h - 2, col_w - 8, 16),
-                      "▼ more", size=8, color=T.DIM, align=T.ALIGN_RIGHT, family="Segoe UI")
+            qty = (int(entry.get("qty", 1) or 1) if not buying else
+                   (left if left else 0))
+            unwanted = not buying and not session.merchant_will_buy(iid)
+            note = ("sold out" if left == 0 else "not wanted" if unwanted else "")
+            extra = [f"{'Buy' if buying else 'Sell'} for {price} g"]
+            if buying:
+                extra.append("Plenty in stock" if left is None else
+                             f"{left} left" if left else "Sold out until tomorrow")
+            card = _item_card(painter, stack, rect, selected=selected, qty=qty,
+                              greyed=left == 0 or unwanted,
+                              badges=(note, f"{price} g"),
+                              badge_colors=(T.DIM, T.GOLD_BRIGHT), extra=extra)
+            cards.draw_card(painter, rect, cards.dimmed(card, active))
+            cards.note_tooltip(rect, card, focus=pad and selected)
+        # Where a new card would appear: an item with no card to land on (one
+        # sold into stock the merchant does not list) flies there.
+        if grid.slots:
+            spot = grid.slots[min(shown, len(grid.slots) - 1)]
+            trade_anim.record_column(side, QRect(spot))
 
-    # The trade button names what it will do; Leave ends the trade.
+    # divider
+    painter.setPen(T.GILD)
+    midx = inner.x() + col_w + 12
+    painter.drawLine(midx, grid_top - 4, midx, by - 8)
+
+    # The trade button names what it will do, and for how much; Leave ends
+    # the trade.
     lst = stock if st["side"] == 0 else sell
     label, can = "Choose an item", False
     if lst:
@@ -1673,7 +2070,7 @@ def _draw_trade(painter, session, w, h):
         d = rpg_items.get(entry["id"] if isinstance(entry, dict) else entry)
         buying = st["side"] == 0
         price = session._price(d.value if d else 0, buying, npc=npc,
-                                   item_id=d.id if d else None)
+                               item_id=d.id if d else None)
         name_ = d.name if d else "item"
         sold_out = buying and session.stock_left(entry) == 0
         can = (c.gold >= price and not sold_out) if buying else True
@@ -1685,7 +2082,7 @@ def _draw_trade(painter, session, w, h):
             label = f"{name_}: sold out until tomorrow"
         elif buying and not can:
             label = f"{name_}: {price}g (not enough gold)"
-    by = inner.bottom() - 58
+    by = inner.bottom() - 52
     button(painter, QRect(inner.x() + (inner.width() - 360) // 2, by, 360, 34),
            label, lambda sess: _handle_trade(sess, "return"), enabled=can, primary=True)
     button(painter, QRect(inner.right() - 110, by, 110, 34), "Leave",
@@ -1696,15 +2093,15 @@ def _draw_trade(painter, session, w, h):
                lambda sess: _handle_trade(sess, "r"))
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "Click or ↑/↓ select   ←/→ buy|sell   Enter trade   R read   Esc leave", size=9,
-              color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+              "Click or arrows select   Tab buy|sell   Enter trade   R read   Esc leave",
+              size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+    cards.flush_tooltip(painter)
 
     # Items changing hands, over everything else on the screen.
     trade_anim.draw(painter)
 
 
-#: Trade rows show the item's thumbnail at half its inventory icon
-#: (inventory_window.CELL less its margin).
+#: Trade thumbnails (the flying card's picture) at half an inventory icon.
 TRADE_THUMB = (58 - 10) // 2
 
 
@@ -1731,9 +2128,51 @@ def _trade_select(side, row):
     return action
 
 
+def _trade_turn(side):
+    """A trade column's page arrows: onto the first card of the next page."""
+    def turn(session, step):
+        st = _sel(session).setdefault("trade", {"row": 0, "side": 0})
+        lst = (_merchant_stock(session.merchant_npc) if side == 0
+               else _sell_list(session.game.character))
+        size = max(1, st.get("sizes", [1, 1])[side])
+        rows = st.setdefault("rows", [0, 0])
+        row = st["row"] if st["side"] == side else rows[side]
+        st["side"] = side
+        st["row"] = max(0, min((row // size + step) * size, max(0, len(lst) - 1)))
+    return turn
+
+
 def _merchant_stock(npc):
     from ..rpg.shops import stock_for
     return stock_for(npc)
+
+
+def _trade_move(st, move, stock, sell):
+    """An arrow key in the trade's two card lists (or grids): within one,
+    and across to the other off its inner edge (Tab also switches)."""
+    side = st["side"]
+    lst, other = (stock, sell) if side == 0 else (sell, stock)
+    cols = max(1, st.get("cols", [1, 1])[side])
+    size = max(1, st.get("sizes", [1, 1])[side])
+    ocols = max(1, st.get("cols", [1, 1])[side ^ 1])
+    osize = max(1, st.get("sizes", [1, 1])[side ^ 1])
+    rows = st.setdefault("rows", [0, 0])
+    row = max(0, min(st["row"], max(0, len(lst) - 1)))
+    if move in ("left", "right"):
+        first_col = not lst or row % cols == 0
+        last_col = not lst or row % cols == cols - 1 or row >= len(lst) - 1
+        toward_other = (move == "right") == (side == 0)
+        if toward_other and (last_col if side == 0 else first_col):
+            line = (row % size) // cols
+            ofirst = (rows[side ^ 1] // osize) * osize
+            col = 0 if side == 0 else ocols - 1
+            rows[side] = row
+            st["side"] = side ^ 1
+            st["row"] = max(0, min(ofirst + line * ocols + col, max(0, len(other) - 1)))
+            return
+        if not toward_other and (last_col if side == 1 else first_col):
+            return                      # the outer edge
+    st["row"] = cards.navigate(row, move, len(lst), cols, size)
 
 
 def _handle_trade(session, key):
@@ -1743,12 +2182,18 @@ def _handle_trade(session, key):
     stock = _merchant_stock(npc)
     sell = _sell_list(c)
     lst = stock if st["side"] == 0 else sell
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % max(1, len(lst)); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % max(1, len(lst)); return True
-    if key in ("left", "a", "right", "d"):
-        st["side"] ^= 1; st["row"] = 0; return True
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move:
+        _trade_move(st, move, stock, sell)
+        return True
+    if key == "tab":
+        rows = st.setdefault("rows", [0, 0])
+        rows[st["side"]] = st["row"]
+        st["side"] ^= 1
+        st["row"] = rows[st["side"]]
+        return True
     if key in ("return", "enter") and lst:
         st["row"] = min(st["row"], len(lst) - 1)
         entry = lst[st["row"]]
@@ -1757,8 +2202,8 @@ def _handle_trade(session, key):
         d = rpg_items.get(iid)
         price = session._price(d.value if d else 0, buying, npc=npc,
                                    item_id=d.id if d else None)
-        # Whether the item already has a row on the side it is going to: if
-        # so it lands on that row, otherwise its new row waits for it.
+        # Whether the item already has a card on the side it is going to: if
+        # so it lands on that card, otherwise its new card waits for it.
         to_list = sell if buying else stock
         had_row = any((e["id"] if isinstance(e, dict) else e) == iid for e in to_list)
         done = session.buy(iid) if buying else session.sell(iid)
@@ -1875,6 +2320,8 @@ def _level_preview(c, choice):
 
 def _paint_parchment(painter, rect):
     """An old page: warm in the middle, browning to the edges, flecked."""
+    if T.inked():
+        return              # on a scroll the scroll is the page
     import random as _random
     from PyQt5.QtGui import QRadialGradient, QBrush
     painter.save()
@@ -1993,69 +2440,54 @@ def _draw_levelup(painter, session, w, h):
               bold=True, family="Segoe UI")
     top += 28
 
-    # The choices, down the left.
-    list_w = int(inner.width() * 0.52)
-    row_h = 58
-    tile = row_h - 8
-    for i, (choice, label, _desc) in enumerate(rows):
-        ry = top + i * (row_h + 6)
-        chosen = st["row"] == i
-        tile_r = QRect(inner.x(), ry + 4, tile, tile)
-        painter.fillRect(tile_r, QColor(122, 40, 30, 230) if chosen else QColor(196, 170, 128))
-        painter.setPen(QPen(QColor(90, 52, 30), 1))
-        painter.drawRect(tile_r)
-        _paint_level_icon(painter, tile_r.adjusted(6, 6, -6, -6), choice,
-                          ink=_PARCH_LIGHT if chosen else QColor(150, 110, 80))
-        band = QRect(tile_r.right() + 10, ry + 6, list_w - tile - 10, row_h - 12)
-        if chosen:
-            from PyQt5.QtGui import QLinearGradient, QBrush
-            g = QLinearGradient(band.topLeft(), band.bottomLeft())
-            g.setColorAt(0.0, QColor(214, 222, 236))
-            g.setColorAt(0.5, QColor(150, 170, 204))
-            g.setColorAt(1.0, QColor(118, 140, 182))
-            painter.save()
-            painter.setPen(QPen(QColor(40, 40, 60), 1.5))
-            painter.setBrush(QBrush(g))
-            painter.drawRect(band)
-            painter.restore()
-        a = LEVEL_CHOICES[choice]
-        ink = _INK if chosen else QColor(120, 98, 84)
-        T.text_in(painter, band.adjusted(14, 0, 0, 0), label, size=17, color=ink,
-                  align=T.ALIGN_LEFT, family=fonts.dialogue_family())
-        value = (f"{int(c.max_magicka)}" if choice == "magicka" else str(c.attrs[a]))
-        T.text_in(painter, QRect(band.right() - 120, band.y(), 60, band.height()), value,
-                  size=16, color=ink, align=int(Qt.AlignVCenter | Qt.AlignRight),
-                  family=fonts.dialogue_family())
-        T.text_in(painter, QRect(band.right() - 52, band.y(), 48, band.height()),
-                  f"+{LEVEL_ATTR_GAIN}", size=16, color=_INK_RED if chosen else ink,
-                  align=T.ALIGN_CENTER, family=fonts.dialogue_family())
-        _row_target(painter, QRect(tile_r.x(), ry, list_w, row_h), _levelup_pick(i),
-                    f"levelup:{choice}")
+    # The choices as cards (game/ui/cards.py): a row each down the left,
+    # the highlighted one in full beside them (or, as a grid, across the
+    # page with it below) -- so the cards carry no tooltip.
+    foot_top = inner.bottom() - 60
+    if cards.LAYOUT == "list":
+        list_w = int(inner.width() * 0.56)
+        area = QRect(inner.x(), top, list_w, max(1, foot_top - 8 - top))
+        grid = cards.layout(area, len(rows), fit_all=True)
+    else:
+        detail_h = 150
+        area = QRect(inner.x(), top, inner.width(), max(1, foot_top - detail_h - top))
+        grid = cards.layout(area, len(rows), grid_min_scale=0.55, fit_all=True)
+    for i, (choice, label, desc) in enumerate(rows):
+        rect = grid.slots[i]
+        cards.draw_card(painter, rect, cards.dimmed(
+            _level_card(painter, c, choice, label, rect, st["row"] == i), True))
+        hits.add(QRect(rect), _levelup_pick(i), f"levelup:{choice}")
 
-    # The highlighted choice, on the right: its picture, what it does, and
-    # what it would change.
+    # The highlighted choice: what it does, and what it would change.
     choice, label, desc = rows[st["row"]]
-    right = QRect(inner.x() + list_w + 24, top - 28, inner.width() - list_w - 24,
-                  inner.bottom() - 60 - (top - 28))
-    frame = min(right.width(), 150)
-    fr = QRect(right.x() + (right.width() - frame) // 2, right.y(), frame, frame)
-    painter.fillRect(fr, QColor(190, 196, 206))
-    painter.setPen(QPen(QColor(90, 52, 30), 3))
-    painter.drawRect(fr)
-    painter.setPen(QPen(QColor(90, 52, 30), 1))
-    painter.drawRect(fr.adjusted(6, 6, -6, -6))
-    _paint_level_icon(painter, fr.adjusted(18, 18, -18, -18), choice)
-    painter.save()
-    painter.setFont(T.font(10, bold=True, family="Segoe UI"))
-    painter.setPen(_INK)
-    drect = QRect(right.x(), fr.bottom() + 10, right.width(), 76)
-    painter.drawText(drect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
-    painter.restore()
-    ey = drect.bottom() + 6
+    if cards.LAYOUT == "list":
+        dx = area.right() + 24
+        right = QRect(dx, top, max(1, inner.right() - dx), max(1, foot_top - 8 - top))
+        painter.save()
+        painter.setFont(T.font(10, bold=True, family="Segoe UI"))
+        painter.setPen(_INK)
+        used = painter.fontMetrics().boundingRect(
+            right, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc).height()
+        painter.drawText(right, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
+        painter.restore()
+        half = right.width()
+        ex, ey = right.x(), right.y() + min(used, right.height() // 2) + 16
+    else:
+        right = QRect(inner.x(), grid.bounds().bottom() + 14, inner.width(),
+                      max(1, foot_top - grid.bounds().bottom() - 18))
+        half = (right.width() - 24) // 2
+        painter.save()
+        painter.setFont(T.font(10, bold=True, family="Segoe UI"))
+        painter.setPen(_INK)
+        drect = QRect(right.x(), right.y(), half, right.height())
+        painter.drawText(drect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
+        painter.restore()
+        ex = right.x() + half + 24
+        ey = right.y()
     for name, before, after in _level_preview(c, choice):
-        if ey > right.bottom() - 14:
+        if ey > right.bottom() - 16:
             break
-        T.text_in(painter, QRect(right.x(), ey, right.width(), 18),
+        T.text_in(painter, QRect(ex, ey, half, 18),
                   f"{name}:  {before}  →  {after}", size=9, color=_INK_BLUE,
                   align=T.ALIGN_LEFT, bold=True, family="Segoe UI")
         ey += 18
@@ -2074,8 +2506,51 @@ def _draw_levelup(painter, session, w, h):
            f"Increase {label}", lambda sess: _handle_levelup(sess, "return"),
            primary=True)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 26, inner.width() - 260, 20),
-              f"Click, 1–{len(rows)} or ↑/↓ to choose   ·   Enter to confirm", size=9,
+              f"Click, 1–{len(rows)} or the arrows to choose   ·   Enter to confirm", size=9,
               color=QColor(110, 86, 60), align=T.ALIGN_LEFT, family="Segoe UI")
+
+
+#: Header tint per level-up choice.
+_LEVEL_ACCENT = {"strength": QColor(214, 110, 96), "endurance": QColor(120, 190, 130),
+                 "charisma": QColor(232, 196, 96), "magicka": QColor(110, 150, 240)}
+_LEVEL_ICONS = {}
+
+
+def _level_icon(choice, px):
+    """The choice's woodcut glyph (:func:`_paint_level_icon`) as a picture,
+    in pale parchment ink for a dark card."""
+    inked = T.inked()
+    key = (choice, int(px), inked)
+    if key not in _LEVEL_ICONS:
+        from PyQt5.QtGui import QPainter, QPixmap
+        pm = QPixmap(int(px), int(px))
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        try:
+            _paint_level_icon(p, QRect(int(px * 0.12), int(px * 0.12), int(px * 0.76),
+                                       int(px * 0.76)), choice,
+                              ink=_INK_RED if inked else _PARCH_LIGHT)
+        finally:
+            p.end()
+        _LEVEL_ICONS[key] = pm
+    return _LEVEL_ICONS[key]
+
+
+def _level_card(painter, c, choice, label, rect, selected, desc=""):
+    """The :class:`cards.Card` for a level-up choice: its glyph, where it
+    stands now and where the level takes it, and (on a row card) *desc*."""
+    from ..rpg.character import LEVEL_ATTR_GAIN, LEVEL_CHOICES
+    a = LEVEL_CHOICES[choice]
+    now = int(c.attrs[a])
+    shown = attr.label(a) if choice != "magicka" else "Intelligence"
+    return cards.Card(
+        title=label, icon=_level_icon(choice, cards.icon_px(painter, rect)),
+        subtitle=f"{shown} {now}",
+        summary=f"{now} → {attr.clamp(now + LEVEL_ATTR_GAIN)}",
+        desc=desc,
+        accent=_LEVEL_ACCENT.get(choice), badges=("", f"+{LEVEL_ATTR_GAIN}"),
+        badge_colors=(None, T.GOLD_BRIGHT), selected=selected,
+        hovered=hits.hovered(rect))
 
 
 def _levelup_pick(i):
@@ -2123,15 +2598,34 @@ def _cont_state(session):
                                     {"side": 0, "row_c": 0, "row_p": 0})
 
 
-#: The container screen's draggable rows and its two drop zones, recorded as
-#: it paints for the window that hosts it (game/ui/container_window.py):
-#: ``cells`` [(QRect, source)], ``zones`` [(QRect, target)].
-CONTAINER_DRAG = {"cells": [], "zones": []}
+#: The container screen's cards and drop zones, recorded as it paints for
+#: the window that hosts it (game/ui/container_window.py): ``cells``
+#: [(QRect, source)] (the drag sources), ``zones`` [(QRect, target)] (each
+#: column, then each contents card as ``("container", index)``), and
+#: ``stacks`` [(QRect, source, qty)] for a right click to split.
+CONTAINER_DRAG = {"cells": [], "zones": [], "stacks": []}
+
+#: Container cards are compact; they shrink (to this) to keep a chest on one page.
+_CONT_MIN_SCALE = 0.8
+
+
+def _cont_turn(side):
+    def turn(session, step):
+        st = _cont_state(session)
+        key = "row_c" if side == 0 else "row_p"
+        n = len(session.container_inventory()) if side == 0 else \
+            len(session.game.character.inventory)
+        size = max(1, st.get("size_c" if side == 0 else "size_p", 1))
+        page = st[key] // size + step
+        st["side"] = side
+        st[key] = max(0, min(page * size, max(0, n - 1)))
+    return turn
 
 
 def _draw_container(painter, session, w, h):
     CONTAINER_DRAG["cells"] = []
     CONTAINER_DRAG["zones"] = []
+    CONTAINER_DRAG["stacks"] = []
     c = session.game.character
     st = _cont_state(session)
     citems = session.container_inventory()
@@ -2141,64 +2635,82 @@ def _draw_container(painter, session, w, h):
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, session.container_name(),
                    f"{c.gold} gold    ·    {controls.label('click')} to {taking} / store   ·   "
-                   f"{controls.label('back')} close")
+                   f"{controls.label('right_click')} splits a stack   ·   {controls.label('back')} close")
 
     st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
     st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))
 
     col_w = int((inner.width() - 24) / 2)
-    # Column titles sit clear below the heading's subtitle line (drawn by
-    # T.heading at ty-8); the item list starts below the titles.
-    head_y = ty + 20
-    list_y = head_y + 24
-    row_h = 22
+    head_y = ty + 4                 # the column titles' row
+    grid_top = head_y + 30
+    btn_h = 30
+    by = inner.bottom() - btn_h
+    worn = {v for v in (c.equipment or {}).values() if v}
+    pad = controls.gamepad()
 
-    def _column(cx, title, items, sel_row, active, side):
-        zone = QRect(cx, head_y - 16, col_w, inner.bottom() - 40 - (head_y - 16))
-        CONTAINER_DRAG["zones"].append((zone, ("container", None) if side == 0
-                                        else ("pack", None)))
-        if drag.current is not None and hits.hovered(zone):
+    def _area(cx):
+        return QRect(cx + 4, grid_top, col_w - 8, max(1, by - 10 - grid_top))
+
+    # Both columns' cards at one size: the smaller of the two that fit.
+    left_x, right_x = inner.x(), inner.x() + col_w + 24
+    size = cards.smaller(*(cards.layout(_area(cx), len(lst), compact=True,
+                                        grid_min_scale=_CONT_MIN_SCALE, fit_all=True).card_size
+                           for cx, lst in ((left_x, citems), (right_x, pitems))))
+
+    def _column(cx, title, items, side):
+        kind = "container" if side == 0 else "pack"
+        active = st["side"] == side
+        key = "row_c" if side == 0 else "row_p"
+        zone = QRect(cx, head_y, col_w, by - 6 - head_y)
+        CONTAINER_DRAG["zones"].append((zone, (kind, None)))
+        if (drag.current is not None or drag.picked_source() is not None) \
+                and hits.hovered(zone):
             painter.save()
             painter.setPen(QPen(T.GOLD_BRIGHT, 1.5))
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(zone, 5, 5)
             painter.restore()
-        head_col = T.GOLD_BRIGHT if active else T.DIM
-        T.text(painter, cx + 6, head_y, title, size=12, color=head_col, bold=True,
-               family="Segoe UI")
+        T.text_in(painter, QRect(cx + 6, head_y, col_w - 140, 24), title, size=12,
+                  color=T.GOLD_BRIGHT if active else T.DIM, bold=True,
+                  align=T.ALIGN_LEFT, family="Segoe UI")
+        grid = cards.layout(_area(cx), len(items), compact=True, size=size)
+        st["cols_c" if side == 0 else "cols_p"] = grid.cols
+        st["size_c" if side == 0 else "size_p"] = grid.page_size
+        page, first, pages = _card_page(st[key], grid.page_size, len(items))
+        _card_pager(painter, QRect(cx + col_w - 120, head_y, 116, 24), page, pages,
+                    _cont_turn(side))
         if not items:
-            T.text(painter, cx + 10, list_y + 16, "(empty)", size=10, color=T.DIM,
+            T.text(painter, cx + 10, grid_top + 16, "(empty)", size=10, color=T.DIM,
                    family="Segoe UI")
-        for i, stack in enumerate(items):
-            ry = list_y + i * row_h
-            if ry > inner.bottom() - 58:
-                break
-            if i == sel_row and active:
-                painter.fillRect(QRect(cx, ry, col_w, row_h - 2), T.SELECT)
-            name = stack.get("name", stack.get("id"))
-            _row_target(painter, QRect(cx, ry, col_w, row_h - 2),
-                        _cont_click(side, i), f"{taking if side == 0 else 'store'}:{i}")
-            CONTAINER_DRAG["cells"].append(
-                (QRect(cx, ry, col_w, row_h - 2),
-                 ("container", i, stack.get("id")) if side == 0
-                 else ("pack", None, stack.get("id"))))
-            qty = f" ×{stack['qty']}" if stack.get("qty", 1) > 1 else ""
-            ncol = T.GOLD_BRIGHT if (i == sel_row and active) else T.INK
-            T.text(painter, cx + 8, ry + 15, name + qty, size=11, color=ncol,
-                   family="Segoe UI")
+        for i in range(first, min(first + grid.page_size, len(items))):
+            stack = items[i]
+            rect = grid.slots[i - first]
+            selected = i == st[key] and active
+            qty = _split_shown(kind, i, stack)
+            card = _item_card(painter, stack, rect, selected=selected, qty=qty,
+                              active=side == 1 and stack.get("id") in worn,
+                              greyed=qty <= 0)
+            cards.draw_card(painter, rect, cards.dimmed(card, active))
+            cards.note_tooltip(rect, card, focus=pad and selected)
+            hits.add(QRect(rect), _cont_click(side, i),
+                     f"{taking if side == 0 else 'store'}:{i}")
+            source = (("container", i, stack.get("id")) if side == 0
+                      else ("pack", None, stack.get("id")))
+            CONTAINER_DRAG["cells"].append((QRect(rect), source))
+            CONTAINER_DRAG["stacks"].append((QRect(rect), source,
+                                             int(stack.get("qty", 1) or 1)))
+            if side == 0:
+                CONTAINER_DRAG["zones"].append((QRect(rect), ("container", i)))
 
-    left_x = inner.x()
-    right_x = inner.x() + col_w + 24
-    _column(left_x, "Contents", citems, st["row_c"], st["side"] == 0, 0)
-    _column(right_x, "Your inventory", pitems, st["row_p"], st["side"] == 1, 1)
+    _column(left_x, "Contents", citems, 0)
+    _column(right_x, "Your inventory", pitems, 1)
 
     # divider
     painter.setPen(T.GILD)
     midx = inner.x() + col_w + 12
-    painter.drawLine(midx, list_y - 4, midx, inner.bottom() - 40)
+    painter.drawLine(midx, grid_top - 4, midx, by - 8)
 
-    bw, bh = 120, 30
-    by = inner.bottom() - bh
+    bw, bh = 120, btn_h
     button(painter, QRect(inner.x(), by, bw, bh), "Steal all" if taking == "steal" else "Take all",
            lambda sess: sess.take_all_from_container(), enabled=bool(citems),
            primary=True)
@@ -2211,13 +2723,15 @@ def _draw_container(painter, session, w, h):
         hint += "    ·    R: read"
     T.text_in(painter, QRect(inner.x() + bw, by, inner.width() - 2 * bw, bh),
               hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+    cards.flush_tooltip(painter)
 
 
 def _cont_click(side, index):
-    """A click on a container row: take it (contents) or store it (yours)."""
+    """A click on a container card: take it (contents) or store it (yours)."""
     def act(session):
         st = _cont_state(session)
         st["side"] = side
+        st["row_c" if side == 0 else "row_p"] = index
         if side == 0:
             session.take_from_container(index)
         else:
@@ -2225,22 +2739,47 @@ def _cont_click(side, index):
     return act
 
 
+def _cont_move(st, move, citems, pitems):
+    """An arrow key in the container's two card lists (or grids): within one, and
+    across to the other one off its inner edge (Tab also switches)."""
+    side = st["side"]
+    key, other_key = ("row_c", "row_p") if side == 0 else ("row_p", "row_c")
+    items, others = (citems, pitems) if side == 0 else (pitems, citems)
+    cols = max(1, st.get("cols_c" if side == 0 else "cols_p", 1))
+    size = max(1, st.get("size_c" if side == 0 else "size_p", cols))
+    ocols = max(1, st.get("cols_p" if side == 0 else "cols_c", 1))
+    osize = max(1, st.get("size_p" if side == 0 else "size_c", ocols))
+    row = st[key]
+    if move in ("left", "right"):
+        first_col = not items or row % cols == 0
+        last_col = not items or row % cols == cols - 1 or row >= len(items) - 1
+        inner_edge = last_col if side == 0 else first_col
+        toward_other = (move == "right") == (side == 0)
+        if toward_other and inner_edge:
+            # Across to the other list, on the same row.
+            line = (row % size) // cols
+            ofirst = (st[other_key] // osize) * osize
+            col = 0 if side == 0 else ocols - 1
+            st[other_key] = max(0, min(ofirst + line * ocols + col, max(0, len(others) - 1)))
+            st["side"] = side ^ 1
+            return
+        if not toward_other and (last_col if side == 1 else first_col):
+            return                      # the outer edge
+    st[key] = cards.navigate(row, move, len(items), cols, size)
+
+
 def _handle_container(session, key):
     st = _cont_state(session)
     citems = session.container_inventory()
     pitems = session.game.character.inventory
-    if key in ("left", "a", "right", "d", "tab"):
+    if key == "tab":
         st["side"] ^= 1
         return True
-    if key in ("up", "w"):
-        k = "row_c" if st["side"] == 0 else "row_p"
-        n = len(citems) if st["side"] == 0 else len(pitems)
-        st[k] = (st[k] - 1) % max(1, n)
-        return True
-    if key in ("down", "s"):
-        k = "row_c" if st["side"] == 0 else "row_p"
-        n = len(citems) if st["side"] == 0 else len(pitems)
-        st[k] = (st[k] + 1) % max(1, n)
+    move = {"up": "up", "w": "up", "down": "down", "s": "down", "left": "left",
+            "a": "left", "right": "right", "d": "right", "pageup": "pageup",
+            "pagedown": "pagedown"}.get(key)
+    if move:
+        _cont_move(st, move, citems, pitems)
         return True
     if key in ("return", "enter"):
         if st["side"] == 0:

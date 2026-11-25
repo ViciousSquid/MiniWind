@@ -309,6 +309,7 @@ class LogicSession:
 
             # Reset cinematic state.
             logic.cutscene_runtime.state = None
+            logic.cutscene_runtime.reset_triggers()
             logic.camera.camera_transition = None
             logic.render_runtime._hud_cinematic_last_active = False
             logic.render_runtime._hud_cinematic_fade_started = None

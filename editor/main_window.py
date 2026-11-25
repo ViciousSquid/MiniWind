@@ -37,7 +37,7 @@ from engine.constants import TILE_SIZE
 from engine.glasses import DEFAULT_GLASSES, normalize_glasses
 from engine import brush_faces, brush_geometry, brush_placement
 from engine import player_starts as start_rules
-from engine import hd_graphics
+from engine.renderer import renderer_from_settings
 from engine.change_journal import moved, touch
 from engine.spatial import set_live_flag
 from engine.fileio import write_json_atomic, write_text_atomic
@@ -665,7 +665,6 @@ class MainWindow(QMainWindow):
         """
         if getattr(self, "state", None) is not None:
             self.canonicalize_sky_image_ownership()
-            self.canonicalize_hd_sky_ownership()
         if not self.unsaved_changes:
             self.unsaved_changes = True
             self.update_title()
@@ -2820,25 +2819,16 @@ class MainWindow(QMainWindow):
                     "\n\nPlease restart the application for the changes to take effect.")
 
     def apply_renderer_setting(self):
-        """Bring the 3D view to the renderer ``[Renderer] renderer`` names:
-        Classic or HD_High. Fio swaps renderers while it runs, in the editor
-        and in Play (QtGameView.switch_renderer), so nothing needs a
-        restart. Returns whether the wanted renderer is the active one."""
+        """Keep the 3D view on Classic, the only renderer Fio draws with,
+        whatever ``[Renderer] renderer`` names (an older settings.ini may
+        still say HD_High). Returns whether Classic is the active renderer."""
         view = getattr(self, 'view_3d', None)
         if view is None or getattr(view, 'renderer', None) is None:
             return False
-        lowpower = bool(getattr(view.renderer, 'lowpower_mode', False))
-        wanted = hd_graphics.REGISTRY_NAME[
-            hd_graphics.renderer_from(self.config, lowpower=lowpower)]
+        wanted = renderer_from_settings(self.config)
         if view.renderer_mode == wanted:
             return True
         return bool(view.switch_renderer(wanted))
-
-    def set_hd_preview(self, shown):
-        """View > HD preview: whether HD_High draws the editor's 3D view in
-        HD (Play always is). Nothing to the classic renderer."""
-        self.view_3d.hd_preview = bool(shown)
-        self.view_3d.update()
 
     def apply_tooltip_settings(self):
         """Settings > Editor > Tooltips: show or hide each area's tooltips.
@@ -3712,51 +3702,7 @@ class MainWindow(QMainWindow):
         view = getattr(self, "view_3d", None)
         if view is not None:
             view.sky_image_path = path
-            # The HD sky rides with it (engine/hd_graphics.py). Plain data:
-            # a renderer at graphics = low never reads it.
-            view.hd_sky_settings = hd_graphics.sky_settings(
-                self.hd_sky_properties_from_map(), path)
         return path
-
-    def _player_starts_in_recovery_order(self):
-        """``(primary, others)``: the Primary PlayerStart and the other
-        starts, earliest created first -- the order a legacy value stored
-        on a non-primary start is recovered in (as for sky_image)."""
-        starts = self.state.player_starts()
-        primary = self.state.resolve_player_start()
-        position = start_rules.earliest_created(
-            [start.properties for start in starts])
-        ordered = [starts[position]] if position is not None else []
-        ordered.extend(
-            start for start in starts
-            if position is None or start is not starts[position])
-        return primary, [start for start in ordered if start is not primary]
-
-    def hd_sky_properties_from_map(self):
-        """The map's effective ``hd_*`` sky properties, as stored, without
-        changing authored data: the Primary PlayerStart's, else recovered
-        from the other starts."""
-        primary, others = self._player_starts_in_recovery_order()
-        return hd_graphics.resolve_properties(
-            primary.properties if primary is not None else None,
-            [start.properties for start in others])
-
-    def canonicalize_hd_sky_ownership(self, resolved=None):
-        """Store the HD sky on the current Primary PlayerStart and clear
-        it from every other start. Called at explicit edit boundaries."""
-        primary, others = self._player_starts_in_recovery_order()
-        if primary is None:
-            return {}
-        if resolved is None:
-            resolved = self.hd_sky_properties_from_map()
-        changed = hd_graphics.canonicalise_properties(
-            primary.properties, [start.properties for start in others], resolved)
-        if changed:
-            touched = [start for start in [primary] + others
-                       if any(start.properties is properties for properties in changed)]
-            self.state.mark_world_changed(touched)
-        self.sync_sky_image_from_map()
-        return resolved
 
     def set_show_whole_world(self, shown):
         """Load every editor cell of a Big World map, or only those near the camera."""

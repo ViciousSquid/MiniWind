@@ -26,6 +26,12 @@ PALE = QColor("#efe3c9")
 MUTED = QColor("#aaa69d")
 TEAL = QColor("#85cbbb")
 RED = QColor("#f3a08c")
+_TRACK = QColor("#303735")
+#: On a parchment scroll (theme.parchment): the words in ink; the lock and
+#: its pins stay iron and brass.
+T.ink_colours(globals(), GOLD=QColor(146, 98, 24), PALE=QColor(40, 26, 16),
+              MUTED=QColor(96, 72, 50), TEAL=QColor(26, 124, 108), RED=QColor(160, 38, 24),
+              _TRACK=QColor(214, 190, 146))
 _PLATE = None
 
 
@@ -34,9 +40,9 @@ def geometry(x, y, w, h):
     return x + (w - WIDTH * scale) / 2, y + (h - HEIGHT * scale) / 2, scale
 
 
-def _text(p, rect, text, size=11, color=PALE, bold=False, align=Qt.AlignLeft | Qt.AlignVCenter):
+def _text(p, rect, text, size=11, color=None, bold=False, align=Qt.AlignLeft | Qt.AlignVCenter):
     p.setFont(T.font(size, bold=bold))
-    p.setPen(color)
+    p.setPen(PALE if color is None else color)
     p.drawText(QRectF(*rect), int(align | Qt.TextWordWrap), text)
 
 
@@ -322,9 +328,10 @@ def draw(p, session, x, y, w, h):
     bg = QLinearGradient(0, 0, WIDTH, HEIGHT)
     bg.setColorAt(0, QColor("#20272a"))
     bg.setColorAt(1, QColor("#101719"))
-    p.setBrush(bg)
-    p.setPen(QPen(QColor("#756345"), 1))
-    p.drawRoundedRect(QRectF(1, 1, WIDTH - 2, HEIGHT - 2), 10, 10)
+    if not T.inked():           # on a scroll the page is the ground
+        p.setBrush(bg)
+        p.setPen(QPen(QColor("#756345"), 1))
+        p.drawRoundedRect(QRectF(1, 1, WIDTH - 2, HEIGHT - 2), 10, 10)
     p.setPen(QPen(QColor("#3e443c"), 1))
     p.drawLine(30, 115, 790, 115)
     owned = ownership.is_theft(session.lockpick_thing.properties, "player", "player")
@@ -343,7 +350,7 @@ def draw(p, session, x, y, w, h):
     _text(p, (462, 257, 315, 50), a.cue, 14, RED if a.strain >= .65 else TEAL if a.aligned else PALE)
     _text(p, (462, 310, 315, 30), f"PICK STRAIN   {int(a.strain * 100)}%", 10, RED if a.strain >= .65 else MUTED)
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor("#303735"))
+    p.setBrush(_TRACK)
     p.drawRoundedRect(QRectF(462, 345, 312, 10), 4, 4)
     p.setBrush(RED if a.strain >= .65 else GOLD)
     p.drawRoundedRect(QRectF(462, 345, 312 * a.strain, 10), 4, 4)

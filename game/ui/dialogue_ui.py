@@ -80,6 +80,56 @@ def _body_font():
     return fonts.dialogue_font(13)
 
 
+#: The speaker's line opens with an illuminated initial the size of the text
+#: (a touch over the line's height, as a scribe's coloured capital), in one
+#: of the manuscript pigments chosen by who is speaking.
+INITIAL_SCALE = 1.15
+INITIAL_PIGMENTS = ("red", "orange", "blue", "green")
+
+
+def _initial_of(text):
+    """``(initial, rest)``: the line's first letter, illuminated, and the rest
+    of it -- or ``("", text)`` when it does not open with a letter."""
+    text = str(text or "")
+    if text and text[0].isalpha():
+        return text[0], text[1:]
+    return "", text
+
+
+def _initial_side(fm):
+    return fm.height() * INITIAL_SCALE
+
+
+def _flow(text, font, width, indent):
+    """The speaker's line laid out to *width*, its first line *indent* px in
+    (room for the initial). ``(QTextLayout, height)``."""
+    from PyQt5.QtGui import QTextLayout, QTextOption
+    from PyQt5.QtCore import QPointF
+    layout = QTextLayout(text, font)
+    opt = QTextOption()
+    opt.setWrapMode(QTextOption.WordWrap)
+    layout.setTextOption(opt)
+    fm = QFontMetrics(font)
+    y = 0.0
+    first = True
+    layout.beginLayout()
+    while True:
+        line = layout.createLine()
+        if not line.isValid():
+            break
+        off = indent if first else 0.0
+        line.setLineWidth(max(10.0, width - off))
+        line.setPosition(QPointF(off, y))
+        y += fm.lineSpacing()
+        first = False
+    layout.endLayout()
+    return layout, max(float(fm.height()), y)
+
+
+def _pigment(speaker):
+    return INITIAL_PIGMENTS[sum(map(ord, str(speaker or ""))) % len(INITIAL_PIGMENTS)]
+
+
 def _head_shown(session):
     """Whether a head will be drawn for the current speaker (NPC present, the
     'Show dialogue heads' toggle on, and its sprite actually loads)."""
@@ -132,9 +182,12 @@ def _layout(session, w):
     text_w = max(80, _content_right_off(w, head_shown) - text_x)
 
     body = view["text"] if view else ""
-    fm = QFontMetrics(_body_font())
-    br = fm.boundingRect(QRect(0, 0, text_w, 100000), int(Qt.TextWordWrap), body)
-    text_h = max(fm.height(), br.height())
+    font = _body_font()
+    fm = QFontMetrics(font)
+    initial, rest = _initial_of(body)
+    indent = _initial_side(fm) + 4 if initial else 0.0
+    _lay, flow_h = _flow(rest, font, text_w, indent)
+    text_h = int(max(fm.height(), flow_h, _initial_side(fm) if initial else 0))
 
     resp_top = _TEXT_TOP + text_h + _GAP_AFTER_TEXT
     box_h = resp_top + n_resp * _RESP_LINE_H + _FOOTER_H + PAD
@@ -225,10 +278,24 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     painter.setPen(QPen(T.GILD, 1))
     painter.drawLine(int(tx), y + pad + 26, int(cr), y + pad + 26)
 
+    # The line, its first letter an illuminated capital the size of the text.
+    font = _body_font()
+    fm = QFontMetrics(font)
+    initial, rest = _initial_of(view["text"])
+    side = _initial_side(fm)
+    indent = side + 4 if initial else 0.0
+    flow, _h = _flow(rest, font, lay["text_w"], indent)
+    top = y + _TEXT_TOP
+    if initial:
+        from . import cards
+        # A small square block on the first line, centred on it.
+        box = QRectF(tx, top + (fm.height() - side) / 2.0, side, side)
+        cards._illuminated_initial(painter, box, initial,
+                                   _pigment(npc.properties.get("name") if npc else ""), False)
     painter.setPen(T.PARCH)
-    painter.setFont(_body_font())
-    painter.drawText(QRect(tx, y + _TEXT_TOP, lay["text_w"], lay["text_h"]),
-                     int(Qt.TextWordWrap), view["text"])
+    painter.setFont(font)
+    from PyQt5.QtCore import QPointF
+    flow.draw(painter, QPointF(tx, top))
 
     ry = y + lay["resp_top"] + 11   # baseline of the first response row
     for i, resp in enumerate(view["responses"]):

@@ -64,6 +64,7 @@ from .rpg import charisma as rpg_cha
 from .rpg import fortune as rpg_fortune
 from .rpg import alignment as rpg_align
 from .ui.arrows import arrow_sprite
+from .stuck_arrows import AMMO_KEY, DEFAULT_AMMO, StuckArrows
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import DEFAULT_MINUTES_PER_DAY, GameClock
@@ -88,6 +89,7 @@ from . import mental_state
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
 from . import npc_stamina
+from . import strafe
 
 _current_session = None
 
@@ -375,6 +377,8 @@ SHAKE_STEPS_PER_SECOND = 28.0
 CRIT_SHAKE = (0.024, 0.40)        # your critical hit
 KILL_SHAKE = (0.018, 0.32)        # your killing blow
 GIB_SHAKE = (0.032, 0.48)         # your overkill: the body blown apart
+#: How wide (world units) the player's picture is when it is blown apart.
+PLAYER_GIB_BODY = 96.0
 CRIT_KILL_SHAKE = (0.044, 0.60)   # your critical killing blow: the hardest of all
 #: A heavy blow taken: starts at HURT_SHAKE_FROM of the player's health and
 #: peaks at half of it.
@@ -455,8 +459,46 @@ CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
 GUARD_AID_RADIUS = 1600.0
 AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is attacked!",
               "Seize them, lads!")
-#: How far inside the terrain's edge the player is stopped.
-WORLD_EDGE_MARGIN = 900.0
+#: A shield raised towards an explosion as it goes off: the damage taken and
+#: the push, as fractions of the full blast.
+BLAST_BLOCK_DAMAGE = 0.95
+BLAST_BLOCK_PUSH = 0.80
+# Slow Time (game.rpg.magic "slow_time"): its rule and its numbers live in
+# game/slow_time.py, one record per world; the session draws it.
+from .slow_time import (  # noqa: F401,E402
+    SLOW_TIME_SCALE, SLOW_TIME_SECONDS, SLOW_TIME_PER_LEVEL, SLOW_TIME_FROM_LEVEL,
+    SLOW_TIME_FADE, SLOW_TIME_COLOUR, SLOW_TIME_LIGHT_RADIUS, SLOW_TIME_LIGHT_INTENSITY,
+    SLOW_TIME_LIGHT_HEIGHT, SLOW_TIME_FLICKER_FLOOR, SLOW_TIME_BUBBLE_SCALE,
+    SLOW_TIME_BUBBLE_LENS, SLOW_TIME_BUBBLE_PULSE, SLOW_TIME_BUBBLE_PULSE_HZ,
+    SLOW_TIME_BUBBLE_RIM, SLOW_TIME_BUBBLE_SHIMMER, SLOW_TIME_BUBBLE_FILL,
+    SLOW_TIME_CASTER_HEIGHT, slow_time_seconds, slow_time_flicker)
+from . import slow_time as slow_time_mod
+
+
+def cast_icon_alpha(age):
+    """A cast icon's opacity *age* seconds after the cast: fading in, held,
+    fading out; None once it is over."""
+    if age < 0.0:
+        return 0.0
+    if age < CAST_ICON_FADE_IN:
+        return age / CAST_ICON_FADE_IN
+    age -= CAST_ICON_FADE_IN
+    if age < CAST_ICON_HOLD:
+        return 1.0
+    age -= CAST_ICON_HOLD
+    if age < CAST_ICON_FADE_OUT:
+        return 1.0 - age / CAST_ICON_FADE_OUT
+    return None
+
+
+#: A fall of more than this many world units kills outright (the backstop
+#: for a map's hurt trigger at the edge of the world).
+FATAL_FALL = 2000.0
+#: A move of more than this between two ticks is a teleport (fast travel, a
+#: portal, a respawn), never part of a fall.
+FALL_TELEPORT_STEP = 400.0
+FALL_DEATH = "Fell to their death"
+EDGE_DEATH = "Fell off the edge of the world"
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
 #: Light Fingers practice (skill-use difficulty) each theft earns.
@@ -593,6 +635,14 @@ FIZZLE_SOUND = "sizzle.mp3"
 #: Resurrection's own sound, in place of SPELLCAST_SOUND (silent until the
 #: file is in assets/sounds).
 RESURRECTION_SOUND = "resurrection.mp3"
+#: Heard everywhere when Slow Time is cast (silent until the file is in
+#: assets/sounds).
+SLOW_TIME_SOUND = "slowtime.wav"
+#: A spell cast shows its icon over the caster's head: fading in, held, then
+#: fading out (seconds, real time).
+CAST_ICON_FADE_IN = 0.3
+CAST_ICON_HOLD = 1.5
+CAST_ICON_FADE_OUT = 0.25
 #: The pad's shake when a lock pick finds a pin's sweet spot: (low motor,
 #: high motor, milliseconds).
 LOCKPICK_SWEET_RUMBLE = (0.25, 0.7, 140)
@@ -769,6 +819,9 @@ class MiniwindSession(SettlementLaw):
         self.law = Writs(self.store)
         self._arrest_region = ""
         self.needs_char_creation = str(cfg.get("start_scenario", "prompt")) == "prompt"
+        #: The key hints a new character is shown (game/key_hints.py): armed
+        #: by begin_new_character only, so never for a loaded save.
+        self.key_hints = None
         #: Which map this is, for what it remembers (game/map_memory.py): the
         #: map's own settings entity, else its region's name.
         self._map_key = str(cfg.get("id") or cfg.get("region_name") or "")
@@ -915,6 +968,9 @@ class MiniwindSession(SettlementLaw):
         #: Every NPC / creature archer mid-draw: they draw a bow by the
         #: player's own rules (game/npc_archery.py).
         self.archery = npc_archery.NpcArchery(self)
+        #: Arrows that struck a barrel stay in it, to be pulled out with the
+        #: interact key (game/stuck_arrows.py).
+        self.stuck_arrows = StuckArrows(self)
         import game.npc_magic as npc_magic
         self.npc_magic = npc_magic.NpcMagic(self)
         # What magic looks like: casts, bolts, impacts, wards (game/magic_fx.py),
@@ -927,8 +983,11 @@ class MiniwindSession(SettlementLaw):
         # Casters and archers keep their distance, but can be run down
         # (game/combat_tactics.py); everyone else is routed round walls.
         from .combat_tactics import CombatTactics
+        from engine.monster_constants import MONSTER_WALL_MARGIN
         self.tactics = CombatTactics(lambda: getattr(self, "_archery_clock", 0.0), self.nav,
-                                     self._tier_of, busy=lambda t: id(t) in self.archery.drawing)
+                                     self._tier_of, busy=lambda t: id(t) in self.archery.drawing,
+                                     blocked=lambda x, y, z: self._blocked_by_wall(
+                                         x, y, z, MONSTER_WALL_MARGIN))
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
         #: Farmers reaping with a scythe and tending livestock by day.
@@ -1956,6 +2015,7 @@ class MiniwindSession(SettlementLaw):
         self.game.add_xp_listener(self._on_xp)
         self.game.add_drink_listener(self._on_drink)
         self.needs_char_creation = True
+        self.key_hints = None
         self.open_screen = "charcreate"
         self.dialogue = None
         self.dialogue_npc = None
@@ -2003,6 +2063,7 @@ class MiniwindSession(SettlementLaw):
         _current_session = self
         logic = self.logic
         logic._player_damage_filter = self._mitigate_incoming
+        logic.player_blast_guard = self.blast_guard
         # Both mouse fire buttons are the engine's shooting: it queues the
         # press and hands it here, and the bow's arrows and the spell bolts
         # fly through its projectile pipeline.
@@ -2011,6 +2072,8 @@ class MiniwindSession(SettlementLaw):
         fio.set_jump_enabled(logic, False)
         # Arrows are drawn as arrows, by the game, not as Fio's projectile orb.
         fio.set_projectile_split(logic, self._split_projectiles)
+        # An arrow that strikes a barrel sticks in it (game/stuck_arrows.py).
+        self.stuck_arrows.install()
         # Wound decals use MiniWind's gore art.
         try:
             logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
@@ -2055,7 +2118,6 @@ class MiniwindSession(SettlementLaw):
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
-        self._world_bounds = self._read_world_bounds()
         try:
             from .living.world import LivingWorld
             self.living = LivingWorld(self)
@@ -2073,6 +2135,8 @@ class MiniwindSession(SettlementLaw):
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        self.end_slow_time()        # the next map runs at the world's own speed
+        fio.clear_actor_time_rate(self.logic)   # and nobody's clock is left altered
         self.nav.invalidate()
         self.windmills.clear()
         if self.living is not None:
@@ -2096,10 +2160,13 @@ class MiniwindSession(SettlementLaw):
             self.flame_spawner.clear()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
+        if getattr(self.logic, "player_blast_guard", None) == self.blast_guard:
+            self.logic.player_blast_guard = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
             self.logic.player_fire_handler = None
         fio.set_jump_enabled(self.logic, True)
         fio.set_projectile_split(self.logic, None)
+        self.stuck_arrows.uninstall()
         fio.clear_projectile_deflector(self.logic, self._deflect_missile)
         try:
             from engine.monster_ai import MonsterAI
@@ -2127,6 +2194,14 @@ class MiniwindSession(SettlementLaw):
         c = self.game.character
         if getattr(fio.player_runtime(self.logic), "god_mode", False):
             return 0.0
+        if self._environmental_harm():
+            # A map's hurt trigger (a fall off the edge of the world, lava) is
+            # not a blow: no difficulty scaling, armour, block, deflection or
+            # lucky escape. It deals what the map author set.
+            final = max(0.0, float(raw_damage))
+            c.damage(final)
+            self._player_hurt(c, final, None)
+            return final
         raw_damage = float(raw_damage) * self.incoming_mult
         attacker = self._attacker()
         if attacker is not None and damage_kind == "physical":
@@ -2134,9 +2209,12 @@ class MiniwindSession(SettlementLaw):
             raw_damage *= rpg_combat.strength_factor(
                 rpg_cha.core(attacker.properties, attr.STRENGTH))
         import game.rpg.armour_class as rpg_ac
+        # An explosion is not a blow a block saves against: a shield raised
+        # towards it softens it (blast_guard), nothing more.
         res = rpg_combat.resolve_incoming(c, raw_damage,
                                           damage_kind=damage_kind,
-                                          blocking=self._blocking, rng=self.dice_rng,
+                                          blocking=self._blocking and not self._harm_is("explosion"),
+                                          rng=self.dice_rng,
                                           dice=self.game.dice,
                                           attacker=self._attacker_name(),
                                           attack_bonus=rpg_ac.npc_attack_bonus(
@@ -2188,8 +2266,73 @@ class MiniwindSession(SettlementLaw):
                 final *= BEHIND_DAMAGE
         final = self._lucky_escape(c, final)
         c.damage(final)
+        self._player_hurt(c, final, attacker)
+        return final
+
+    def _harm_is(self, cause) -> bool:
+        """Whether the damage being taken has *cause*, as the engine recorded
+        it (``last_damage`` = source, cause, kind)."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        return isinstance(last, tuple) and len(last) > 1 and last[1] == cause
+
+    def blast_guard(self, centre):
+        """``(damage, push)`` scales for an explosion going off at *centre*
+        (the engine asks, engine/explosions.py): a shield raised towards it
+        takes :data:`BLAST_BLOCK_DAMAGE` of the damage and
+        :data:`BLAST_BLOCK_PUSH` of the push; otherwise the whole blast."""
+        if self._shield_faces(centre):
+            return BLAST_BLOCK_DAMAGE, BLAST_BLOCK_PUSH
+        return 1.0, 1.0
+
+    def _shield_faces(self, point) -> bool:
+        """Whether the player is blocking with a shield turned towards
+        *point*: the same shield, stamina and front arc a ricochet needs
+        (game/missile_deflection.py)."""
+        c = self.game.character
+        if (c.is_dead or not self._blocking or c.stamina <= 0
+                or eq.shield(c) is None or eq.is_two_handed(eq.weapon(c))):
+            return False
+        player = fio.player(self.logic)
+        if player is None:
+            return False
+        import math
+        facing = float(player.angle)
+        nx, nz = math.sin(facing), math.cos(facing)
+        dx, dz = float(point[0]) - float(player.pos[0]), float(point[2]) - float(player.pos[2])
+        flat = math.hypot(dx, dz)
+        return flat > 1e-3 and (dx * nx + dz * nz) > 0.25 * flat
+
+    def _environmental_harm(self) -> bool:
+        """Whether the damage being taken is from a hurt trigger in the map,
+        as the engine recorded it (``last_damage`` = source, cause, kind)."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        return isinstance(last, tuple) and len(last) > 1 and last[1] in ("trigger", "fall")
+
+    def _death_by_falling(self) -> bool:
+        """Whether the harm being taken is a fall: the fall checks' own
+        (cause "fall"), or a hurt trigger that caught the player in the air,
+        dropping (the trigger under the edge of the world). A fall kills; it
+        never blows the body apart."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        cause = last[1] if isinstance(last, tuple) and len(last) > 1 else None
+        if cause == "fall":
+            return True
+        if cause != "trigger":
+            return False
+        p = fio.player(self.logic)
+        try:
+            return (p is not None and not p.on_ground and not p.in_water
+                    and float(p.velocity[1]) < 0.0)
+        except (AttributeError, TypeError, IndexError):
+            return False
+
+    def _player_hurt(self, c, final, attacker) -> None:
+        """What *final* damage, already taken by *c*, does on screen and to
+        the game: blood, the red flash, the death screen's cause."""
         if final > 0:
-            self._gore_player_hurt(final, attacker)
+            if not (c.is_dead and not self._death_by_falling()
+                    and self._gib_player(c, final, attacker)):
+                self._gore_player_hurt(final, attacker)
             # A lethal hit can stop engine ticks before the next UI update.
             # Release the lock UI here too, so it cannot cover the death flow.
             if self.open_screen == "lockpicking":
@@ -2202,7 +2345,106 @@ class MiniwindSession(SettlementLaw):
                 # death, so the per-tick encounter watch never hears of it.
                 self._watch_encounter()
         self.add_floater(f"-{int(round(final))}", kind="hurt")
-        return final
+
+    # -- falling ------------------------------------------------------------
+    def _watch_fall(self, delta) -> None:
+        """Kill a player who has fallen more than :data:`FATAL_FALL`, and
+        claim the engine's fall out of the world (``Player.void_handler``) so
+        it is a death, not a trip back to the start. Standing, swimming,
+        noclip and teleports (fast travel, portals) start a fall afresh."""
+        player = fio.player(self.logic)
+        if player is None:
+            return
+        if getattr(player, "void_handler", None) != self._fell_out_of_world:
+            try:
+                player.void_handler = self._fell_out_of_world
+            except AttributeError:           # a player that takes no handler
+                pass
+        if self.game.character.is_dead:
+            self._fall_top = None
+            return
+        pos = (float(player.pos[0]), float(player.pos[1]), float(player.pos[2]))
+        last = self.__dict__.get("_fall_last")
+        self._fall_last = pos
+        step = max(FALL_TELEPORT_STEP, 1600.0 * float(delta or 0.0))
+        teleported = last is not None and (
+            abs(pos[0] - last[0]) > step or abs(pos[2] - last[2]) > step
+            or abs(pos[1] - last[1]) > step)
+        top = self.__dict__.get("_fall_top")
+        if (teleported or top is None or pos[1] > top
+                or getattr(player, "on_ground", True)
+                or getattr(player, "in_water", False)
+                or not getattr(player, "physics_enabled", True)):
+            self._fall_top = pos[1]
+            return
+        if top - pos[1] > FATAL_FALL:
+            self._kill_by_fall(player)
+
+    def _fell_out_of_world(self, player) -> bool:
+        """The engine's player has dropped below the level (leave_void): a
+        death, held where it fell, never a trip back to the start."""
+        if not self.game.character.is_dead:
+            self._kill_by_fall(player)
+        return self.game.character.is_dead
+
+    def _kill_by_fall(self, player) -> None:
+        """Kill the player by falling, through the engine's own damage path
+        (death screen, sounds, events), with the death screen's words. A
+        fatal fall is a rule of the world: god and buddha mode do not save
+        anyone from it (``ignore_god_mode``)."""
+        c = self.game.character
+        message = EDGE_DEATH if self._beyond_terrain(player) else FALL_DEATH
+        self._fall_top = None
+        source = {"death_message": message, "ignore_god_mode": True}
+        amount = float(c.health) + float(c.max_health) + 1.0
+        runtime = getattr(self.logic, "trigger_runtime", None)
+        if runtime is not None:
+            runtime._apply_player_damage(amount, source=source, cause="fall")
+            return
+        # No engine damage path (a bare logic): the character directly.
+        fio.player_runtime(self.logic).last_damage = (source, "fall", "physical")
+        c.damage(amount)
+        self._player_hurt(c, amount, None)
+        self._sync_engine_health()
+
+    def _beyond_terrain(self, player) -> bool:
+        """Whether *player* is past the edge of the map's terrain."""
+        ter = fio.terrain(self.logic)
+        if ter is None or not getattr(ter, "enabled", False):
+            return False
+        try:
+            (x0, x1), (z0, z1) = ter.get_terrain_bounds()
+        except Exception:
+            return False
+        x, z = float(player.pos[0]), float(player.pos[2])
+        return not (x0 <= x <= x1 and z0 <= z <= z1)
+
+    def _gib_player(self, c, final, attacker) -> bool:
+        """Blow the player apart on an overkill, by the one rule every NPC
+        and creature dies by (game.rpg.gore.should_gib: a killing blow of at
+        least GIB_DAMAGE_FRACTION x max health): their picture in pieces,
+        blood, and no body left standing. True when it did."""
+        import game.rpg.gore as _gore
+        if not _gore.should_gib({"max_health": c.max_health}, final, c.health):
+            return False
+        self._player_gibbed = True
+        ppos = self._player_pos()
+        if ppos is not None and self.gore_enabled():
+            feet = [ppos[0], ppos[1] - 56.0, ppos[2]]
+            src = getattr(attacker, "pos", None)
+            away = (ppos[0] - src[0], ppos[2] - src[2]) if src is not None else None
+            self.gore.gib(feet, final, away,
+                          sprite=getattr(self.logic, "player_head_sprite", None),
+                          body=PLAYER_GIB_BODY)
+            self.crab_frenzy.gibbed(self, feet, 1.0)
+        self.shake(*GIB_SHAKE)
+        self.gore.flash_red(0.55)
+        return True
+
+    def player_body_gone(self) -> bool:
+        """Whether the player was blown apart: the overhead view draws no
+        body (nor what it held) while they stay dead."""
+        return bool(self.__dict__.get("_player_gibbed")) and self.game.character.is_dead
 
     def _lucky_escape(self, c, final):
         """A blow that would kill may, once a day, leave the fortunate on a
@@ -2270,7 +2512,7 @@ class MiniwindSession(SettlementLaw):
                 # Blown apart: the body's own picture in pieces, and blood.
                 self.gore.gib(feet, damage, away, sprite=self._body_picture(target),
                               body=float(p.get("sprite_width", 96) or 96), mass=mass)
-                # Near water, crabs come for the pieces.
+                # Near water (blue) or on sand (red), crabs come for the pieces.
                 self.crab_frenzy.gibbed(self, feet, mass)
                 if crit_kill:
                     # A critical killing blow: blown apart, and then some.
@@ -2432,6 +2674,10 @@ class MiniwindSession(SettlementLaw):
         self._sync_engine_health(full=True)
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
         self._start_opening_quests()
+        # "I: Inventory" in the middle of the screen, then (for a character
+        # who starts with spells) "P: Spellbook" -- a new character only (game/key_hints.py).
+        import game.key_hints as key_hints
+        key_hints.arm(self)
 
     def _start_opening_quests(self) -> None:
         """Start every quest marked ``starts_on_new_game``: a new character
@@ -2762,7 +3008,16 @@ class MiniwindSession(SettlementLaw):
         self._ground_actors()
         self._ease_zoom(delta)
         self._update_arrival()
-        self._update_bow_draw(delta)
+        # Actors whose own clock is altered (engine/actor_time.py): a Slow
+        # Time caster runs at its normal speed while the world is slowed, so
+        # its timers here take its rate times the tick -- the player's
+        # cooldowns, swings, bow draw, stamina and regeneration as much as its
+        # steps (those on Fio's player tick and the monster AI's).
+        rates = fio.actor_time_rates(self.logic)
+        pdelta = delta
+        if rates:
+            pdelta = delta * fio.actor_time_rate(self.logic, fio.player(self.logic))
+        self._update_bow_draw(pdelta)
         self._check_waypoint()
         self._refresh_roads()
         self.archery.update(delta)
@@ -2773,38 +3028,42 @@ class MiniwindSession(SettlementLaw):
         self.burning.update(delta)
         self._update_grass_fire(delta)
         self.wildlife.update(delta)
+        import game.key_hints as key_hints
+        key_hints.watch_spells(self)        # a first spell gained: the P hint
         self._check_talk_partner()
         if self.__dict__.get("_party_due") and self._player_pos() is not None:
             self._party_due = False
             party.arrive(self)
         self.memory.update(delta)
+        self._watch_fall(delta)
+        self._update_slow_time()
         self._check_pack()
         self.autosave.tick(delta)
         self.rewind.tick(delta)
         self._update_bolt_lights(delta)
+        self.stuck_arrows.update()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
             self.arrows_in_flight = ()
             self._arrow_tags.clear()
-        self._keep_player_in_world()
         self.clock.advance(delta)
         if not self.clock.paused:
             self.windmills.produce_until(float(self.clock.day) * 24.0 + self.clock.hour,
                                          initial_hours=delta * self.clock.hours_per_second)
         self._update_grass()
-        self.game.tick(delta, self._sprint(delta))
+        self.game.tick(pdelta, self._sprint(pdelta))
         self._announce_skill_raises()
         self._update_encumbrance()
         self._update_visibility()
         if self._attack_cooldown > 0:
-            self._attack_cooldown -= delta
+            self._attack_cooldown -= pdelta
         if self._offhand_cooldown > 0:
-            self._offhand_cooldown -= delta
+            self._offhand_cooldown -= pdelta
         if self._cast_cooldown > 0:
-            self._cast_cooldown -= delta
+            self._cast_cooldown -= pdelta
         if self._player_flash > 0:
-            self._player_flash = max(0.0, self._player_flash - delta)
+            self._player_flash = max(0.0, self._player_flash - pdelta)
 
         # Bounty enforcement runs independently of normal NPC schedules so a guard
         # can approach, arrest, escort, or pursue the player immediately.
@@ -2895,6 +3154,9 @@ class MiniwindSession(SettlementLaw):
                     continue
                 self._move(npc, delta * stride)
                 continue
+            if rates:
+                self._move(npc, delta * fio.actor_time_rate(self.logic, npc))
+                continue
             self._move(npc, delta)
 
         # The roads: journeys advance off-screen on the clock, and parties
@@ -2930,9 +3192,9 @@ class MiniwindSession(SettlementLaw):
 
         # Decay player stab animation
         if self._attack_anim_time > 0:
-            self._attack_anim_time = max(0.0, self._attack_anim_time - delta)
+            self._attack_anim_time = max(0.0, self._attack_anim_time - pdelta)
         if self._offhand_anim_time > 0:
-            self._offhand_anim_time = max(0.0, self._offhand_anim_time - delta)
+            self._offhand_anim_time = max(0.0, self._offhand_anim_time - pdelta)
 
         # Detect NPC/creature attacks by watching the engine's is_shooting flag.
         # When it flips from False -> True we start a 0.2 s stab animation.
@@ -2951,10 +3213,11 @@ class MiniwindSession(SettlementLaw):
             now = tp.get("is_shooting", False)
             if now and not was:
                 tp["_attack_anim"] = 0.2
+            adelta = delta * fio.actor_time_rate(self.logic, t) if rates else delta
             if tp.get("_attack_anim", 0.0) > 0:
-                tp["_attack_anim"] = max(0.0, tp["_attack_anim"] - delta)
+                tp["_attack_anim"] = max(0.0, tp["_attack_anim"] - adelta)
             if tp.get("_offhand_anim", 0.0) > 0:
-                tp["_offhand_anim"] = max(0.0, tp["_offhand_anim"] - delta)
+                tp["_offhand_anim"] = max(0.0, tp["_offhand_anim"] - adelta)
             tp["_was_shooting"] = now
 
         # keep the engine's health pool in step with the character
@@ -4669,62 +4932,7 @@ class MiniwindSession(SettlementLaw):
         self._run_reveals()
         self._age_lists(delta)
         self._check_pack()          # a satchel sold over the counter
-
-    def _read_world_bounds(self):
-        """``(min_x, max_x, min_z, max_z)`` the player may walk in: the
-        terrain's extent, drawn in by :data:`WORLD_EDGE_MARGIN` so the rim of
-        the map is a wall rather than a cliff into nothing. None without
-        terrain (an interior map keeps its own walls)."""
-        ter = fio.terrain(self.logic)
-        if ter is not None and getattr(ter, "enabled", False):
-            try:
-                (x0, x1), (z0, z1) = ter.get_terrain_bounds()
-            except Exception:
-                return None
-        else:
-            # No live terrain object on this thread (yet): the map's own
-            # terrain record says the same thing.
-            state = getattr(self.logic, "editor_state", None)
-            td = getattr(state, "terrain_data", None)
-            if not isinstance(td, dict) or not td.get("enabled", True):
-                return None
-            try:
-                size = float(td.get("chunk_size", 256.0))
-                x0 = int(td["min_chunk_x"]) * size + float(td.get("offset_x", 0.0))
-                x1 = (int(td["max_chunk_x"]) + 1) * size + float(td.get("offset_x", 0.0))
-                z0 = int(td["min_chunk_z"]) * size + float(td.get("offset_z", 0.0))
-                z1 = (int(td["max_chunk_z"]) + 1) * size + float(td.get("offset_z", 0.0))
-            except (KeyError, TypeError, ValueError):
-                return None
-        m = WORLD_EDGE_MARGIN
-        if x1 - x0 <= 4 * m or z1 - z0 <= 4 * m:
-            return None
-        return (x0 + m, x1 - m, z0 + m, z1 - m)
-
-    def _keep_player_in_world(self) -> None:
-        """The edges of the map are untraversable: the player is held inside
-        the world's bounds, sliding along the edge rather than stopping dead."""
-        bounds = getattr(self, "_world_bounds", None)
-        player = fio.player(self.logic)
-        if bounds is None or player is None:
-            return
-        x0, x1, z0, z1 = bounds
-        pos = player.pos
-        x, z = float(pos[0]), float(pos[2])
-        cx, cz = min(max(x, x0), x1), min(max(z, z0), z1)
-        if cx != x or cz != z:
-            pos[0], pos[2] = cx, cz
-            vel = getattr(player, "velocity", None)
-            if vel is not None:
-                if cx != x:
-                    vel[0] = 0.0
-                if cz != z:
-                    vel[2] = 0.0
-            if not getattr(self, "_edge_told", False):
-                self._edge_told = True
-                self.notify("The land beyond is impassable.", 2.5)
-        else:
-            self._edge_told = False
+        self._update_slow_time()
 
     def _update_encumbrance(self) -> None:
         """Your pace: Speed sets it (Character.move_speed_factor), and
@@ -4788,6 +4996,235 @@ class MiniwindSession(SettlementLaw):
             self.notify("You feel more experienced. Press L to level up.", 6.0)
         elif not c.can_level_up:
             self._level_up_announced = False
+
+    # -- Slow Time --------------------------------------------------------------
+    def slow_time_record(self):
+        """This world's one Slow Time record (game/slow_time.py), shared by
+        every session on the world: the root's and each co-op player's."""
+        return slow_time_mod.registry(self.logic)
+
+    def slow_time(self, level, caster=None) -> float:
+        """Slow Time cast by *caster* (this session's own player when None)
+        at *level* (game/slow_time.py has the rule): for
+        :func:`slow_time_seconds` (real seconds) the world runs at
+        :data:`SLOW_TIME_SCALE` -- once, however many cast it -- and the
+        caster's own clock at the speed it ran before, so they move twice as
+        fast as the world round them until their own spell ends. Each caster
+        wears a violet fisheye bubble (:meth:`slow_time_lenses`) and gives off
+        a flickering violet light meanwhile, and the screen's edges take a
+        violet tint while any lasts.
+
+        Cast again by the same caster it lasts the longer of the two; cast by
+        someone else meanwhile, both are exempt, each for their own spell, and
+        the world stays slow until the last one ends. Returns how long the
+        caster's own spell now lasts."""
+        import time as _time
+        now = _time.monotonic()
+        record = self.slow_time_record()
+        me = fio.player(self.logic)
+        if caster is None:
+            caster = me
+        if record.remote:
+            # A network client's record is the host's: the host casts it.
+            return record.left(caster, now)
+        mine = caster is me
+        cast = record.cast(caster, level, owner=self if mine else None, player=mine, now=now)
+        self.play_ui_sound(SLOW_TIME_SOUND)
+        self.notify("Time slows…", 2.0)
+        self._update_slow_time_lights()
+        return cast.until - now
+
+    def slow_time_caster(self):
+        """Who cast the newest Slow Time running now (a player's body, or an
+        NPC or creature), or None."""
+        casters = self.slow_time_record().casters()
+        return casters[-1] if casters else None
+
+    def slow_time_casters(self) -> list:
+        """Everyone whose Slow Time is running now, oldest cast first."""
+        return self.slow_time_record().casters()
+
+    def slow_time_left(self, caster=None) -> float:
+        """Real seconds of Slow Time left: until the last spell ends, or
+        (given) of *caster*'s own (0: none)."""
+        return self.slow_time_record().left(caster)
+
+    def slow_time_tint(self) -> float:
+        """How strong the screen's violet edge and the greyscale are now
+        (0..1): fading in from the first cast, held, fading out to the end of
+        the last. Each caster's bubble and light fade with their own spell."""
+        return self.slow_time_record().tint()
+
+    def _update_slow_time(self) -> None:
+        """While any Slow Time lasts: hold the world slowed and each caster
+        not, and carry each caster's light with them. A spell ends when its
+        seconds are up, or its caster falls; when the last ends the world runs
+        as before."""
+        record = self.slow_time_record()
+        if not record.casts:
+            return
+        ended = record.update()
+        self._put_out_slow_time_lights(ended)
+        self._update_slow_time_lights()
+
+    def end_slow_time(self) -> None:
+        """Every Slow Time is over (the map is left): the world runs at its
+        own speed, every caster's clock is back in step, and their lights go
+        out."""
+        self._put_out_slow_time_lights(self.slow_time_record().end_all())
+
+    def _put_out_slow_time_lights(self, casts) -> None:
+        dropped = False
+        for cast in casts:
+            light, cast.light = cast.light, None
+            if light is not None:
+                self._drop_light(light)
+                dropped = True
+        if dropped:
+            self._rebuild_entity_caches()
+
+    def _slow_time_centre(self, cast):
+        """The middle of the caster's body (world units), or None."""
+        pos = getattr(cast.caster, "pos", None)
+        if pos is None:
+            return None
+        x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
+        if cast.player:
+            return (x, y + SLOW_TIME_CASTER_HEIGHT * 0.5, z)   # a player's origin: its feet
+        return (x, y, z)                                       # an actor's: mid-sprite
+
+    @staticmethod
+    def _slow_time_height(cast) -> float:
+        props = getattr(cast.caster, "properties", None)
+        if isinstance(props, dict) and not cast.player:
+            try:
+                return float(props.get("sprite_height") or SLOW_TIME_CASTER_HEIGHT)
+            except (TypeError, ValueError):
+                pass
+        return SLOW_TIME_CASTER_HEIGHT
+
+    def _update_slow_time_lights(self) -> None:
+        """Each caster's violet light: it hangs over them wherever they go,
+        flickers (:func:`slow_time_flicker`) and fades in and out with their
+        own spell. The authority's lights are world entities, so a network
+        client sees them as it sees every other light; its replica record
+        makes none of its own."""
+        record = self.slow_time_record()
+        if record.remote:
+            return
+        import time as _time
+        now = _time.monotonic()
+        flicker = slow_time_flicker(now)
+        added = False
+        for cast in record.casts:
+            centre = self._slow_time_centre(cast)
+            if centre is None:
+                continue
+            feet_y = centre[1] - self._slow_time_height(cast) * 0.5
+            at = (centre[0], feet_y + SLOW_TIME_LIGHT_HEIGHT, centre[2])
+            intensity = SLOW_TIME_LIGHT_INTENSITY * cast.envelope(now) * flicker
+            radius = SLOW_TIME_LIGHT_RADIUS * (0.94 + 0.06 * flicker)
+            light = cast.light
+            if light is None:
+                light = self._make_light(at, {
+                    "colour": list(SLOW_TIME_COLOUR), "intensity": intensity,
+                    "radius": radius, "state": "on", "casts_shadows": False,
+                    "hidden_in_game": False, "_slow_time": True})
+                if light is None:
+                    continue
+                try:
+                    fio.things(self.logic).append(light)
+                except Exception:
+                    continue
+                cast.light = light
+                added = True
+                continue
+            lp = light.pos
+            if (lp[0], lp[1], lp[2]) != at:
+                light.pos = list(at)          # assigned, so the renderer hears of it
+            light.properties["intensity"] = intensity
+            light.properties["radius"] = radius
+            _journal(light)
+        if added:
+            self._rebuild_entity_caches()
+
+    def slow_time_light(self):
+        """The newest caster's light while Slow Time lasts, or None."""
+        lights = self.slow_time_lights()
+        return lights[-1] if lights else None
+
+    def slow_time_lights(self) -> list:
+        """Every caster's light while their Slow Time lasts."""
+        return [c.light for c in self.slow_time_record().casts if c.light is not None]
+
+    def slow_time_lenses(self):
+        """Every caster's fisheye bubble as a lens for the GL pass
+        (:func:`game.ui.magic_gl.draw_lenses`): ``[(x, y, z, strength,
+        radius, rim, colour, shimmer, fill)]``, one per caster whose spell is
+        running, or ``[]`` when none is. Everyone sees every bubble. Each
+        radius is its caster's height times :data:`SLOW_TIME_BUBBLE_SCALE`,
+        gently pulsing larger and smaller (:data:`SLOW_TIME_BUBBLE_PULSE`);
+        each swells in and out with its caster's own spell."""
+        record = self.slow_time_record()
+        if not record.casts:
+            return []
+        import time as _time
+        now = _time.monotonic()
+        wave = math.sin(now * math.tau * SLOW_TIME_BUBBLE_PULSE_HZ)
+        breathe = 1.0 + SLOW_TIME_BUBBLE_PULSE * wave        # gently larger, smaller
+        lens = SLOW_TIME_BUBBLE_LENS * (1.0 + 0.5 * SLOW_TIME_BUBBLE_PULSE * wave)
+        colour = tuple(c / 255.0 for c in SLOW_TIME_COLOUR)
+        out = []
+        for cast in record.casts:
+            env = cast.envelope(now)
+            centre = self._slow_time_centre(cast) if env > 0.0 else None
+            if centre is None:
+                continue
+            radius = self._slow_time_height(cast) * SLOW_TIME_BUBBLE_SCALE * breathe
+            radius *= 0.6 + 0.4 * env                  # it swells out as it fades in
+            out.append((centre[0], centre[1], centre[2], lens * env, radius,
+                        SLOW_TIME_BUBBLE_RIM, colour, SLOW_TIME_BUBBLE_SHIMMER,
+                        SLOW_TIME_BUBBLE_FILL * env))
+        return out
+
+    def played_cutscenes(self):
+        """The ids of the "play once" cutscenes this save has seen play."""
+        try:
+            played = json.loads(self.store.get("cutscenes_played", "") or "[]")
+        except (TypeError, ValueError):
+            return set()
+        return {str(cid) for cid in played} if isinstance(played, list) else set()
+
+    def remember_cutscene(self, cutscene_id) -> None:
+        """A "play once" cutscene played: remembered with the save."""
+        if not cutscene_id:
+            return
+        played = self.played_cutscenes()
+        played.add(str(cutscene_id))
+        self.store.set("cutscenes_played", json.dumps(sorted(played)))
+
+    def cutscene_tick(self, delta) -> None:
+        """A cutscene battle's tick (Fio's ``cutscene.tick``): the game's
+        combat runs -- bows draw and loose, spells and fires burn, blood
+        lands, words float -- but not its world: no clock, schedules or
+        player, all held while the cutscene plays."""
+        self._run_reveals()
+        self._age_lists(delta)
+        self._update_slow_time()
+        self.archery.update(delta)
+        self.held.update()
+        self.burning.update(delta)
+        self._update_bolt_lights(delta)
+        self.stuck_arrows.update()
+        if self.arrows_in_flight and not fio.projectile_count(self.logic):
+            self.arrows_in_flight = ()
+            self._arrow_tags.clear()
+        # Those a rule sent fleeing run for refuge on the game's own legs.
+        for actor in list((self.__dict__.get("_cutscene_fleeing") or {}).values()):
+            if actor.properties.get("dead"):
+                self._cutscene_fleeing.pop(id(actor), None)
+                continue
+            self._move(actor, delta)
 
     def _age_lists(self, delta):
         for n in self.notifications:
@@ -6324,6 +6761,41 @@ class MiniwindSession(SettlementLaw):
                 if make_noise is not None:
                     make_noise(list(thing.pos), YELL_NOISE, "yell")
 
+    def cutscene_line(self, kind, thing, text, seconds=None) -> None:
+        """A cutscene's SAY or THINK keyframe (Fio's ``cutscene.line``): the
+        line over *thing*'s head wherever it stands -- the camera, not the
+        player, is what is watching -- and ahead of anyone's own chatter."""
+        if thing is None or not text:
+            return
+        import time as _time
+        think = str(kind or "").lower() == "think"
+        default = THOUGHT_SECONDS if think else BARK_SECONDS
+        try:
+            seconds = float(seconds) if seconds is not None else default
+        except (TypeError, ValueError):
+            seconds = default
+        store = self.__dict__.setdefault("thoughts" if think else "barks", {})
+        store[id(thing)] = (thing, str(text), _time.monotonic() + max(0.1, seconds))
+        self.__dict__.setdefault("_scripted_lines", set()).add(id(thing))
+
+    def cutscene_started(self) -> None:
+        """A cutscene begins (Fio's ``cutscene.started``): the chatter that
+        was up -- said, thought or about to be said -- is dropped, so the
+        scene opens on its own lines only."""
+        for store in ("barks", "thoughts", "_bark_queue", "_scripted_lines"):
+            self.__dict__.pop(store, None)
+
+    def _scripted_first(self, lines):
+        """*lines* (``[(thing, text, left)]``) with a cutscene's own first, so
+        the HUD's cap on how many it shows never drops one. An actor is
+        forgotten as scripted once it has nothing said or thought left up."""
+        scripted = self.__dict__.get("_scripted_lines")
+        if not scripted:
+            return lines
+        up = set(self.__dict__.get("barks") or ()) | set(self.__dict__.get("thoughts") or ())
+        scripted &= up
+        return sorted(lines, key=lambda line: id(line[0]) not in scripted)
+
     def bark_later(self, thing, text, delay: float) -> None:
         """Have *thing* say *text* after *delay* seconds -- the reply in an
         exchange, so the two lines are not said at once."""
@@ -6349,7 +6821,7 @@ class MiniwindSession(SettlementLaw):
                 barks.pop(key, None)
                 continue
             out.append((thing, text, until - now))
-        return out
+        return self._scripted_first(out)
 
     # -------------------------------------------------------------- floats
     def float_item_gain(self, thing, item_id, qty=1) -> None:
@@ -6432,9 +6904,39 @@ class MiniwindSession(SettlementLaw):
         self.float_text(thing, FIZZLE_TEXT, FIZZLE_SECONDS)
         self._spell_sound(thing, FIZZLE_SOUND)
 
-    def cast_sound(self, thing) -> None:
-        """A caster's spell (an NPC's) worked: heard where it stands."""
+    def cast_sound(self, thing, spell=None) -> None:
+        """A caster's spell (an NPC's) worked: heard where it stands, and its
+        icon shown over the caster's head."""
         self._spell_sound(thing, SPELLCAST_SOUND)
+        if spell is not None:
+            self.show_cast(thing, spell)
+
+    def show_cast(self, thing, spell) -> None:
+        """*thing* cast *spell*: its icon over *thing*'s head for a moment
+        (:func:`cast_icon_alpha`). A new cast replaces the one shown."""
+        sid = getattr(spell, "id", spell)
+        if thing is None or not sid:
+            return
+        import time as _time
+        self.__dict__.setdefault("cast_icons", {})[id(thing)] = (
+            thing, str(sid), _time.monotonic())
+
+    def live_cast_icons(self, now=None):
+        """``[(thing, spell_id, alpha)]``: the cast icons up now."""
+        icons = self.__dict__.get("cast_icons")
+        if not icons:
+            return []
+        import time as _time
+        now = _time.monotonic() if now is None else now
+        out = []
+        for key, (thing, sid, start) in list(icons.items()):
+            alpha = cast_icon_alpha(now - start)
+            if alpha is None or (getattr(thing, "properties", None) or {}).get("dead"):
+                icons.pop(key, None)
+                continue
+            if alpha > 0.0:
+                out.append((thing, sid, alpha))
+        return out
 
     def _spell_sound(self, thing, sound) -> bool:
         """A spell's sound, from where its caster stands -- the player's as
@@ -6887,7 +7389,7 @@ class MiniwindSession(SettlementLaw):
                 thoughts.pop(key, None)
                 continue
             out.append((thing, text, until - now))
-        return out
+        return self._scripted_first(out)
 
     def _update_thoughts(self) -> None:
         """Give each actor near the player a thought whenever its reason for
@@ -7812,6 +8314,7 @@ class MiniwindSession(SettlementLaw):
         # route is being followed) head for the next corner of a route.
         nav = getattr(self, "nav", None)
         key = id(npc)
+        routed = False
         if nav is not None and (p.get("_blocked_ticks") or nav.has_route(key)):
             way = nav.steer_actor(npc, pos, dest)
             wx, wz = way[0] - pos[0], way[2] - pos[2]
@@ -7819,10 +8322,30 @@ class MiniwindSession(SettlementLaw):
             if wd <= 1e-3:
                 return          # planning is queued, or the safe endpoint is reached
             dx, dz, dist = wx, wz, wd
+            routed = True
+        # Something small in the way is stepped round sideways (game/strafe.py),
+        # facing the goal all the while; a route is the fallback, not the first
+        # resort. A route being followed is left to steer.
+        resting = strafe.resting(p, delta) if p.get(strafe.REST) else False
+        if p.get(strafe.STATE) is not None:
+            if routed:
+                p.pop(strafe.STATE, None)
+            elif self._strafe_tick(npc, dx, dz, dist, speed, delta):
+                return
         step = min(speed * delta, dist)
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step
-        if not self._step_to(npc, nx, nz):
+        y = pos[1]
+        if not self._blocked_by_wall(nx, y, nz):
+            moved = True
+            npc.pos = [nx, y, nz]
+        elif routed or resting:
+            moved = self._slide_to(npc, nx, nz)
+        else:
+            moved = self._glance_or_strafe(npc, nx, nz, dx / dist, dz / dist, speed, delta)
+            if moved is None:
+                return          # it has begun a strafe
+        if not moved:
             # Nose against a wall with no way round it. Drop the destination so
             # the next decision pass picks something reachable instead of
             # grinding into the brush forever.
@@ -8143,21 +8666,23 @@ class MiniwindSession(SettlementLaw):
         return (id(grid), getattr(grid, 'navigation_revision', 0),
                 tuple((g.version, g.position_revision) for g in groups))
 
-    def _blocked_by_wall(self, x, y, z) -> bool:
+    def _blocked_by_wall(self, x, y, z, margin=None) -> bool:
         """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
 
         Answered by the engine's spatial grid — the same one the combat AI and
         the player's own physics use, so it is a cell lookup rather than a scan
         over every brush, cheap enough to run per walking NPC per tick. With no
         grid (no play session) nothing is solid, which keeps the schedule
-        testable off a live map.
+        testable off a live map. *margin* overrides the walker's
+        :data:`NPC_WALL_MARGIN` (the combat chase asks at the engine's own).
         """
         ai = getattr(self.logic, "monster_ai", None)
         if ai is None:
             return False
         try:
             return ai._monster_overlaps_wall(float(x), float(y), float(z),
-                                             NPC_WALL_MARGIN)
+                                             NPC_WALL_MARGIN if margin is None
+                                             else float(margin))
         except Exception:
             return False
 
@@ -8176,6 +8701,13 @@ class MiniwindSession(SettlementLaw):
         if not self._blocked_by_wall(nx, y, nz):
             npc.pos = [nx, y, nz]
             return True
+        return self._slide_to(npc, nx, nz)
+
+    def _slide_to(self, npc, nx, nz) -> bool:
+        """The slide half of :meth:`_step_to`, for a step to (nx, nz) already
+        found blocked: along whichever axis is clear. True if it moved."""
+        pos = npc.pos
+        y = pos[1]
         # Only count a slide if that axis actually changes position. When an
         # NPC heads straight into a wall, one of these candidates can be its
         # current position; treating that no-op as success clears _blocked_ticks
@@ -8187,6 +8719,59 @@ class MiniwindSession(SettlementLaw):
             npc.pos = [pos[0], y, nz]
             return True
         return False
+
+    def _glance_or_strafe(self, npc, nx, nz, fx, fz, speed, delta):
+        """A step to (nx, nz) along unit heading (fx, fz) was stopped. A
+        glancing contact slides on along the face, as before; one nearly
+        head-on probes for a strafe round the obstacle (game/strafe.py).
+
+        True if it slid; None if a strafe has begun (and taken its first
+        sidestep); False if neither side is open -- the caller falls back on
+        a route, and no new probe is made for a while.
+        """
+        pos = npc.pos
+        x, y, z = pos[0], pos[1], pos[2]
+        enough = strafe.STRAFE_SLIDE_FRACTION
+        if (fx * fx >= enough and abs(nx - x) > 1e-6
+                and not self._blocked_by_wall(nx, y, z)):
+            npc.pos = [nx, y, z]
+            return True
+        if (fz * fz >= enough and abs(nz - z) > 1e-6
+                and not self._blocked_by_wall(x, y, nz)):
+            npc.pos = [x, y, nz]
+            return True
+        p = npc.properties
+        final = p.get("_dest") or (nx, y, nz)
+        prefer = strafe.prefer_side(p, fx, fz, final[0] - x, final[2] - z)
+        choice = strafe.probe(self._blocked_by_wall, x, y, z, fx, fz,
+                              NPC_WALL_MARGIN, prefer)
+        if choice is None:
+            strafe.rest(p)
+            return False
+        strafe.begin(p, *choice, fx, fz)
+        self._strafe_tick(npc, fx, fz, 1.0, speed, delta)
+        return None
+
+    def _strafe_tick(self, npc, dx, dz, dist, speed, delta) -> bool:
+        """One tick of *npc*'s strafe, heading (dx, dz)/dist toward its goal.
+        True if the tick is spent (it sidestepped, or failed and falls back
+        on a route next tick); False if the strafe is over and it walks on."""
+        p = npc.properties
+        pos = npc.pos
+        spot = strafe.advance(p, self._blocked_by_wall, pos[0], pos[1], pos[2],
+                              dx / dist, dz / dist, speed * strafe.STRAFE_PACE * delta,
+                              delta, NPC_WALL_MARGIN)
+        if spot is True:
+            return False
+        if spot is False:
+            # Shut in that way too: a route round it from the next tick.
+            p["_blocked_ticks"] = int(p.get("_blocked_ticks", 0)) + 1
+            return True
+        npc.pos = [spot[0], pos[1], spot[1]]
+        p["_blocked_ticks"] = 0
+        # Sideways, but still looking where it is going.
+        face_heading(npc, dx, dz, delta)
+        return True
 
     # ============================================================== teleport
     def cave_entrances(self):
@@ -8587,8 +9172,9 @@ class MiniwindSession(SettlementLaw):
         max_dist = float(max_dist)
         c = self.game.character
         shot = rpg_items.get(self.game._fired_ammo.get(hand)) or eq.ammo_for(c, eq.hand_weapon(c, hand))
-        sprite = arrow_sprite(shot.id if shot is not None else
-                              eq.equipped_id(c, "ammo"))
+        loosed = shot.id if shot is not None else eq.equipped_id(c, "ammo")
+        sprite = arrow_sprite(loosed)
+        ammo_id = loosed or DEFAULT_AMMO     # what it is, if it sticks in a barrel
 
         start = [ppos[0], ppos[1] + fio.projectile_body_lift(), ppos[2]]
         aim = self._projectile_aim_point(start)
@@ -8615,7 +9201,8 @@ class MiniwindSession(SettlementLaw):
                                    damage=rpg_combat.base_ranged_damage(c, hand=hand, ammo=shot)
                                           * rpg_classes.damage_mult(c),
                                    lifetime=max_dist / ARROW_SPEED,
-                                   max_dist=max_dist, on_hit=_on_hit)
+                                   max_dist=max_dist, on_hit=_on_hit,
+                                   metadata={AMMO_KEY: ammo_id})
         tag = fio.projectile_tag(lt, row)
         if tag:
             self._arrow_tags[tag] = sprite
@@ -8788,8 +9375,9 @@ class MiniwindSession(SettlementLaw):
 
     def _magic_cast_fx(self, spell, target=None) -> None:
         """The visible side of a cast the player just made -- and the sound
-        of it, from the player."""
+        of it, from the player, and its icon over the player's head."""
         self._spell_sound(self.player_actor, SPELLCAST_SOUND)
+        self.show_cast(self.player_actor, spell)
         pos = self._player_pos()
         if pos is None:
             return
@@ -8995,11 +9583,16 @@ class MiniwindSession(SettlementLaw):
             self.notify("Knock clears the sheared pick and opens the lock." if jammed
                         else "Knock opens the lock.", 4.0)
             self._spell_sound(self.player_actor, SPELLCAST_SOUND)
+            self.show_cast(self.player_actor, spell)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
             self._magic_cast_fx(spell)
             self._spawn_wisp(spell)
+            return True
+        if any(e.get("kind") == "slow_time" for e in (spell.effects or [])):
+            self._magic_cast_fx(spell)
+            self.slow_time(c.level)
             return True
         if spell.delivery == rpg_magic.SELF:
             self._magic_cast_fx(spell)
@@ -9109,6 +9702,7 @@ class MiniwindSession(SettlementLaw):
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
         self._spell_sound(self.player_actor, RESURRECTION_SOUND)   # its own, not the cast's
+        self.show_cast(self.player_actor, spell)
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
         if p.get("multiplayer_player"):
@@ -9138,6 +9732,90 @@ class MiniwindSession(SettlementLaw):
         self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
+
+    # -- NPC resurrection: a necromancer's raised dead fight for it --------
+    def raisable_body(self, caster, reach):
+        """The nearest fallen NPC or creature *caster* could raise within
+        *reach*: not blown apart, never raised before, not a player."""
+        best, best_d = None, float(reach)
+        for t in fio.things(self.logic):
+            tp = t.properties
+            if t is caster or not tp.get("dead") or tp.get("gibbed") or tp.get("resurrection_used"):
+                continue
+            if tp.get("multiplayer_player"):
+                continue
+            if str(tp.get("type", "")).replace("_", "").lower() not in ("npc", "creature", "monster"):
+                continue
+            d = self._dist2d(caster.pos, t.pos)
+            if d <= best_d:
+                best, best_d = t, d
+        return best
+
+    def raise_for(self, caster, body) -> bool:
+        """Raise *body* as *caster*'s: alive, red-tinted, on *caster*'s team
+        and fighting its foe -- the player's resurrection, cast by an NPC."""
+        p = body.properties
+        if p.get("gibbed") or p.get("resurrection_used") or not self._revive_actor(body):
+            return False
+        self._restore_living_kit(p)
+        cp = caster.properties
+        team = str(cp.get("team") or cp.get("faction") or "")
+        p.update(resurrection_used=True, resurrected_by=str(cp.get("id") or ""),
+                 sprite_tint=[1.0, 0.30, 0.30], combatant=True, aggression="hostile",
+                 team=team, faction=str(cp.get("faction") or team), triggered=False,
+                 awake=True, follow_player=False, away_on_journey=False,
+                 _ward_rolled=True, _second_weapon_rolled=True, _caster_sidearm_rolled=True)
+        for key in ("_aggro_target", "_base_aggression", "_flee", "_dest",
+                    "_arrest_state", "_journey", "_death_noted"):
+            p.pop(key, None)
+        if cp.get("_aggro_target"):
+            p["_aggro_target"] = cp["_aggro_target"]       # straight at its master's foe
+        self._deaths_seen.discard(str(p.get("name", "")))
+        if p.get("name"):
+            self.store.set("dead." + str(p["name"]), "false")
+        _journal(body)
+        self._rebuild_entity_caches()
+        self.magic_fx.resurrection(_feet(body))
+        self._spell_sound(caster, RESURRECTION_SOUND)
+        self.float_text(body, "RAISED")
+        # Mid-cutscene, the raised turns on its old side in the battle too.
+        runtime = getattr(self.logic, "cutscene_runtime", None)
+        if runtime is not None and getattr(runtime, "state", None):
+            try:
+                runtime.join_side(body, caster)
+            except Exception:
+                pass
+        return True
+
+    # -- what a cutscene asks of the game (Fio's cutscene.* events) ----------
+    def cutscene_cast(self, caster, spell_id, target=None):
+        """A cutscene's CAST (or a rule's): *caster* casts *spell_id*. The
+        actors it raised."""
+        return self.npc_magic.cast_spell(caster, spell_id, target)
+
+    def cutscene_flee(self, actor, threat=None) -> None:
+        """A cutscene rule's FLEE: *actor* runs for refuge from *threat*, as a
+        frightened villager does (the schedule mover walks it there)."""
+        p = actor.properties
+        p["triggered"] = True
+        p["awake"] = False
+        p.pop("_aggro_target", None)
+        p.pop("_pursuit_range", None)
+        p["sched_state"] = sched.FLEE
+        p["_flee"] = True
+        if threat is not None:
+            p["_dest"] = self._refuge_point(actor, threat)
+        else:
+            p["_dest"] = list(p.get("home") or actor.pos)
+        self.__dict__.setdefault("_cutscene_fleeing", {})[id(actor)] = actor
+
+    def prepare_cutscene_actors(self, actors) -> None:
+        """Actors a cutscene spawned, readied as a map's are at its start: a
+        handedness, their core stats, and a blade for an archer's close
+        quarters (game/held_weapons.py)."""
+        self._assign_npc_handedness()
+        self._assign_npc_stats()
+        self._arm_fighters()
 
     def leave_map(self) -> None:
         """The player leaves this map (play stops for a level change): its
@@ -10344,11 +11022,13 @@ class MiniwindSession(SettlementLaw):
     def select_strip_slot(self, index: int, hand=None) -> bool:
         """A strip slot picked, by a click or its number key: selected, and
         what is in it applied at once -- a weapon taken in hand (see
-        :meth:`ready_weapon`); a spell readied in *hand*, the physical
-        ``"left"`` (the default) or ``"right"`` (see :meth:`ready_spell`);
-        anything else used as a double-click would (:meth:`inventory_use`):
-        a shield or armour worn, or taken off when already worn, a potion
-        drunk. True if anything changed."""
+        :meth:`ready_weapon`); a spell taken up in the main hand and cast
+        at once, the main hand's weapon (or spell) going into the slot the
+        spell leaves (see :meth:`cast_from_strip`) -- or, given *hand* (Shift
+        or a right click: ``"off"``), readied in that hand without casting
+        (:meth:`ready_spell`); anything else used as a double-click would
+        (:meth:`inventory_use`): a shield or armour worn, or taken off when
+        already worn, a potion drunk. True if anything changed."""
         slots = self.strip_slots()
         index = int(index)
         if not 0 <= index < len(slots):
@@ -10358,14 +11038,85 @@ class MiniwindSession(SettlementLaw):
         if not stack:
             return False
         if stack.get("spell"):
-            return self.ready_spell(stack["spell"], hand or "left")
+            if hand is None:
+                return self.cast_from_strip(index)
+            return self.ready_spell(stack["spell"], hand)
         d = rpg_items.get(stack.get("id"))
         if d is None:
             return False
         if d.category != rpg_items.WEAPON:
             return self.inventory_use(d.id)
         copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
-        return self.ready_weapon(d.id, copy)
+        c = self.game.character
+        held = eq.hand_spell(c, "main")
+        done = self.ready_weapon(d.id, copy)
+        if done and held is not None and eq.hand_spell(c, "main") is None \
+                and STRIP_SPELL + held.id not in c.strip:
+            # The weapon took the hand from a spell: the spell takes the
+            # weapon's slot, so the same key swaps them back again.
+            c.strip[index] = STRIP_SPELL + held.id
+        return done
+
+    def _main_hand_entry(self):
+        """What the main hand holds, as a strip entry: a weapon's item id,
+        ``"spell:<id>"`` for a spell, or None (empty, or only the fists)."""
+        c = self.game.character
+        spell = eq.hand_spell(c, "main")
+        if spell is not None:
+            return STRIP_SPELL + spell.id
+        iid = eq.equipped_id(c, rpg_items.SLOT_WEAPON)
+        if not iid or warrior_fist.innate(iid) or not inv.has_item(c.inventory, iid, 1):
+            return None
+        return iid
+
+    def _put_in_strip_slot(self, index: int, entry) -> None:
+        """Put *entry* in strip slot *index*, out of any other slot it would
+        hold one copy too many in (a spell has one slot; a weapon one per
+        copy carried -- the main hand's copy is the first)."""
+        strip = self.game.character.strip
+        others = [k for k, v in enumerate(strip) if v == entry and k != index]
+        if str(entry).startswith(STRIP_SPELL):
+            room = 1
+        else:
+            room = self._strip_copies(inv.find(self.game.character.inventory, entry))
+            self.game.character._strip_seen.add(entry)
+        while others and len(others) + 1 > room:
+            strip[others.pop(0)] = None
+        strip[index] = entry
+
+    def cast_from_strip(self, index: int) -> bool:
+        """The number key (or a click) on a strip slot holding a spell.
+
+        The spell is taken up in the main hand and cast at once, aimed as the
+        hand's mouse button aims it (straight out along the facing). Whatever
+        the main hand held -- a weapon, or another spell -- takes the spell's
+        place in the slot, so the same key swaps them back. An empty main
+        hand leaves the spell where it is, and a spell already in the main
+        hand just casts. The spell stays in hand: its mouse button (and the
+        attack key) cast it again. True if anything changed."""
+        self.strip_slots()
+        c = self.game.character
+        strip = c.strip
+        index = int(index)
+        if not 0 <= index < len(strip) or not str(strip[index] or "").startswith(STRIP_SPELL):
+            return False
+        sid = str(strip[index])[len(STRIP_SPELL):]
+        spell = rpg_magic.get(sid)
+        if spell is None or sid not in (c.known_spells or ()):
+            return False
+        held = eq.hand_spell(c, "main")
+        swapped = held is None or held.id != sid
+        if swapped:
+            if not c.can_use_magic():
+                self.notify("You cannot use magic", 2.0)
+                return False
+            previous = self._main_hand_entry()
+            if not self.equip_hand_spell(sid, "main"):
+                return False
+            if previous is not None:
+                self._put_in_strip_slot(index, previous)
+        cast = self.do_cast(aim="facing", hand="main")
+        return swapped or bool(cast)
 
     def cycle_strip(self, step) -> bool:
         """Highlight the previous/next occupied quickbar slot without using it.
@@ -10477,15 +11228,56 @@ class MiniwindSession(SettlementLaw):
             if iid == item_id:
                 strip[i] = None
 
-    def store_item_in_container(self, item_id) -> bool:
-        """Put the whole carried stack of *item_id* in the open container."""
+    def store_item_in_container(self, item_id, qty=None, onto=None) -> bool:
+        """Put the carried stack of *item_id* in the open container -- all of
+        it, or *qty* of it (half a stack split off with a right click);
+        *onto* a container row holding the same thing, it joins that stack."""
         if self.container_thing is None:
             return False
         pinv = self.game.character.inventory
         index = next((i for i, st in enumerate(pinv) if st.get("id") == item_id), None)
         if index is None:
             return False
-        return self.store_in_container(index)
+        return self.store_in_container(index, qty=qty, onto=onto)
+
+    @staticmethod
+    def _same_stack(a, b) -> bool:
+        """Whether two stacks may be one: the same thing, of the same rarity,
+        and stolen alike (joining must not launder stolen goods)."""
+        import game.sim.ownership as own
+        return (isinstance(a, dict) and isinstance(b, dict)
+                and a.get("id") == b.get("id")
+                and rpg_items.rarity_of(a) == rpg_items.rarity_of(b)
+                and own.is_stolen(a) == own.is_stolen(b)
+                and a.get(own.STOLEN_FROM) == b.get(own.STOLEN_FROM))
+
+    def split_container_stack(self, index: int, qty: int, onto=None) -> bool:
+        """Move *qty* of the open container's stack at *index* within it: onto
+        the stack at row *onto* (the same thing: they join), or, with *onto*
+        None, into a stack of its own. A container may hold the same thing in
+        several stacks; the player's pack keeps one record per thing."""
+        items = self.container_inventory()
+        if not (0 <= int(index) < len(items)):
+            return False
+        stack = items[int(index)]
+        have = int(stack.get("qty", 1) or 1)
+        n = max(1, min(int(qty or 1), have))
+        if isinstance(onto, int) and not isinstance(onto, bool):
+            if onto == index or not (0 <= onto < len(items)):
+                return False
+            other = items[onto]
+            if not self._same_stack(stack, other):
+                return False
+            other["qty"] = int(other.get("qty", 1) or 1) + n
+            stack["qty"] = have - n
+            if stack["qty"] <= 0:
+                items.pop(int(index))
+            return True
+        if n >= have:
+            return False                 # nothing left behind: no split
+        stack["qty"] = have - n
+        items.append(dict(stack, qty=n))
+        return True
 
     def item_drop(self, source, target) -> bool:
         """One drag and drop between any of the item windows: the pack and the
@@ -10493,9 +11285,18 @@ class MiniwindSession(SettlementLaw):
 
         *source* is ``(kind, key, item id)`` and *target* ``(kind, key)``,
         where kind is ``pack``, ``equip``, ``quick``, ``strip`` or
-        ``container`` (key: a slot, a slot index, or a container row)."""
+        ``container`` (key: a slot, a slot index, or a container row).
+
+        A source may carry a fourth item, a count: half a stack split off
+        with a right click (``(kind, key, item id, n)``). Only *n* then move
+        into or out of a container (onto a container row of the same thing
+        they join it; within the container they become a stack of their
+        own). Within the pack and the strip a split is the whole stack again,
+        as the pack keeps one record per thing (its slots of five are only
+        how it is shown)."""
         skind, skey, iid = source[0], source[1], source[2]
         tkind, tkey = target[0], target[1]
+        qty = int(source[3]) if len(source) > 3 and source[3] else None
         if not iid:
             return False
         if skind in ("spell", "spell_hand") and tkind == "strip":
@@ -10512,13 +11313,15 @@ class MiniwindSession(SettlementLaw):
         if skind in ("spell", "spell_hand") or tkind == "hand":
             return self.inventory_move(source, target, iid)
         if skind == "container":
-            if tkind == "container":
-                return False
             items = self.container_inventory()
             row = skey if (isinstance(skey, int) and 0 <= skey < len(items)
                            and items[skey].get("id") == iid) else next(
                 (i for i, st in enumerate(items) if st.get("id") == iid), None)
-            if row is None or not self.take_from_container(row):
+            if tkind == "container":
+                if qty is None or row is None:
+                    return False
+                return self.split_container_stack(row, qty, tkey)
+            if row is None or not self.take_from_container(row, qty=qty):
                 return False
             if iid == rpg_items.GOLD:
                 return True                          # coin goes to the purse
@@ -10528,7 +11331,8 @@ class MiniwindSession(SettlementLaw):
                 return self.inventory_move(("pack", None, iid), (tkind, tkey), iid)
             return True
         if tkind == "container":
-            return self.store_item_in_container(iid)
+            return self.store_item_in_container(
+                iid, qty=qty, onto=tkey if isinstance(tkey, int) else None)
         if tkind == "strip":
             return self.set_strip_slot(int(tkey), iid,
                                        from_index=skey if skind == "strip" else None)
@@ -11556,16 +12360,23 @@ class MiniwindSession(SettlementLaw):
         return sim_own.is_theft(self.container_thing.properties, actor_key(actor),
                                actor.properties.get("faction", ""))
 
-    def take_from_container(self, index: int) -> bool:
-        """Move one stack from the open container into the player's inventory."""
+    def take_from_container(self, index: int, qty=None) -> bool:
+        """Move one stack from the open container into the player's inventory
+        -- or *qty* of it (half a stack split off with a right click)."""
         items = self.container_inventory()
         if not (0 <= index < len(items)):
             return False
+        have = int(items[index].get("qty", 1) or 1)
+        n = have if qty is None else max(1, min(int(qty), have))
         if items[index].get("id") != rpg_items.GOLD and not self.pack_has_room(
-                items[index].get("id"), int(items[index].get("qty", 1) or 1)):
+                items[index].get("id"), n):
             self._pack_full_note()
             return False
-        stack = items.pop(index)
+        if n < have:
+            items[index]["qty"] = have - n
+            stack = dict(items[index], qty=n)
+        else:
+            stack = items.pop(index)
         name = stack.get("name", stack.get("id", ""))
         # A chest with an owner makes emptying it a theft, exactly like a world
         # item — the container needed no code of its own to become stealable.
@@ -11595,8 +12406,11 @@ class MiniwindSession(SettlementLaw):
                                     sim_own.owner_name_of(props))
         return True
 
-    def store_in_container(self, index: int) -> bool:
-        """Move one stack from the player's inventory into the open container."""
+    def store_in_container(self, index: int, qty=None, onto=None) -> bool:
+        """Move one stack from the player's inventory into the open container
+        -- or *qty* of it (half a stack split off with a right click). Given
+        *onto*, a container row holding the same thing, it joins that stack;
+        otherwise it is a stack of its own there."""
         if self.container_thing is None:
             return False
         if self.container_thing.properties.get("lock_jammed") or self.container_thing.properties.get("locked"):
@@ -11608,14 +12422,37 @@ class MiniwindSession(SettlementLaw):
         if warrior_fist.innate(iid):
             self.notify("Your fists stay with you", 2.0)
             return False
-        # Whatever is worn or slotted comes off first, so nothing points at a
-        # stack that is no longer carried.
-        before = eq.armour_class(self.game.character)
-        self._forget_in_slots(iid)
+        have = int(pinv[index].get("qty", 1) or 1)
+        n = have if qty is None else max(1, min(int(qty), have))
+        c = self.game.character
+        before = eq.armour_class(c)
+        if n < have:
+            # Part of the stack: fewer copies than hands holding it, the off
+            # hand lets go first (as dropping some does).
+            left = have - n
+            for slot in (rpg_items.SLOT_SHIELD, rpg_items.SLOT_WEAPON):
+                if list((c.equipment or {}).values()).count(iid) > left \
+                        and c.equipment.get(slot) == iid:
+                    if slot == rpg_items.SLOT_WEAPON:
+                        self._cancel_bow_draw()
+                    self.game.unequip(slot)
+            pinv[index]["qty"] = left
+            stack = dict(pinv[index], qty=n)
+        else:
+            # Whatever is worn or slotted comes off first, so nothing points
+            # at a stack that is no longer carried.
+            self._forget_in_slots(iid)
+            stack = pinv.pop(index)
         self._announce_ac(before)
-        stack = pinv.pop(index)
-        self.container_inventory().append(stack)
-        self.notify(f"Stored {stack.get('name', stack.get('id',''))}")
+        items = self.container_inventory()
+        other = items[onto] if (isinstance(onto, int) and not isinstance(onto, bool)
+                                and 0 <= onto < len(items)) else None
+        if other is not None and self._same_stack(other, stack):
+            other["qty"] = int(other.get("qty", 1) or 1) + n
+        else:
+            items.append(stack)
+        name = stack.get('name', stack.get('id', ''))
+        self.notify(f"Stored {name}" + (f" ({n})" if n < have else ""))
         return True
 
     def close_container(self) -> None:
@@ -11844,7 +12681,13 @@ class MiniwindSession(SettlementLaw):
             source, cause, kind = (getattr(c, "_last_harm", None) or (None, None, None))
             thing, trap = None, ""
             if isinstance(source, dict):
-                trap = str(source.get("name") or "")          # a hurt trigger's brush
+                # A hurt trigger's brush: the map author's own words, else
+                # its name for the game's trap phrases.
+                own = str(source.get("death_message") or "").strip()
+                if own:
+                    self._death_message = own
+                    return own
+                trap = str(source.get("name") or "")
             elif isinstance(source, int):
                 # A projectile's owner, by id(): looked up once, at death.
                 thing = next((t for t in fio.things(self.logic) if id(t) == source), None)
@@ -11910,6 +12753,8 @@ class MiniwindSession(SettlementLaw):
         self._sim_hours = 0.0
         if self.game.load_from_store():
             self.needs_char_creation = False
+            import game.key_hints as key_hints
+            key_hints.loaded(self)          # a loaded character knows its keys
             self._law_sync()
             # A loaded chase resumes from its search record, without granting
             # any guard fresh knowledge of the player's current position.

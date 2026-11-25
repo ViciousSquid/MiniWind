@@ -6,7 +6,7 @@ from collections.abc import Mapping
 import math
 import time
 
-from .. import fio
+from .. import fio, slow_time
 from . import MAX_PARTY
 from ..rpg.character import Character
 
@@ -66,6 +66,9 @@ FIELDS = frozenset(
         "intensity",
         "radius",
         "color",
+        # A light's own colour (the engine's spelling): a Slow Time caster's
+        # violet light reaches clients violet, not the default white.
+        "colour",
         "state",
         "orientation",
     )
@@ -276,6 +279,10 @@ def capture(coop):
         "arrow_paths": clean(coop.root.arrow_paths),
         "magic": [fx[0].tolist(), clean(fx[1]), clean(fx[2])],
         "projectiles": projectiles.tolist(),
+        # Every Slow Time running (game/slow_time.py): who casts it and how
+        # long it has run and has left, so a client draws every bubble, the
+        # edge and the greyscale, and its own caster moves at its own speed.
+        "slow_time": slow_time.capture(coop),
     }
 
 
@@ -510,6 +517,10 @@ def apply(coop, message):
         ).reshape(-1, 3)
         for key, value in message.get("doors", {}).items():
             coop.logic.mover_runtime.door_states[int(key)] = value
+        if not coop.authority:
+            # The host's Slow Time, its casters found here by identity (the
+            # host keeps its own record: it is the one deciding).
+            slow_time.receive(coop, message.get("slow_time"))
         coop._received_sequence = sequence
     finally:
         coop._applying = False

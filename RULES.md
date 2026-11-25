@@ -133,6 +133,21 @@ Every control named is the one in use: keyboard and mouse or gamepad,
 whichever was used last, switching at once, by your own bindings. Enter / A
 next, ← / D-pad ← back, Esc / B skip. Without the setting none of it appears.
 
+**Key hints.** As a new character first comes into view (after the tutorial's
+pages, if shown), the inventory key appears 100 px below the middle of the screen
+(64 × 64, the word "Inventory" under it): 0.5 s fading in, 2 s held, 0.5 s
+fading out. A Mage, and any other character who starts with spells
+(a birthsign's, a race's -- never a Warrior or Barbarian, who never use
+magic), is then shown the spellbook key ("Spellbook") the same way, at
+3 s after the first began or as soon as it has gone, whichever is later --
+never both at once. Pressing a hint's key (by your own binding, which is
+the key shown) hides it at once; pressed before its hint shows, the hint is
+skipped. Real time, so Slow Time does not stretch them; a hint keeps its
+clock but is not drawn while a menu, a conversation or the pause menu is up,
+and one not yet begun waits for them to close. Never for a loaded save. A
+character who gains magic later (a book, a tutor, a quest) is shown the
+spellbook key then, once (`game/key_hints.py`; the pictures are `assets/ui/keys/key_<letter>.png`).
+
 ### Classes
 
 Thirteen classes; the character creator offers six (★). A class sets your
@@ -441,6 +456,20 @@ shakes, never the HUD (`game/runtime.py`, `game/host.py`).
 | Your overkill | 0.032 | 0.48 |
 | Your critical killing blow | 0.044 | 0.60 |
 
+### Arrows in barrels
+
+An arrow or crossbow bolt -- yours or an archer's -- that hits a barrel sticks
+in it where it struck, at the angle it flew, with a thunk
+(`assets/sounds/thunk.wav`). It stays there, moving and turning with the
+barrel when it is pushed, topples, rolls or is carried; a barrel holds at most
+12 (another pushes the oldest out). Standing within 140 of a barrel with
+arrows in it, when it is the nearest thing to use, **E** pulls them all out
+into your pack, each as the ammunition it was (plain Iron Arrows if that is
+not known); any your pack has no room for stay in the barrel. While you are
+that near, E pulls arrows rather than picking a carryable barrel up. A barrel
+that explodes destroys the arrows in it. They are kept with the barrel, so a
+save keeps them (`game/stuck_arrows.py`).
+
 ---
 
 ## 8. Armour and magic
@@ -473,6 +502,18 @@ says *Metal armour prevents this*.
   rare, 18+ uncommon, else common.
 * **Resurrection** (100 magicka, all of it) raises a fallen body as a
   follower, once a day; each body only once; never one blown apart.
+* **Slow Time** (base cost 45) slows the world to half speed for 5 seconds, a
+  second more for each level past the fifth. The caster is not slowed for
+  their own spell: they move, swing and recover at their normal speed --
+  twice everyone else's -- inside a violet fisheye bubble, giving off a
+  flickering violet light; the world outside every bubble turns greyscale
+  and the screen's edges take a faint violet clock. Anyone may cast it, a
+  player or an NPC, and **several at once never slow the world further**:
+  it stays at half speed, every caster is exempt for their own spell's time
+  (then slows with everyone else), and the world runs as before when the
+  last spell ends. Casting it again yourself lasts the longer of the two. A
+  caster who falls ends their own spell; leaving the map ends them all. In
+  co-op everyone sees every bubble and light (`game/slow_time.py`).
 
 ### Ground cover
 

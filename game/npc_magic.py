@@ -20,16 +20,20 @@ kit are what it can cast. When the combat AI says a shot is due
   spell as a real bolt -- the player's projectile pipeline, lit in the spell's
   colour -- at whoever it is fighting.
 
-**Spells are held in the hands.** As the player's are, an actor's spells are
-readied in its hands (``hand_spells``: ``{"main": id, "off": id}``), and it
-casts only what is in them; the spell glows in that hand while it fights.
+**A caster casts any spell it knows.** Spellcasters know several spells, and
+choose among all of them: the strongest attack it can afford, a ward, a heal,
+the dead to raise. A spell is cast from a hand (``hand_spells``: ``{"main":
+id, "off": id}``), and glows there while it fights: casting one not in hand
+readies it there first (:func:`ready_spell`) -- the main hand if no weapon is
+drawn, else the off hand if nothing (a shield, a torch) fills it.
 Authored hands win (the editor's Spell in main/off hand); otherwise they are
 readied the first time the actor
 fights or at play start (:func:`ready_hands`): a caster with no weapon drawn
 holds its strongest attack spell in its main hand and a ward or a heal in
 its off hand; an armed fighter keeps its weapon and holds one spell in its
 off hand -- an attack when it carries no bow or staff (its way to fight at
-range), else a ward or a heal. A staff channels its own spell regardless. An empty ``hand_spells`` means it casts nothing.
+range), else a ward or a heal. A staff channels its own spell regardless. An actor that knows no spells
+casts nothing.
 Raised followers keep the spells they knew in life, and fight with them.
 
 **Casts can fizzle.** As the player's do, an actor's cast is rolled against
@@ -119,6 +123,22 @@ def _all_known(props):
         spell = magic.get(entry.get("id", ""))
         if spell is not None:
             yield spell, entry
+
+
+def _spell_known(props, spell_id):
+    """``(spell, entry)`` for *spell_id* if *props*' actor knows it, else None."""
+    for spell, entry in _all_known(props):
+        if spell.id == str(spell_id):
+            return spell, entry
+    return None
+
+
+def raise_spell(props):
+    """The resurrection spell *props*' actor knows (a necromancer), or None."""
+    for spell, _entry in _all_known(props):
+        if any(e.get("kind") == "resurrect" for e in spell.effects or ()):
+            return spell
+    return None
 
 
 def _known(props):
@@ -219,6 +239,26 @@ def ready_hands(props) -> dict:
     return held
 
 
+def ready_spell(props, spell_id) -> str:
+    """Ready *spell_id* in a hand to cast it, if it is not in one: the main
+    hand when no weapon is drawn, else a free off hand. Returns the hand
+    (or '' when no hand is free -- it is cast all the same)."""
+    held = hands(props)
+    for hand, sid in held.items():
+        if sid == spell_id:
+            return hand
+    weapon = props.get("_active_weapon") or props.get("equipped_weapon")
+    off_busy = bool(props.get("offhand_weapon") or props.get("equipped_shield")
+                    or props.get("_torch_lit"))
+    hand = "main" if not weapon else ("off" if not off_busy else "")
+    if hand:
+        current = props.get("hand_spells")
+        current = dict(current) if isinstance(current, dict) else {}
+        current[hand] = str(spell_id)
+        props["hand_spells"] = current
+    return hand
+
+
 def hand_glows(props):
     """``[(hand, spell)]`` for the spells *props*' actor shows in its hands
     now: only while it fights, and not in a hand a weapon has taken."""
@@ -274,7 +314,7 @@ def attacks(props):
     strongest first. Per-actor overrides on the spell entry win."""
     import game.rpg.magic as magic
     found = []
-    for spell, entry in _known(props):
+    for spell, entry in _all_known(props):
         damage = _float(entry.get("damage", spell.damage))
         if spell.delivery != magic.PROJECTILE or damage <= 0:
             continue
@@ -293,7 +333,7 @@ def wards(props):
     knows, strongest first."""
     import game.rpg.magic as magic
     out = []
-    for spell, _entry in _known(props):
+    for spell, _entry in _all_known(props):
         if spell.delivery != magic.SELF:
             continue
         for effect in spell.effects or ():
@@ -436,6 +476,7 @@ class NpcMagic:
             return False
         for spell, kind, magnitude, duration in wards(p):
             if spend(p, spell.base_cost, now):
+                ready_spell(p, spell.id)
                 if self._fizzles(thing, spell):
                     return True
                 p["_ward_until"] = now + duration
@@ -443,7 +484,7 @@ class NpcMagic:
                 p["_ward_magnitude"] = magnitude
                 p["_attack_anim"] = 0.2
                 self.warded[id(thing)] = thing
-                self._cast_sound(thing)
+                self._cast_sound(thing, spell)
                 fx = getattr(self.session, "magic_fx", None)
                 if fx is not None:
                     from .magic_fx import look_for
@@ -535,22 +576,128 @@ class NpcMagic:
         top = _float(p.get("max_health") or p.get("_max_health"), health)
         if top <= 0 or health <= 0 or health >= top * HEAL_BELOW:
             return False
-        heals = sorted(((_heals(spell), spell) for spell, _entry in _known(p)),
+        heals = sorted(((_heals(spell), spell) for spell, _entry in _all_known(p)),
                        key=lambda h: h[0], reverse=True)
         current = magicka(p)
         for amount, spell in heals:
             if amount > 0 and current + 1e-6 >= spell.base_cost and spend(p, spell.base_cost):
+                ready_spell(p, spell.id)
                 if self._fizzles(thing, spell):
                     return True
                 p["health"] = min(top, health + amount)
                 p["_attack_anim"] = 0.2
-                self._cast_sound(thing)
+                self._cast_sound(thing, spell)
                 self._journal(thing)
                 fx = getattr(self.session, "magic_fx", None)
                 if fx is not None:
                     fx.heal(_feet(thing), spell.color)
                 return True
         return False
+
+    # -- resurrection: a necromancer raises the fallen to fight for it --------
+    #: How far (world units) a necromancer reaches for a body to raise.
+    RAISE_REACH = 900.0
+
+    def try_raise(self, thing) -> bool:
+        """A necromancer in a fight raises the nearest fallen body it can
+        reach to fight on its side; True when it cast."""
+        spell = raise_spell(thing.properties)
+        if spell is None:
+            return False
+        finder = getattr(self.session, "raisable_body", None)
+        body = finder(thing, self.RAISE_REACH) if finder is not None else None
+        if body is None:
+            return False
+        return self.raise_dead(thing, spell, body) is not None
+
+    def raise_dead(self, thing, spell, body=None):
+        """Cast *spell* (a resurrection) to raise *body* -- or the nearest
+        fallen within reach -- for *thing*. The raised actor, or None."""
+        p = thing.properties
+        if body is None:
+            finder = getattr(self.session, "raisable_body", None)
+            body = finder(thing, self.RAISE_REACH) if finder is not None else None
+        if body is None:
+            return None
+        if magicka(p) + 1e-6 < spell.base_cost or not spend(p, spell.base_cost):
+            return None
+        ready_spell(p, spell.id)
+        p["_attack_anim"] = 0.2
+        self._journal(thing)
+        if self._fizzles(thing, spell):
+            return None
+        raise_for = getattr(self.session, "raise_for", None)
+        if raise_for is None or not raise_for(thing, body):
+            return None
+        return body
+
+    def cast_spell(self, thing, spell_id, target=None):
+        """*thing* casts *spell_id* (a spell it knows) on *target* -- an order
+        (a cutscene's CAST) rather than its own choice; the same magicka,
+        roll and effects as any of its casts. The actors it raised."""
+        import game.rpg.magic as magic
+        p = thing.properties
+        found = _spell_known(p, spell_id)
+        if found is None:
+            return []
+        spell, entry = found
+        kinds = {e.get("kind") for e in spell.effects or ()}
+        if "slow_time" in kinds:
+            if not spend(p, spell.base_cost):
+                return []
+            ready_spell(p, spell.id)
+            if self._fizzles(thing, spell):
+                return []
+            p["_attack_anim"] = 0.2
+            self._cast_sound(thing, spell)
+            slow = getattr(self.session, "slow_time", None)
+            if slow is not None:
+                # The world slows; the caster does not (game.runtime.slow_time).
+                slow(p.get("creature_level", 1), caster=thing)
+            return []
+        if "resurrect" in kinds:
+            body = target if target is not None and (getattr(target, "properties", {}) or {}).get("dead") else None
+            raised = self.raise_dead(thing, spell, body)
+            return [raised] if raised is not None else []
+        damage = _float(entry.get("damage", spell.damage))
+        if spell.delivery == magic.PROJECTILE and damage > 0:
+            if target is None:
+                return []
+            target_pos = self.session.archery._target_pos(target)
+            if target_pos is None or not spend(p, spell.base_cost):
+                return []
+            ready_spell(p, spell.id)
+            if self._fizzles(thing, spell):
+                return []
+            self._loose(thing, target, target_pos, spell, damage,
+                        _float(entry.get("speed", spell.projectile_speed), 900.0),
+                        list(entry.get("color") or spell.color))
+            self._cast_sound(thing, spell)
+            return []
+        if spell.delivery == magic.SELF:
+            if not spend(p, spell.base_cost):
+                return []
+            ready_spell(p, spell.id)
+            if self._fizzles(thing, spell):
+                return []
+            now = clock()
+            for effect in spell.effects or ():
+                if effect.get("kind") in WARD_KINDS:
+                    p["_ward_until"] = now + _float(effect.get("duration"), 20.0)
+                    p["_ward_kind"] = effect["kind"]
+                    p["_ward_magnitude"] = _float(effect.get("magnitude"))
+                    self.warded[id(thing)] = thing
+            heal = _heals(spell)
+            if heal > 0:
+                top = _float(p.get("max_health") or p.get("_max_health"), _float(p.get("health")))
+                p["health"] = min(top, _float(p.get("health")) + heal)
+            p["_attack_anim"] = 0.2
+            self._cast_sound(thing, spell)
+            self._journal(thing)
+            fx = getattr(self.session, "magic_fx", None)
+            if fx is not None and heal > 0:
+                fx.heal(_feet(thing), spell.color)
+        return []
 
     def cast_attack(self, thing, target) -> bool:
         """Loose *thing*'s strongest affordable attack spell at *target* (an
@@ -565,19 +712,26 @@ class NpcMagic:
                 # A staff channels its spell: it never fizzles.
                 channelled = (spell is _staff_spell(p)
                               and spell.id not in hands(p).values())
+                if not channelled:
+                    ready_spell(p, spell.id)
                 if not channelled and self._fizzles(thing, spell):
                     return True
                 self._loose(thing, target, target_pos, spell, damage, speed, colour)
-                self._cast_sound(thing)
+                self._cast_sound(thing, spell)
                 return True
         return False
 
     # -- internals ------------------------------------------------------------
-    def _cast_sound(self, thing) -> None:
-        """A cast that worked is heard, as the player's are (where the session
-        can play one: game.runtime.MiniwindSession.cast_sound)."""
+    def _cast_sound(self, thing, spell=None) -> None:
+        """A cast that worked is heard, as the player's are, and its icon
+        shown over the caster's head (where the session can:
+        game.runtime.MiniwindSession.cast_sound)."""
         hook = getattr(self.session, "cast_sound", None)
-        if hook is not None:
+        if hook is None:
+            return
+        try:
+            hook(thing, spell)
+        except TypeError:          # a session whose cast_sound takes no spell
             hook(thing)
 
     def _fizzles(self, thing, spell) -> bool:

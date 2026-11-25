@@ -54,7 +54,7 @@ def _session(fio_session, clock):
     level = level_data(brushes=room(size=1600.0) + [trigger], things=[
         make_thing(PlayerStart, "spawn", (-300.0, 40.0, 0.0)),
         make_thing(Shake, "quake", (300.0, 64.0, 0.0), intensity=0.8, duration=1.0),
-        make_thing(Prop, "crate", (-200.0, 0.0, 200.0), model_path="Oil_Drum.obj",
+        make_thing(Prop, "crate", (-200.0, 0.0, 200.0), model_path="Oak_Barrel.obj",
                    physics_enabled=True)])
     session = fio_session(level)
     session.clock = clock

@@ -78,7 +78,7 @@ def test_a_physics_model_is_turned_by_its_physics_not_by_rotate():
 
 
 def test_every_new_model_can_rotate_but_does_not_by_default():
-    prop = Prop.for_model('assets/models/Oil_Drum.obj', pos=[0, 0, 0])
+    prop = Prop.for_model('assets/models/Oak_Barrel.obj', pos=[0, 0, 0])
     for key, value in mr.ROTATE_DEFAULTS.items():
         assert prop.properties[key] == value
     assert prop.properties['rotate_enabled'] is False
