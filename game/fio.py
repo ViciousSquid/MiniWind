@@ -210,6 +210,38 @@ def clear_projectile_deflector(logic, hook):
         runtime.projectile_deflector = None
 
 
+def set_projectile_catcher(logic, catcher):
+    """Install the game's catcher of projectiles -- Props they stick in
+    (``LogicCombat.projectile_catcher``); None clears it."""
+    runtime = getattr(logic, "combat_runtime", None)
+    if runtime is not None:
+        runtime.projectile_catcher = catcher
+
+
+def clear_projectile_catcher(logic, catcher):
+    runtime = getattr(logic, "combat_runtime", None)
+    if runtime is not None and getattr(runtime, "projectile_catcher", None) is catcher:
+        runtime.projectile_catcher = None
+
+
+def set_prop_use_claim(logic, claim):
+    """Let the game take the use press before Props are collected or picked
+    up (``PropSession.use_claim``; None clears it)."""
+    runtime = getattr(logic, "prop_runtime", None)
+    if runtime is not None:
+        runtime.use_claim = claim
+
+
+def explosion_runtime(logic):
+    """The explosive Props' runtime (``ExplosionRuntime``), or None."""
+    return getattr(logic, "explosion_runtime", None)
+
+
+def prop_runtime(logic):
+    """The Prop registry (``PropSession``), or None."""
+    return getattr(logic, "prop_runtime", None)
+
+
 def projectile_tag(logic, row) -> int:
     """The tag Fio gave the projectile in *row* (0 for one without hooks)."""
     runtime = getattr(logic, "combat_runtime", None)

@@ -64,6 +64,7 @@ from .rpg import charisma as rpg_cha
 from .rpg import fortune as rpg_fortune
 from .rpg import alignment as rpg_align
 from .ui.arrows import arrow_sprite
+from .stuck_arrows import AMMO_KEY, DEFAULT_AMMO, StuckArrows
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import DEFAULT_MINUTES_PER_DAY, GameClock
@@ -947,6 +948,9 @@ class MiniwindSession(SettlementLaw):
         #: Every NPC / creature archer mid-draw: they draw a bow by the
         #: player's own rules (game/npc_archery.py).
         self.archery = npc_archery.NpcArchery(self)
+        #: Arrows that struck a barrel stay in it, to be pulled out with the
+        #: interact key (game/stuck_arrows.py).
+        self.stuck_arrows = StuckArrows(self)
         import game.npc_magic as npc_magic
         self.npc_magic = npc_magic.NpcMagic(self)
         # What magic looks like: casts, bolts, impacts, wards (game/magic_fx.py),
@@ -2044,6 +2048,8 @@ class MiniwindSession(SettlementLaw):
         fio.set_jump_enabled(logic, False)
         # Arrows are drawn as arrows, by the game, not as Fio's projectile orb.
         fio.set_projectile_split(logic, self._split_projectiles)
+        # An arrow that strikes a barrel sticks in it (game/stuck_arrows.py).
+        self.stuck_arrows.install()
         # Wound decals use MiniWind's gore art.
         try:
             logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
@@ -2135,6 +2141,7 @@ class MiniwindSession(SettlementLaw):
             self.logic.player_fire_handler = None
         fio.set_jump_enabled(self.logic, True)
         fio.set_projectile_split(self.logic, None)
+        self.stuck_arrows.uninstall()
         fio.clear_projectile_deflector(self.logic, self._deflect_missile)
         try:
             from engine.monster_ai import MonsterAI
@@ -2994,6 +3001,7 @@ class MiniwindSession(SettlementLaw):
         self.autosave.tick(delta)
         self.rewind.tick(delta)
         self._update_bolt_lights(delta)
+        self.stuck_arrows.update()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
@@ -5021,6 +5029,7 @@ class MiniwindSession(SettlementLaw):
         self.held.update()
         self.burning.update(delta)
         self._update_bolt_lights(delta)
+        self.stuck_arrows.update()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             self.arrows_in_flight = ()
             self._arrow_tags.clear()
@@ -8864,8 +8873,9 @@ class MiniwindSession(SettlementLaw):
         max_dist = float(max_dist)
         c = self.game.character
         shot = rpg_items.get(self.game._fired_ammo.get(hand)) or eq.ammo_for(c, eq.hand_weapon(c, hand))
-        sprite = arrow_sprite(shot.id if shot is not None else
-                              eq.equipped_id(c, "ammo"))
+        loosed = shot.id if shot is not None else eq.equipped_id(c, "ammo")
+        sprite = arrow_sprite(loosed)
+        ammo_id = loosed or DEFAULT_AMMO     # what it is, if it sticks in a barrel
 
         start = [ppos[0], ppos[1] + fio.projectile_body_lift(), ppos[2]]
         aim = self._projectile_aim_point(start)
@@ -8892,7 +8902,8 @@ class MiniwindSession(SettlementLaw):
                                    damage=rpg_combat.base_ranged_damage(c, hand=hand, ammo=shot)
                                           * rpg_classes.damage_mult(c),
                                    lifetime=max_dist / ARROW_SPEED,
-                                   max_dist=max_dist, on_hit=_on_hit)
+                                   max_dist=max_dist, on_hit=_on_hit,
+                                   metadata={AMMO_KEY: ammo_id})
         tag = fio.projectile_tag(lt, row)
         if tag:
             self._arrow_tags[tag] = sprite

@@ -430,6 +430,12 @@ class ExplosionRuntime:
             lo, hi = (-32.0, 0.0, -32.0), (32.0, 64.0, 32.0)
         return lo, hi, scale, _position(prop), _turn(props.get('rotation'))
 
+    def model_frame(self, prop):
+        """*prop*'s model frame as drawn, for game code that works in it (an
+        arrow stuck in a barrel): ``(lo, hi, scale, pos, turn)`` as
+        :meth:`_model_box` gives it. Any Prop, explosive or not."""
+        return self._model_box(prop)
+
     def box(self, prop):
         """*prop*'s world box ``(lo, hi)``: around its model's bounds, scaled
         and turned as it is drawn (a barrel lying on its side is a long low

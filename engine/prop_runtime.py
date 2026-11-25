@@ -65,6 +65,10 @@ class PropSession:
         self._filed = {}
         self._max_reach = self.DEFAULT_CARRY_REACH
         self.drop_interceptor = None
+        #: Optional game ``claim() -> bool``, asked when use is pressed with
+        #: nothing held: True keeps the press from collecting or picking up
+        #: a Prop (MiniWind's E pulls the arrows out of a barrel instead).
+        self.use_claim = None
         self._falling = {}
         #: The held Prop's horizontal half-width (from its physics body), and
         #: which Prop it was measured for.
@@ -416,6 +420,9 @@ class PropSession:
             return
 
         if use_pressed:
+            claim = self.use_claim
+            if claim is not None and claim():
+                return
             # A use-activated collectible wins over carrying the same Prop.
             if self._collect_in_view(eye, forward):
                 return
