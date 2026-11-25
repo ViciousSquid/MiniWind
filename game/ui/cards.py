@@ -1,16 +1,27 @@
 """Collectible-style cards: the game's way of showing a list of things.
 
 A screen builds a :class:`Card` per entry (spell, item, ware ...), asks
-:func:`layout_grid` where a page of them goes, paints each with
-:func:`draw_card`, and moves its selection with :func:`navigate`. The cards
-are drawn in the game theme (:mod:`game.ui.theme`): a dark gradient body, a
-header band tinted by the card's *accent* (a spell's school, an item's
-category), a frame tinted by its *frame* colour (rarity), the picture in an
-icon well, a subtitle, a one-line summary and up to two corner badges.
+:func:`layout` where a page of them goes, paints each with :func:`draw_card`,
+and moves its selection with :func:`navigate`. The cards are drawn in the
+game theme (:mod:`game.ui.theme`): a dark gradient body, a band tinted by the
+card's *accent* (a spell's school, an item's category), a frame tinted by its
+*frame* colour (rarity), the picture in an icon well, the title, a subtitle,
+a description and a few small badges.
 
-Two sizes: :data:`SIZE` (150 x 210, portrait) and :data:`COMPACT`
-(110 x 150) for screens that show many things at once (containers, trade).
-Everything inside a card scales with its rect, so any size between works.
+Two styles, chosen by :data:`LAYOUT`:
+
+* ``"list"`` (the default): one wide card per row, top to bottom
+  (:func:`layout_list`, painted by :func:`draw_row_card`): the accent as a
+  strip down the left edge, a big square icon, then the title and two or
+  three lines of description, the badges at the right edge. Rows are
+  :data:`ROW_H` tall, or :data:`COMPACT_ROW_H` on dense screens (loot, trade).
+* ``"grid"``: portrait cards in rows and columns (:func:`layout_grid`,
+  :func:`draw_portrait_card`), :data:`SIZE` (150 x 210) or :data:`COMPACT`
+  (110 x 150).
+
+:func:`draw_card` paints whichever fits its rect: a row card in a rect wider
+than tall, a portrait card otherwise. Everything inside a card scales with
+its rect, so any size between works.
 """
 
 from __future__ import annotations
@@ -24,12 +35,28 @@ from PyQt5.QtGui import QBrush, QColor, QFontMetrics, QLinearGradient, QPainterP
 from . import fonts
 from . import theme as T
 
+#: How the card screens lay out their cards: "list" (one row card per line)
+#: or "grid" (portrait cards in rows and columns).
+LAYOUT = "list"
+
 #: The standard portrait card, and the compact one (logical px).
 SIZE = (150, 210)
 COMPACT = (110, 150)
 #: The gap between cards in a grid.
 GAP = 12
 COMPACT_GAP = 8
+#: A row card's height, standard and compact (logical px), and the gap
+#: between rows.
+ROW_H = 104
+COMPACT_ROW_H = 80
+ROW_GAP = 10
+COMPACT_ROW_GAP = 8
+#: How far *fit_all* may shrink rows to get every one on a page (compact
+#: rows hardly at all: a dense screen pages instead).
+ROW_MIN_SCALE = 0.68
+COMPACT_ROW_MIN_SCALE = 0.9
+#: How far rows may give to fit one more on a page that pages anyway.
+ROW_FILL_SCALE = 0.86
 
 #: Greyed-out text and frame (worn metal armour, an unaffordable ware ...).
 GREY = QColor(118, 118, 126)
@@ -59,11 +86,15 @@ class Card:
     prefer the tooltip for it. *mark* is the glyph in the well's corner when
     the card is *active* ("✦"). *glyph* is drawn large in the icon well
     when there is no *icon* (a quest's mark, a save slot's number).
+    *desc* is the longer description a row card wraps beside its picture
+    (two or three lines; the *summary* stands in when it is empty); the
+    portrait card has no room for it.
     """
     title: str
     icon: object = None                     # QPixmap or None
     subtitle: str = ""
     summary: str = ""
+    desc: str = ""
     accent: Optional[QColor] = None         # header band
     frame: Optional[QColor] = None          # border (rarity)
     badges: Sequence[str] = ()
@@ -148,13 +179,89 @@ def layout_grid(area: QRect, count: int, card_size=SIZE, gap: int = GAP,
     return Grid(slots, cols, rows, (cw, ch), gap)
 
 
+def layout_list(area: QRect, count: int, row_h: int = ROW_H, gap: int = ROW_GAP,
+                fit_all: bool = False, min_scale: float = ROW_MIN_SCALE,
+                fill: bool = True) -> Grid:
+    """A list of row cards inside *area*: one per line, each the full width
+    of *area*, *row_h* tall, as many as fit (a :class:`Grid` with one
+    column, so paging and hit-testing work as for a grid). With *fit_all*,
+    rows that would need more than one page shrink (down to *min_scale* of
+    *row_h*) so all *count* fit on one, where they can; otherwise the list
+    pages, its rows giving a little (to :data:`ROW_FILL_SCALE`) where that
+    fits one more on a page (unless not *fill*: rows exactly *row_h*). A
+    row never overflows *area*."""
+    aw, ah = max(1, area.width()), max(1, area.height())
+    rh = max(1, int(row_h))
+    rows = max(0, (ah + gap) // (rh + gap))
+    if fit_all and count > rows:
+        fit = (ah - (count - 1) * gap) // max(1, count)
+        if fit >= rh * min_scale:
+            rh, rows = int(fit), count
+    if fill and count > rows >= 1:
+        # A page with room for most of one more row: the rows give a little
+        # so it fits, rather than leave the space empty.
+        tight = (ah + gap) // (int(rh * ROW_FILL_SCALE) + gap)
+        if tight > rows:
+            rows = min(tight, count)
+            rh = min(rh, (ah - (rows - 1) * gap) // rows)
+    if rows < 1:
+        rh, rows = min(rh, ah), 1
+    slots = [QRect(area.x(), area.y() + i * (rh + gap), aw, rh) for i in range(rows)]
+    return Grid(slots, 1, rows, (aw, rh), gap)
+
+
+def layout(area: QRect, count: int, *, compact: bool = False, size=None,
+           gap: Optional[int] = None, grid_min_scale: float = 0.75,
+           fit_all: bool = False, center: bool = True,
+           row_min_scale: Optional[float] = None) -> Grid:
+    """Where a page of *count* cards goes in *area*, in the :data:`LAYOUT`
+    style: a list of row cards (:data:`ROW_H`, or :data:`COMPACT_ROW_H`
+    when *compact*) or a grid of portrait cards (:data:`SIZE` or
+    :data:`COMPACT`, shrinking to *grid_min_scale*). *size* reuses another
+    layout's ``card_size`` (two columns of cards at one size): in a list
+    its height is the row height. *fit_all* tries to get every card on one
+    page (see :func:`layout_list` / :func:`layout_grid`), rows shrinking
+    no further than *row_min_scale* (by default :data:`ROW_MIN_SCALE`, or
+    :data:`COMPACT_ROW_MIN_SCALE` when *compact*)."""
+    if LAYOUT == "list":
+        row_h = int(size[1]) if size else (COMPACT_ROW_H if compact else ROW_H)
+        g = (COMPACT_ROW_GAP if compact else ROW_GAP) if gap is None else gap
+        return layout_list(area, count, row_h, g, fit_all=fit_all and not size, fill=not size,
+                           min_scale=row_min_scale if row_min_scale is not None else
+                           COMPACT_ROW_MIN_SCALE if compact else ROW_MIN_SCALE)
+    card_size = tuple(size) if size else (COMPACT if compact else SIZE)
+    g = (COMPACT_GAP if compact else GAP) if gap is None else gap
+    return layout_grid(area, count, card_size, g, min_scale=1.0 if size else grid_min_scale,
+                       center=center, fit_all=fit_all and not size)
+
+
+def smaller(*sizes):
+    """The smallest of some layouts' ``card_size`` (by area): two columns
+    of cards drawn at one size."""
+    return min(sizes, key=lambda wh: (wh[0] * wh[1], wh[1]))
+
+
+def icon_px(painter, rect: QRect) -> int:
+    """Device pixels for the picture in a card drawn in *rect* (either
+    style), so the pixmap is not scaled up."""
+    from . import theme
+    if rect.width() > rect.height() * _ROW_ASPECT:
+        side = rect.height()
+    else:
+        side = min(rect.width(), rect.height()) * 0.7
+    return max(32, int(side * theme.device_ratio(painter)))
+
+
 def navigate(index: int, direction: str, count: int, cols: int,
              page_size: Optional[int] = None) -> int:
-    """The selection after a move in a grid of *count* cards, *cols* wide.
+    """The selection after a move in a grid of *count* cards, *cols* wide
+    (a list is a grid one column wide).
 
     left / right step one card (wrapping round the whole list); up / down a
     row (onto the next or previous page past the page's edge, wrapping to
-    the far end of the same column); pageup / pagedown a whole page."""
+    the far end of the same column; in a list, the previous / next card);
+    pageup / pagedown a whole page. A screen with two lists side by side
+    (loot, trade) moves between them on left / right itself."""
     if count <= 0:
         return 0
     cols = max(1, int(cols))
@@ -216,8 +323,22 @@ def _badge_rect(painter, text, s, x, y, anchor_right=False):
     return QRect(x - w if anchor_right else x, y, w, h)
 
 
+#: A rect this much wider than tall holds a row card.
+_ROW_ASPECT = 1.25
+
+
 def draw_card(painter, rect: QRect, card: Card) -> None:
-    """Paint *card* filling *rect* (any size; laid out for 150 x 210)."""
+    """Paint *card* filling *rect*: as a row card (:func:`draw_row_card`)
+    when *rect* is wider than tall, as a portrait card otherwise."""
+    if rect.width() > rect.height() * _ROW_ASPECT:
+        draw_row_card(painter, rect, card)
+    else:
+        draw_portrait_card(painter, rect, card)
+
+
+def draw_portrait_card(painter, rect: QRect, card: Card) -> None:
+    """Paint *card* as a portrait card filling *rect* (any size; laid out
+    for 150 x 210)."""
     s = max(0.3, min(rect.width() / float(SIZE[0]), rect.height() / float(SIZE[1])))
     compact = s < 0.86
     grey = card.locked or card.greyed
@@ -405,6 +526,265 @@ def draw_card(painter, rect: QRect, card: Card) -> None:
     if not card.selected:
         painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
         painter.drawRoundedRect(r.adjusted(3, 3, -3, -3), rad - 2, rad - 2)
+    if grey:
+        painter.fillPath(body, QColor(18, 18, 22, 90))
+    painter.restore()
+
+
+# ------------------------------------------------------------------ row cards
+def _bold(px):
+    f = _font(px)
+    f.setBold(True)
+    return f
+
+
+def _wrap_lines(text: str, fm: QFontMetrics, width: int, max_lines: int) -> List[str]:
+    """*text* word-wrapped to *width*, at most *max_lines* lines; the last
+    one ends in an ellipsis when there was more."""
+    out: List[str] = []
+    words = str(text).split()
+    line = ""
+    i = 0
+    while i < len(words) and len(out) < max_lines:
+        trial = (line + " " + words[i]).strip()
+        if fm.horizontalAdvance(trial) <= width or not line:
+            line = trial
+            i += 1
+            continue
+        out.append(line)
+        line = ""
+    if line and len(out) < max_lines:
+        out.append(line)
+        line = ""
+    if out and (i < len(words) or line):
+        rest = " ".join([out[-1]] + ([line] if line else []) + words[i:])
+        out[-1] = fm.elidedText(rest, Qt.ElideRight, width)
+    return [fm.elidedText(l, Qt.ElideRight, width) for l in out]
+
+
+def _row_badges(card: Card):
+    """(top line, bottom line) of a row card's right-edge badges, as
+    (text, colour) lists from the right edge inwards."""
+    top, bottom = [], []
+    colors = list(card.badge_colors)
+    badges = list(card.badges)[:2]
+
+    def col(k, default):
+        return colors[k] if k < len(colors) and colors[k] is not None else default
+
+    if card.price:
+        top.append((card.price, T.GOLD_BRIGHT))
+    if len(badges) > 1 and badges[1]:
+        top.append((badges[1], col(1, T.DIM.lighter(120))))
+    if badges and badges[0] and not card.pips:
+        bottom.append((badges[0], col(0, T.GOLD)))
+    return top, bottom
+
+
+def draw_row_card(painter, rect: QRect, card: Card) -> None:
+    """Paint *card* as one wide row filling *rect* (laid out for
+    :data:`ROW_H` tall; any height from about 40 to 140 works): the accent
+    as a strip down the left edge, a square icon well, the title (shrunk to
+    fit, never cut short) with the subtitle after it, the description
+    wrapped under them, and the badges, price and level pips at the right
+    edge. Selected, hovered, active, locked and greyed look as on the
+    portrait card."""
+    h = float(rect.height())
+    s = max(0.4, min(1.4, h / float(ROW_H)))
+    grey = card.locked or card.greyed
+    accent = QColor(card.accent) if card.accent is not None else QColor(T.GILD)
+    frame = QColor(card.frame) if card.frame is not None else QColor(T.GILD)
+    if grey:
+        accent, frame = QColor(GREY).darker(115), QColor(GREY)
+    r = QRectF(rect)
+    rad = 8 * min(1.0, s)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setRenderHint(painter.SmoothPixmapTransform, True)
+
+    if card.active and not grey:
+        for k in range(4, 0, -1):
+            painter.setPen(QPen(QColor(ACTIVE_GLOW.red(), ACTIVE_GLOW.green(),
+                                       ACTIVE_GLOW.blue(), 34), k * 2.2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(r.adjusted(-1, -1, 1, 1), rad, rad)
+    if card.selected:
+        for k in range(3, 0, -1):
+            painter.setPen(QPen(QColor(255, 214, 130, 30), k * 2.6))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(r.adjusted(-2, -2, 2, 2), rad + 2, rad + 2)
+
+    body = QPainterPath()
+    body.addRoundedRect(r, rad, rad)
+    grad = QLinearGradient(0, r.top(), 0, r.bottom())
+    top, bot = QColor(_BODY_TOP), QColor(_BODY_BOT)
+    if card.hovered or card.selected:
+        top, bot = top.lighter(125), bot.lighter(120)
+    grad.setColorAt(0.0, top)
+    grad.setColorAt(1.0, bot)
+    painter.fillPath(body, QBrush(grad))
+
+    # The accent: a strip down the left edge and a wash fading from it.
+    strip = max(4.0, 7 * s)
+    painter.save()
+    painter.setClipPath(body)
+    wash = QLinearGradient(r.left(), 0, r.left() + r.width() * 0.45, 0)
+    wash.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 64))
+    wash.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+    painter.fillRect(r, QBrush(wash))
+    band = QLinearGradient(0, r.top(), 0, r.bottom())
+    band.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 230))
+    band.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 150))
+    painter.fillRect(QRectF(r.left(), r.top(), strip, r.height()), QBrush(band))
+    painter.restore()
+
+    # The icon well: a square the row's height less the padding.
+    pad = max(4.0, 9 * s)
+    side = max(8.0, h - 2 * pad)
+    well = QRectF(r.left() + strip + pad, r.top() + (h - side) / 2, side, side)
+    painter.setBrush(_WELL)
+    painter.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 170), 1.4))
+    painter.drawRoundedRect(well, 6 * s, 6 * s)
+    pm = card.icon
+    if pm is not None and not pm.isNull():
+        if grey:
+            from . import spell_lock
+            pm = spell_lock.grey(pm, True)
+        inset = well.adjusted(3 * s, 3 * s, -3 * s, -3 * s)
+        painter.save()
+        clip = QPainterPath()
+        clip.addRoundedRect(inset, 4 * s, 4 * s)
+        painter.setClipPath(clip)
+        painter.drawPixmap(inset.toRect(), pm)
+        painter.restore()
+    elif card.glyph:
+        painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 50))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(well.center(), side * 0.38, side * 0.38)
+        f, ok = fitted_font(card.glyph, int(side * 0.84), side * 0.5, side * 0.2)
+        painter.setFont(f)
+        painter.setPen(GREY.lighter(130) if grey else accent.lighter(140))
+        painter.drawText(well.adjusted(3, 3, -3, -3),
+                         int(Qt.AlignCenter | (0 if ok else Qt.TextWordWrap)), card.glyph)
+    else:
+        painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 120))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(well.center(), side * 0.22, side * 0.22)
+    if card.active:
+        d = max(14.0, 26 * s)
+        disc = QRectF(well.left() - d * 0.25, well.top() - d * 0.25, d, d)
+        glow = GREY if grey else ACTIVE_GLOW
+        painter.setBrush(QColor(16, 20, 40, 240))
+        painter.setPen(QPen(glow, 1.6))
+        painter.drawEllipse(disc)
+        painter.setFont(_font(d * 0.66))
+        painter.setPen(GREY.lighter(140) if grey else QColor(225, 235, 255))
+        painter.drawText(disc, int(Qt.AlignCenter), card.mark)
+    bs = max(1.0, min(1.3, s * 1.15))      # badge scale: legible at any height
+    if card.quantity and int(card.quantity) > 1:
+        q = f"×{int(card.quantity)}"
+        br = _badge_rect(painter, q, bs, int(well.right() - 2 * s), 0, True)
+        br.moveBottom(int(well.bottom() - 2 * s))
+        _badge(painter, br, q, GREY.lighter(130) if grey else T.INK, bs)
+
+    # The right edge: badges (price, cost) level with the title, a note or
+    # level pips under them.
+    right = int(r.right() - max(8.0, 14 * s))
+    top_badges, bottom_badges = _row_badges(card)
+    bh = max(13, int(17 * bs))
+    line1_y = int(r.top() + pad + 2 * s)
+    line2_y = int(r.bottom() - pad - bh - 1 * s)
+    one_line = line2_y < line1_y + bh + 3           # a short row
+    if one_line:
+        line1_y = line2_y = int(r.center().y() - bh / 2)
+    ink_of = (lambda c: GREY.lighter(120)) if grey else (lambda c: c)
+    used = [0, 0]
+    for line, (badges, y) in enumerate(((top_badges, line1_y), (bottom_badges, line2_y))):
+        x = right - (used[0] + 6 if line and one_line and used[0] else 0)
+        for text, color in badges:
+            br = _badge_rect(painter, text, bs, x, y, True)
+            br.setHeight(bh)
+            _badge(painter, br, text, ink_of(color), bs)
+            x = br.left() - int(5 * bs)
+        used[line] = right - x if badges else 0
+    if card.pips and card.pips[1] > 0:
+        filled, total = int(card.pips[0]), int(card.pips[1])
+        d = max(4.0, 8 * bs)
+        gapx = 3.5 * bs
+        x = right - (used[0] + 6 if one_line and used[0] else used[1])
+        x0 = x - total * (d + gapx) + gapx
+        cy = line2_y + bh / 2.0
+        col = GREY.lighter(120) if grey else T.GOLD_BRIGHT
+        for k in range(total):
+            on = k < filled
+            cx = x0 + k * (d + gapx) + d / 2
+            painter.setPen(QPen(col if on else QColor(col.red(), col.green(), col.blue(), 120), 1))
+            painter.setBrush(col if on else Qt.NoBrush)
+            painter.drawEllipse(QRectF(cx - d / 2, cy - d / 2, d, d))
+        used[1] = int(right - x0 + gapx)
+    def reserve(w):
+        return w + (int(12 * s) if w else 0)
+
+    # The words: the title (and subtitle) on the first line, beside the top
+    # badges; the description wrapped under it, beside the bottom ones.
+    tx = int(well.right() + 14 * s)
+    tw = max(20, int(right - reserve(max(used) if one_line else used[0]) - tx))
+    dw = max(20, int(right - reserve(max(used) if one_line else used[1]) - tx))
+    ink = GREY.lighter(125) if grey else (T.GOLD_BRIGHT if card.selected else T.INK)
+    tf, ok = fitted_font(card.title, tw, max(16.0, 20 * s), max(10.0, 13 * s))
+    tf.setBold(True)
+    px = tf.pixelSize()
+    while px > 8 and QFontMetrics(tf).horizontalAdvance(card.title) > tw:
+        px -= 1
+        tf = _bold(px)
+    tfm = QFontMetrics(tf)
+    title_w = tfm.horizontalAdvance(card.title)
+    title_h = tfm.height()
+    text = card.desc or card.summary
+    df = _font(max(12.0, min(16.0, 15 * s)))
+    dfm = QFontMetrics(df)
+    line_h = dfm.lineSpacing()
+    avail = h - 2 * pad - title_h - 3 * s
+    max_lines = max(0, min(3, int(avail // line_h)))
+    lines = _wrap_lines(text, dfm, dw, max_lines) if text and max_lines else []
+    block = title_h + (3 * s + len(lines) * line_h if lines else 0)
+    ty = r.top() + max(pad, (h - block) / 2.0)
+    painter.setFont(tf)
+    painter.setPen(ink)
+    painter.drawText(QRect(tx, int(ty), tw + 4, title_h),
+                     int(Qt.AlignLeft | Qt.AlignVCenter), card.title)
+    if card.subtitle:
+        sf = _font(max(11.0, min(14.0, 13 * s)))
+        gap = int(12 * s)
+        room = tw - title_w - gap
+        sub = card.subtitle
+        if QFontMetrics(sf).horizontalAdvance(sub) <= room:       # whole, or not at all
+            painter.setFont(sf)
+            painter.setPen(GREY if grey else accent.lighter(135))
+            base = int(ty) + (title_h + tfm.ascent() - tfm.descent()) // 2
+            painter.drawText(tx + title_w + gap, base, sub)       # on the title's baseline
+    if lines:
+        painter.setFont(df)
+        painter.setPen(GREY.lighter(115) if grey else T.PARCH)
+        y = ty + title_h + 3 * s
+        for line in lines:
+            painter.drawText(QRect(tx, int(y), dw, line_h),
+                             int(Qt.AlignLeft | Qt.AlignVCenter), line)
+            y += line_h
+
+    # The frame, last: rarity, or gold for the selected card.
+    if card.selected:
+        pen = QPen(T.GOLD_BRIGHT, 2.6)
+    elif card.hovered:
+        pen = QPen(frame.lighter(135), 2.0)
+    else:
+        pen = QPen(frame.darker(115), 1.8)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(pen)
+    painter.drawRoundedRect(r.adjusted(0.8, 0.8, -0.8, -0.8), rad, rad)
+    if not card.selected:
+        painter.setPen(QPen(QColor(255, 255, 255, 18), 1))
+        painter.drawRoundedRect(r.adjusted(3, 3, -3, -3), max(1.0, rad - 2), max(1.0, rad - 2))
     if grey:
         painter.fillPath(body, QColor(18, 18, 22, 90))
     painter.restore()

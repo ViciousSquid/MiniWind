@@ -300,12 +300,12 @@ def draw_tutor(painter, session, w, h):
               color=_INK_SOFT, align=T.ALIGN_CENTER, family="Segoe UI")
     top = inner.y() + 70
 
-    # The spells for sale as cards down the left (game/ui/cards.py), the
+    # The spells for sale as cards down the left, a row each (game/ui/cards.py), the
     # chosen one in full on the right -- so the cards carry no tooltip.
-    list_w = int(inner.width() * 0.5)
+    list_w = int(inner.width() * (0.56 if cards.LAYOUT == "list" else 0.5))
     foot_y = inner.bottom() - 34
     area = QRect(inner.x(), top + 30, list_w, max(1, foot_y - 12 - top - 30))
-    grid = cards.layout_grid(area, len(spells), min_scale=0.6, fit_all=True)
+    grid = cards.layout(area, len(spells), grid_min_scale=0.6, fit_all=True)
     st["cols"], st["page_size"] = grid.cols, grid.page_size
     page, first, pages = s._card_page(st["row"], grid.page_size, len(spells))
     s._card_pager(painter, QRect(inner.x() + list_w - 120, top, 120, 24), page, pages,

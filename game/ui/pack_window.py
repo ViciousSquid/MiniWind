@@ -47,6 +47,8 @@ class PackWindow(InventoryWindow):
         self.key = "screen:statistics"
         self._body_height = 640
         self.selected_skill = None
+        self.fortune_page = 0
+        self._fortune_pages = 1
         self._skill_nodes = []
         self.screen = None
         self.viewport = viewport
@@ -217,21 +219,42 @@ class PackWindow(InventoryWindow):
         c = self._character()
         if c is None:
             return
+        # A card per benefit (game/ui/cards.py), a row each: the number big
+        # in the picture's place, green for good, red for ill; the reason
+        # beside it, and in full in the card's tooltip (this page has no
+        # detail pane). More than a page of them turn with the arrows (or
+        # the mouse wheel).
+        benefits = list(fortune.benefits(c))
+        area = QRect(inner.x(), inner.y() + 34, inner.width(),
+                     max(1, inner.bottom() - inner.y() - 34))
+        grid = cards.layout(area, len(benefits), compact=True, grid_min_scale=0.6,
+                            fit_all=True)
+        size = max(1, grid.page_size)
+        self._fortune_pages = pages = max(1, (len(benefits) + size - 1) // size)
+        self.fortune_page = page = max(0, min(self.fortune_page, pages - 1))
+        pager_w = 150 if pages > 1 else 0
         painter.setFont(self.f_body)
         painter.setPen(_TEXT)
-        _fit(painter, QRect(inner.x(), inner.y(), inner.width(), 24),
+        _fit(painter, QRect(inner.x(), inner.y(), inner.width() - pager_w, 24),
              Qt.AlignLeft | Qt.AlignVCenter,
              f"Fortune {fortune.score(c)}  =  (Charisma {c.attrs.get('personality', 40)}"
              f" + Luck {c.attrs.get('luck', 40)}) / 2   ·   the fair of face and the "
              "lucky have an easier road, and here is exactly how.")
-        # A card per benefit (game/ui/cards.py): the number big in the
-        # middle, green for good, red for ill; the reason under it, and in
-        # full in the card's tooltip (this page has no detail pane).
-        benefits = list(fortune.benefits(c))
-        area = QRect(inner.x(), inner.y() + 34, inner.width(),
-                     max(1, inner.bottom() - inner.y() - 34))
-        grid = cards.layout_grid(area, len(benefits), min_scale=0.6, fit_all=True)
-        for (name, value, why, good), rect in zip(benefits, grid.slots):
+        if pages > 1:
+            right = QRect(inner.right() - 30, inner.y(), 30, 24)
+            left = QRect(right.x() - 70 - 30, inner.y(), 30, 24)
+            for r, glyph, step in ((left, "◂", -1), (right, "▸", 1)):
+                enabled = 0 <= page + step < pages
+                self._bevel(painter, r, enabled=enabled)
+                painter.setPen(_TEXT if enabled else _EDGE)
+                _fit(painter, r, Qt.AlignCenter, glyph)
+                if enabled:
+                    self._buttons.append((QRect(r), self._fortune_turn(step)))
+            painter.setPen(_TEXT)
+            _fit(painter, QRect(left.right() + 1, inner.y(), 70, 24), Qt.AlignCenter,
+                 f"{page + 1} / {pages}")
+        shown = benefits[page * size:(page + 1) * size]
+        for (name, value, why, good), rect in zip(shown, grid.slots):
             mark = (QColor(110, 210, 120) if good else QColor(225, 105, 95)
                     if good is False else QColor(170, 168, 160))
             why = str(why)
@@ -249,6 +272,11 @@ class PackWindow(InventoryWindow):
             cards.draw_card(painter, rect, card)
             cards.note_tooltip(rect, card)
         cards.flush_tooltip(painter)
+
+    def _fortune_turn(self, step):
+        def act():
+            self.fortune_page = max(0, min(self.fortune_page + step, self._fortune_pages - 1))
+        return act
 
     def _draw_alignment(self, painter, rect):
         """Where the character stands from Villainous to Saintly, what it is
@@ -369,6 +397,9 @@ class PackWindow(InventoryWindow):
         if (self.screen == "map" and self.expanded and self.map._rect is not None
                 and self.map._rect.contains(event.pos())):
             self.map.handle_wheel(event.pos(), event.angleDelta().y())
+        elif (self.screen == "fortune" and self.expanded
+              and self._full_rect().contains(event.pos())):
+            self._fortune_turn(-1 if event.angleDelta().y() > 0 else 1)()
 
     def _draw_grid(self, painter, rect):
         inner = self._panel(painter, rect, "Inventory")
