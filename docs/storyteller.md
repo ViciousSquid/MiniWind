@@ -9,6 +9,12 @@ override it at `game/data/mods/<name>/storyteller.json`. `TUNING` loads that
 content over `DEFAULT_TUNING` code fallbacks. Tuning lists replace rather than
 append, so overriding a two-hour departure window preserves two endpoints.
 
+The Storyteller is the Director's pacing subsystem, not a second reactive-AI
+pipeline. The [Director documentation](director.md) explains how events become
+perceived facts, NPC intentions and runtime behaviour; this page covers how
+pacing samples that simulation and influences the living world's existing
+journeys.
+
 The cycle is `CALM → RISING → PEAK → RESPITE → CALM`. Quiet time and recovery
 gate escalation. Existing unreported memories, kin vendettas and regional writs
 can start the rise; recent attacks against the player, visible hostiles and
