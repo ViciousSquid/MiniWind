@@ -79,6 +79,7 @@ class _Session:
     flash_head_mark = MiniwindSession.flash_head_mark
     _head_marked = {}
     live_barks = MiniwindSession.live_barks
+    _scripted_first = MiniwindSession._scripted_first
 
     def _player_pos(self):
         return None

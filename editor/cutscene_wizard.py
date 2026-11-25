@@ -77,6 +77,17 @@ def register_actor_panel(factory):
         ACTOR_PANELS.append(factory)
 
 
+#: A game's spell names for the CAST menu: ``fn(spell_id) -> name`` (None:
+#: the id, title-cased). Set with :func:`register_spell_namer`.
+SPELL_NAMER = None
+
+
+def register_spell_namer(fn):
+    """Name spells in the CAST menu with the game's names."""
+    global SPELL_NAMER
+    SPELL_NAMER = fn
+
+
 def _entity_class(type_name):
     """The editor entity class for *type_name* (a class, a class name or a
     type id)."""
@@ -763,13 +774,11 @@ class CutsceneWizard(QtWidgets.QDialog):
             if not sid:
                 continue
             name = str(sid).replace("_", " ").title()
-            try:
-                import game.rpg.magic as magic      # the game's names, where it has them
-                spell = magic.get(sid)
-                if spell is not None:
-                    name = spell.name
-            except Exception:
-                pass
+            if SPELL_NAMER is not None:            # the game's names, where it has them
+                try:
+                    name = SPELL_NAMER(str(sid)) or name
+                except Exception:
+                    pass
             out.append((str(sid), name))
         return out
 

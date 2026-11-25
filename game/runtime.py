@@ -625,6 +625,9 @@ FIZZLE_SOUND = "sizzle.mp3"
 #: Resurrection's own sound, in place of SPELLCAST_SOUND (silent until the
 #: file is in assets/sounds).
 RESURRECTION_SOUND = "resurrection.mp3"
+#: Heard everywhere when Slow Time is cast (silent until the file is in
+#: assets/sounds).
+SLOW_TIME_SOUND = "slowtime.wav"
 #: The pad's shake when a lock pick finds a pin's sweet spot: (low motor,
 #: high motor, milliseconds).
 LOCKPICK_SWEET_RUMBLE = (0.25, 0.7, 140)
@@ -4961,6 +4964,7 @@ class MiniwindSession(SettlementLaw):
         self._slow_time_until = max(float(self.__dict__.get("_slow_time_until") or 0.0),
                                     now + seconds)
         logic.time_scale = SLOW_TIME_SCALE * self._slow_time_prior
+        self.play_ui_sound(SLOW_TIME_SOUND)
         self.notify("Time slows…", 2.0)
         return self._slow_time_until - now
 

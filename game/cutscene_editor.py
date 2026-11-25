@@ -48,6 +48,7 @@ def register():
     wizard.register_actor_kind("+ Creature", Creature, {"npc_role": "bandit"},
                                entity_type="creature")
     wizard.register_actor_panel(actor_panel)
+    wizard.register_spell_namer(spell_name)
     # MiniWind is top down: cutscene cameras look straight down.
     wizard.TOP_DOWN_CAMERA = True
 
@@ -55,6 +56,13 @@ def register():
 # ---------------------------------------------------------------------------
 # What the panel offers (pure: no Qt), so tests and tools can use it too.
 # ---------------------------------------------------------------------------
+def spell_name(spell_id):
+    """A spell's name in the game, or None for one it does not know."""
+    from .rpg import magic
+    spell = magic.get(spell_id)
+    return spell.name if spell is not None else None
+
+
 def kind_of(actor) -> str:
     return str(getattr(actor, "properties", {}).get("type", "") or "")
 

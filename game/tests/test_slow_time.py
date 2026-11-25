@@ -66,3 +66,12 @@ def test_the_screen_takes_an_icy_tint(qt_app):
     p.end()
     c = img.pixelColor(10, 10)
     assert c.blue() > c.red() > 0
+
+
+def test_casting_slow_time_plays_its_sound(monkeypatch):
+    from .. import runtime
+    s = _session()
+    played = []
+    monkeypatch.setattr(type(s), "play_ui_sound", lambda self, name, volume=1.0: played.append(name) or True)
+    s.slow_time(1)
+    assert played == [runtime.SLOW_TIME_SOUND] and runtime.SLOW_TIME_SOUND == "slowtime.wav"
