@@ -474,8 +474,9 @@ SLOW_TIME_PER_LEVEL = 1.0
 SLOW_TIME_FROM_LEVEL = 5
 #: The tint, the caster's bubble and light fade in and out over this long (s).
 SLOW_TIME_FADE = 0.35
-#: Icy blue: the caster's light and bubble rim (RGB 0-255).
-SLOW_TIME_COLOUR = (120, 190, 255)
+#: The spell icon's violet (its colour in game/rpg/magic.py): the caster's
+#: light, the bubble's glass and rim, and the screen's tint (RGB 0-255).
+SLOW_TIME_COLOUR = (166, 130, 234)
 #: The flickering light the caster gives off while it lasts: its reach, its
 #: brightness at the top of a flicker, how high above the feet it hangs, and
 #: the least share of that brightness a flicker dips to (never fully out).
@@ -484,7 +485,7 @@ SLOW_TIME_LIGHT_INTENSITY = 8.0
 SLOW_TIME_LIGHT_HEIGHT = 90.0
 SLOW_TIME_FLICKER_FLOOR = 0.45
 #: The fisheye bubble round the caster: its radius as a share of the caster's
-#: height, how hard it magnifies, where its icy rim glows (as a share of the
+#: height, how hard it magnifies, where its violet rim glows (as a share of the
 #: radius), the ripple through its glass, and how blue it tints the inside.
 SLOW_TIME_BUBBLE_SCALE = 1.5
 #: 0.6: the middle seen about 2.5x larger, squeezed toward the rim (fisheye).

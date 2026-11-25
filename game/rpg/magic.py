@@ -370,14 +370,14 @@ register(Spell("resurrection", "Resurrection", sk.OCCULT, 100, TARGET,
 # Slow Time -- the world (everyone and everything but the caster) runs at
 # half speed for five seconds, a second more for each level past the fifth
 # (game.runtime.slow_time_seconds). The caster keeps their own speed -- twice
-# the world's -- inside an icy fisheye bubble, giving off a flickering blue
-# light; the screen takes an icy tint meanwhile.
+# the world's -- inside a violet fisheye bubble, giving off a flickering violet
+# light; the screen takes a violet tint meanwhile.
 register(Spell("slow_time", "Slow Time", sk.OCCULT, 45, SELF,
                [{"kind": "slow_time", "magnitude": 0.5, "duration": 5}],
                "The world slows to half speed around you for five seconds, and "
                "a second longer for every level past the fifth. You alone move "
                "at your own pace.",
-               element="magic", color=[150, 210, 255]))
+               element="magic", color=[166, 130, 234]))   # its icon's violet
 register(Spell("sp_detect", "Detect Life", sk.OCCULT, 16, SELF,
                [{"kind": "detect_life", "magnitude": 1, "duration": 30}],
                "Sense living things nearby.", element="magic"))

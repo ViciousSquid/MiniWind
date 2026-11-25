@@ -408,18 +408,73 @@ def draw_bubbles(painter, session, viewport, width, height):
             _draw_bubble(painter, int(sp[0]), int(sp[1]), kind)
 
 
-#: Slow Time's tint over the whole screen, at its strongest: a light icy blue.
-SLOW_TIME_TINT = (120, 190, 255, 52)
+#: Slow Time's tint at the edges of the screen: the spell icon's violet
+#: (runtime.SLOW_TIME_COLOUR); the alpha is the base its vignette builds on.
+SLOW_TIME_TINT = (166, 130, 234, 52)
 
 
-def draw_slow_time(painter, session, width, height):
-    """The icy tint while Slow Time lasts (fading in and out)."""
+#: Slow Time's own edge effect: where the violet vignette starts (share of
+#: the half-diagonal; the middle stays clear), and the ring of clock ticks
+#: framing the view -- how many ticks, its inset from the edges (share of
+#: the shorter side), how bright, and how slowly it turns (degrees a second).
+SLOW_TIME_EDGE_FROM = 0.72
+SLOW_TIME_TICKS = 60
+SLOW_TIME_TICK_INSET = 0.05
+SLOW_TIME_TICK_ALPHA = 0.42
+SLOW_TIME_TICK_TURN = 2.5
+
+
+def draw_slow_time(painter, session, width, height, now=None):
+    """Slow Time at the edges of sight only -- the middle stays clear, and all
+    of it subtle: a thin violet vignette, breathing slowly, and a faint ring
+    of clock ticks framing the view (every fifth longer), turning slowly
+    with a soft glow drifting round it. Both fade in and out with the spell."""
     tint = getattr(session, "slow_time_tint", None)
     strength = tint() if tint is not None else 0.0
     if strength <= 0.0:
         return
+    import math
+    import time as _time
+    from PyQt5.QtGui import QRadialGradient, QPainter
+    t = _time.monotonic() if now is None else now
     r, g, b, a = SLOW_TIME_TINT
-    painter.fillRect(0, 0, int(width), int(height), QColor(r, g, b, int(a * strength)))
+    breathe = 0.8 + 0.2 * math.sin(t * math.tau * 0.3)     # slow, gentle
+    w, h = int(width), int(height)
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    # The vignette: clear in the middle, the violet only at the very edges.
+    centre = QPointF(w / 2.0, h / 2.0)
+    reach = math.hypot(w, h) * 0.5
+    grad = QRadialGradient(centre, reach)
+    grad.setColorAt(0.0, QColor(r, g, b, 0))
+    grad.setColorAt(SLOW_TIME_EDGE_FROM, QColor(r, g, b, 0))
+    grad.setColorAt(0.9, QColor(r, g, b, int(min(255, a * 0.9) * strength * breathe)))
+    grad.setColorAt(1.0, QColor(r, g, b, int(min(255, a * 1.8) * strength * breathe)))
+    painter.fillRect(QRect(0, 0, w, h), grad)
+    # The clock: ticks on an ellipse just inside the edges, turning slowly.
+    inset = min(w, h) * SLOW_TIME_TICK_INSET
+    rx, ry = w / 2.0 - inset, h / 2.0 - inset
+    turn = math.radians(t * SLOW_TIME_TICK_TURN)
+    ink = QColor(min(255, r + 50), min(255, g + 50), min(255, b + 20))
+    for k in range(SLOW_TIME_TICKS):
+        ang = turn + math.tau * k / SLOW_TIME_TICKS
+        major = k % 5 == 0
+        length = min(w, h) * (0.03 if major else 0.014)
+        cx, cy = math.cos(ang), math.sin(ang)
+        # Outward along the ellipse's normal, so the ticks point at the edge.
+        nx, ny = cx / max(rx, 1.0), cy / max(ry, 1.0)
+        norm = math.hypot(nx, ny) or 1.0
+        nx, ny = nx / norm, ny / norm
+        x0, y0 = w / 2.0 + rx * cx, h / 2.0 + ry * cy
+        # A soft glow drifts slowly round the ring, brightening the ticks it
+        # passes and leaving the rest faint.
+        drift = 0.5 + 0.5 * math.cos(ang - t * 0.7)
+        c = QColor(ink)
+        c.setAlphaF(max(0.0, min(1.0, SLOW_TIME_TICK_ALPHA * strength
+                                 * (1.0 if major else 0.55) * (0.35 + 0.65 * drift ** 2))))
+        painter.setPen(QPen(c, 2.4 if major else 1.4, Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(QPointF(x0, y0), QPointF(x0 + nx * length, y0 + ny * length))
+    painter.restore()
 
 
 def draw_barks(painter, session, viewport, width, height):
@@ -475,9 +530,11 @@ _FLOAT_INK = (214, 200, 255)
 #: between the head and it.
 CAST_ICON_SIZE = 40
 CAST_ICON_GAP = 6
-#: Half a drawn head, in world units (heads are drawn 128 across): the icon
-#: clears the head by this much as well, whatever the zoom.
-HEAD_HALF = 64.0
+#: The icon's glow: the halo's radius as a share of the icon, how much it
+#: breathes, and how strongly the picture is lit up over itself (emissive).
+CAST_ICON_GLOW = 1.5
+CAST_ICON_GLOW_PULSE = 0.06
+CAST_ICON_EMISSION = 0.6
 
 
 def _head_screen(glm, proj, view, thing, width, height):
@@ -492,21 +549,30 @@ def _head_screen(glm, proj, view, thing, width, height):
     return sp
 
 
-def _head_clearance(glm, proj, view, thing, sp, width, height):
-    """How many px the drawn head reaches above its point *sp* -- half a head,
-    measured on screen so it holds at any zoom."""
-    pos = thing.pos
-    head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
-    side = _world_to_screen(glm, proj, view, pos[0] + HEAD_HALF, head_y, pos[2], width, height)
-    if side is None:
-        return 0.0
-    return min(200.0, ((side[0] - sp[0]) ** 2 + (side[1] - sp[1]) ** 2) ** 0.5)
+_BLOOMS = {}
+
+
+def _icon_bloom(pix):
+    """A soft, blurred copy of *pix* (shrunk and smoothly grown back), cached."""
+    key = pix.cacheKey()
+    bloom = _BLOOMS.get(key)
+    if bloom is None:
+        small = pix.scaled(max(1, pix.width() // 6), max(1, pix.height() // 6),
+                           Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        bloom = small.scaled(pix.width(), pix.height(), Qt.IgnoreAspectRatio,
+                             Qt.SmoothTransformation)
+        if len(_BLOOMS) > 64:
+            _BLOOMS.clear()
+        _BLOOMS[key] = bloom
+    return bloom
 
 
 def draw_cast_icons(painter, session, viewport, width, height, now=None):
-    """The icon of a spell just cast, over its caster's head: 0.3 s fading
-    in, 1.5 s held, 0.25 s fading out (runtime.cast_icon_alpha). Drawn
-    before :func:`draw_floats`, whose words ("*fizzled*") sit above it."""
+    """The icon of a spell just cast, glowing on top of its caster: 0.3 s
+    fading in, 1.5 s held, 0.25 s fading out (runtime.cast_icon_alpha).
+    Emissive -- a halo of the spell's colour round it and the picture lit
+    up additively, no shadow. Drawn before :func:`draw_floats`, whose words
+    ("*fizzled*") sit above it."""
     if viewport is None or not hasattr(session, "live_cast_icons"):
         return
     icons = session.live_cast_icons(now)
@@ -517,8 +583,11 @@ def draw_cast_icons(painter, session, viewport, width, height, now=None):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    from PyQt5.QtGui import QPainter
+    import math
+    import time as _time
+    from PyQt5.QtGui import QPainter, QRadialGradient
     import game.rpg.magic as rpg_magic
+    t = _time.monotonic() if now is None else now
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
@@ -531,37 +600,52 @@ def draw_cast_icons(painter, session, viewport, width, height, now=None):
         pix = _spell_icon_pixmap(spell, s * 2)        # sharp on high-DPI screens
         if pix is None:
             continue
-        top = sp[1] - _head_clearance(glm, proj, view, thing, sp, width, height)
-        rect = QRectF(sp[0] - s / 2.0, top - CAST_ICON_GAP - s, s, s)
-        painter.setOpacity(max(0.0, min(1.0, float(alpha))))
+        a = max(0.0, min(1.0, float(alpha)))
+        cx, cy = sp[0], sp[1]
+        rect = QRectF(cx - s / 2.0, cy - s / 2.0, s, s)
+        colour = list(getattr(spell, "color", None) or (150, 200, 255))[:3]
+        glow = QColor(*[int(max(0, min(255, c))) for c in colour])
+        # The halo: the spell's light round it, breathing a little -- an aura
+        # of its colour, visible over a bright scene as well as a dark one.
+        pulse = 1.0 + CAST_ICON_GLOW_PULSE * math.sin(t * math.tau * 2.2 + id(thing) % 7)
+        r = s * CAST_ICON_GLOW * pulse
+        grad = QRadialGradient(QPointF(cx, cy), r)
+        for stop, share in ((0.0, 0.85), (0.38, 0.7), (0.6, 0.32), (0.82, 0.1), (1.0, 0.0)):
+            c = QColor(glow)
+            c.setAlphaF(share)
+            grad.setColorAt(stop, c)
+        painter.setOpacity(a)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 110))        # a soft shadow under it
-        painter.drawEllipse(rect.adjusted(-3, -1, 3, 5))
+        painter.setBrush(grad)
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+        # Its edge glows in the spell's light: a wide soft stroke, a bright one.
+        painter.setBrush(Qt.NoBrush)
+        for width_px, share in ((8.0, 0.45), (4.0, 0.7)):
+            c = QColor(glow.lighter(125))
+            c.setAlphaF(share)
+            painter.setPen(QPen(c, width_px, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawRoundedRect(rect, s * 0.14, s * 0.14)
+        # The picture, then lit from within: a blurred copy of it added over
+        # it, so its bright lines bloom.
         painter.drawPixmap(rect, pix, QRectF(pix.rect()))
+        bloom = _icon_bloom(pix)
+        painter.setCompositionMode(QPainter.CompositionMode_Plus)
+        painter.setOpacity(a * CAST_ICON_EMISSION)
+        painter.drawPixmap(rect.adjusted(-s * 0.08, -s * 0.08, s * 0.08, s * 0.08), bloom,
+                           QRectF(bloom.rect()))
+        painter.drawPixmap(rect, pix, QRectF(pix.rect()))
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
     painter.restore()
 
 
 def _cast_icon_lift(session, viewport=None, width=0, height=0):
     """``{id(thing): px}``: how far a head's floating words rise to clear the
-    cast icon shown over it (and the head under it, given a *viewport*)."""
+    cast icon glowing on top of it."""
     try:
         icons = session.live_cast_icons()
     except Exception:
         return {}
-    out = {}
-    for thing, _sid, _a in icons:
-        lift = CAST_ICON_SIZE + CAST_ICON_GAP
-        if viewport is not None:
-            try:
-                import glm
-                proj, view = viewport.projection_matrix, viewport.view_matrix
-                sp = _head_screen(glm, proj, view, thing, width, height)
-                if sp is not None:
-                    lift += _head_clearance(glm, proj, view, thing, sp, width, height)
-            except Exception:
-                pass
-        out[id(thing)] = lift
-    return out
+    return {id(thing): CAST_ICON_SIZE / 2.0 + CAST_ICON_GAP for thing, _sid, _a in icons}
 
 
 def draw_floats(painter, session, viewport, width, height):

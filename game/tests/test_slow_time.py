@@ -1,6 +1,6 @@
 """Slow Time: the world at half speed for 5 s (+1 s a level past 5), tinted
-icy blue -- all but its caster, who keeps their own speed (twice the world's),
-wears an icy fisheye bubble and gives off a flickering blue light."""
+violet -- all but its caster, who keeps their own speed (twice the world's),
+wears a violet fisheye bubble and gives off a flickering violet light."""
 from types import SimpleNamespace
 
 import pytest
@@ -295,7 +295,7 @@ def test_the_bubble_is_round_the_caster_while_it_lasts(clock):
     assert strength == pytest.approx(SLOW_TIME_BUBBLE_LENS, rel=0.06)
     assert SLOW_TIME_BUBBLE_LENS >= 0.55                  # a strong fisheye
     assert fill == pytest.approx(SLOW_TIME_BUBBLE_FILL)
-    assert colour[2] > colour[1] > colour[0]      # icy blue
+    assert colour[2] > colour[0] > colour[1]      # the icon's violet
     clock[0] += 3.9                               # fading out
     faded = s.slow_time_lenses()[0]
     assert faded[8] < fill and faded[3] < strength * 0.95
@@ -384,19 +384,25 @@ def test_a_save_made_while_it_lasts_loads_at_the_worlds_own_speed(clock):
     assert t.logic.time_scale == 1.0
 
 
-def test_the_screen_takes_an_icy_tint(qt_app):
+def test_the_screen_is_tinted_violet_at_its_edges_only(qt_app):
+    """The resurrection's way: the middle of sight stays clear; the edges take
+    the spell's violet, grainy and streaked."""
     from PyQt5.QtGui import QImage, QPainter, QColor
     from ..ui import hud
     s = _session()
     s.slow_time(1)
     s._slow_time_from -= 1.0                     # past the fade-in
-    img = QImage(64, 64, QImage.Format_ARGB32)
+    img = QImage(320, 180, QImage.Format_ARGB32)
     img.fill(QColor(0, 0, 0))
     p = QPainter(img)
-    hud.draw_slow_time(p, s, 64, 64)
+    hud.draw_slow_time(p, s, 320, 180, now=0.0)
     p.end()
-    c = img.pixelColor(10, 10)
-    assert c.blue() > c.red() > 0
+    centre = img.pixelColor(160, 90)
+    assert (centre.red(), centre.green(), centre.blue()) == (0, 0, 0)    # clear
+    corners = [img.pixelColor(x, y) for x in (2, 6, 314, 318) for y in (2, 6, 174, 178)]
+    lit = [c for c in corners if c.blue() > 0]
+    assert len(lit) >= 12
+    assert all(c.blue() > c.red() > c.green() for c in lit)              # violet
 
 
 def test_casting_slow_time_plays_its_sound(monkeypatch):
@@ -411,7 +417,7 @@ def test_casting_slow_time_plays_its_sound(monkeypatch):
 @pytest.mark.gl
 def test_the_bubble_bends_and_tints_the_frame_in_gl():
     """The real lens pass over a striped frame: inside the bubble the stripes
-    are magnified and tinted icy blue, a bright rim rings it, and outside it
+    are magnified and tinted violet, a bright rim rings it, and outside it
     the frame is untouched."""
     import numpy as np
     import OpenGL.GL as gl
@@ -453,6 +459,43 @@ def test_the_bubble_bends_and_tints_the_frame_in_gl():
         return int((light[1:] != light[:-1]).sum())
     span = slice(int(mid - r_px * 0.5), int(mid + r_px * 0.5))
     assert edges(after[mid, span]) < edges(before[mid, span])
-    # A bright icy rim at the edge.
+    # A bright rim at the edge.
     rim = after[mid, int(mid + r_px * 0.965) - 1:int(mid + r_px * 0.965) + 2]
     assert rim[:, 2].max() > 200
+
+
+def test_the_bubble_tint_and_light_are_the_spell_icons_colour():
+    """One colour: the spell's (its icon's violet) for the bubble, the light
+    and the screen tint."""
+    from ..rpg import magic
+    from ..ui import hud
+    from ..runtime import SLOW_TIME_COLOUR
+    spell = tuple(magic.get("slow_time").color)
+    assert SLOW_TIME_COLOUR == spell == tuple(hud.SLOW_TIME_TINT[:3])
+    r, g, b = spell
+    assert b > r > g                                    # violet, like the icon
+
+
+def test_the_edge_effect_is_gently_animated(qt_app):
+    """The ring of ticks turns and its glow drifts: two moments differ, but
+    only a little in a fraction of a second (gentle)."""
+    from PyQt5.QtGui import QImage, QPainter, QColor
+    from ..ui import hud
+    s = _session()
+    s.slow_time(1)
+    s._slow_time_from -= 1.0
+
+    def frame(t):
+        img = QImage(320, 180, QImage.Format_ARGB32)
+        img.fill(QColor(0, 0, 0))
+        p = QPainter(img)
+        hud.draw_slow_time(p, s, 320, 180, now=t)
+        p.end()
+        return img
+
+    a, b, c = frame(0.0), frame(0.05), frame(3.0)
+    changed = lambda x, y: sum(x.pixel(i, j) != y.pixel(i, j)
+                               for i in range(0, 320, 2) for j in range(0, 180, 2))
+    assert changed(a, c) > changed(a, b) > 0
+    peak = max(QColor(a.pixel(i, j)).blue() for i in range(320) for j in range(180))
+    assert peak < 140                                    # subtle: never a wash
