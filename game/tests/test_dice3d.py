@@ -576,11 +576,11 @@ def test_the_players_attack_roll_sits_at_the_bottom_above_the_shortcut_bar():
     save = ((300.0, 200.0), {"result": {"label": "Lockpicking"}, "side": "you"}, _layout(180, 90))
     foe = ((700.0, 300.0), _box("Bandit rolls to hit you"), _layout(180, 120))
     groups = hud._stack_roll_boxes([attack, save, foe], 1280, 720, floor=640,
-                                   dock="right", bottom=644 - hud.STRIP_NAME_CLEAR)
+                                   dock="right", bottom=644 - hud.PLAYER_ATTACK_DOCK_GAP)
     where = {e[3]["result"]["label"]: e for g in groups for e in g}
     x, y, _sp, _b, lay, pointer = where["Roll to hit Bandit"]
     assert x == (1280 - 280) // 2                                # centred
-    assert y + lay["h"] == 644 - hud.STRIP_NAME_CLEAR            # above the bar's name plate
+    assert y + lay["h"] == 644 - hud.PLAYER_ATTACK_DOCK_GAP      # right above the bar
     assert not pointer
     sx, sy = where["Lockpicking"][:2]
     assert sy + 90 < 200 and abs(sx + 90 - 300) < 120            # still over the player

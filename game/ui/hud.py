@@ -606,6 +606,22 @@ def shows_roll_boxes(session) -> bool:
     return session.open_screen is None or session.open_screen in ROLL_BOX_SCREENS
 
 
+def player_attack_roll_shown(session) -> bool:
+    """Whether the player's own attack roll is on screen at the bottom
+    (:data:`PLAYER_ATTACK_DOCK`): the shortcut bar hides the selected
+    slot's name meanwhile, so the box sits right above the bar."""
+    if PLAYER_ATTACK_DOCK != "bottom":
+        return False
+    try:
+        if not shows_roll_boxes(session):
+            return False
+        return any(_box_side(b) == "you" and _is_attack(b)
+                   and getattr(b.get("actor"), "pos", None) is not None
+                   for b in _screen_roll_boxes(session))
+    except Exception:
+        return False
+
+
 def _keep_clear_rects(session, width, height):
     """``[(x, y, w, h)]`` a roll box over its roller moves clear of: the
     open conversation's or screen's window (drawn over the boxes) and the
@@ -670,9 +686,9 @@ def draw_roll_boxes(painter, session, viewport, width, height):
         if not layout.collapsed("strip"):
             strip_top = int(layout.screen_rect("strip", width, height).top())
             floor = strip_top - 4
-            # The player's own attack sits clear of the selected slot's name,
-            # which the bar shows above itself (inventory_strip._draw_name).
-            bottom = strip_top - STRIP_NAME_CLEAR
+            # The player's own attack sits right above the bar: the bar hides
+            # the selected slot's name while it shows (player_attack_roll_shown).
+            bottom = strip_top - PLAYER_ATTACK_DOCK_GAP
     except Exception:
         floor = height
     dock_top = 8
@@ -710,9 +726,6 @@ ROLL_STACK_DOCK = "right"
 PLAYER_ATTACK_DOCK = "bottom"
 #: The gap between the bottom-docked rolls and the shortcut bar.
 PLAYER_ATTACK_DOCK_GAP = 6
-#: How far above the shortcut bar's top the bottom-docked rolls end: clear of
-#: the selected slot's name plate (30 px above the bar), and a small gap.
-STRIP_NAME_CLEAR = 30 + PLAYER_ATTACK_DOCK_GAP
 #: A docked box's width: the roller's name on one line, what they roll for
 #: on the next, so the column stays narrow however long the names.
 ROLL_DOCK_W = 210
@@ -864,8 +877,8 @@ def _stack_roll_boxes(anchored, width, height, stack=True, floor=None,
 
 def _bottom_dock(anchored, natural, width, base, members, placed):
     """The player's own attack rolls centred at the bottom of the screen,
-    the newest lowest, stacked up from *base* (just above the shortcut bar
-    and the name it shows); as many as fit. No pointer: they are the
+    the newest lowest, stacked up from *base* (just above the shortcut
+    bar); as many as fit. No pointer: they are the
     player's."""
     members = sorted(members)
     room = base - 4

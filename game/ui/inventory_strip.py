@@ -244,9 +244,10 @@ class InventoryStrip(FloatingWindow):
         drag.set_zones(self, [(QRect(rect), ("strip", i)) for i, rect in enumerate(self._rects)])
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
-        # The selected slot's name, above the bar.
+        # The selected slot's name, above the bar -- not while the player's
+        # attack roll sits there (hud.player_attack_roll_shown).
         stack = self._slots[self.selected] if self.selected < len(self._slots) else None
-        if stack and dragged is None:
+        if stack and dragged is None and not self._roll_over_name():
             self._draw_name(painter, stack)
         if self._locked and dragged is None:
             # A greyed spell says why: hovered by the pointer, or the slot a
@@ -359,6 +360,11 @@ class InventoryStrip(FloatingWindow):
             painter.drawRoundedRect(r.adjusted(-1.5, -1.5, 1.5, 1.5), 4, 4)
         if hot and not dragging:
             painter.fillRect(rect.adjusted(2, 2, -2, -2), QColor(255, 220, 160, 26))
+
+    def _roll_over_name(self) -> bool:
+        """Whether the player's attack roll is shown where the name goes."""
+        from . import hud
+        return hud.player_attack_roll_shown(self.session)
 
     def _draw_name(self, painter, stack):
         name = str(stack.get("name") or stack.get("id"))

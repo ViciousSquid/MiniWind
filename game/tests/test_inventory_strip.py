@@ -197,6 +197,9 @@ def test_a_worn_shield_is_drawn_on_the_off_arm_and_raised_to_block():
     # very fast tween -- and never as a stab.
     from ..runtime import BLOCK_TWEEN_SECONDS
     s._blocking = True
+    # The tween from rest: the frame just drawn timed itself on the real
+    # clock, which is under 100 s in a machine just started.
+    s.__dict__.pop("_block_at", None)
     t0 = 100.0
     s._block_pose(t0)
     half = s._block_pose(t0 + BLOCK_TWEEN_SECONDS / 2)
@@ -498,3 +501,39 @@ def test_crossbows_pair_up_but_a_bow_takes_both_hands():
     _give(s, "short_bow")
     bow = [st["id"] if st else None for st in s.strip_slots()].index("short_bow")
     assert s.select_strip_slot(bow) and _hands(s) == ("short_bow", None)
+
+
+def test_the_selected_name_is_hidden_while_the_players_attack_roll_shows(qt_app, monkeypatch):
+    """The player's attack roll sits right above the bar (game/ui/hud.py
+    PLAYER_ATTACK_DOCK): the selected slot's name gives it the room, and
+    comes back once the roll box has gone."""
+    from PyQt5.QtGui import QImage, QPainter
+    from ..ui.inventory_strip import InventoryStrip
+    from ..ui import hud
+    s = _session()
+    _give(s, "iron_shortsword")
+    strip = InventoryStrip(s)
+    strip.place(1280, 720)
+    named = []
+    monkeypatch.setattr(strip, "_draw_name", lambda painter, stack: named.append(stack["id"]))
+    boxes = []
+    monkeypatch.setattr(s, "live_roll_boxes", lambda: list(boxes))
+
+    def paint():
+        img = QImage(1280, 720, QImage.Format_ARGB32)
+        p = QPainter(img)
+        strip.draw(p)
+        p.end()
+
+    paint()
+    assert named == ["iron_shortsword"]
+    you = s.player_actor
+    boxes.append({"actor": you, "side": "you", "result": {"label": "Roll to hit Bandit"}})
+    assert hud.player_attack_roll_shown(s)
+    paint()
+    assert named == ["iron_shortsword"]                     # hidden meanwhile
+    boxes[0] = {"actor": you, "side": "you", "result": {"label": "Lockpicking"}}
+    assert not hud.player_attack_roll_shown(s)              # only an attack makes room
+    boxes.clear()
+    paint()
+    assert named == ["iron_shortsword"] * 2                 # back once it has gone
