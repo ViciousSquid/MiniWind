@@ -50,50 +50,7 @@ def world_map_rgb(terrain, map_path):
     wm._build("district-map", terrain, [], brush_source=map_path)
     if wm.rgb is None:
         raise RuntimeError(f"world map failed: {wm.error}")
-    rgb = wm.rgb.copy()
-    paint_by_area(rgb, terrain, wm.bounds, wm.cell)
-    return rgb, wm.bounds, wm.cell
-
-
-def paint_by_area(rgb, terrain, bounds, cell):
-    """Lay the terrain's paint over a map picture by area: each pixel takes
-    the strongest paint in its footprint, so roads (and baked borders) far
-    narrower than a pixel still show as lines. In place."""
-    maps = getattr(terrain, "texture_paint_maps", None) or {}
-    size = float(terrain.chunk_size)
-    (min_x, _x1), (min_z, _z1) = bounds
-    rows, cols = rgb.shape[:2]
-    for (cx, cz), paint in maps.items():
-        res = paint.shape[0]
-        alpha = paint[..., 3].astype(np.float32) / 255.0
-        if not alpha.any():
-            continue
-        x0 = terrain.offset_x + cx * size
-        z0 = terrain.offset_z + cz * size
-        c0 = int(np.floor((x0 - min_x) / cell))
-        r0 = int(np.floor((z0 - min_z) / cell))
-        n = int(np.ceil(size / cell))
-        # Each texel's map pixel, then the strongest paint per pixel.
-        tx = (x0 + (np.arange(res) + 0.5) * size / res - min_x) / cell
-        col = np.clip(np.floor(tx).astype(np.int64) - c0, 0, n - 1)
-        tz = (z0 + (np.arange(res) + 0.5) * size / res - min_z) / cell
-        row = np.clip(np.floor(tz).astype(np.int64) - r0, 0, n - 1)
-        best = np.zeros((n, n), np.float32)
-        colour = np.zeros((n, n, 3), np.float32)
-        ci, ri = np.meshgrid(col, row, indexing="ij")        # [ix, iz] like paint
-        flat = (ri * n + ci).ravel()
-        a = alpha.ravel()
-        order = np.argsort(a, kind="stable")                # strongest written last
-        best.ravel()[flat[order]] = a[order]
-        colour.reshape(-1, 3)[flat[order]] = paint[..., :3].reshape(-1, 3)[order]
-        rr0, cc0 = max(0, r0), max(0, c0)
-        rr1, cc1 = min(rows, r0 + n), min(cols, c0 + n)
-        if rr1 <= rr0 or cc1 <= cc0:
-            continue
-        b = best[rr0 - r0:rr1 - r0, cc0 - c0:cc1 - c0, None]
-        c = colour[rr0 - r0:rr1 - r0, cc0 - c0:cc1 - c0]
-        region = rgb[rr0:rr1, cc0:cc1].astype(np.float32)
-        rgb[rr0:rr1, cc0:cc1] = np.clip(region * (1 - b) + c * b, 0, 255).astype(np.uint8)
+    return wm.rgb, wm.bounds, wm.cell
 
 
 def biome_shares(districts, terrain, step=400.0):

@@ -230,6 +230,25 @@ def test_baked_road_texture_paint_is_visible_on_both_maps():
     assert tuple(base[6, 1]) == (70, 70, 70)
 
 
+def test_a_road_far_narrower_than_a_pixel_still_shows():
+    """A 4-unit-wide road on 512-texel paint, on a map of 250-unit pixels:
+    every pixel it crosses takes its colour (the strongest paint there)."""
+    class Thin(_Terrain):
+        chunk_size = 2000.0
+        offset_x = offset_z = -1000.0
+
+        def __init__(self):
+            paint = np.zeros((512, 512, 4), np.uint8)
+            paint[300, :, :3] = (180, 102, 48)          # one texel wide, along z
+            paint[300, :, 3] = 255
+            self.texture_paint_maps = {(0, 0): paint}
+    base = np.full((8, 8, 3), 70, np.uint8)
+    worldmap.paint_texture_paint(base, Thin(), ((-1000, 1000), (-1000, 1000)), 250.0)
+    column = int((300 + 0.5) * 2000 / 512 // 250)
+    assert all(tuple(base[r, column]) == (180, 102, 48) for r in range(8))
+    assert tuple(base[0, column - 1]) == (70, 70, 70)
+
+
 def test_rebuilding_paints_baked_roads(tmp_path, monkeypatch):
     class PaintedTerrain(_Terrain):
         chunk_size = 2000.0

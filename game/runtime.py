@@ -7373,6 +7373,8 @@ class MiniwindSession(SettlementLaw):
                 self.districts = found
                 if not self.district_borders_enabled():
                     self.set_district_borders(False)
+                elif self.border_glow_enabled():
+                    found.border_lines()      # traced now, under the loading bar
         except Exception as exc:              # never take the session down
             print(f"[MiniWind] districts unavailable: {exc}")
 
@@ -7412,6 +7414,35 @@ class MiniwindSession(SettlementLaw):
         elif on and lifted:
             drawing.lay(ter)
             self._district_lifted = False
+
+    def border_glow_enabled(self) -> bool:
+        """The glow along a border as the player nears it (GAME → "Border
+        glow", ``[GAME] border_glow``; the console's ``districts glow on|off``
+        this session). On by default; never without the borders."""
+        over = self.__dict__.get("_border_glow")
+        on = bool(over) if over is not None else self._game_flag("border_glow")
+        return on and self.district_borders_enabled()
+
+    def district_glow(self):
+        """The border glow, updated for where the player is now, or None
+        when there is nothing to draw (game/district_glow.py). Away from a
+        border this is only a distance check, a few times a second."""
+        found = self.__dict__.get("districts")
+        if found is None or not self.border_glow_enabled():
+            return None
+        glow = self.__dict__.get("_district_glow")
+        if glow is None:
+            ter = fio.terrain(self.logic) if self.logic is not None else None
+            if ter is None or not hasattr(ter, "_get_heights_batch"):
+                return None
+            from .district_glow import Glow
+            glow = self._district_glow = Glow(found, lambda xs, zs: ter._get_heights_batch(
+                np.asarray(xs, np.float32), np.asarray(zs, np.float32)))
+        pos = self._player_pos()
+        if pos is None:
+            return None
+        import time as _time
+        return glow if glow.update(float(pos[0]), float(pos[2]), _time.monotonic()) > 0.0 else None
 
     def _restore_district_borders(self) -> None:
         """As the session ends: the map's paint as its file has it."""

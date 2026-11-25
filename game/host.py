@@ -936,6 +936,13 @@ class MiniwindGame:
         if session is None:
             return
         projection, view = ev.get("projection"), ev.get("view")
+        # The border glow, under everything else on the floor, only while the
+        # player is near a district border (game/district_glow.py).
+        glow_of = getattr(session, "district_glow", None)
+        glow = glow_of() if callable(glow_of) else None
+        if glow is not None:
+            import game.ui.district_glow_gl as district_glow_gl
+            district_glow_gl.draw(projection, view, glow)
         gore = getattr(session, "gore", None)
         if (gore is not None and not getattr(session, "needs_char_creation", False)
                 and getattr(session, "open_screen", None) != "charcreate"):

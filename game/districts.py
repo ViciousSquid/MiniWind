@@ -470,6 +470,19 @@ def _n(x, z, scale, k):
                         (_INK_SALT + k * HASH_SEED) & _U32)
 
 
+def stroke_path(x, z, width=30.0):
+    """``(tremor, half, pressure)`` of the pen's main stroke at (x, z): the
+    stroke runs where ``d + tremor == 0`` (*d* signed across the true border,
+    as :func:`ink` takes it) and is ``half`` either side of that at its
+    fullest. What the border glow follows, so it hugs the drawn line."""
+    x, z = np.asarray(x, np.float64), np.asarray(z, np.float64)
+    w = float(width)
+    tremor = (_n(x, z, 450.0, 1) - 0.5) * 8.0 * w + (_n(x, z, 110.0, 2) - 0.5) * 1.5 * w
+    pressure = _n(x, z, 620.0, 3)
+    half = 0.5 * w * (0.3 + 1.25 * pressure)
+    return tremor, half, pressure
+
+
 def ink(x, z, d, width=30.0):
     """How much ink (0..1) a pen line drawn by hand puts at (x, z), *d*
     world units (signed, across the line) from the true border.
@@ -481,9 +494,7 @@ def ink(x, z, d, width=30.0):
     """
     x, z, d = (np.asarray(v, np.float64) for v in (x, z, d))
     w = float(width)
-    tremor = (_n(x, z, 450.0, 1) - 0.5) * 8.0 * w + (_n(x, z, 110.0, 2) - 0.5) * 1.5 * w
-    pressure = _n(x, z, 620.0, 3)
-    half = 0.5 * w * (0.3 + 1.25 * pressure)
+    tremor, half, pressure = stroke_path(x, z, w)
     bleed = (_n(x, z, 28.0, 4) - 0.5) * 0.45 * w
     soft = 5.0                                   # a texel-wide soft edge
 

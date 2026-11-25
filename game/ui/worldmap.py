@@ -37,7 +37,7 @@ MINIMAP_SPAN = 6400.0
 #: Where cached map pictures are kept.
 CACHE_DIR = "cache"
 #: Bumped whenever the painting changes, so old caches are not reused.
-STYLE_VERSION = 5
+STYLE_VERSION = 6
 
 _TREE_HINT = "tree"
 
@@ -110,11 +110,14 @@ def colour_terrain(heights, cell, biome_weights=None):
 
 
 def paint_texture_paint(rgb, terrain, bounds, cell):
-    """Composite the terrain's baked RGBA paint onto its map picture.
+    """Composite the terrain's baked RGBA paint onto its map picture, in place.
 
-    Roads, plazas and ground decals are stored as per-chunk texture paint,
-    not brushes or biome weights. The terrain samples each paint chunk in
-    [x, z] order, whereas the map image is [z, x].
+    Roads, plazas, ground decals and the districts' inked borders are stored
+    as per-chunk texture paint, not brushes or biome weights. They are far
+    narrower than a map pixel (a road is ~40 units, a pixel ~80), so each
+    pixel takes the *strongest* paint in its footprint rather than one
+    sample from its middle, which missed most of them: every road shows as
+    a line. The terrain stores each chunk [x, z]; the picture is [z, x].
     """
     maps = getattr(terrain, "texture_paint_maps", None)
     if not maps:
@@ -122,33 +125,77 @@ def paint_texture_paint(rgb, terrain, bounds, cell):
     size = float(getattr(terrain, "chunk_size", 0.0))
     if size <= 0:
         return
+    (min_x, _x1), (min_z, _z1) = bounds
+    rows, cols = rgb.shape[:2]
+    ox = float(getattr(terrain, "offset_x", 0.0))
+    oz = float(getattr(terrain, "offset_z", 0.0))
+    n = int(math.ceil(size / cell)) + 1
+    coarse = {}
+    for (cx, cz), paint in list(maps.items()):
+        if paint is None or getattr(paint, "ndim", 0) != 3 or paint.shape[2] != 4:
+            continue
+        alpha = paint[..., 3]
+        if not alpha.any():
+            continue
+        res = paint.shape[0]
+        if size / res >= cell:
+            coarse[(cx, cz)] = paint        # texels bigger than pixels: sample them
+            continue
+        x0, z0 = ox + int(cx) * size, oz + int(cz) * size
+        c0 = int(math.floor((x0 - min_x) / cell))
+        r0 = int(math.floor((z0 - min_z) / cell))
+        # Each texel's map pixel, within this chunk's little window.
+        texel = (np.arange(res) + 0.5) * (size / res)
+        col = np.clip(np.floor((x0 + texel - min_x) / cell).astype(np.int64) - c0, 0, n - 1)
+        row = np.clip(np.floor((z0 + texel - min_z) / cell).astype(np.int64) - r0, 0, n - 1)
+        ci, ri = np.meshgrid(col, row, indexing="ij")              # [ix, iz], as paint
+        flat = (ri * n + ci).ravel()
+        a = alpha.ravel()
+        order = np.argsort(a, kind="stable")                       # the strongest last
+        best = np.zeros(n * n, np.float32)
+        colour = np.zeros((n * n, 3), np.float32)
+        best[flat[order]] = a[order].astype(np.float32) / 255.0
+        colour[flat[order]] = paint[..., :3].reshape(-1, 3)[order]
+        best, colour = best.reshape(n, n), colour.reshape(n, n, 3)
+        rr0, cc0 = max(0, r0), max(0, c0)
+        rr1, cc1 = min(rows, r0 + n), min(cols, c0 + n)
+        if rr1 <= rr0 or cc1 <= cc0:
+            continue
+        b = best[rr0 - r0:rr1 - r0, cc0 - c0:cc1 - c0, None]
+        c = colour[rr0 - r0:rr1 - r0, cc0 - c0:cc1 - c0]
+        region = rgb[rr0:rr1, cc0:cc1].astype(np.float32)
+        rgb[rr0:rr1, cc0:cc1] = np.clip(region * (1.0 - b) + c * b, 0, 255).astype(np.uint8)
+    if coarse:
+        _sample_paint(rgb, coarse, size, ox, oz, bounds, cell)
+
+
+def _sample_paint(rgb, maps, size, ox, oz, bounds, cell):
+    """Paint whose texels are bigger than the map's pixels: each pixel takes
+    the texel under its middle."""
     (min_x, _), (min_z, _) = bounds
     rows, cols = rgb.shape[:2]
-    # The map's sample centres match the height and biome sampling grid.
     xs = min_x + (np.arange(cols) + 0.5) * cell
     zs = min_z + (np.arange(rows) + 0.5) * cell
-    fx = (xs - float(getattr(terrain, "offset_x", 0.0))) / size
-    fz = (zs - float(getattr(terrain, "offset_z", 0.0))) / size
+    fx = (xs - ox) / size
+    fz = (zs - oz) / size
     cx, cz = np.floor(fx).astype(np.int64), np.floor(fz).astype(np.int64)
-    for chunk_x in np.unique(cx):
+    for (chunk_x, chunk_z), paint in maps.items():
         columns = np.flatnonzero(cx == chunk_x)
-        for chunk_z in np.unique(cz):
-            paint = maps.get((int(chunk_x), int(chunk_z)))
-            if paint is None or getattr(paint, "ndim", 0) != 3 or paint.shape[2] != 4:
-                continue
-            lines = np.flatnonzero(cz == chunk_z)
-            px = np.clip(((fx[columns] - chunk_x) * paint.shape[0]).astype(np.int64),
-                         0, paint.shape[0] - 1)
-            pz = np.clip(((fz[lines] - chunk_z) * paint.shape[1]).astype(np.int64),
-                         0, paint.shape[1] - 1)
-            # Advanced indices come back in [x, z] order; transpose to [z, x].
-            sample = paint[px[:, None], pz[None, :]].transpose(1, 0, 2)
-            alpha = sample[..., 3:4].astype(np.float32) / 255.0
-            if not np.any(alpha):
-                continue
-            region = rgb[np.ix_(lines, columns)].astype(np.float32)
-            blended = region * (1.0 - alpha) + sample[..., :3] * alpha
-            rgb[np.ix_(lines, columns)] = np.clip(blended, 0, 255).astype(np.uint8)
+        lines = np.flatnonzero(cz == chunk_z)
+        if not len(columns) or not len(lines):
+            continue
+        px = np.clip(((fx[columns] - chunk_x) * paint.shape[0]).astype(np.int64),
+                     0, paint.shape[0] - 1)
+        pz = np.clip(((fz[lines] - chunk_z) * paint.shape[1]).astype(np.int64),
+                     0, paint.shape[1] - 1)
+        # Advanced indices come back in [x, z] order; transpose to [z, x].
+        sample = paint[px[:, None], pz[None, :]].transpose(1, 0, 2)
+        alpha = sample[..., 3:4].astype(np.float32) / 255.0
+        if not np.any(alpha):
+            continue
+        region = rgb[np.ix_(lines, columns)].astype(np.float32)
+        blended = region * (1.0 - alpha) + sample[..., :3] * alpha
+        rgb[np.ix_(lines, columns)] = np.clip(blended, 0, 255).astype(np.uint8)
 
 
 def paint_brushes(rgb, brushes, bounds, cell, heights=None):
