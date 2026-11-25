@@ -86,8 +86,8 @@ taking the upstream fixes in the same owning modules:
 
 The migration carries the upstream I/O, physics, decal, SysMon, editor and
 view tests that apply to MiniWind, plus the test-tool adaptation for the
-current per-map brush-semantics API. MiniWind's shipped maps remain version 3;
-Fio's refreshed version-5 demo maps and `_SHOWCASE` assets are not copied over.
+current per-map brush-semantics API. The overworld (`miniwind_world.json`) is
+saved as version 5 since 691ef32; the other shipped maps remain version 3. Fio's refreshed version-5 demo maps and `_SHOWCASE` assets are not copied over.
 The existing loader migration and MiniWind map fixtures remain authoritative.
 
 `editor/version.txt` now records `Fio 3.5.0.1511`; MiniWind remains at
