@@ -176,7 +176,7 @@ def test_locked_cards_are_greyed_and_say_why(session, monkeypatch):
     assert c.active_spell == "flare"
 
 
-def test_cards_show_selection_active_and_a_tooltip(session, monkeypatch):
+def test_cards_show_selection_active_and_no_tooltip(session, monkeypatch):
     drawn = []
     real = cards.draw_card
     monkeypatch.setattr(cards, "draw_card",
@@ -195,7 +195,7 @@ def test_cards_show_selection_active_and_a_tooltip(session, monkeypatch):
     monkeypatch.setattr(hits, "pointer", (rect.center().x(), rect.center().y()))
     drawn.clear()
     _paint(session, 1100, 578)
-    assert tips and tips[-1].startswith("Firebolt")
+    assert tips == []              # the pane on the right shows the spell instead
     assert next(card for _r, card in drawn if card.title == "Firebolt").hovered
 
 

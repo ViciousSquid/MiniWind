@@ -487,7 +487,12 @@ SLOW_TIME_FLICKER_FLOOR = 0.45
 #: height, how hard it magnifies, where its icy rim glows (as a share of the
 #: radius), the ripple through its glass, and how blue it tints the inside.
 SLOW_TIME_BUBBLE_SCALE = 1.5
-SLOW_TIME_BUBBLE_LENS = 0.32
+#: 0.6: the middle seen about 2.5x larger, squeezed toward the rim (fisheye).
+SLOW_TIME_BUBBLE_LENS = 0.6
+#: The bubble gently pulses larger and smaller: by this share of its radius,
+#: this many times a second (and its fisheye a little with it).
+SLOW_TIME_BUBBLE_PULSE = 0.10
+SLOW_TIME_BUBBLE_PULSE_HZ = 0.45
 SLOW_TIME_BUBBLE_RIM = 0.94
 SLOW_TIME_BUBBLE_SHIMMER = 0.35
 SLOW_TIME_BUBBLE_FILL = 0.55
@@ -5228,8 +5233,8 @@ class MiniwindSession(SettlementLaw):
         (:func:`game.ui.magic_gl.draw_lenses`): ``[(x, y, z, strength,
         radius, rim, colour, shimmer, fill)]``, or ``[]`` when no Slow Time
         runs. Its radius is the caster's height times
-        :data:`SLOW_TIME_BUBBLE_SCALE`, breathing a little; it swells in and
-        out with the spell."""
+        :data:`SLOW_TIME_BUBBLE_SCALE`, gently pulsing larger and smaller
+        (:data:`SLOW_TIME_BUBBLE_PULSE`); it swells in and out with the spell."""
         if self.__dict__.get("_slow_time_until") is None:
             return []
         caster = self.__dict__.get("_slow_time_caster")
@@ -5240,11 +5245,13 @@ class MiniwindSession(SettlementLaw):
         env = self.slow_time_tint()
         if env <= 0.0:
             return []
-        breathe = 1.0 + 0.03 * math.sin(_time.monotonic() * math.tau * 0.8)
+        wave = math.sin(_time.monotonic() * math.tau * SLOW_TIME_BUBBLE_PULSE_HZ)
+        breathe = 1.0 + SLOW_TIME_BUBBLE_PULSE * wave        # gently larger, smaller
         radius = self._slow_time_height(caster) * SLOW_TIME_BUBBLE_SCALE * breathe
         radius *= 0.6 + 0.4 * env                  # it swells out as it fades in
+        lens = SLOW_TIME_BUBBLE_LENS * (1.0 + 0.5 * SLOW_TIME_BUBBLE_PULSE * wave)
         colour = tuple(c / 255.0 for c in SLOW_TIME_COLOUR)
-        return [(centre[0], centre[1], centre[2], SLOW_TIME_BUBBLE_LENS * env, radius,
+        return [(centre[0], centre[1], centre[2], lens * env, radius,
                  SLOW_TIME_BUBBLE_RIM, colour, SLOW_TIME_BUBBLE_SHIMMER,
                  SLOW_TIME_BUBBLE_FILL * env)]
 

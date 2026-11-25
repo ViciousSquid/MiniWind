@@ -1445,12 +1445,12 @@ def _draw_spells(painter, session, w, h):
         card = _spell_card(painter, session, spell, selected=i == st["row"],
                            locked=locked, rect=rect)
         cards.draw_card(painter, rect, card)
+        # No card tooltip here: the pane on the right shows the selected
+        # spell in full. Only a greyed card says why (metal armour).
         if locked:
             spell_lock.note(rect, True)
             if i == st["row"] and pad:
                 spell_lock.focus(rect, True)
-        else:
-            cards.note_tooltip(rect, card, focus=pad and i == st["row"])
         hits.add(QRect(rect), lambda s, sid=spell.id: _ready_spell(s, sid),
                  f"spell:{spell.id}")
         _SPELL_HITS["cells"].append((QRect(rect), ("spell", None, spell.id)))

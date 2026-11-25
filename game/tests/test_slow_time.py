@@ -291,16 +291,34 @@ def test_the_bubble_is_round_the_caster_while_it_lasts(clock):
     clock[0] += 1.0
     (x, y, z, strength, radius, rim, colour, shimmer, fill), = s.slow_time_lenses()
     assert (x, z) == (0.0, 0.0) and y == pytest.approx(SLOW_TIME_CASTER_HEIGHT / 2)
-    assert radius == pytest.approx(SLOW_TIME_CASTER_HEIGHT * SLOW_TIME_BUBBLE_SCALE, rel=0.04)
-    assert strength == pytest.approx(SLOW_TIME_BUBBLE_LENS)
+    assert radius == pytest.approx(SLOW_TIME_CASTER_HEIGHT * SLOW_TIME_BUBBLE_SCALE, rel=0.11)
+    assert strength == pytest.approx(SLOW_TIME_BUBBLE_LENS, rel=0.06)
+    assert SLOW_TIME_BUBBLE_LENS >= 0.55                  # a strong fisheye
     assert fill == pytest.approx(SLOW_TIME_BUBBLE_FILL)
     assert colour[2] > colour[1] > colour[0]      # icy blue
     clock[0] += 3.9                               # fading out
     faded = s.slow_time_lenses()[0]
-    assert faded[3] < strength and faded[4] < radius
+    assert faded[8] < fill and faded[3] < strength * 0.95
     clock[0] += 0.2
     s._update_slow_time()
     assert s.slow_time_lenses() == []
+
+
+def test_the_bubble_gently_pulses_larger_and_smaller(clock):
+    from ..runtime import (SLOW_TIME_BUBBLE_SCALE, SLOW_TIME_CASTER_HEIGHT,
+                           SLOW_TIME_BUBBLE_PULSE, SLOW_TIME_BUBBLE_PULSE_HZ)
+    s = _session()
+    s.slow_time(10)                               # long enough to watch it
+    clock[0] += 1.0                               # fully in
+    radii = []
+    period = 1.0 / SLOW_TIME_BUBBLE_PULSE_HZ
+    for k in range(24):
+        radii.append(s.slow_time_lenses()[0][4])
+        clock[0] += period / 24
+    base = SLOW_TIME_CASTER_HEIGHT * SLOW_TIME_BUBBLE_SCALE
+    assert max(radii) == pytest.approx(base * (1 + SLOW_TIME_BUBBLE_PULSE), rel=0.02)
+    assert min(radii) == pytest.approx(base * (1 - SLOW_TIME_BUBBLE_PULSE), rel=0.02)
+    assert 1.5 <= period <= 3.0                   # gentle: a breath, not a flicker
 
 
 def test_the_bubble_projects_to_a_tinted_lens_on_screen():
@@ -308,7 +326,7 @@ def test_the_bubble_projects_to_a_tinted_lens_on_screen():
     from ..ui import magic_gl
     proj = glm.perspective(glm.radians(60.0), 16 / 9, 1.0, 5000.0)
     view = glm.lookAt(glm.vec3(0, 900, 1), glm.vec3(0, 0, 0), glm.vec3(0, 1, 0))
-    lens = (0.0, 56.0, 0.0, 0.32, 168.0, 0.94, (0.47, 0.75, 1.0), 0.35, 0.55)
+    lens = (0.0, 56.0, 0.0, 0.6, 168.0, 0.94, (0.47, 0.75, 1.0), 0.35, 0.55)
     (cx, cy, r, s, progress, colour, shimmer, fill), = magic_gl.project_lenses(
         proj, view, [lens], 1280, 720)
     assert (cx, cy) == pytest.approx((0.5, 0.5), abs=0.01)
