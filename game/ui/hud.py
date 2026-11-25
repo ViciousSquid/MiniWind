@@ -335,11 +335,9 @@ def draw_barks(painter, session, viewport, width, height):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    import game.ui.fonts as fonts
-    font = fonts.dialogue_font(11)
-    fm = QFontMetrics(font)
     painter.save()
-    painter.setFont(font)
+    painter.setFont(_bark_font())
+    fm = painter.fontMetrics()           # as the words will be drawn, on this device
     painter.setRenderHint(painter.Antialiasing, True)
     for thing, text, left in barks[:8]:
         if _has_roll_box(session, thing):
@@ -350,9 +348,7 @@ def draw_barks(painter, session, viewport, width, height):
         if sp is None:
             continue
         alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
-        lines = _plate_lines(fm, text, PLATE_MAX_W - 16)
-        w = max(fm.horizontalAdvance(line) for line in lines) + 16
-        h = 6 + fm.height() * len(lines)
+        lines, w, h = _plate_box(fm, text, BARK_PAD_X)
         rect = QRect(int(sp[0] - w / 2), int(sp[1] - 4 - h), w, h)
         painter.setPen(QPen(QColor(168, 142, 84, alpha), 1))
         painter.setBrush(QColor(0, 0, 0, int(alpha * 0.72)))
@@ -1267,6 +1263,33 @@ def _plate_lines(fm, text, max_w, max_lines=2):
     return [fm.elidedText(l, Qt.ElideRight, max_w) for l in lines]
 
 
+#: Speech and thought plates: how many lines before the rest is cut short,
+#: and the room around the words (px).
+PLATE_MAX_LINES = 4
+PLATE_PAD_Y = 6
+BARK_PAD_X = 10
+THOUGHT_PAD_X = 14
+BARK_FONT_PT = 11
+THOUGHT_FONT_PT = 10
+#: Between a speech plate's top and the thought bubble above it (px).
+THOUGHT_OVER_BARK_GAP = 6
+
+
+def _plate_box(fm, text, pad_x):
+    """``(lines, w, h)`` of a speech or thought plate saying *text* in a font
+    measured by *fm*: wrapped to :data:`PLATE_MAX_W`, up to
+    :data:`PLATE_MAX_LINES` lines, with the padding round it."""
+    lines = _plate_lines(fm, text, PLATE_MAX_W - 2 * pad_x, max_lines=PLATE_MAX_LINES)
+    w = max(fm.horizontalAdvance(line) for line in lines) + 2 * pad_x
+    h = 2 * PLATE_PAD_Y + fm.lineSpacing() * len(lines)
+    return lines, w, h
+
+
+def _bark_font():
+    import game.ui.fonts as fonts
+    return fonts.dialogue_font(BARK_FONT_PT)
+
+
 #: Thought bubbles: a pale cloud trailing two small puffs down to the
 #: head, so a thought never reads as something said aloud (draw_barks).
 _THOUGHT_FILL = (232, 232, 244)
@@ -1288,12 +1311,16 @@ def draw_thoughts(painter, session, viewport, width, height):
     except Exception:
         return
     import game.ui.fonts as fonts
-    font = fonts.dialogue_font(10)
-    fm = QFontMetrics(font)
-    speaking = {id(thing) for thing, _t, _l in
+    # What each one is saying aloud: the thought goes above that plate.
+    speaking = {id(thing): text for thing, text, _l in
                 (session.live_barks() if hasattr(session, "live_barks") else ())}
     painter.save()
-    painter.setFont(font)
+    bark_fm = None
+    if speaking:
+        painter.setFont(_bark_font())
+        bark_fm = painter.fontMetrics()
+    painter.setFont(fonts.dialogue_font(THOUGHT_FONT_PT))
+    fm = painter.fontMetrics()           # as the words will be drawn, on this device
     painter.setRenderHint(painter.Antialiasing, True)
     r, g, b = _THOUGHT_FILL
     for thing, text, left in thoughts[:8]:
@@ -1305,10 +1332,14 @@ def draw_thoughts(painter, session, viewport, width, height):
         if sp is None:
             continue
         alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
-        cx, cy = int(sp[0]), int(sp[1]) - (30 if id(thing) in speaking else 0)
-        lines = _plate_lines(fm, text, PLATE_MAX_W - 22)
-        w = max(fm.horizontalAdvance(line) for line in lines) + 22
-        h = 6 + fm.height() * len(lines)
+        cx, cy = int(sp[0]), int(sp[1])
+        said = speaking.get(id(thing))
+        if said is not None and bark_fm is not None:
+            # Above the speech plate, however many lines it runs to (its
+            # bottom is 4 px over the head point, see draw_barks); the puffs
+            # end at cy.
+            cy -= 4 + _plate_box(bark_fm, said, BARK_PAD_X)[2] + THOUGHT_OVER_BARK_GAP
+        lines, w, h = _plate_box(fm, text, THOUGHT_PAD_X)
         rect = QRect(cx - w // 2, cy - 16 - h, w, h)
         painter.setPen(QPen(QColor(120, 116, 150, alpha), 1))
         painter.setBrush(QColor(r, g, b, int(alpha * 0.92)))
