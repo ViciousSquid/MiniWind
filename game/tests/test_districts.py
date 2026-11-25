@@ -241,3 +241,30 @@ def test_the_console_reports_districts_and_toggles_borders(monkeypatch):
     assert s._district_borders is False and s.district_overlay() is None
     console.cmd_districts(console.ConsoleContext(), "")
     assert "Play Mode only" in lines[-1]
+
+
+@pytest.mark.gl
+def test_borders_change_a_real_terrain_frame_and_none_changes_nothing(qt_app):
+    from tests.helpers import scenes
+    from tests.helpers.session import FioTestSession
+    found = dd.Districts({"bounds": [-600, -600, 600, 600], "warp": 120.0, "warp_scale": 400.0,
+                          "border": {"width": 12.0, "alpha": 0.9},
+                          "districts": [{"id": "a", "seat": [-300, 0]},
+                                        {"id": "b", "seat": [300, 50]},
+                                        {"id": "c", "seat": [0, 400]}]})
+    session = FioTestSession(qt_app, scenes.terrain_map(), size=(320, 180))
+    try:
+        renderer = session.view.renderer
+        session.paint()
+        renderer.district_overlay = None
+        off = session.paint().astype(int)
+        renderer.district_overlay = found.overlay()
+        on = session.paint().astype(int)
+        renderer.district_overlay = None
+        again = session.paint().astype(int)
+    finally:
+        session.close()
+    changed = np.abs(on - off).sum(axis=2) > 0
+    assert changed.any()
+    assert on[changed].mean() < off[changed].mean()           # dark lines
+    assert np.array_equal(off, again)                         # off again: untouched

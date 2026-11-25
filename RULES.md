@@ -999,6 +999,31 @@ wheat and the clock all read it, so they always agree.
   summer, cut in late autumn, bare in winter); on Leap Day it stays as at
   winter's end.
 
+
+## 20. Districts
+
+The overworld is divided into eight districts (`game/data/districts.json`,
+`game/districts.py`): **Millbrook** (lowland), **Greywood**, **Ashby
+Reach** and **Cairnmoor** (desert; Cairnmoor takes in Whisperdeep),
+**Elderbrook**, **Wyndham**, **Furrow End** and **Emberpeak** (lowland).
+
+* *Where one ends.* A point belongs to the district whose seat is nearest,
+  measured after a gentle noise warp (up to 5,000 units) so borders wander,
+  plus 11,000 units times how far the ground there is from the district's
+  home biome, so each district keeps to its own ground and borders follow
+  the desert's edge. A district can have more than one seat; there is no
+  border between its own seats.
+* *How they look.* Thin dark lines on the ground (30 units wide), drawn by
+  the terrain shader each frame: the people, creatures and things on a
+  border always stand over it, and a border stops at the water's edge (the
+  sea, a lake). They are only a guide: crossing one changes nothing, and
+  nothing about them is saved. Settings › Game › *District borders* (on by
+  default) or `districts on|off` in the console shows or hides them;
+  `districts` alone says which district you are in. Other maps (caves) have
+  none.
+* *Seeing them.* `python -m game.tools.district_map` draws the world map
+  with every border, seat and name (`docs/images/districts_map.png`).
+
 ## Known gaps
 
 Places where the code does not yet do what something in the game describes:
