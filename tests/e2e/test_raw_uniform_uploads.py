@@ -349,7 +349,34 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
         # Which differs: the upload path, or the first paint from the ones
         # after it? A third paint, raw again, says.
         again = session.paint()
+        renderer = session.view.renderer
+        # A frame that re-renders the shadow maps, not the first one: does it
+        # come out as the first did?
+        renderer._shadow_slot_sig = [None] * len(renderer._shadow_slot_sig)
+        rerendered = session.paint()
+        # And with the driver made to finish the shadow pass before the lit
+        # passes read it?
+        import OpenGL.GL as gl_finish
+        real_shadows = type(renderer).render_shadow_maps
+
+        def finished(self, *args, **kwargs):
+            result = real_shadows(self, *args, **kwargs)
+            gl_finish.glFinish()
+            return result
+        renderer._shadow_slot_sig = [None] * len(renderer._shadow_slot_sig)
+        type(renderer).render_shadow_maps = finished
+        try:
+            finished_frame = session.paint()
+        finally:
+            type(renderer).render_shadow_maps = real_shadows
+
+        def which(frame):
+            return ("the first" if np.array_equal(frame, raw) else
+                    "the later ones" if np.array_equal(frame, through_wrappers)
+                    else "neither")
         message = _frames_differ(raw, through_wrappers)
+        message += ("; a frame re-rendering the shadows matches %s; with glFinish "
+                    "after the shadow pass, %s" % (which(rerendered), which(finished_frame)))
         message += ("; a third paint (raw again) %s; render stats that differ, "
                     "raw -> wrapped: %s" % (
                         "matches the raw one" if np.array_equal(again, raw) else
