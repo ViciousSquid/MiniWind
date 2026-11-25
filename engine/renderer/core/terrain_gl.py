@@ -30,7 +30,8 @@ from engine.renderer.core import grass_wind
 from engine.terrain_frame import (grass_vertex_count, heightfield_indices, paint_chain,
                                   paint_mip_levels)
 from engine.terrain_table import GRID_BORDER, STORED_GRID
-from .raw_calls import draw_elements, uniform_matrix4, vertex_attrib_pointer
+from .raw_calls import (draw_elements, has_base_instance, uniform_matrix4,
+                        vertex_attrib_pointer)
 
 
 def _no_current_gl_context():
@@ -224,6 +225,9 @@ class TerrainGL:
         #: Grass instances and draws the last frame sent (tests, SysMon).
         self.grass_instances_drawn = 0
         self.grass_draws = 0
+        #: Whether the context draws from a base instance (asked once, at the
+        #: first grass drawn on it; see _draw_grass_run).
+        self._base_instance = None
 
     def _sync_gl_columns_reset(self):
         for name in ('_grass_vao', '_grass_vbo', '_grass_count', '_gpu_version',
@@ -969,6 +973,8 @@ class TerrainGL:
         blade_height = float(self.frame.grass_height)
         blade_width = float(self.frame.grass_blade_width)
         lod_sq = self.frame.grass_lod_distance * self.frame.grass_lod_distance
+        if self._base_instance is None:
+            self._base_instance = bool(has_base_instance())
         last_segments = None
         near = (float(camera_pos.x), float(camera_pos.z),
                 float(self.frame.grass_lod_distance))
@@ -1282,6 +1288,12 @@ class TerrainGL:
         """Draw *count* of *slot*'s blades from instance *start* (its VAO bound)."""
         if start == 0:
             gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, vertices, count)
+        elif self._base_instance:
+            # GL 4.2 or ARB_base_instance: the run's instances are fetched
+            # from *start* on -- the very rows the attributes would be
+            # pointed at below (every grass attribute is per instance, and
+            # the grass shader does not read gl_InstanceID).
+            gl.glDrawArraysInstancedBaseInstance(gl.GL_TRIANGLES, 0, vertices, count, start)
         else:
             # OpenGL 3.3 has no glDrawArraysInstancedBaseInstance: point the
             # instance attributes at the run, draw, and point them back.
@@ -1573,6 +1585,7 @@ class TerrainGL:
                 pass
         self.shader_program = self.block_program = self.grass_shader_program = 0
         self.skirt_program = 0
+        self._base_instance = None          # the next context is asked afresh
         self.uniforms, self.block_uniforms, self.grass_uniforms = {}, {}, {}
         self.skirt_uniforms = {}
         if self._skirt_vao:
