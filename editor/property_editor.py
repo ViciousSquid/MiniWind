@@ -1746,6 +1746,17 @@ class PropertyEditor(QWidget):
         )
         self._widgets['death_message_edit'] = death_edit
 
+        god_cb = _make_checkbox(
+            "Kills through god / buddha mode",
+            brush.get('ignore_god_mode', False),
+            lambda on: self.update_object_prop('ignore_god_mode', bool(on)),
+            _Style.CHECKBOX
+        )
+        god_cb.setToolTip("This trigger's damage ignores god and buddha mode "
+                          "(e.g. under the edge of the world).")
+        dmg_layout.addWidget(god_cb)
+        self._widgets['ignore_god_mode_cb'] = god_cb
+
         # A trigger that detects Props cannot currently deal player damage.
         # Keep the Damage section visible so its configuration is preserved, but
         # disable it while the Props filter is selected.

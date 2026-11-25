@@ -457,6 +457,18 @@ CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
 GUARD_AID_RADIUS = 1600.0
 AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is attacked!",
               "Seize them, lads!")
+#: A shield raised towards an explosion as it goes off: the damage taken and
+#: the push, as fractions of the full blast.
+BLAST_BLOCK_DAMAGE = 0.95
+BLAST_BLOCK_PUSH = 0.80
+#: A fall of more than this many world units kills outright (the backstop
+#: for a map's hurt trigger at the edge of the world).
+FATAL_FALL = 2000.0
+#: A move of more than this between two ticks is a teleport (fast travel, a
+#: portal, a respawn), never part of a fall.
+FALL_TELEPORT_STEP = 400.0
+FALL_DEATH = "Fell to their death"
+EDGE_DEATH = "Fell off the edge of the world"
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
 #: Light Fingers practice (skill-use difficulty) each theft earns.
@@ -2003,6 +2015,7 @@ class MiniwindSession(SettlementLaw):
         _current_session = self
         logic = self.logic
         logic._player_damage_filter = self._mitigate_incoming
+        logic.player_blast_guard = self.blast_guard
         # Both mouse fire buttons are the engine's shooting: it queues the
         # press and hands it here, and the bow's arrows and the spell bolts
         # fly through its projectile pipeline.
@@ -2095,6 +2108,8 @@ class MiniwindSession(SettlementLaw):
             self.flame_spawner.clear()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
+        if getattr(self.logic, "player_blast_guard", None) == self.blast_guard:
+            self.logic.player_blast_guard = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
             self.logic.player_fire_handler = None
         fio.set_jump_enabled(self.logic, True)
@@ -2141,9 +2156,12 @@ class MiniwindSession(SettlementLaw):
             raw_damage *= rpg_combat.strength_factor(
                 rpg_cha.core(attacker.properties, attr.STRENGTH))
         import game.rpg.armour_class as rpg_ac
+        # An explosion is not a blow a block saves against: a shield raised
+        # towards it softens it (blast_guard), nothing more.
         res = rpg_combat.resolve_incoming(c, raw_damage,
                                           damage_kind=damage_kind,
-                                          blocking=self._blocking, rng=self.dice_rng,
+                                          blocking=self._blocking and not self._harm_is("explosion"),
+                                          rng=self.dice_rng,
                                           dice=self.game.dice,
                                           attacker=self._attacker_name(),
                                           attack_bonus=rpg_ac.npc_attack_bonus(
@@ -2198,17 +2216,69 @@ class MiniwindSession(SettlementLaw):
         self._player_hurt(c, final, attacker)
         return final
 
+    def _harm_is(self, cause) -> bool:
+        """Whether the damage being taken has *cause*, as the engine recorded
+        it (``last_damage`` = source, cause, kind)."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        return isinstance(last, tuple) and len(last) > 1 and last[1] == cause
+
+    def blast_guard(self, centre):
+        """``(damage, push)`` scales for an explosion going off at *centre*
+        (the engine asks, engine/explosions.py): a shield raised towards it
+        takes :data:`BLAST_BLOCK_DAMAGE` of the damage and
+        :data:`BLAST_BLOCK_PUSH` of the push; otherwise the whole blast."""
+        if self._shield_faces(centre):
+            return BLAST_BLOCK_DAMAGE, BLAST_BLOCK_PUSH
+        return 1.0, 1.0
+
+    def _shield_faces(self, point) -> bool:
+        """Whether the player is blocking with a shield turned towards
+        *point*: the same shield, stamina and front arc a ricochet needs
+        (game/missile_deflection.py)."""
+        c = self.game.character
+        if (c.is_dead or not self._blocking or c.stamina <= 0
+                or eq.shield(c) is None or eq.is_two_handed(eq.weapon(c))):
+            return False
+        player = fio.player(self.logic)
+        if player is None:
+            return False
+        import math
+        facing = float(player.angle)
+        nx, nz = math.sin(facing), math.cos(facing)
+        dx, dz = float(point[0]) - float(player.pos[0]), float(point[2]) - float(player.pos[2])
+        flat = math.hypot(dx, dz)
+        return flat > 1e-3 and (dx * nx + dz * nz) > 0.25 * flat
+
     def _environmental_harm(self) -> bool:
         """Whether the damage being taken is from a hurt trigger in the map,
         as the engine recorded it (``last_damage`` = source, cause, kind)."""
         last = getattr(fio.player_runtime(self.logic), "last_damage", None)
-        return isinstance(last, tuple) and len(last) > 1 and last[1] == "trigger"
+        return isinstance(last, tuple) and len(last) > 1 and last[1] in ("trigger", "fall")
+
+    def _death_by_falling(self) -> bool:
+        """Whether the harm being taken is a fall: the fall checks' own
+        (cause "fall"), or a hurt trigger that caught the player in the air,
+        dropping (the trigger under the edge of the world). A fall kills; it
+        never blows the body apart."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        cause = last[1] if isinstance(last, tuple) and len(last) > 1 else None
+        if cause == "fall":
+            return True
+        if cause != "trigger":
+            return False
+        p = fio.player(self.logic)
+        try:
+            return (p is not None and not p.on_ground and not p.in_water
+                    and float(p.velocity[1]) < 0.0)
+        except (AttributeError, TypeError, IndexError):
+            return False
 
     def _player_hurt(self, c, final, attacker) -> None:
         """What *final* damage, already taken by *c*, does on screen and to
         the game: blood, the red flash, the death screen's cause."""
         if final > 0:
-            if not (c.is_dead and self._gib_player(c, final, attacker)):
+            if not (c.is_dead and not self._death_by_falling()
+                    and self._gib_player(c, final, attacker)):
                 self._gore_player_hurt(final, attacker)
             # A lethal hit can stop engine ticks before the next UI update.
             # Release the lock UI here too, so it cannot cover the death flow.
@@ -2222,6 +2292,79 @@ class MiniwindSession(SettlementLaw):
                 # death, so the per-tick encounter watch never hears of it.
                 self._watch_encounter()
         self.add_floater(f"-{int(round(final))}", kind="hurt")
+
+    # -- falling ------------------------------------------------------------
+    def _watch_fall(self, delta) -> None:
+        """Kill a player who has fallen more than :data:`FATAL_FALL`, and
+        claim the engine's fall out of the world (``Player.void_handler``) so
+        it is a death, not a trip back to the start. Standing, swimming,
+        noclip and teleports (fast travel, portals) start a fall afresh."""
+        player = fio.player(self.logic)
+        if player is None:
+            return
+        if getattr(player, "void_handler", None) != self._fell_out_of_world:
+            try:
+                player.void_handler = self._fell_out_of_world
+            except AttributeError:           # a player that takes no handler
+                pass
+        if self.game.character.is_dead:
+            self._fall_top = None
+            return
+        pos = (float(player.pos[0]), float(player.pos[1]), float(player.pos[2]))
+        last = self.__dict__.get("_fall_last")
+        self._fall_last = pos
+        step = max(FALL_TELEPORT_STEP, 1600.0 * float(delta or 0.0))
+        teleported = last is not None and (
+            abs(pos[0] - last[0]) > step or abs(pos[2] - last[2]) > step
+            or abs(pos[1] - last[1]) > step)
+        top = self.__dict__.get("_fall_top")
+        if (teleported or top is None or pos[1] > top
+                or getattr(player, "on_ground", True)
+                or getattr(player, "in_water", False)
+                or not getattr(player, "physics_enabled", True)):
+            self._fall_top = pos[1]
+            return
+        if top - pos[1] > FATAL_FALL:
+            self._kill_by_fall(player)
+
+    def _fell_out_of_world(self, player) -> bool:
+        """The engine's player has dropped below the level (leave_void): a
+        death, held where it fell, never a trip back to the start."""
+        if not self.game.character.is_dead:
+            self._kill_by_fall(player)
+        return self.game.character.is_dead
+
+    def _kill_by_fall(self, player) -> None:
+        """Kill the player by falling, through the engine's own damage path
+        (death screen, sounds, events), with the death screen's words. A
+        fatal fall is a rule of the world: god and buddha mode do not save
+        anyone from it (``ignore_god_mode``)."""
+        c = self.game.character
+        message = EDGE_DEATH if self._beyond_terrain(player) else FALL_DEATH
+        self._fall_top = None
+        source = {"death_message": message, "ignore_god_mode": True}
+        amount = float(c.health) + float(c.max_health) + 1.0
+        runtime = getattr(self.logic, "trigger_runtime", None)
+        if runtime is not None:
+            runtime._apply_player_damage(amount, source=source, cause="fall")
+            return
+        # No engine damage path (a bare logic): the character directly.
+        fio.player_runtime(self.logic).last_damage = (source, "fall", "physical")
+        c.damage(amount)
+        self._player_hurt(c, amount, None)
+        self._sync_engine_health()
+
+    def _beyond_terrain(self, player) -> bool:
+        """Whether *player* is past the edge of the map's terrain."""
+        ter = fio.terrain(self.logic)
+        if ter is None or not getattr(ter, "enabled", False):
+            return False
+        try:
+            (x0, x1), (z0, z1) = ter.get_terrain_bounds()
+        except Exception:
+            return False
+        x, z = float(player.pos[0]), float(player.pos[2])
+        return not (x0 <= x <= x1 and z0 <= z <= z1)
 
     def _gib_player(self, c, final, attacker) -> bool:
         """Blow the player apart on an overkill, by the one rule every NPC
@@ -2824,6 +2967,7 @@ class MiniwindSession(SettlementLaw):
             self._party_due = False
             party.arrive(self)
         self.memory.update(delta)
+        self._watch_fall(delta)
         self._check_pack()
         self.autosave.tick(delta)
         self.rewind.tick(delta)

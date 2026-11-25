@@ -131,6 +131,29 @@ def test_the_blast_damages_and_pushes_what_it_can_see(fio_session, clock):
     assert near.pos[2] > start[2] + 10.0                            # pushed away from it
 
 
+def test_a_game_can_soften_the_blast_for_the_player(fio_session, clock):
+    """``logic.player_blast_guard(centre) -> (damage, push)`` scales what the
+    blast does to the player (MiniWind: a shield raised towards it)."""
+    def blast_at(guard):
+        session = _play(fio_session, clock, [_barrel("b1", 0.0, 0.0)])
+        logic = session.logic
+        player = logic.player_runtime.player
+        player.pos = glm.vec3(130.0, player.pos.y, 0.0)
+        player.velocity = glm.vec3(0.0, 0.0, 0.0)
+        seen = []
+        logic._player_damage_filter = lambda dmg, kind: seen.append(
+            (dmg, logic.player_runtime.last_damage[1])) or dmg
+        logic.player_blast_guard = guard
+        logic.explosion_runtime.explode_prop(_named(session, "b1"))
+        return seen, float(player.velocity.x)
+
+    full, push = blast_at(None)
+    softened, soft_push = blast_at(lambda centre: (0.95, 0.8))
+    assert full == [(40.0, "explosion")]
+    assert softened == [(pytest.approx(38.0), "explosion")]
+    assert soft_push == pytest.approx(push * 0.8)
+
+
 def test_barrels_set_each_other_off_in_turn(fio_session, clock):
     session = _play(fio_session, clock, [
         _barrel("b1", 0.0, 0.0), _barrel("b2", 150.0, 0.0),

@@ -20,6 +20,8 @@ from __future__ import annotations
 import math
 import time
 
+from editor.debug_console import debug_log
+
 from .effect_entity import EFFECT_EXPLOSION
 
 #: The sound every explosion makes, from where it is, at its volume.
@@ -600,10 +602,24 @@ class ExplosionRuntime:
             ny = min(max(cy, py - half), py + half)
             d = ((px - cx) ** 2 + (ny - cy) ** 2 + (pz - cz) ** 2) ** 0.5
             if d <= radius and seen(px, ny, pz):
+                # A game may soften the blast for a player who meets it well
+                # (``logic.player_blast_guard(centre) -> (damage, push)``
+                # scales; a shield raised towards it, in MiniWind).
+                damage_scale = push_scale = 1.0
+                guard = getattr(logic, 'player_blast_guard', None)
+                if guard is not None:
+                    try:
+                        damage_scale, push_scale = guard((cx, cy, cz))
+                    except Exception:
+                        import traceback
+                        debug_log("Error", "player blast guard failed:\n"
+                                  + traceback.format_exc())
+                        damage_scale = push_scale = 1.0
                 if damage > 0.0:
                     runtime.damage_source = (cx, cy, cz)
-                    logic.trigger_runtime._apply_player_damage(damage)
-                push = force * self.ACTOR_PUSH * falloff(d)
+                    logic.trigger_runtime._apply_player_damage(
+                        damage * float(damage_scale), cause="explosion")
+                push = force * self.ACTOR_PUSH * falloff(d) * float(push_scale)
                 if push > 0.0:
                     hx, hz = px - cx, pz - cz
                     flat = (hx * hx + hz * hz) ** 0.5
