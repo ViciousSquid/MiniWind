@@ -6,7 +6,8 @@ The moment a new character starts to play, the inventory key is shown in the
 middle of the screen -- the key's picture (128 x 128) with its word under it --
 fading in, held, then fading out. A character who starts with spells (some
 builds are given them; ``known_spells``) is then shown the spellbook key the
-same way. Only one hint is ever up at a time:
+same way -- never a Warrior or a Barbarian, who never have magic
+(``classes.can_use_magic``). Only one hint is ever up at a time:
 
 * the inventory hint starts as soon as play is first in view (no menu up --
   the experimental tutorial's pages, if ticked, come first);
@@ -177,7 +178,10 @@ class KeyHints:
 def arm(session) -> None:
     """A new character begins: queue its hints on *session*."""
     try:
-        magic = bool(session.game.character.known_spells)
+        character = session.game.character
+        # Spells to show it for -- and never a Warrior (or Barbarian): they
+        # never have magic, whatever they carry.
+        magic = bool(character.known_spells) and bool(character.can_use_magic())
     except Exception:
         magic = False
     session.key_hints = KeyHints(magic)

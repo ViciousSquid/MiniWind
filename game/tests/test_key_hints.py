@@ -93,6 +93,14 @@ def test_opening_the_inventory_any_way_hides_it():
 
 
 # -- the spellbook key -------------------------------------------------------
+@pytest.mark.parametrize("klass", ["warrior", "barbarian"])
+def test_warriors_never_have_magic_so_never_see_it(klass):
+    s = _new(klass)
+    s.game.character.known_spells = ["flare"]
+    kh.arm(s)
+    assert _queue(s) == ["inventory"]
+
+
 def _queue(s):
     return [a for a, _c in s.key_hints.queue]
 
@@ -105,7 +113,7 @@ def test_only_a_character_who_starts_with_spells_is_shown_the_spellbook(klass):
 
 
 def test_a_build_given_spells_is_shown_it_and_one_without_is_not():
-    s = _new("warrior")
+    s = _new("thief")
     s.game.character.known_spells = ["flare"]
     kh.arm(s)
     assert _queue(s) == ["inventory", "spells"]
