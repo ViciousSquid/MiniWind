@@ -5,6 +5,8 @@ import pytest
 
 pytest.importorskip("PyQt5")
 
+pytestmark = pytest.mark.qt
+
 LONG = ("I've walked this road since before the old mill burned, and I'll walk "
         "it long after you're gone, stranger.")
 

@@ -14,6 +14,8 @@ from engine.prop_entity import (BARREL_SETTINGS, DEFAULT_MODEL_PATH, MODEL_PRESE
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OAK = "assets/models/Oak_Barrel.obj"
 
+pytestmark = pytest.mark.qt
+
 
 def test_the_barrel_is_the_oak_barrel_and_its_files_ship():
     assert DEFAULT_MODEL_PATH == OAK
@@ -58,7 +60,6 @@ def test_the_oak_barrel_keeps_the_old_drums_bounds():
     assert lo[1] == pytest.approx(0.0, abs=1e-3)
 
 
-@pytest.mark.qt
 def test_switching_to_model_picks_the_oak_barrel(qt_app):
     pytest.importorskip("PyQt5")
     from PyQt5.QtWidgets import QComboBox
