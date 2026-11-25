@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - exercised by the head-less player
     def debug_log(category, message):
         print(f"[{category}] {message}")
 from .change_journal import JOURNAL, STATE, set_positions, touch
-from . import monster_table
+from . import actor_time, monster_table
 from .monster_constants import (MONSTER_EYE_RISE, monster_body_rise,
                                 monster_eye_rise)
 from . import monster_facing
@@ -431,6 +431,12 @@ class MonsterAI:
         path = self._fallback_reason()
         self.table.path = path
         row_delta, sit_out = self._offscreen_rows(monster_things, delta, player_pos, rect)
+        if getattr(self.lt, "actor_time_rates", None):
+            # A monster whose own clock is altered (engine/actor_time.py) --
+            # a Slow Time caster the slowed world does not slow -- takes its
+            # rate times the tick.
+            row_delta, sit_out = actor_time.row_deltas(self.lt, monster_things, delta,
+                                                       row_delta, sit_out)
         if path == 'dense':
             self._update_dense(monster_things, delta if row_delta is None else row_delta,
                                player_pos, sit_out)

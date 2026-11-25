@@ -4,6 +4,7 @@
 | --- | --- |
 | `__init__.py` | Package marker. |
 | `actor_pick.py` | Finds the actor under a screen ray, using the published tables. |
+| `actor_time.py` | Actors whose own clock runs faster or slower than the world's (a Slow Time caster the slowed world does not slow); the player's tick and the monster AI take it into account. |
 | `animated_texture.py` | Decodes animated GIF textures and picks the frame for a play time. |
 | `brush_faces.py` | One material record per brush face: the precedence rule for legacy angled brushes, the reader and writer every face edit goes through, conversion between box and angled encodings. |
 | `brush_geometry.py` | Convex brush geometry from planes: faces, collision meshes, 2D outlines, bounds, component edits. |

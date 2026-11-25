@@ -652,7 +652,8 @@ class NpcMagic:
             self._cast_sound(thing, spell)
             slow = getattr(self.session, "slow_time", None)
             if slow is not None:
-                slow(p.get("creature_level", 1))
+                # The world slows; the caster does not (game.runtime.slow_time).
+                slow(p.get("creature_level", 1), caster=thing)
             return []
         if "resurrect" in kinds:
             body = target if target is not None and (getattr(target, "properties", {}) or {}).get("dead") else None

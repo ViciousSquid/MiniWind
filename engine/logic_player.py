@@ -156,6 +156,12 @@ class LogicPlayer:
         player = self.player
         if not player:
             return
+        if getattr(logic, "actor_time_rates", None):
+            # A player whose own clock is altered (engine/actor_time.py) --
+            # the caster of a Slow Time the slowed world does not slow --
+            # moves, turns and falls by its rate times the tick.
+            from . import actor_time
+            delta *= actor_time.rate(logic, player)
 
         from .game_input import modal_input_active
         modal = modal_input_active(logic)
