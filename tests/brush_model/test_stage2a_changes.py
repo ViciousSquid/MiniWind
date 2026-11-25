@@ -16,6 +16,10 @@ MiniWind does not ship.)
 The pre-Stage-2a reading of a bound is frozen below (``pos``/``size``);
 the current reading is the helper. The pixel-level check of "nothing drawn
 changes" is ``tools/compare_map_pixels.py``.
+
+The shipped ``miniwind_world`` has since been re-saved as version 5, which
+stores the roof at its planes' centre; the stale copy is read from the map's
+last legacy save (``bs.LEGACY_WORLD``).
 """
 
 import numpy as np
@@ -25,6 +29,9 @@ from tests.helpers import brush_semantics as bs
 from tests.helpers.paths import REPO_ROOT
 
 MAPS = bs.shipped_maps(REPO_ROOT)
+#: The legacy (pre-version-5) record whose stored bounds Stage 2a stopped
+#: reading.
+LEGACY = bs.legacy_maps(REPO_ROOT)
 
 STALE_ROOF = 'e23ac095'
 
@@ -39,7 +46,7 @@ SIZE = (944.0, 96.0, 928.0)
 
 def _changed_bounds():
     out = {}
-    for name, brushes in MAPS.items():
+    for name, brushes in list(MAPS.items()) + list(LEGACY.items()):
         for raw in brushes:
             if not raw.get(bs.WORLD_PLANES):
                 continue        # Stage 2a characterises legacy world-plane maps
@@ -67,7 +74,7 @@ def test_only_the_named_bounds_change():
 def test_no_shipped_brush_draws_differently(name):
     """The faces each brush draws -- world rings, posed, and materials --
     are the planes' (or the box's), whatever the stored copy says."""
-    for raw in MAPS[name]:
+    for raw in MAPS[name] + LEGACY.get(name, []):
         brush = bs.migrated(raw)
         for tag, ring, _material in bs.render_faces(brush):
             assert np.allclose(

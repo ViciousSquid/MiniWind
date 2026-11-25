@@ -26,17 +26,20 @@ with open(repo_path('tests', 'brush_model', 'semantics_snapshot.json')) as _hand
     RECORDED = json.load(_handle)
 
 MAPS = bs.shipped_maps(REPO_ROOT)
+#: ``miniwind_world`` as last saved before version 5 (``bs.LEGACY_WORLD``).
+LEGACY = bs.legacy_maps(REPO_ROOT)
 
-#: MiniWind ships its own maps, not Fio's: the fixture records those, and the
-#: inventory below is ``miniwind_world``'s (the caves and the Big World test
-#: map are boxes throughout and carry nothing).
+#: MiniWind ships its own maps, not Fio's: the fixture records those. The
+#: legacy inventory below is ``miniwind_world``'s last pre-version-5 save
+#: (the caves and the Big World test map are boxes throughout and carry
+#: nothing).
 WORLD = 'miniwind_world.json'
 #: Convex brushes whose authored per-tag value Stage 1 draws.
 WALL_SCALED = '0ce48c9d-d122-49ad-b3ff-2147acdbfbc7'
 SLAB_SCALED = '213d70aa-31b4-4205-afab-22736d34007a'
 WALL_TURNED = '2cb2ca41-8ad0-4d45-83fd-ead8209be8f0'
 TABLE_TURNED = '4002ca0e-f7a1-49ec-b291-8cf3dbf9bd60'
-#: The roof whose stored ``pos`` is 4928 units from its planes.
+#: The roof whose stored ``pos`` was 4928 units from its planes.
 ROOF_STALE = 'e23ac095-195e-4d67-9770-ab3c33fb3e1b'
 
 REGENERATE = ("if this change is deliberate, regenerate with "
@@ -61,7 +64,19 @@ def test_a_shipped_map_draws_what_was_recorded(name):
 def test_the_recorded_inventory_is_the_known_one():
     """The inventory in words, so a reader need not decode the fixture.
 
-    All of it is in ``miniwind_world``, on seven of its twelve convex brushes:
+    None: every shipped map is either boxes throughout or, as
+    ``miniwind_world`` is, saved as version 5 -- each convex face's one
+    material record is on its plane and each convex ``pos`` is its placement,
+    so nothing is left for the load to settle. What the map carried before it
+    was re-saved is held by :func:`test_the_legacy_inventory_is_the_known_one`.
+    """
+    for name, entry in RECORDED.items():
+        assert entry['inconsistencies'] == {}, name
+
+
+def test_the_legacy_inventory_is_the_known_one():
+    """``miniwind_world``'s last legacy save (``bs.LEGACY_WORLD``, map
+    version 3), in words. All of it is on seven of its twelve convex brushes:
 
     * Bounds: one roof brush whose ``pos`` is not its planes' centre, by
       4928 units (six more are within 1e-6 and not pinned).
@@ -73,17 +88,9 @@ def test_the_recorded_inventory_is_the_known_one():
       from the texture on their planes, which is what was and is drawn.
     * Runtime keys: none; no MiniWind map was saved with a mover mid-motion.
     """
-    kinds = {}
-    for name, entry in RECORDED.items():
-        for found in entry['inconsistencies'].values():
-            for kind in found:
-                kinds.setdefault(kind, set()).add(name)
-    assert kinds == {
-        'bound_drift': {WORLD},
-        'resolved_from_tag': {WORLD},
-        'discarded_tag_value': {WORLD},
-    }
-    world = RECORDED[WORLD]['inconsistencies']
+    world = bs.map_snapshot(LEGACY[WORLD])['inconsistencies']
+    kinds = {kind for found in world.values() for kind in found}
+    assert kinds == {'bound_drift', 'resolved_from_tag', 'discarded_tag_value'}
     resolved = {bid: f['resolved_from_tag'] for bid, f in world.items()
                 if 'resolved_from_tag' in f}
     every_scale = ['down.uv_scale', 'east.uv_scale', 'north.uv_scale',
@@ -98,8 +105,31 @@ def test_the_recorded_inventory_is_the_known_one():
     assert discarded == {'327f41c5-e697-43b0-90da-895d31f99deb', TABLE_TURNED,
                          'd3a40da8-565b-4e00-9fed-e390dcd4d98a'}
     drifts = {bid: f['bound_drift'] for bid, f in world.items() if 'bound_drift' in f}
-    assert drifts == {ROOF_STALE: RECORDED[WORLD]['inconsistencies'][ROOF_STALE]['bound_drift']}
+    assert set(drifts) == {ROOF_STALE}
     assert drifts[ROOF_STALE] == pytest.approx(4928.0, abs=2.5)
+
+
+def test_the_version_5_world_draws_what_its_legacy_save_drew():
+    """Re-saving ``miniwind_world`` as version 5 changed how its convex
+    brushes are stored, not what they draw: each draws exactly what the
+    editor drew from its legacy record once loaded (encoding, pass, bound,
+    and every face's ring and material, to the digest's resolution). The
+    re-save's one visible change, a trigger volume, is a box and is pinned
+    by the snapshot."""
+    shipped = {b.get('id'): b for b in MAPS[WORLD]}
+
+    def drawn(brush):
+        brush = bs.migrated(brush)
+        return [bs.encoding(brush), bs.draw_pass(brush), bs._rounded(bs.bound(brush)),
+                [bs._rounded([tag, ring, material])
+                 for tag, ring, material in bs.render_faces(brush)]]
+
+    legacy = LEGACY[WORLD]
+    assert len(legacy) == 12
+    assert {b['id'] for b in legacy} == {
+        bid for bid, b in shipped.items() if bs.encoding(b) != 'box'}
+    for raw in legacy:
+        assert drawn(shipped[raw['id']]) == drawn(raw), raw['id']
 
 
 def test_the_digest_sees_a_visible_change_and_not_float_noise():

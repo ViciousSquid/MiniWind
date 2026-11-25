@@ -13,6 +13,7 @@ is read from maps as one (see :data:`LEGACY_MODEL_DEFAULTS`).
 from __future__ import annotations
 
 from engine.change_journal import TrackedAttribute
+from engine.model_rotate import ROTATE_DEFAULTS
 from engine.items import DEFAULT_DEFINITIONS, ITEM_IDS
 
 try:
@@ -123,7 +124,7 @@ PROP_DEFAULTS = {
     'collision_size': [0.0, 0.0, 0.0],
     'physics_enabled': False,
     'no_collision': True,
-    'collision_shape': 'auto',
+    'collision_shape': 'aabb',
     'gravity': True,
     'friction': 0.55,
     'linear_damping': 0.08,
@@ -132,16 +133,28 @@ PROP_DEFAULTS = {
     'disabled': False,
     'io_enabled': True,
 
+    # Animation: a model's Rotate (engine.model_rotate; the Animation tab).
+    **ROTATE_DEFAULTS,
+
     # Model representation. model_path is deliberately not a default mesh: a
     # billboard Prop must not collide as one (see __init__).
     'rotation': [0, 0, 0],
     'scale': [1, 1, 1],
 }
 
-#: What a Prop placed to show a model starts as: the Prop defaults (neither
-#: carryable nor solid) in model representation.
+#: What a newly placed, generic model starts as: solid scenery -- Solid on
+#: (colliding with its actual triangles), Physics off and Gravity off, so it
+#: stays exactly where it is put and the player cannot walk through it. Not
+#: carryable. Model-specific presets below override this: the Ball is a
+#: physics Prop with gravity, and the Ball and Oil Barrel deliberately use
+#: their cheaper AABB. Existing map records do not pass through
+#: for_model(), so what they saved is unchanged.
 MODEL_PROP_DEFAULTS = {
     'render_mode': 'model',
+    'collision_shape': 'mesh',
+    'no_collision': False,
+    'physics_enabled': False,
+    'gravity': False,
 }
 
 #: What a map saved with the old ``Model`` entity meant by one: solid, and not
@@ -160,11 +173,14 @@ LEGACY_MODEL_DEFAULTS = {
 #:
 #: The Oil Barrel is the default model. It takes back what a Ball sets that
 #: only makes sense for a ball, and leaves physics, solidity and carrying as
-#: the author has them.
+#: the author has them. As a physics Prop it falls over when knocked hard
+#: enough and rolls on its side (``topples``), and stands up again in the
+#: player's hands.
 OIL_BARREL_SETTINGS = {
     'model_path': DEFAULT_MODEL_PATH,
-    'collision_shape': 'auto',
+    'collision_shape': 'aabb',
     'rolls': False,
+    'topples': True,
     'bounciness': 0.0,
     'scale': [1.0, 1.0, 1.0],
     'carry_distance': PROP_DEFAULTS['carry_distance'],
@@ -175,10 +191,12 @@ OIL_BARREL_SETTINGS = {
 BALL_SETTINGS = {
     'model_path': BALL_MODEL_PATH,
     'physics_enabled': True,
+    'gravity': True,
     'no_collision': False,
     'collision_shape': 'aabb',
     'carry_enabled': True,
     'rolls': True,
+    'topples': False,
     'bounciness': 0.5,
     'scale': [1.0, 1.0, 1.0],
     'carry_distance': PROP_DEFAULTS['carry_distance'],
@@ -194,8 +212,27 @@ MODEL_PRESETS = {
     'Oil Barrel': OIL_BARREL_SETTINGS,
     'Ball': BALL_SETTINGS,
 }
+#: The Oil Barrel's variants: its Variant list in the Prop panel, each a
+#: model file. Every variant is the Oil Barrel (its preset, its settings);
+#: only the look differs.
+OIL_BARREL_VARIANTS = {
+    'None': DEFAULT_MODEL_PATH,
+    'Grey': 'assets/models/Oil_Drum_Grey.obj',
+}
 _MODEL_SETTINGS = {settings['model_path']: settings for settings in (
     OIL_BARREL_SETTINGS, BALL_SETTINGS, BALL_NUMBERS_SETTINGS)}
+for _path in OIL_BARREL_VARIANTS.values():
+    _MODEL_SETTINGS.setdefault(_path, {**OIL_BARREL_SETTINGS, 'model_path': _path})
+
+#: The models that fall over unless a Prop says otherwise: the oil barrels.
+#: A map saved before barrels could fall over has no ``topples`` in it; its
+#: barrels take this.
+TOPPLING_MODELS = frozenset(OIL_BARREL_VARIANTS.values())
+
+
+def topples_by_default(model_path):
+    """Whether a Prop showing *model_path* falls over when nothing says."""
+    return _model_key(model_path) in TOPPLING_MODELS
 
 
 def _model_key(model_path):
@@ -215,12 +252,31 @@ def model_settings(model_path):
 
 
 def model_preset_name(model_path):
-    """The Presets entry showing *model_path*, or None for another model."""
+    """The Presets entry showing *model_path*, or None for another model.
+    Every Oil Barrel variant is the Oil Barrel."""
     key = _model_key(model_path)
+    if oil_barrel_variant(key) is not None:
+        return 'Oil Barrel'
     for name, settings in MODEL_PRESETS.items():
         if settings['model_path'] == key:
             return name
     return None
+
+
+def oil_barrel_variant(model_path):
+    """The Oil Barrel variant *model_path* is ('None', 'Grey'), or None when
+    it is not an Oil Barrel."""
+    key = _model_key(model_path)
+    for name, path in OIL_BARREL_VARIANTS.items():
+        if path == key:
+            return name
+    return None
+
+
+def is_preset_only_model(model_path):
+    """Whether *model_path* is reached only through a preset (the Oil Barrel
+    and its variants): the asset browser does not list it."""
+    return oil_barrel_variant(model_path) is not None
 
 
 def legacy_model_properties(properties):
@@ -261,6 +317,11 @@ class Prop(_ThingBase):
     #: Runtime render state the projection resolves; assignment journals it.
     _respawn_fade_alpha = TrackedAttribute(1.0)
     _carry_sprite_yaw = TrackedAttribute(None)
+    #: The Rotate animation's angle (degrees) and model axis (0, 1, 2),
+    #: driven during Play by PropSession and by the Animation tab's
+    #: Preview; 0 / Z otherwise.
+    _rotate_angle = TrackedAttribute(0.0)
+    _rotate_axis = TrackedAttribute(2)
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -290,6 +351,12 @@ class Prop(_ThingBase):
             and not self.properties.get('model_path')
         ):
             self.properties['model_path'] = self.DEFAULT_MODEL_PATH
+
+        # A barrel falls over; anything else does not, unless it is told to.
+        if 'topples' not in self.properties:
+            self.properties['topples'] = (
+                self.properties.get('render_mode') == 'model'
+                and topples_by_default(self.properties.get('model_path')))
 
         # Ammo boxes have a stock amount just like the stock health/weapon/key
         # pickups have a stock appearance. An explicitly authored amount wins.
@@ -323,10 +390,11 @@ class Prop(_ThingBase):
 
         The one way a model enters a world from the editor -- the Asset
         Browser and the 2D view's Add Model both come here -- so a model is
-        always a Prop, never a separate kind of entity. Like any Prop it is
-        neither carryable nor solid until the author says so -- unless the
-        model brings settings with it (:func:`model_settings`): a Ball is a
-        rolling physics Prop wherever it is placed from.
+        always a Prop, never a separate kind of entity. It starts as solid
+        scenery (:data:`MODEL_PROP_DEFAULTS`: Solid on, Physics and Gravity
+        off), not carryable -- unless the model brings settings with it
+        (:func:`model_settings`): a Ball is a rolling physics Prop wherever
+        it is placed from.
         """
         props = dict(MODEL_PROP_DEFAULTS)
         props.update(model_settings(model_path) or {})

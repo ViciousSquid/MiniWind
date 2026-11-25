@@ -84,11 +84,15 @@ editor, including **§** on ISO Mac keyboards and **` / ~** on US keyboards.
 Errors are never silent. Every error is written to **`logs/miniwind.log`**
 (rotated at 2 MB, five files kept) with its full traceback and the thread it
 happened on, echoed to the console, and shown on screen as a red banner over the
-game. Native crashes and fatal errors go to **`logs/crash.log`**.
+game. Unhandled exceptions are also kept in the engine's crash log,
+**`fio_crash.log`**, and native crashes and fatal errors go to
+**`fio_fault.log`**; both sit next to `settings.ini` (or in the per-user data
+folder when the install is read-only).
 
 If the simulation stops advancing while the window is still responsive (a
 freeze), a watchdog writes every thread's stack to the log and says so on
-screen. Please attach both log files to any bug report.
+screen. Please attach `logs/miniwind.log` and the two `fio_*.log` files to any
+bug report.
 
 `MINIWIND_LOG_LEVEL=DEBUG` also records every Debug Console line;
 `MINIWIND_LOG_DIR` moves the logs elsewhere.

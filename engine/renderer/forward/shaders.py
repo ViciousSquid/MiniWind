@@ -8,10 +8,11 @@ texture array the layered billboard shader samples.
 import re
 
 import OpenGL.GL as gl
+from engine.renderer.core import gl_state
 from OpenGL.GL.shaders import compileProgram, compileShader
 
 from engine import shaders
-from engine.shaders import DEFAULT_SHADERS
+from engine.shaders import DEFAULT_SHADERS, EXPLOSION_INSTANCE_FLOATS
 from engine.sprite_layers import SpriteLayers
 from ..core.resources import UniformCache, _RENDERER_PREFIX
 
@@ -258,7 +259,7 @@ layout (location = 10) in vec4 iPayload;
             return False
         replaced = self.shaders.get(name)
         if replaced:
-            gl.glDeleteProgram(replaced)    # compiled again: free the first
+            gl_state.glDeleteProgram(replaced)    # compiled again: free the first
         self.shaders[name] = program
         self.uniforms[name] = UniformCache(program)
         self._preload_lit_uniforms(name)
@@ -492,24 +493,48 @@ vec3 woundedColour(vec3 colour, vec2 uv, vec2 wound) {
                                                            'spriteRippleTime']):
             print(f'{_RENDERER_PREFIX} Layered sprite shader compiled successfully.')
 
-    # One Effect row expands into deterministic virtual flame cards.
-    EFFECT_INSTANCE_FLOATS = 16
+    # One EXPLOSION Effect row per instance (engine.shaders'
+    # EXPLOSION_INSTANCE_LAYOUT).
+    EFFECT_INSTANCE_FLOATS = EXPLOSION_INSTANCE_FLOATS
 
-    FIRE_VIRTUAL_CARDS = 20
+    #: One emitter row per PARTICLES_PER_EMITTER particle instances: five
+    #: vec4s (see particle.vert's iPosSeed .. iLight).
+    PARTICLE_INSTANCE_FLOATS = 20
 
     def _compile_instanced_effect_shader(self):
-        """Compile the single procedural FIRE/EXPLOSION instance shader."""
+        """Compile the EXPLOSION instance shader and the particle shader."""
         vert = DEFAULT_SHADERS.get('effect.vert', '')
         frag = DEFAULT_SHADERS.get('effect.frag', '')
-        if not vert or not frag:
-            return
-        if self._register_instanced_shader(
+        if vert and frag and self._register_instanced_shader(
             'effect_instanced',
             vert,
             frag,
-            extra_uniforms=['projection', 'view', 'explosion_texture'],
+            extra_uniforms=['projection', 'view', 'explosion_texture',
+                            'uTime', 'uSceneDepth', 'uSoft', 'uViewport',
+                            'uDepthParams'],
         ):
+            self.uniforms['effect_instanced'].preload(self.ENV_UNIFORMS)
             print(f'{_RENDERER_PREFIX} Effect instancing shader compiled successfully.')
+        self._compile_instanced_particle_shader()
+
+    def _compile_instanced_particle_shader(self):
+        """Compile the stateless emitter shader ('particle_instanced')."""
+        vert = DEFAULT_SHADERS.get('particle.vert', '')
+        frag = DEFAULT_SHADERS.get('particle.frag', '')
+        if not vert or not frag:
+            return
+        if self._register_instanced_shader(
+            'particle_instanced',
+            vert,
+            frag,
+            extra_uniforms=['projection', 'view', 'uTime', 'uPresets',
+                            'uMaxScreen', 'uNearFade', 'uSceneDepth',
+                            'uSoft', 'uViewport', 'uDepthParams'],
+        ):
+            self.uniforms['particle_instanced'].preload(self.ENV_UNIFORMS)
+            # The preset table is constant: sent once per compiled program.
+            self._particle_presets_sent = None
+            print(f'{_RENDERER_PREFIX} Particle instancing shader compiled successfully.')
 
     def _compile_instanced_lit_brush_shader(self, lit_vert, lit_frag):
         """Compile the flat-shaded brush shader with instanced colour.
@@ -742,14 +767,15 @@ layout (location = 10) in float iInstanceAlpha;
                 program = self.shaders.pop(name, None)
                 if program:
                     try:
-                        gl.glDeleteProgram(program)
+                        gl_state.glDeleteProgram(program)
                     except Exception:
                         pass
             print(f'[Renderer] GPU model instancing disabled: {exc}')
 
     def _preload_lit_uniforms(self, shader_name):
         uniforms = self.uniforms[shader_name]
-        uniforms.preload(['projection', 'view', 'model', 'object_color', 'alpha', 'active_lights'])
+        uniforms.preload(['projection', 'view', 'model', 'object_color', 'alpha',
+                          'active_lights', 'emissive_factor'])
         uniforms.preload(self.ENV_UNIFORMS)
 
     def _preload_water_uniforms(self):
@@ -758,7 +784,7 @@ layout (location = 10) in float iInstanceAlpha;
             'projection', 'view', 'model', 'time', 'viewPos',
             'normalMap', 'sceneColor',
             'screenSize', 'waterOpacity', 'waterReflectivity',
-            'waterTint', 'distortionStrength', 'refractionIndex',
+            'waterTint', 'waterEmissive', 'distortionStrength', 'refractionIndex',
             'roughness', 'fresnelIntensity', 'normalMatrix',
             'waveAmp', 'brushSize',
             'sceneDepth', 'hasSceneDepth', 'ssrEnabled', 'invProjection',

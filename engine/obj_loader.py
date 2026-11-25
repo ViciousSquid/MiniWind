@@ -1,3 +1,4 @@
+from array import array
 from typing import List, Tuple, Optional
 import os
 import math
@@ -11,6 +12,11 @@ gl = None
 # Models arrive inside shared maps and .fiopak packages; an OBJ or MTL beyond
 # this is refused rather than read whole into memory.
 MAX_OBJ_FILE_BYTES = 256 * 1024 * 1024
+#: Most triangles one OBJ may hold once its faces are fanned out. A model at
+#: the cap peaks at about 1.6 GB while its buffers are built (the packed faces,
+#: the interleaved vertex data and its index arrays); a real model of this
+#: size, with texture and normal indices, is already near MAX_OBJ_FILE_BYTES.
+MAX_OBJ_TRIANGLES = 4_000_000
 
 
 def _read_text(path: str) -> Optional[str]:
@@ -85,6 +91,116 @@ def z_up_to_y_up(v):
     return (v[0], v[2], -v[1])
 
 
+# ---------------------------------------------------------------------------
+# Faces
+# ---------------------------------------------------------------------------
+# A face used to be a dict holding a list of (v, vt, vn) tuples: about 520
+# bytes for a triangle, so an 8 MB file of "f 1 2 3" lines peaked at half a
+# gigabyte and one at the triangle cap at about 8 GB. The faces are packed
+# into flat int arrays instead (44 bytes for a triangle); ``OBJLoader.faces``
+# still reads as the list of dicts it was, built one face at a time.
+
+class _FaceTable:
+    """An OBJ's faces, packed: every corner's ``(v, vt, vn)`` indices in one
+    flat array, where each face starts in it, and each face's material."""
+
+    __slots__ = ('corners', 'starts', 'materials', 'material_names', '_material_index')
+
+    def __init__(self):
+        #: (v, vt, vn) per corner, flat; -1 for an index that is missing.
+        self.corners = array('i')
+        #: Face k's corners are corners ``starts[k]`` to ``starts[k + 1]``
+        #: (counted in corners, not ints).
+        self.starts = array('i', [0])
+        #: Per face, an index into material_names.
+        self.materials = array('i')
+        #: Material names (None for "no usemtl yet"), in order of first use.
+        self.material_names: list = []
+        self._material_index: dict = {}
+
+    def __len__(self):
+        return len(self.materials)
+
+    def material_id(self, name) -> int:
+        index = self._material_index.get(name)
+        if index is None:
+            index = self._material_index[name] = len(self.material_names)
+            self.material_names.append(name)
+        return index
+
+    def add(self, corners, material) -> None:
+        for corner in corners:
+            self.corners.extend(corner)
+        self.starts.append(len(self.corners) // 3)
+        self.materials.append(self.material_id(material))
+
+    def face(self, k) -> dict:
+        first, end = self.starts[k], self.starts[k + 1]
+        flat = self.corners[first * 3:end * 3]
+        return {'vertices': [tuple(flat[i:i + 3]) for i in range(0, len(flat), 3)],
+                'material': self.material_names[self.materials[k]]}
+
+    def triangles(self):
+        """``(corners, material_ids)``: every face fanned into triangles, as a
+        ``(T, 3, 3)`` int array of (v, vt, vn) corners and the ``(T,)``
+        material index of each, in file order -- what fanning the face dicts
+        one by one gave, without a Python object per corner."""
+        starts = np.frombuffer(self.starts, dtype=np.intc).astype(np.int64)
+        per_face = np.maximum(np.diff(starts) - 2, 0)
+        total = int(per_face.sum())
+        corners = np.frombuffer(self.corners, dtype=np.intc).reshape(-1, 3)
+        if total == 0:
+            return (np.zeros((0, 3, 3), dtype=np.intc),
+                    np.zeros(0, dtype=np.int64))
+        face_of = np.repeat(np.arange(len(per_face)), per_face)
+        # k = 1 .. count - 2 within each face: triangle (0, k, k + 1).
+        k = np.arange(total) - np.repeat(np.cumsum(per_face) - per_face, per_face) + 1
+        first = starts[:-1][face_of]
+        index = np.stack((first, first + k, first + k + 1), axis=1)
+        materials = np.frombuffer(self.materials, dtype=np.intc).astype(np.int64)
+        return corners[index], materials[face_of]
+
+
+class _FaceList:
+    """``OBJLoader.faces``: the packed faces read as the list of
+    ``{'vertices': [(v, vt, vn), ...], 'material': name}`` dicts they were
+    parsed from, each built when it is read."""
+
+    __slots__ = ('_table',)
+
+    def __init__(self, table):
+        self._table = table
+
+    def __len__(self):
+        return len(self._table)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self._table.face(k) for k in range(*index.indices(len(self)))]
+        count = len(self)
+        if index < 0:
+            index += count
+        if not 0 <= index < count:
+            raise IndexError('face index out of range')
+        return self._table.face(index)
+
+    def __iter__(self):
+        face = self._table.face
+        for k in range(len(self)):
+            yield face(k)
+
+    def __eq__(self, other):
+        if isinstance(other, (list, tuple, _FaceList)):
+            return len(self) == len(other) and list(self) == list(other)
+        return NotImplemented
+
+    def __repr__(self):
+        return f'<{len(self)} OBJ faces>'
+
+    def append(self, face) -> None:
+        self._table.add(face['vertices'], face.get('material'))
+
+
 class OBJLoader:
     """
     Wavefront OBJ/MTL loader, reading straight from the filesystem like the
@@ -95,10 +211,28 @@ class OBJLoader:
         self.vertices: List[Tuple[float, float, float]] = []
         self.texcoords: List[Tuple[float, float]] = []
         self.normals: List[Tuple[float, float, float]] = []
-        self.faces: List[dict] = []
+        self._faces = _FaceTable()
         self.materials: dict = {}
         #: The up axis the file was authored in; a 'z' file was turned Y-up.
         self.up_axis = 'y'
+
+    @property
+    def faces(self) -> _FaceList:
+        """The parsed faces, as ``{'vertices': [(v, vt, vn), ...],
+        'material': name}`` dicts (packed underneath; see _FaceTable)."""
+        return _FaceList(self._faces)
+
+    @faces.setter
+    def faces(self, faces) -> None:
+        table = _FaceTable()
+        for face in faces:
+            table.add(face['vertices'], face.get('material'))
+        self._faces = table
+
+    def material_names(self) -> list:
+        """The materials the faces name (None for faces before any usemtl),
+        in order of first use."""
+        return list(self._faces.material_names)
     
     @staticmethod
     def _resolve_index(value: str, length: int) -> int:
@@ -130,12 +264,21 @@ class OBJLoader:
         if text is None:
             print(f"[OBJLoader] Failed to load: {filepath}")
             return False
-        
+        return self.load_text(text, filepath)
+
+    def load_text(self, text: str, filepath="", read_text=None) -> bool:
+        """Parse archive-backed OBJ/MTL text without materializing files."""
+        self._text_reader = read_text
         lines = text.splitlines()
         current_material = None
         mtl_lib_name = None
         up_tag = None
-        
+        triangles = 0
+        faces = self._faces
+        add_corner = faces.corners.extend
+        resolve = self._resolve_index
+        material_id = None
+
         for line in lines:
             line = line.strip()
             if not line:
@@ -166,25 +309,32 @@ class OBJLoader:
                 except ValueError:
                     self.normals.append((0.0, 0.0, 0.0))
             elif keyword == 'f' and len(parts) >= 4:
-                face = {'vertices': [], 'material': current_material}
+                # A face is fanned into len-2 triangles when it is built. One
+                # line of a million indices costs a few MB of text but would
+                # build gigabytes of vertex data: the total is capped.
+                triangles += len(parts) - 3
+                if triangles > MAX_OBJ_TRIANGLES:
+                    print(f"[OBJLoader] {os.path.basename(filepath)} has more than "
+                          f"{MAX_OBJ_TRIANGLES} triangles; not loaded")
+                    self._faces = _FaceTable()
+                    return False
+                n_v, n_vt, n_vn = len(self.vertices), len(self.texcoords), len(self.normals)
                 for fp in parts[1:]:
                     indices = fp.split('/')
-                    v_idx = self._resolve_index(
-                        indices[0] if indices else '',
-                        len(self.vertices),
-                    )
-                    vt_idx = self._resolve_index(
-                        indices[1] if len(indices) > 1 else '',
-                        len(self.texcoords),
-                    )
-                    vn_idx = self._resolve_index(
-                        indices[2] if len(indices) > 2 else '',
-                        len(self.normals),
-                    )
-                    face['vertices'].append((v_idx, vt_idx, vn_idx))
-                self.faces.append(face)
+                    add_corner((
+                        resolve(indices[0] if indices else '', n_v),
+                        resolve(indices[1] if len(indices) > 1 else '', n_vt),
+                        resolve(indices[2] if len(indices) > 2 else '', n_vn),
+                    ))
+                faces.starts.append(len(faces.corners) // 3)
+                if material_id is None:
+                    # Named on first use by a face, as the material groups
+                    # are ordered (see OBJ._build_gl_buffers).
+                    material_id = faces.material_id(current_material)
+                faces.materials.append(material_id)
             elif keyword == 'usemtl' and len(parts) > 1:
                 current_material = ' '.join(parts[1:])
+                material_id = None
             elif keyword == 'mtllib' and len(parts) > 1:
                 mtl_lib_name = ' '.join(parts[1:])
         
@@ -201,12 +351,20 @@ class OBJLoader:
     
     def _load_mtl(self, obj_path: str, mtl_name: str) -> None:
         """Resolve MTL path relative to OBJ location and load."""
-        obj_dir = os.path.dirname(obj_path)
-        normalized_name = str(mtl_name).strip().strip('"').replace('\\', os.sep).replace('/', os.sep)
-        mtl_path = os.path.normpath(os.path.join(obj_dir, normalized_name))
+        # The name is model data: it may point beside the OBJ or elsewhere in
+        # the same assets folder, never to an absolute, drive, UNC or
+        # '..'-escaping path (engine.asset_paths).
+        from engine.asset_paths import companion_path, warn_refused
+        mtl_path = companion_path(obj_path, mtl_name)
+        if mtl_path is None:
+            warn_refused(mtl_name, 'material library')
+            self._discover_base_color_texture(obj_path)
+            return
+        mtl_path = os.path.normpath(mtl_path)
         mtl_dir = os.path.dirname(mtl_path)
         
-        mtl_text = _read_text(mtl_path)
+        reader = getattr(self, "_text_reader", None)
+        mtl_text = reader(mtl_path) if reader else _read_text(mtl_path)
         if mtl_text is None:
             print(f"[OBJLoader] MTL not found: {mtl_path}")
             self._discover_base_color_texture(obj_path)
@@ -250,6 +408,24 @@ class OBJLoader:
                         mtl['ambient'] = colour
                     else:
                         mtl['specular'] = colour
+                elif keyword == 'Ke' and len(parts) >= 4:
+                    # Emission, as glTF's emissiveFactor is for a GLB -- but
+                    # classic Fio has always ignored an MTL's Ke, so it is
+                    # kept under a key only the HD renderer reads.
+                    try:
+                        mtl['hd_emissive'] = (float(parts[1]), float(parts[2]),
+                                              float(parts[3]))
+                    except ValueError:
+                        continue
+                elif keyword in ('Pr', 'Pm') and len(parts) > 1:
+                    # The PBR extension of MTL: roughness and metalness (HD only).
+                    try:
+                        amount = float(parts[1])
+                    except ValueError:
+                        continue
+                    if math.isfinite(amount):
+                        mtl['roughness' if keyword == 'Pr' else 'metallic'] = max(
+                            0.0, min(1.0, amount))
                 elif keyword in ('d', 'Tr') and len(parts) > 1:
                     try:
                         alpha = float(parts[1])
@@ -339,11 +515,7 @@ class OBJLoader:
             'mtl_dir': os.path.dirname(texture_path),
         }
 
-        material_names = {
-            face.get('material')
-            for face in self.faces
-            if face.get('material')
-        }
+        material_names = {name for name in self._faces.material_names if name}
         if material_names:
             for material_name in material_names:
                 self.materials[material_name] = material.copy()
@@ -418,6 +590,7 @@ class OBJ:
 
     def _build_gl_buffers(self, loader: OBJLoader):
         """Build OpenGL VAO/VBO from parsed OBJ data."""
+        from engine.renderer.core import gl_state
         global gl
         if gl is None:
             import OpenGL.GL as gl
@@ -425,27 +598,16 @@ class OBJ:
         
         # Fan-triangulate every face into corner index triples, noting each
         # triangle's material (in order of first appearance).
-        corners = []
-        tri_material = []
-        material_rank = {}
-        for face in loader.faces:
-            mat_name = face.get('material', None)
-            rank = material_rank.setdefault(mat_name, len(material_rank))
-            face_verts = face['vertices']
-            first = face_verts[0]
-            for i in range(1, len(face_verts) - 1):
-                corners.append(first)
-                corners.append(face_verts[i])
-                corners.append(face_verts[i + 1])
-                tri_material.append(rank)
+        # (The packed table's material ids are already that order.)
+        corner_idx, tri_material = loader._faces.triangles()
+        material_rank = {name: rank for rank, name
+                         in enumerate(loader._faces.material_names)}
 
         # Lay triangles out material by material, so each group is one
         # contiguous range even when the file switches back to a material it
         # used earlier (a stable sort keeps the file order within a group).
-        corner_idx = np.asarray(corners, dtype=np.int64).reshape(-1, 3)
-        tri_material = np.asarray(tri_material, dtype=np.int64)
         order = np.argsort(tri_material, kind='stable')
-        corner_idx = corner_idx.reshape(-1, 3, 3)[order].reshape(-1, 3)
+        corner_idx = corner_idx[order].reshape(-1, 3)
 
         n = len(corner_idx)
         vertex_data = np.zeros((n, 8), dtype=np.float32)
@@ -490,7 +652,7 @@ class OBJ:
         self.vao = gl.glGenVertexArrays(1)
         self.vbo = gl.glGenBuffers(1)
         
-        gl.glBindVertexArray(self.vao)
+        gl_state.glBindVertexArray(self.vao)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo)
         gl.glBufferData(gl.GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, gl.GL_STATIC_DRAW)
         
@@ -503,11 +665,12 @@ class OBJ:
         gl.glVertexAttribPointer(2, 2, gl.GL_FLOAT, gl.GL_FALSE, 32, ctypes.c_void_p(24))
         gl.glEnableVertexAttribArray(2)
         
-        gl.glBindVertexArray(0)
+        gl_state.glBindVertexArray(0)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, 0)
     
     def cleanup(self):
         """Release OpenGL resources."""
+        from engine.renderer.core import gl_state
         global gl
         if (self.vbo or self.vao) and gl is None:
             import OpenGL.GL as gl
@@ -515,6 +678,6 @@ class OBJ:
             gl.glDeleteBuffers(1, [self.vbo])
             self.vbo = None
         if self.vao:
-            gl.glDeleteVertexArrays(1, [self.vao])
+            gl_state.glDeleteVertexArrays(1, [self.vao])
             self.vao = None
         self.is_loaded = False

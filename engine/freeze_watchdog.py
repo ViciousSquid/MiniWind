@@ -115,13 +115,6 @@ class FreezeWatchdog(threading.Thread):
         self.reports.append((kind, message, stacks))
         error_report.report_error(message + " (thread stacks written to the log)",
                                   trace="Thread stacks:\n" + stacks)
-        handle = error_report.crash_file()
-        if handle is not None:
-            try:
-                handle.write("\n%s %s\n%s\n" % (time.strftime("%H:%M:%S"), message, stacks))
-                handle.flush()
-            except Exception:
-                pass
         if self._on_stall is not None:
             try:
                 self._on_stall(kind, message, stacks)

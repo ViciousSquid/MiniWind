@@ -41,6 +41,7 @@ import math
 import numpy as np
 
 from engine import brush_faces
+from engine.level_validation import MAX_BRUSH_PLANES
 
 # --------------------------------------------------------------------------
 # Tunables
@@ -1117,6 +1118,10 @@ def clip_brush(brush, clip_normal, clip_d, keep_positive=False, texture=None,
     """
     box_to_geometry(brush)
     existing = [_plane_from_json(p) for p in brush['geometry']['planes']]
+    if len(existing) >= MAX_BRUSH_PLANES:
+        # One more plane and the map could not be opened again
+        # (engine.level_validation refuses the brush).
+        return False
     # The cut is given in world space; the planes are in the brush's frame.
     # (clip_planes reads the plane as n-hat . p <= clip_d.)
     n = _normalize(clip_normal)
@@ -1365,19 +1370,26 @@ def _ray_triangle(o, d, a, b, c, eps=1e-9):
     return float(e2 @ q) * inv
 
 
-def ray_convex_face(convex, ray_o, ray_d, eps=1e-9):
+def ray_convex_face(convex, ray_o, ray_d, eps=1e-9, entering=False):
     """Nearest surface face of ``convex`` hit by a world-space ray.
 
     Returns ``(t, face)`` for the closest forward intersection (``t > 0``) with
     any triangle of any face, or ``None`` when the ray misses the solid.  Lets
     the Face tool pick the true sloped face of a clipped brush instead of the
     six sides of its bounding box.
+
+    With ``entering`` only faces the ray enters through (facing it) count, so
+    a ray that starts inside the solid hits nothing: from inside, the face it
+    would otherwise report is the far one it leaves through, behind whatever
+    the camera is looking at.
     """
     o = _v(ray_o)
     d = _v(ray_d)
     best_t = math.inf
     best_face = None
     for face in convex.faces:
+        if entering and float(np.dot(face['normal'], d)) >= 0.0:
+            continue
         idx = face['indices']
         ring = convex.verts[idx]
         v0 = ring[0]

@@ -127,8 +127,10 @@ class PluginManager:
         # Editor-UI extensions plugins register; native editor owners consume these:
         # extra property fields appended to an entity's panel, and whole custom
         # property tabs. Both keyed/filtered by normalised entity type.
-        self._extra_fields: dict = {}       # type -> list[PropertySpec]
-        self._property_tabs: list = []      # list[(label, factory, type_or_None)]
+        # Each recorded with its owning plugin (None: registered by the host),
+        # so a disabled plugin's contributions drop out.
+        self._extra_fields: dict = {}       # type -> list[(plugin, PropertySpec)]
+        self._property_tabs: list = []      # list[(plugin, label, factory, type_or_None)]
         # API 1.5.0 editor extensions, each recorded with its owning plugin so
         # a disabled plugin's contributions drop out (as Tools actions do).
         self._property_sections: list = []  # [(plugin, label, factory, type|None, expanded)]
@@ -155,6 +157,16 @@ class PluginManager:
         self._enabled_generation = 0
         self._active_cache: dict = {}       # hook name -> list of active plugins
         self._active_cache_gen = -1
+        # The logic object of the play session in progress (None outside
+        # Play), and the plugins whose on_play_start has run in it and whose
+        # on_play_stop is therefore still owed. set_enabled() uses both to keep
+        # the start/stop pair balanced when a plugin is toggled mid-Play.
+        self._play_logic = None
+        self._play_started: set = set()
+        # (plugin, hook) -> consecutive failures / failures since enabled.
+        # See _hook_failed().
+        self._hook_streak: dict = {}
+        self._hook_failures: dict = {}
 
     # -- logging ------------------------------------------------------------
     def _log(self, message: str):
@@ -229,6 +241,20 @@ class PluginManager:
     def _load_one(self, mod_name: str):
         try:
             module = importlib.import_module(f"plugins.{mod_name}")
+        except ImportError as exc:
+            # Discovery can start while a *host* module is still importing --
+            # ``engine.prop_entity`` reaches ``editor``, whose initialiser
+            # loads plugins, and a plugin that imports ``Prop`` then meets
+            # the half-built module. That is the order things were imported
+            # in, not a broken plugin: it is retried by the next call, when
+            # the outer import has finished, instead of being dropped for
+            # the life of the process.
+            if 'partially initialized module' in str(exc):
+                self._deferred.add(mod_name)
+                self._debug(f"Plugin '{mod_name}' met a module still importing; will retry")
+                return
+            self._log(f"Failed to import plugin '{mod_name}':\n{traceback.format_exc()}")
+            return
         except Exception:
             self._log(f"Failed to import plugin '{mod_name}':\n{traceback.format_exc()}")
             return
@@ -295,6 +321,7 @@ class PluginManager:
             plugin.register(EditorAPI(self, plugin))
         except Exception:
             self._log(f"register() failed for '{plugin.name}':\n{traceback.format_exc()}")
+            self._discard_partial_registration(plugin)
             return
 
         # Collect any property schemas the plugin publishes for its entities.
@@ -314,6 +341,35 @@ class PluginManager:
 
         self.plugins.append(plugin)
         self._loaded_modules.add(mod_name)
+        self._enabled_generation += 1
+
+    def _discard_partial_registration(self, plugin):
+        """Undo what a plugin registered before its ``register()`` raised.
+
+        The plugin never joins :attr:`plugins`, so the Plugins menu cannot
+        switch it off; anything it had already added (menu entries, tools,
+        console commands, pause items) would otherwise stay live. It is also
+        marked disabled, which silences every surface gated on ``enabled``
+        (its event handlers, I/O inputs and entity placement).
+        """
+        plugin.enabled = False
+        # Everything it recorded, editor UI included: a tab or field factory
+        # left behind would still run against every entity panel built.
+        self._extra_fields = {
+            key: kept for key, specs in self._extra_fields.items()
+            if (kept := [e for e in specs if e[0] is not plugin])}
+        self._property_tabs = [e for e in self._property_tabs if e[0] is not plugin]
+        self._property_sections = [e for e in self._property_sections if e[0] is not plugin]
+        self._kv_suggestion_providers = [
+            e for e in self._kv_suggestion_providers if e[0] is not plugin]
+        self._entity_inspectors = [e for e in self._entity_inspectors if e[0] is not plugin]
+        self._menu_entries = [e for e in self._menu_entries if e[0] is not plugin]
+        self._tools_actions = [e for e in self._tools_actions if e[0] is not plugin]
+        self._menu_actions = [e for e in self._menu_actions if e[0] is not plugin]
+        self._pause_menu_items = [e for e in self._pause_menu_items if e[0] is not plugin]
+        self._console_commands = {
+            name: entry for name, entry in self._console_commands.items()
+            if entry[0] is not plugin}
         self._enabled_generation += 1
 
     def _verify_requirements(self):
@@ -619,19 +675,62 @@ class PluginManager:
             plugin = self.find_plugin(plugin_or_name)
         if plugin is None:
             return
+        enabled = bool(enabled)
         was = bool(getattr(plugin, "enabled", True))
-        plugin.enabled = bool(enabled)
-        if was != bool(enabled):
-            self._enabled_generation += 1
-            # Notify the plugin so it can acquire/release resources on toggle.
-            try:
-                plugin.on_enabled_changed(bool(enabled))
-            except Exception:
-                self._log(f"on_enabled_changed() failed for '{plugin.name}':\n{traceback.format_exc()}")
+        if was == enabled:
+            plugin.enabled = enabled
+        else:
+            # A toggle during Play is serialised with the logic tick (the
+            # lock is re-entrant, so a toggle made *from* a tick is fine):
+            # the plugin's on_tick must not run concurrently with the
+            # on_play_start / on_play_stop dispatched below.
+            lock = getattr(self._play_logic, "_tick_lock", None)
+            if lock is not None:
+                with lock:
+                    self._apply_enabled(plugin, enabled)
+            else:
+                self._apply_enabled(plugin, enabled)
         if auto and enabled:
             self._auto_enabled.add(plugin)
         else:
             self._auto_enabled.discard(plugin)
+
+    def _apply_enabled(self, plugin, enabled: bool):
+        """Flip *plugin*'s enabled flag, with the lifecycle calls that go with it."""
+        logic = self._play_logic
+        if not enabled and logic is not None and plugin in self._play_started:
+            # Disabled in the middle of a play session: dispatch_play_stop will
+            # skip it by then, so its on_play_stop -- where a plugin restores
+            # what it mutated -- runs now, while it still counts as enabled.
+            self._play_started.discard(plugin)
+            if self._overrides(plugin, "on_play_stop"):
+                try:
+                    plugin.on_play_stop(logic)
+                except Exception:
+                    self._log(f"on_play_stop() failed for '{plugin.name}':\n{traceback.format_exc()}")
+        plugin.enabled = enabled
+        self._enabled_generation += 1
+        if enabled:
+            # A fresh start: forget the failures that got it disabled.
+            for key in [k for k in self._hook_streak if k[0] is plugin]:
+                del self._hook_streak[key]
+            for key in [k for k in self._hook_failures if k[0] is plugin]:
+                del self._hook_failures[key]
+        # Notify the plugin so it can acquire/release resources on toggle.
+        try:
+            plugin.on_enabled_changed(enabled)
+        except Exception:
+            self._log(f"on_enabled_changed() failed for '{plugin.name}':\n{traceback.format_exc()}")
+        if (enabled and logic is not None and plugin not in self._play_started
+                and getattr(plugin, "enabled", True)):
+            # Enabled in the middle of a play session: it missed the session's
+            # on_play_start, and would otherwise be ticked without it.
+            self._play_started.add(plugin)
+            if self._overrides(plugin, "on_play_start"):
+                try:
+                    plugin.on_play_start(logic)
+                except Exception:
+                    self._log(f"on_play_start() failed for '{plugin.name}':\n{traceback.format_exc()}")
 
     # -- entity ownership / packaging --------------------------------------
     @staticmethod
@@ -845,7 +944,7 @@ class PluginManager:
         return self._tick_work
 
     # -- editor-UI extensions ------------------------------------------------
-    def register_extra_fields(self, entity_type: str, specs):
+    def register_extra_fields(self, entity_type: str, specs, plugin=None):
         """Append extra editable fields to *entity_type*'s property panel.
 
         Unlike a full property schema (which drives a plugin entity's whole
@@ -856,13 +955,22 @@ class PluginManager:
         if not specs:
             return
         key = self._normalise_type(entity_type)
-        self._extra_fields.setdefault(key, []).extend(specs)
+        self._extra_fields.setdefault(key, []).extend((plugin, spec) for spec in specs)
+
+    def _contributes(self, plugin) -> bool:
+        """Whether a UI contribution recorded for *plugin* is live: the
+        host's own (None) always, a plugin's while it is enabled."""
+        return plugin is None or self.is_enabled(plugin)
 
     def extra_fields_for(self, entity_type: str):
-        """Extra field specs registered for *entity_type* (possibly empty)."""
-        return self._extra_fields.get(self._normalise_type(entity_type), [])
+        """Extra field specs registered for *entity_type* (possibly empty).
+        Fields of a disabled plugin are left out."""
+        return [spec for plugin, spec
+                in self._extra_fields.get(self._normalise_type(entity_type), ())
+                if self._contributes(plugin)]
 
-    def register_property_tab(self, label: str, factory, entity_type=None):
+    def register_property_tab(self, label: str, factory, entity_type=None,
+                              plugin=None):
         """Register a custom property-panel tab.
 
         *factory(thing)* returns a widget; *label* names the tab. If
@@ -870,14 +978,15 @@ class PluginManager:
         entity. Consumed by PropertyEditor when it builds a panel.
         """
         self._property_tabs.append(
-            (label, factory,
+            (plugin, label, factory,
              self._normalise_type(entity_type) if entity_type else None))
 
     def property_tabs_for(self, entity_type: str):
-        """List of ``(label, factory)`` custom tabs that apply to *entity_type*."""
+        """List of ``(label, factory)`` custom tabs that apply to *entity_type*.
+        Tabs of a disabled plugin are left out."""
         norm = self._normalise_type(entity_type)
-        return [(label, factory) for (label, factory, t) in self._property_tabs
-                if t is None or t == norm]
+        return [(label, factory) for (plugin, label, factory, t) in self._property_tabs
+                if (t is None or t == norm) and self._contributes(plugin)]
 
     # -- API 1.5.0: property sections, key suggestions, entity inspectors ----
     def _record_property_section(self, plugin, label: str, factory,
@@ -994,6 +1103,13 @@ class PluginManager:
         return cached
 
     def dispatch_play_start(self, logic):
+        self._play_logic = logic
+        # Every enabled plugin is "in" this session from here, whether or not
+        # it overrides the hook: set_enabled() pairs a mid-Play disable with
+        # on_play_stop for exactly these.
+        self._play_started = {
+            p for p in self.plugins + self._builtin_games
+            if getattr(p, "enabled", True)}
         for plugin in self._active_for("on_play_start"):
             try:
                 plugin.on_play_start(logic)
@@ -1001,11 +1117,60 @@ class PluginManager:
                 self._log(f"on_play_start() failed for '{plugin.name}':\n{traceback.format_exc()}")
 
     def dispatch_play_stop(self, logic):
-        for plugin in self._active_for("on_play_stop"):
+        try:
+            for plugin in self._active_for("on_play_stop"):
+                try:
+                    plugin.on_play_stop(logic)
+                except Exception:
+                    self._log(f"on_play_stop() failed for '{plugin.name}':\n{traceback.format_exc()}")
+        finally:
+            self._play_logic = None
+            self._play_started = set()
+
+    #: Consecutive failures of one per-tick hook after which the plugin is
+    #: switched off. A hook that raises every tick would otherwise be called,
+    #: fail and log a traceback sixty times a second for the whole session.
+    MAX_HOOK_FAILURES = 10
+    #: Full tracebacks logged per (plugin, hook) before logging thins out.
+    HOOK_TRACEBACK_LIMIT = 2
+
+    def _hook_ok(self, plugin, hook: str):
+        if self._hook_streak:
+            self._hook_streak.pop((plugin, hook), None)
+
+    def _hook_failed(self, plugin, hook: str):
+        """Report a per-tick *hook* of *plugin* raising (call inside ``except``).
+
+        The first failures are logged with their traceback; after that only
+        a one-line reminder at 4, 8, 16, ... failures, so a hook that fails now
+        and then cannot flood the console. ``MAX_HOOK_FAILURES`` in a row
+        disable the plugin through :meth:`set_enabled`, with one message.
+        """
+        key = (plugin, hook)
+        streak = self._hook_streak.get(key, 0) + 1
+        total = self._hook_failures.get(key, 0) + 1
+        self._hook_streak[key] = streak
+        self._hook_failures[key] = total
+        error = traceback.format_exc()
+        last = error.strip().splitlines()[-1] if error.strip() else "unknown error"
+        if streak >= self.MAX_HOOK_FAILURES:
+            self._hook_streak.pop(key, None)
+            self._log(
+                f"Plugin '{plugin.name}' disabled: {hook}() failed "
+                f"{streak} times in a row (last error: {last}). "
+                f"Re-enable it from the Plugins menu once it is fixed.")
             try:
-                plugin.on_play_stop(logic)
+                self.set_enabled(plugin, False)
             except Exception:
-                self._log(f"on_play_stop() failed for '{plugin.name}':\n{traceback.format_exc()}")
+                plugin.enabled = False
+                self._enabled_generation += 1
+            return
+        if total <= self.HOOK_TRACEBACK_LIMIT:
+            self._log(f"{hook}() failed for '{plugin.name}':\n{error}")
+        elif total & (total - 1) == 0:
+            self._log(
+                f"{hook}() is still failing for '{plugin.name}' "
+                f"({total} failures so far; last error: {last})")
 
     def dispatch_tick(self, logic, ctx: TickContext):
         if getattr(ctx, "logic", None) is None:
@@ -1014,7 +1179,9 @@ class PluginManager:
             try:
                 plugin.on_tick(logic, ctx)
             except Exception:
-                self._log(f"on_tick() failed for '{plugin.name}':\n{traceback.format_exc()}")
+                self._hook_failed(plugin, "on_tick")
+            else:
+                self._hook_ok(plugin, "on_tick")
         try:
             ctx._finalize_hud()
         except Exception:
@@ -1054,7 +1221,9 @@ class PluginManager:
             try:
                 plugin.on_tick(logic, ctx)
             except Exception:
-                self._log(f"on_tick() failed for '{plugin.name}':\n{traceback.format_exc()}")
+                self._hook_failed(plugin, "on_tick")
+            else:
+                self._hook_ok(plugin, "on_tick")
         # Event-bus 'tick' for plugins that hook via host.on('tick', ...) rather
         # than overriding on_tick. Fires after the hook so both see the same ctx.
         if wants_event:

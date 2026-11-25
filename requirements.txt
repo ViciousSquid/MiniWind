@@ -1,4 +1,4 @@
-# MiniWind on the Fio 3.5.0.1611 engine -- runtime dependencies for the game,
+# MiniWind on the Fio 3.5.2.2411 engine -- runtime dependencies for the game,
 # the desktop editor and the engine.
 #
 # Interpreter: CPython 3.13 or newer, GIL-enabled (python_runtime.py refuses

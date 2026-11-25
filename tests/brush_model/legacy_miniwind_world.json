@@ -1,0 +1,1415 @@
+{
+ "version": 3,
+ "brushes": [
+  {
+   "pos": [
+    60.0,
+    168.0,
+    -1071.9999999999998
+   ],
+   "size": [
+    1416.0,
+    464.0,
+    128.0
+   ],
+   "textures": {
+    "north": "gregory-ligman-brickwall.jpg",
+    "south": "gregory-ligman-brickwall.jpg",
+    "east": "gregory-ligman-brickwall.jpg",
+    "west": "gregory-ligman-brickwall.jpg",
+    "top": "gregory-ligman-brickwall.jpg",
+    "down": "gregory-ligman-brickwall.jpg"
+   },
+   "uv_scale": {},
+   "id": "5e056557-c1a9-48ec-9cfb-84a62b524655",
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       8.021926592690997e-17,
+       0.0,
+       1.0
+      ],
+      "d": -1007.9999999999998,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       1.21875,
+       0.90625
+      ],
+      "face": "east"
+     },
+     {
+      "n": [
+       -8.021926592690997e-17,
+       0.0,
+       -1.0
+      ],
+      "d": 1135.9999999999998,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       1.21875,
+       0.90625
+      ],
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 400.0,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.25,
+       1.21875
+      ],
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": 64.0,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.25,
+       1.21875
+      ],
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       6.361817414415707e-16
+      ],
+      "d": 647.9999999999995,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.25,
+       0.90625
+      ],
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0,
+       0.0,
+       -6.361817414415707e-16
+      ],
+      "d": 768.0000000000006,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.25,
+       0.90625
+      ],
+      "face": "south"
+     }
+    ]
+   }
+  },
+  {
+   "pos": [
+    52.0,
+    224.0,
+    -816.0
+   ],
+   "size": [
+    360.0,
+    48.0,
+    48.000000000000455
+   ],
+   "textures": {
+    "north": "gregory-ligman-brickwall.jpg",
+    "south": "gregory-ligman-brickwall.jpg",
+    "east": "gregory-ligman-brickwall.jpg",
+    "west": "gregory-ligman-brickwall.jpg",
+    "top": "gregory-ligman-brickwall.jpg",
+    "down": "gregory-ligman-brickwall.jpg"
+   },
+   "uv_scale": {
+    "north": [
+     0.703125,
+     0.09375
+    ],
+    "south": [
+     0.703125,
+     0.09375
+    ],
+    "east": [
+     0.09375000000000089,
+     0.09375
+    ],
+    "west": [
+     0.09375000000000089,
+     0.09375
+    ],
+    "top": [
+     0.703125,
+     0.09375000000000089
+    ],
+    "down": [
+     0.703125,
+     0.09375000000000089
+    ]
+   },
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       1.1326686094979342e-16,
+       0.0,
+       1.0
+      ],
+      "d": -791.9999999999998,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.421875,
+       0.625
+      ],
+      "face": "east"
+     },
+     {
+      "n": [
+       -1.1326686094979342e-16,
+       0.0,
+       -1.0
+      ],
+      "d": 840.0000000000002,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.421875,
+       0.625
+      ],
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 248.0,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.09375,
+       0.421875
+      ],
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -200.0,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.09375,
+       0.421875
+      ],
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       4.505645505366949e-16
+      ],
+      "d": 128.00000000000128,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.09375,
+       0.625
+      ],
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0,
+       0.0,
+       -4.505645505366949e-16
+      ],
+      "d": 231.99999999999906,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.09375,
+       0.625
+      ],
+      "face": "south"
+     }
+    ]
+   },
+   "id": "0ce48c9d-d122-49ad-b3ff-2147acdbfbc7"
+  },
+  {
+   "pos": [
+    1136.0,
+    272.0,
+    -688.0
+   ],
+   "size": [
+    128.00000000000443,
+    128.0,
+    128.0
+   ],
+   "textures": {
+    "north": "WoodenCrate_512.jpg",
+    "south": "WoodenCrate_512.jpg",
+    "east": "WoodenCrate_512.jpg",
+    "west": "WoodenCrate_512.jpg",
+    "top": "WoodenCrate_512.jpg",
+    "down": "WoodenCrate_512.jpg"
+   },
+   "uv_scale": {},
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       1.8203602652645327e-16,
+       0.0,
+       1.0
+      ],
+      "d": -624.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "east"
+     },
+     {
+      "n": [
+       -1.8203602652645327e-16,
+       0.0,
+       -1.0
+      ],
+      "d": 752.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 336.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -208.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0000000000000002,
+       0.0,
+       2.8035127588949986e-16
+      ],
+      "d": -1072.0000000000023,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0000000000000002,
+       0.0,
+       -2.8035127588949986e-16
+      ],
+      "d": 1200.0000000000025,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "south"
+     }
+    ]
+   },
+   "id": "33a30666-eb0e-44ee-88a1-6531e834c5a4"
+  },
+  {
+   "pos": [
+    904.0,
+    216.0,
+    184.00000000000003
+   ],
+   "size": [
+    208.0,
+    16.0,
+    272.00000000000006
+   ],
+   "textures": {
+    "north": "nodraw.jpg",
+    "south": "nodraw.jpg",
+    "east": "nodraw.jpg",
+    "west": "nodraw.jpg",
+    "top": "bed.png",
+    "down": "nodraw.jpg"
+   },
+   "uv_scale": {
+    "top": [
+     1.0,
+     1.0
+    ]
+   },
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       2.3804711161151565e-16,
+       0.0,
+       1.0
+      ],
+      "d": 320.0000000000002,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "east"
+     },
+     {
+      "n": [
+       -2.3804711161151565e-16,
+       0.0,
+       -1.0
+      ],
+      "d": -48.00000000000024,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 224.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -208.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       2.1438626979785291e-16
+      ],
+      "d": -799.9999999999993,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0,
+       0.0,
+       -2.1438626979785291e-16
+      ],
+      "d": 1007.9999999999998,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "south"
+     }
+    ]
+   },
+   "id": "d3a40da8-565b-4e00-9fed-e390dcd4d98a",
+   "uv_shift": {
+    "top": [
+     0.0,
+     0.0
+    ]
+   },
+   "uv_angle": {
+    "top": 0.0
+   }
+  },
+  {
+   "pos": [
+    1024.0,
+    70.11764705882358,
+    -1264.0
+   ],
+   "size": [
+    512.0,
+    268.2352941176472,
+    512.0
+   ],
+   "textures": {
+    "north": "stone-wall-v0-63mmfjnritm81.png",
+    "south": "stone-wall-v0-63mmfjnritm81.png",
+    "east": "stone-wall-v0-63mmfjnritm81.png",
+    "west": "stone-wall-v0-63mmfjnritm81.png",
+    "top": "stone-wall-v0-63mmfjnritm81.png",
+    "down": "stone-wall-v0-63mmfjnritm81.png"
+   },
+   "uv_scale": {
+    "north": [
+     1.0,
+     0.53125
+    ],
+    "south": [
+     1.0,
+     0.53125
+    ],
+    "east": [
+     1.0,
+     0.53125
+    ],
+    "west": [
+     1.0,
+     0.53125
+    ],
+    "top": [
+     2.0,
+     2.0
+    ],
+    "down": [
+     1.0,
+     1.0
+    ]
+   },
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "d": 1280.0,
+      "texture": "stone-wall-v0-63mmfjnritm81.png",
+      "uv_scale": [
+       1.0,
+       0.53125
+      ],
+      "face": "east"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      "d": -768.0,
+      "texture": "stone-wall-v0-63mmfjnritm81.png",
+      "uv_scale": [
+       1.0,
+       0.53125
+      ],
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 208.0,
+      "texture": "stone-wall-v0-63mmfjnritm81.png",
+      "uv_scale": [
+       1.0,
+       1.0
+      ],
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": 64.0,
+      "texture": "stone-wall-v0-63mmfjnritm81.png",
+      "uv_scale": [
+       1.0,
+       1.0
+      ],
+      "face": "down"
+     },
+     {
+      "n": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "d": -1008.0,
+      "texture": "stone-wall-v0-63mmfjnritm81.png",
+      "uv_scale": [
+       1.0,
+       0.53125
+      ],
+      "face": "north"
+     },
+     {
+      "n": [
+       0.0,
+       0.0,
+       -1.0
+      ],
+      "d": 1520.0,
+      "texture": "stone-wall-v0-63mmfjnritm81.png",
+      "uv_scale": [
+       1.0,
+       0.53125
+      ],
+      "face": "south"
+     },
+     {
+      "n": [
+       -0.0,
+       0.973417168333576,
+       -0.2290393337255473
+      ],
+      "d": 429.67779006912684,
+      "texture": "stone-wall-v0-63mmfjnritm81.png",
+      "uv_scale": [
+       1.0,
+       0.53125
+      ]
+     }
+    ]
+   },
+   "uv_shift": {
+    "top": [
+     0.0,
+     0.0
+    ]
+   },
+   "uv_angle": {
+    "top": 0.0
+   },
+   "id": "213d70aa-31b4-4205-afab-22736d34007a"
+  },
+  {
+   "pos": [
+    640.0,
+    272.0,
+    320.0
+   ],
+   "size": [
+    128.00000000000443,
+    128.0,
+    128.0
+   ],
+   "textures": {
+    "north": "WoodenCrate_512.jpg",
+    "south": "WoodenCrate_512.jpg",
+    "east": "WoodenCrate_512.jpg",
+    "west": "WoodenCrate_512.jpg",
+    "top": "WoodenCrate_512.jpg",
+    "down": "WoodenCrate_512.jpg"
+   },
+   "uv_scale": {},
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       1.8203602652645327e-16,
+       0.0,
+       1.0
+      ],
+      "d": 383.99999999999994,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "east"
+     },
+     {
+      "n": [
+       -1.8203602652645327e-16,
+       0.0,
+       -1.0
+      ],
+      "d": -255.9999999999999,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 336.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -208.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0000000000000002,
+       0.0,
+       2.8035127588949986e-16
+      ],
+      "d": -576.000000000002,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0000000000000002,
+       0.0,
+       -2.8035127588949986e-16
+      ],
+      "d": 704.0000000000023,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "south"
+     }
+    ]
+   },
+   "id": "c6ac33a5-5d8d-49a5-85df-341a1223e225"
+  },
+  {
+   "pos": [
+    624.0,
+    272.0,
+    176.0
+   ],
+   "size": [
+    156.76734353812344,
+    128.0,
+    156.76734353812935
+   ],
+   "textures": {
+    "north": "WoodenCrate_512.jpg",
+    "south": "WoodenCrate_512.jpg",
+    "east": "WoodenCrate_512.jpg",
+    "west": "WoodenCrate_512.jpg",
+    "top": "WoodenCrate_512.jpg",
+    "down": "WoodenCrate_512.jpg"
+   },
+   "uv_scale": {},
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       -0.2588190451025206,
+       0.0,
+       0.9659258262890683
+      ],
+      "d": 72.49986128291116,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "east"
+     },
+     {
+      "n": [
+       0.2588190451025206,
+       0.0,
+       -0.9659258262890683
+      ],
+      "d": 55.500138717088895,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 336.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -208.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "down"
+     },
+     {
+      "n": [
+       -0.9659258262890686,
+       0.0,
+       -0.2588190451025205
+      ],
+      "d": -584.2898675424225,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "north"
+     },
+     {
+      "n": [
+       0.9659258262890686,
+       0.0,
+       0.2588190451025205
+      ],
+      "d": 712.2898675424226,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "south"
+     }
+    ]
+   },
+   "id": "4e341cae-04f1-4c8d-b93d-831b59c03219"
+  },
+  {
+   "pos": [
+    640.0,
+    400.0,
+    208.0
+   ],
+   "size": [
+    128.00000000000443,
+    128.0,
+    128.0
+   ],
+   "textures": {
+    "north": "WoodenCrate_512.jpg",
+    "south": "WoodenCrate_512.jpg",
+    "east": "WoodenCrate_512.jpg",
+    "west": "WoodenCrate_512.jpg",
+    "top": "WoodenCrate_512.jpg",
+    "down": "WoodenCrate_512.jpg"
+   },
+   "uv_scale": {},
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       1.8203602652645327e-16,
+       0.0,
+       1.0
+      ],
+      "d": 271.99999999999994,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "east"
+     },
+     {
+      "n": [
+       -1.8203602652645327e-16,
+       0.0,
+       -1.0
+      ],
+      "d": -143.9999999999999,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 464.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -336.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0000000000000002,
+       0.0,
+       2.8035127588949986e-16
+      ],
+      "d": -576.000000000002,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0000000000000002,
+       0.0,
+       -2.8035127588949986e-16
+      ],
+      "d": 704.0000000000023,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "south"
+     }
+    ]
+   },
+   "id": "c26cbc67-4eba-4006-bc94-bbfcf6945436"
+  },
+  {
+   "pos": [
+    -1252.0,
+    288.0,
+    560.0000000000034
+   ],
+   "size": [
+    472.0,
+    288.0,
+    80.0
+   ],
+   "textures": {
+    "north": "gregory-ligman-brickwall.jpg",
+    "south": "gregory-ligman-brickwall.jpg",
+    "east": "gregory-ligman-brickwall.jpg",
+    "west": "gregory-ligman-brickwall.jpg",
+    "top": "gregory-ligman-brickwall.jpg",
+    "down": "gregory-ligman-brickwall.jpg"
+   },
+   "uv_scale": {
+    "east": [
+     0.78125,
+     0.5625
+    ],
+    "north": [
+     0.15625,
+     0.5625
+    ],
+    "south": [
+     0.15625,
+     0.5625
+    ],
+    "west": [
+     0.78125,
+     0.5625
+    ],
+    "top": [
+     0.15625,
+     0.78125
+    ],
+    "down": [
+     0.15625,
+     0.78125
+    ]
+   },
+   "uv_shift": {
+    "east": [
+     0.0,
+     0.0
+    ]
+   },
+   "uv_angle": {
+    "east": 90.0
+   },
+   "id": "2cb2ca41-8ad0-4d45-83fd-ead8209be8f0",
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       1.5426781909021484e-16,
+       0.0,
+       1.0
+      ],
+      "d": 600.0000000000032,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.78125,
+       0.5625
+      ],
+      "face": "east"
+     },
+     {
+      "n": [
+       -1.5426781909021484e-16,
+       0.0,
+       -1.0
+      ],
+      "d": -520.0000000000033,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.78125,
+       0.5625
+      ],
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 432.0,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.15625,
+       0.78125
+      ],
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -144.0,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.15625,
+       0.78125
+      ],
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       3.3081450554960933e-16
+      ],
+      "d": 1488.000000000002,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.15625,
+       0.5625
+      ],
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0,
+       0.0,
+       -3.3081450554960933e-16
+      ],
+      "d": -1016.0000000000013,
+      "texture": "gregory-ligman-brickwall.jpg",
+      "uv_scale": [
+       0.15625,
+       0.5625
+      ],
+      "face": "south"
+     }
+    ]
+   }
+  },
+  {
+   "pos": [
+    -1280.0,
+    216.0,
+    384.0
+   ],
+   "size": [
+    208.0,
+    16.0,
+    272.00000000000006
+   ],
+   "textures": {
+    "north": "nodraw.jpg",
+    "south": "nodraw.jpg",
+    "east": "nodraw.jpg",
+    "west": "nodraw.jpg",
+    "top": "bed.png",
+    "down": "nodraw.jpg"
+   },
+   "uv_scale": {
+    "top": [
+     1.0,
+     1.0
+    ]
+   },
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       2.3804711161151565e-16,
+       0.0,
+       1.0
+      ],
+      "d": 520.0000000000001,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "east"
+     },
+     {
+      "n": [
+       -2.3804711161151565e-16,
+       0.0,
+       -1.0
+      ],
+      "d": -247.99999999999983,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 224.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -208.0,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       2.1438626979785291e-16
+      ],
+      "d": 1384.0000000000007,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0,
+       0.0,
+       -2.1438626979785291e-16
+      ],
+      "d": -1176.0000000000002,
+      "texture": "WoodenCrate_512.jpg",
+      "face": "south"
+     }
+    ]
+   },
+   "id": "327f41c5-e697-43b0-90da-895d31f99deb",
+   "uv_shift": {
+    "top": [
+     0.0,
+     0.0
+    ]
+   },
+   "uv_angle": {
+    "top": 0.0
+   }
+  },
+  {
+   "pos": [
+    -1056.0,
+    256.0,
+    400.0
+   ],
+   "size": [
+    80.00000000000182,
+    16.0,
+    184.0
+   ],
+   "textures": {
+    "north": "table01.png",
+    "south": "table01.png",
+    "east": "table01.png",
+    "west": "table01.png",
+    "top": "table01.png",
+    "down": "table01.png"
+   },
+   "uv_scale": {
+    "top": [
+     1.0,
+     1.0
+    ]
+   },
+   "id": "4002ca0e-f7a1-49ec-b291-8cf3dbf9bd60",
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       3.3494628880867077e-16,
+       0.0,
+       1.0
+      ],
+      "d": 491.9999999999996,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       1.0,
+       0.125
+      ],
+      "face": "east"
+     },
+     {
+      "n": [
+       -3.3494628880867077e-16,
+       0.0,
+       -1.0
+      ],
+      "d": -307.9999999999996,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       1.0,
+       0.125
+      ],
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 264.0,
+      "texture": "table01.png",
+      "uv_scale": [
+       1.0,
+       1.0
+      ],
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -248.0,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       1.0,
+       1.0
+      ],
+      "face": "down"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       1.5236482385299012e-16
+      ],
+      "d": 1095.999999999999,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       1.0,
+       0.125
+      ],
+      "face": "north"
+     },
+     {
+      "n": [
+       1.0,
+       0.0,
+       -1.5236482385299012e-16
+      ],
+      "d": -1015.9999999999991,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       1.0,
+       0.125
+      ],
+      "face": "south"
+     }
+    ]
+   },
+   "uv_shift": {
+    "top": [
+     0.0,
+     0.0
+    ]
+   },
+   "uv_angle": {
+    "top": 135.0
+   }
+  },
+  {
+   "pos": [
+    3632.0,
+    192.0,
+    -8784.0
+   ],
+   "size": [
+    944.0,
+    96.0,
+    928.0
+   ],
+   "textures": {
+    "north": "nodraw.jpg",
+    "south": "nodraw.jpg",
+    "east": "nodraw.jpg",
+    "west": "nodraw.jpg",
+    "top": "house03.png",
+    "down": "nodraw.jpg"
+   },
+   "uv_scale": {
+    "north": [
+     4.0,
+     0.125
+    ],
+    "south": [
+     4.0,
+     0.125
+    ],
+    "east": [
+     4.25,
+     0.125
+    ],
+    "west": [
+     4.25,
+     0.125
+    ],
+    "top": [
+     1.0,
+     1.0
+    ],
+    "down": [
+     4.0,
+     4.25
+    ]
+   },
+   "uv_shift": {
+    "top": [
+     0.0,
+     0.0
+    ]
+   },
+   "uv_angle": {
+    "top": 0.0
+   },
+   "id": "e23ac095-195e-4d67-9770-ab3c33fb3e1b",
+   "geometry": {
+    "planes": [
+     {
+      "n": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "d": 2072.0,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.25,
+       0.125
+      ],
+      "face": "east"
+     },
+     {
+      "n": [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      "d": -1128.0,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.25,
+       0.125
+      ],
+      "face": "west"
+     },
+     {
+      "n": [
+       0.0,
+       1.0,
+       0.0
+      ],
+      "d": 240.0,
+      "texture": "house03.png",
+      "uv_scale": [
+       1.0,
+       1.0
+      ],
+      "face": "top"
+     },
+     {
+      "n": [
+       0.0,
+       -1.0,
+       0.0
+      ],
+      "d": -144.0,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.0,
+       4.25
+      ],
+      "face": "down"
+     },
+     {
+      "n": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "d": -3392.0,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.0,
+       0.125
+      ],
+      "face": "north"
+     },
+     {
+      "n": [
+       0.0,
+       0.0,
+       -1.0
+      ],
+      "d": 4320.0,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.0,
+       0.125
+      ],
+      "face": "south"
+     },
+     {
+      "n": [
+       -0.6709133239691263,
+       -0.0,
+       0.7415357791237712
+      ],
+      "d": -3468.4100175549192,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.25,
+       0.125
+      ]
+     },
+     {
+      "n": [
+       0.8422714006615114,
+       0.0,
+       0.5390536964233673
+      ],
+      "d": -283.54224431869125,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.25,
+       0.125
+      ]
+     },
+     {
+      "n": [
+       0.8240419241993676,
+       0.0,
+       0.5665288228870652
+      ],
+      "d": -453.22305830965206,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.25,
+       0.125
+      ]
+     },
+     {
+      "n": [
+       0.8770962678415019,
+       0.0,
+       0.48031462286558435
+      ],
+      "d": -81.52818642031481,
+      "texture": "nodraw.jpg",
+      "uv_scale": [
+       4.25,
+       0.125
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

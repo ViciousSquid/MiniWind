@@ -1,7 +1,8 @@
-"""A map's terrain paint in its own ``.stamp`` file, the paint resolution
+"""A map's terrain paint in its own ``.paint`` file (Fio's paint file), also
+beside a map read from a mounted data package, the paint resolution
 following the chunk size, and the integer paint mip.
 
-The overworld's road paint (ten megabytes) lives in ``<map>.stamp`` beside
+The overworld's road paint (ten megabytes) lives in ``<map>.paint`` beside
 the map rather than inside its JSON; everything past the file boundary sees
 the level as it always did."""
 
@@ -31,59 +32,78 @@ def _level():
     }
 
 
+def _save(path, level):
+    """As the editor saves a map: the paint file first, then the map."""
+    out, paint = terrain_stamp.split_level(level)
+    terrain_stamp.write_map_stamps(path, paint)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=4)
+
+
 def test_a_map_saves_its_paint_beside_it_and_reads_it_back(tmp_path):
     path = str(tmp_path / "world.json")
     level = _level()
-    terrain_stamp.write_level(path, level, indent=4)
+    _save(path, level)
     on_disk = json.load(open(path, encoding="utf-8"))
-    td = on_disk["terrain_data"]
-    assert td == {"chunk_size": 2048.0, "paint_file": "world.stamp"}
-    assert os.path.isfile(tmp_path / "world.stamp")
-    # Read back, the level is as it was saved.
-    merged = terrain_stamp.merge_level_paint(on_disk, path)
+    assert on_disk["terrain_data"] == {"chunk_size": 2048.0, "paint_file": True}
+    assert os.path.isfile(tmp_path / "world.paint")
+    merged = terrain_stamp.join_level(on_disk, path)
     assert merged["terrain_data"] == level["terrain_data"]
     # And the level handed in was not changed by saving it.
     assert "texture_paint" in level["terrain_data"]
 
 
-def test_a_map_without_paint_has_no_stamp_file(tmp_path):
+def test_a_map_without_paint_has_no_paint_file(tmp_path):
     path = str(tmp_path / "plain.json")
-    terrain_stamp.write_level(path, {"brushes": [], "terrain_data": {"enabled": True}})
-    assert not os.path.exists(tmp_path / "plain.stamp")
+    _save(path, {"brushes": [], "terrain_data": {"enabled": True}})
+    assert not os.path.exists(tmp_path / "plain.paint")
     assert json.load(open(path))["terrain_data"] == {"enabled": True}
 
 
-def test_an_old_map_with_inline_paint_loads_as_it_was():
+def test_an_old_map_with_inline_paint_loads_as_it_was(tmp_path):
     level = _level()
-    assert terrain_stamp.merge_level_paint(json.loads(json.dumps(level)), "x.json") == level
+    path = str(tmp_path / "x.json")
+    assert terrain_stamp.join_level(json.loads(json.dumps(level)), path) == level
 
 
-def test_a_missing_stamp_file_loads_the_map_without_paint(tmp_path, capsys):
-    level = {"terrain_data": {"paint_file": "gone.stamp", "chunk_size": 256.0}}
-    out = terrain_stamp.merge_level_paint(level, str(tmp_path / "m.json"))
-    assert out["terrain_data"] == {"chunk_size": 256.0}
-    assert "could not be read" in capsys.readouterr().out
+def test_a_missing_paint_file_loads_the_map_without_paint(tmp_path):
+    level = {"terrain_data": {"paint_file": True, "chunk_size": 256.0}}
+    path = str(tmp_path / "m.json")
+    assert terrain_stamp.missing_paint_file(level, path) == "m.paint"
+    out = terrain_stamp.join_level(level, path)
+    assert "texture_paint" not in out["terrain_data"]
+    assert out["terrain_data"]["chunk_size"] == 256.0
 
 
-def test_exporting_stamps_over_a_maps_stamp_file_keeps_its_paint(tmp_path):
-    path = str(tmp_path / "world.json")
-    terrain_stamp.write_level(path, _level())
-    stamp_path = terrain_stamp.map_stamp_path(path)
-    terrain = Terrain(seed=1)
-    terrain_stamp.save_stamp_file(terrain, stamp_path)
-    data = json.load(open(stamp_path))
-    assert data["paint"]["chunks"] == [{"coord": [0, 1], "data": "abc"}]
-    assert terrain_stamp.load_stamp_file(stamp_path)["version"] == terrain_stamp.STAMP_VERSION
+def test_a_map_in_a_mounted_package_reads_its_paint_from_there(tmp_path, monkeypatch):
+    """MiniWind loads maps from mounted .fiopak data packages: the paint file
+    beside such a map is found and read there too."""
+    from engine import asset_archives
+    level = _level()
+    _out, paint = terrain_stamp.split_level(level)
+    files = {"maps/world.paint": json.dumps(paint).encode("utf-8")}
+
+    def member(path):
+        return os.path.relpath(path, str(tmp_path)).replace(os.sep, "/")
+
+    monkeypatch.setattr(asset_archives, "in_archive", lambda p: member(p) in files)
+    monkeypatch.setattr(asset_archives, "read", lambda p: files.get(member(p)))
+    path = str(tmp_path / "maps" / "world.json")
+    marked = dict(level, terrain_data={"chunk_size": 2048.0, "paint_file": True})
+    assert terrain_stamp.missing_paint_file(marked, path) is None
+    assert terrain_stamp.join_level(marked, path)["terrain_data"] == level["terrain_data"]
 
 
-def test_the_overworld_keeps_its_paint_in_its_stamp_file():
+def test_the_overworld_keeps_its_paint_in_its_paint_file():
     path = os.path.join(ROOT, "maps", "miniwind_world.json")
     with open(path, encoding="utf-8") as fh:
         level = json.load(fh)
     td = level["terrain_data"]
-    assert td.get("paint_file") == "miniwind_world.stamp"
-    assert not any(k in td for k in terrain_stamp.PAINT_FIELDS)
-    terrain_stamp.merge_level_paint(level, path)
+    assert td.get("paint_file") is True
+    assert not any(k in td for k in terrain_stamp._MOVED_KEYS)
+    assert not os.path.exists(os.path.join(ROOT, "maps", "miniwind_world.stamp"))
+    assert terrain_stamp.missing_paint_file(level, path) is None
+    terrain_stamp.join_level(level, path)
     assert level["terrain_data"]["texture_paint_resolution"] == 512
     assert len(level["terrain_data"]["texture_paint"]) > 100
 

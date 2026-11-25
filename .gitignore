@@ -25,6 +25,15 @@ game/data/multiplayer_build.json
 
 # Runtime logs: errors, crashes and freeze reports (engine/error_report.py)
 logs/
+# Fio's crash logs, next to settings.ini (editor/crash_log.py)
+fio_crash.log
+fio_crash.log.1
+fio_fault.log
+fio_fault.log.1
 # Temporary level pair the level-changer e2e test writes (and removes) while
 # it runs (tests/e2e/test_level_changer_spawns.py).
 maps/_e2e_*.json
+maps/*_autosave.json
+
+# Console dumps written by the debug console's `condump` command.
+logs/

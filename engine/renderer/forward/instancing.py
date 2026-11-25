@@ -9,43 +9,12 @@ import weakref
 
 import numpy as np
 import OpenGL.GL as gl
-from OpenGL.raw.GL.VERSION.GL_2_0 import (
-    glVertexAttribPointer as _wrapped_vertex_attrib_pointer)
-
-from engine import glraw
-
-
-def _raw_vertex_attrib_pointer(location, size, kind, normalized, stride, offset):
-    """``glVertexAttribPointer`` with an integer offset into the bound buffer.
-
-    The native entry point taking the offset as ``void *`` when it resolves
-    (glraw.pointer_fn): no Python runs for the call, where PyOpenGL's raw
-    function still ran its pointer argument through a Python ``from_param``
-    -- 24 Python calls per brush run, over 1,100 a frame. Else the raw
-    function as before."""
-    native = _VERTEX_ATTRIB_POINTER[0]
-    if native is None:
-        native = _VERTEX_ATTRIB_POINTER[0] = (
-            glraw.pointer_fn("glVertexAttribPointer") or False)
-    if native:
-        native(location, size, kind, normalized, stride,
-               offset.value if isinstance(offset, ctypes.c_void_p) else offset)
-    else:
-        _wrapped_vertex_attrib_pointer(location, size, kind, normalized, stride,
-                                       offset if isinstance(offset, ctypes.c_void_p)
-                                       else ctypes.c_void_p(offset))
-
-
-#: The resolved native entry point (False: use the wrapper), resolved on the
-#: first call, which is made with a context current.
-_VERTEX_ATTRIB_POINTER = [None]
-_FLOAT = int(gl.GL_FLOAT)
-_FALSE = int(gl.GL_FALSE)
-_SPRITE_ATTRIBUTES = ((1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28),
-                      (6, 2, 32), (7, 3, 40))
+from engine.renderer.core import gl_state
+from ..core.raw_calls import buffer_orphan, buffer_sub_data, vertex_attrib_pointer
 
 from engine import change_detection, render_table
 from engine.render_keys import KeyLayout, sort_into_runs
+from engine.shaders import EXPLOSION_INSTANCE_LAYOUT, PARTICLES_PER_EMITTER
 
 # The render key every brush pass sorts by. Two fields, because two things
 # cannot vary inside one draw: the bound texture, and which of the cube's six
@@ -82,6 +51,14 @@ _NO_ROWS = np.empty(0, dtype=np.intp)
 _ALL_ROWS = np.empty(0, dtype=np.intp)
 
 
+# The lit pass's override colours as float32 rows, so they upload through the
+# same per-row path as the table's own colours (same float32 values the tuples
+# converted to). Used by the Solid Lit pass and the Wireframe edges.
+_OVERRIDE_COLOURS = np.array(
+    [_TRIGGER_COLOR, _SELECTED_COLOR, _SUBTRACT_COLOR], dtype=np.float32)
+_TRIGGER_ROW, _SELECTED_ROW, _SUBTRACT_ROW = 0, 1, 2
+
+
 def _pick(value, rows):
     """*value*'s entries for *rows*: a per-row array indexed, a scalar as
     it is."""
@@ -99,12 +76,15 @@ class BrushStream:
     table's matrices this buffer last matched. The two double-buffered
     render tables take turns, so each keeps its own entry."""
 
-    __slots__ = ('vbo', 'vao', 'capacity', 'mirror', 'count', 'slots', 'spare',
+    __slots__ = ('vbo', 'vao', 'run_vaos', 'capacity', 'mirror', 'count', 'slots', 'spare',
                  'payload', 'consts', 'seen', 'uploaded', 'index', 'given')
 
     def __init__(self):
         self.vbo = None
         self.vao = None
+        #: Vertex arrays over this buffer by the instance a run starts at
+        #: (:meth:`InstancingMixin._brush_run_vao`); ``vao`` is the one at 0.
+        self.run_vaos = {}
         self.capacity = 0
         self.mirror = np.zeros((0, 32), dtype=np.float32)
         self.count = 0
@@ -188,6 +168,64 @@ class BrushStream:
             self.consts = (float(spare), float(payload))
         else:
             self.consts = None
+
+
+class ModelInstanceStream:
+    """One draw_models_instanced call's instance buffer: its GL buffer, the
+    staging rows, a copy of what was last uploaded, and counts of uploads
+    made and skipped (for the tests)."""
+
+    __slots__ = ('vbo', 'data', 'held', 'uploads', 'skipped', 'plan', 'run_vaos')
+
+    def __init__(self):
+        self.vbo = None
+        self.data = np.empty((0, 29), dtype=np.float32)
+        self.held = None
+        self.uploads = 0
+        self.skipped = 0
+        #: The :class:`ModelPlan` last built for this stream, while every
+        #: model it draws was loaded (PassesMixin._model_plan).
+        self.plan = None
+        #: ``(model vertex array, first row) -> vertex array`` reading that
+        #: model's vertices and this buffer's rows from that row.
+        self.run_vaos = {}
+
+    def ensure(self, count, floats):
+        """Room for *count* rows in the staging array (grown geometrically);
+        a grown array is a new buffer size, so what was uploaded is void."""
+        if count <= len(self.data):
+            return
+        capacity = max(16, len(self.data))
+        while capacity < count:
+            capacity *= 2
+        self.data = np.empty((capacity, floats), dtype=np.float32)
+        self.held = None
+
+
+class ModelPlan:
+    """What one model pass submits, prepared: the rows in draw order and each
+    run's vertex array and draws. See ``PassesMixin._model_plan``."""
+
+    __slots__ = ('slots', 'slot_bytes', 'recipe_bytes', 'solid', 'programs', 'vbo',
+                 'runs', 'sources', 'triangles')
+
+    def __init__(self, slots, slot_bytes, recipe_bytes, solid, programs, vbo):
+        #: The pass's rows, sorted into runs: what the instance buffer holds.
+        self.slots = slots
+        # What the plan was made from; it is used again while these hold.
+        self.slot_bytes = slot_bytes
+        self.recipe_bytes = recipe_bytes
+        self.solid = solid
+        self.programs = programs
+        self.vbo = vbo
+        #: ``(vertex array, instances, draws)`` per run; a draw is ``(program
+        #: name, textured, emissive, texture, colour, tint, alpha, indexed,
+        #: start, vertices)``.
+        self.runs = []
+        #: ``(recipe id, recipe, model, its draw groups, manual texture)`` per
+        #: run: what each run's draws were resolved from.
+        self.sources = []
+        self.triangles = 0
 
 
 class InstancingMixin:
@@ -433,8 +471,7 @@ class InstancingMixin:
                           for a, b in zip(firsts, lasts)]
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, stream.vbo)
         for lo, hi in bounds:
-            gl.glBufferSubData(gl.GL_ARRAY_BUFFER, lo * stride,
-                               stream.mirror[lo:hi])
+            buffer_sub_data(gl.GL_ARRAY_BUFFER, lo * stride, stream.mirror[lo:hi])
             stream.uploaded += (hi - lo) * stride
             self.instance_bytes_uploaded += (hi - lo) * stride
 
@@ -459,70 +496,76 @@ class InstancingMixin:
         gl.glBufferData(gl.GL_ARRAY_BUFFER, stream.mirror.nbytes, None,
                         gl.GL_DYNAMIC_DRAW)
         if stream.vao is None:
-            stream.vao = self._brush_stream_vao(stream.vbo)
+            stream.vao = stream.run_vaos[0] = self._brush_stream_vao(stream.vbo)
         # A grown store keeps the buffer's name: the vertex array's pointers
         # (name, stride, offset) are still right.
         return True
 
-    def _brush_stream_vao(self, vbo):
-        """A VAO over the shared cube VBO plus one instance stream's buffer.
+    #: The most vertex arrays one stream keeps for its runs. A stable scene
+    #: draws the same runs every frame; one that keeps changing would grow
+    #: the set without end, so past this it starts again.
+    RUN_VAOS_PER_STREAM = 256
+
+    def _brush_run_vao(self, stream, base):
+        """The vertex array that reads *stream*'s instances from row *base*.
+
+        OpenGL 3.3 has no ``glDrawArraysInstancedBaseInstance``: a run that
+        starts part way through the buffer is reached by where the instance
+        attributes point. They were re-aimed for every run of every frame --
+        eight calls a run, 300 a frame on the showcase, though the same runs
+        start at the same rows from one frame to the next. Each start has its
+        own vertex array now, made the first time a run starts there and
+        bound thereafter: one call a run.
+        """
+        vaos = stream.run_vaos
+        vao = vaos.get(base)
+        if vao is None:
+            if len(vaos) >= self.RUN_VAOS_PER_STREAM:
+                spare = [name for row, name in vaos.items() if row]
+                gl_state.glDeleteVertexArrays(len(spare), spare)
+                vaos.clear()
+                vaos[0] = stream.vao
+                if not base:
+                    return stream.vao
+            vao = vaos[base] = self._brush_stream_vao(stream.vbo, base)
+        return vao
+
+    def _brush_stream_vao(self, vbo, base=0):
+        """A VAO over the shared cube VBO plus one instance stream's buffer,
+        its instances read from row *base*.
 
         Deliberately separate from ``vaos['cube']``: the non-instanced path
         shares that one, and giving it eight enabled divisor-1 attributes would
         have every ordinary cube draw read an instance buffer it does not use.
         """
         vao = gl.glGenVertexArrays(1)
-        gl.glBindVertexArray(vao)
+        gl_state.glBindVertexArray(vao)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._cube_vbo)
         for location, size, offset in ((0, 3, 0), (1, 3, 12), (2, 2, 24)):
-            gl.glVertexAttribPointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
-                                     32, ctypes.c_void_p(offset))
+            vertex_attrib_pointer(location, size, gl.GL_FLOAT, gl.GL_FALSE, 32, offset)
             gl.glEnableVertexAttribArray(location)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vbo)
         stride = self.BRUSH_INSTANCE_FLOATS * 4
+        origin = int(base) * stride
         for location in range(3, 11):
-            gl.glVertexAttribPointer(
-                location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride,
-                ctypes.c_void_p((location - 3) * 16))
+            vertex_attrib_pointer(location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride,
+                                  origin + (location - 3) * 16)
             gl.glEnableVertexAttribArray(location)
             gl.glVertexAttribDivisor(location, 1)
-        gl.glBindVertexArray(0)
+        gl_state.glBindVertexArray(0)
         return vao
 
     def _release_brush_streams(self):
         """Delete every instance stream's buffer and vertex array (renderer
         cleanup, or a context about to be lost)."""
         for stream in self._brush_streams.values():
-            if stream.vao:
-                gl.glDeleteVertexArrays(1, [stream.vao])
+            if stream.run_vaos:
+                names = list(stream.run_vaos.values())
+                gl_state.glDeleteVertexArrays(len(names), names)
+                stream.run_vaos.clear()
             if stream.vbo:
                 gl.glDeleteBuffers(1, [stream.vbo])
         self._brush_streams.clear()
-
-    def _point_brush_instances_at(self, base):
-        """Re-aim the instance attributes at instance *base*.
-
-        OpenGL 3.3 has no ``glDrawArraysInstancedBaseInstance``, so a run that
-        starts part way through the buffer is reached by moving the attribute
-        pointers instead. Eight calls per run, against six vertices' worth of
-        draw -- and there are at most six runs per texture.
-        """
-        stride = self.BRUSH_INSTANCE_FLOATS * 4
-        origin = int(base) * stride
-        # The raw entry point: the offset is a plain integer into the bound
-        # buffer, so PyOpenGL's array handling and the pointer bookkeeping it
-        # keeps per context (a dict write per call) buy nothing here -- and
-        # they were most of the cost of a brush pass.
-        native = _VERTEX_ATTRIB_POINTER[0]
-        if native:
-            for location in range(3, 11):
-                native(location, 4, _FLOAT, _FALSE, stride,
-                       origin + (location - 3) * 16)
-            return
-        for location in range(3, 11):
-            _raw_vertex_attrib_pointer(
-                location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride,
-                origin + (location - 3) * 16)
 
     def _ensure_sprite_instance_buffer(self, count):
         """Grow the sprite instance VBO and its staging array to *count* rows."""
@@ -541,6 +584,20 @@ class InstancingMixin:
         # As with the brush buffer, the VAO is left alone: glBufferData keeps
         # the buffer's name and the VAO's pointers reference the name.
 
+    def _upload_sprite_instances(self, data):
+        """Upload *data* to the sprite instance buffer, into fresh storage.
+
+        Entity sprites, billboards and flames share the buffer, and each
+        portal view draws its sprites before the main view does: written in
+        place, every upload after the first in a frame waited for the draws
+        still reading the last (an implicit sync, worst on tiled mobile GPUs).
+        Orphaning it first (glBufferData with no data) gives the driver new
+        storage to write while those draws keep the old."""
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
+        buffer_orphan(gl.GL_ARRAY_BUFFER, self._sprite_instance_data.nbytes,
+                      gl.GL_DYNAMIC_DRAW)
+        buffer_sub_data(gl.GL_ARRAY_BUFFER, 0, data)
+
     def _ensure_sprite_instance_vao(self):
         """A VAO over the shared billboard quad plus the instance buffer.
 
@@ -553,7 +610,7 @@ class InstancingMixin:
             return self._sprite_instance_vao
         self._ensure_sprite_instance_buffer(1)
         vao = gl.glGenVertexArrays(1)
-        gl.glBindVertexArray(vao)
+        gl_state.glBindVertexArray(vao)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_vbo)
         gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
         gl.glEnableVertexAttribArray(0)
@@ -567,7 +624,7 @@ class InstancingMixin:
                                      stride, ctypes.c_void_p(offset))
             gl.glEnableVertexAttribArray(location)
             gl.glVertexAttribDivisor(location, 1)
-        gl.glBindVertexArray(0)
+        gl_state.glBindVertexArray(0)
         self._sprite_instance_vao = vao
         return vao
 
@@ -586,9 +643,14 @@ class InstancingMixin:
         origin = base * stride
         # The raw entry point, as for brush runs: an integer offset into the
         # bound buffer needs none of the wrapper's array handling.
-        for location, size, offset in _SPRITE_ATTRIBUTES:
-            _raw_vertex_attrib_pointer(location, size, _FLOAT, _FALSE,
-                                       stride, origin + offset)
+        # (6) a head actor's spin and (7) its extra row follow
+        # Fio's five.
+        for location, size, offset in (
+            (1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28),
+            (6, 2, 32), (7, 3, 40)
+        ):
+            vertex_attrib_pointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
+                                  stride, origin + offset)
 
     def _ensure_effect_instance_buffer(self, count):
         if self._effect_instance_vbo is None:
@@ -607,81 +669,110 @@ class InstancingMixin:
             None,
             gl.GL_DYNAMIC_DRAW,
         )
+        # The buffer was reallocated: what it held is gone.
+        self._explosion_uploaded = None
 
     def _ensure_effect_instance_vao(self):
         if self._effect_instance_vao is not None:
             return self._effect_instance_vao
         self._ensure_effect_instance_buffer(1)
         vao = gl.glGenVertexArrays(1)
-        gl.glBindVertexArray(vao)
+        gl_state.glBindVertexArray(vao)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_vbo)
         gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
         gl.glEnableVertexAttribArray(0)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._effect_instance_vbo)
+        # One vec4 per entry of EXPLOSION_INSTANCE_LAYOUT, from location 1:
+        # the layout effect.vert's declarations are generated from.
         stride = self.EFFECT_INSTANCE_FLOATS * 4
-        for location, size, offset in (
-            (1, 3, 0),
-            (2, 4, 12),
-            (3, 4, 28),
-            (4, 4, 44),
-            (5, 1, 60),
-        ):
+        for vec in range(len(EXPLOSION_INSTANCE_LAYOUT)):
+            location = vec + 1
             gl.glVertexAttribPointer(
-                location, size, gl.GL_FLOAT, gl.GL_FALSE,
-                stride, ctypes.c_void_p(offset)
+                location, 4, gl.GL_FLOAT, gl.GL_FALSE,
+                stride, ctypes.c_void_p(vec * 16)
             )
             gl.glEnableVertexAttribArray(location)
             gl.glVertexAttribDivisor(location, 1)
-        gl.glBindVertexArray(0)
+        gl_state.glBindVertexArray(0)
         self._effect_instance_vao = vao
         return vao
 
-    def _ensure_model_instance_buffer(self, count):
-        if count <= 0:
+    def _ensure_particle_instance_buffer(self, count):
+        """Grow the emitter instance VBO and its staging array to *count*
+        emitter rows (each feeds PARTICLES_PER_EMITTER particle instances)."""
+        if self._particle_instance_vbo is None:
+            self._particle_instance_vbo = gl.glGenBuffers(1)
+        if count <= self._particle_instance_capacity:
             return
-        if self._model_instance_vbo is None:
-            self._model_instance_vbo = gl.glGenBuffers(1)
-        if count > self._model_instance_capacity:
-            capacity = max(16, self._model_instance_capacity)
-            while capacity < count:
-                capacity *= 2
-            self._model_instance_capacity = capacity
-            self._model_instance_data = np.empty((capacity, 29), dtype=np.float32)
-            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._model_instance_vbo)
-            gl.glBufferData(
-                gl.GL_ARRAY_BUFFER,
-                self._model_instance_data.nbytes,
-                None,
-                gl.GL_DYNAMIC_DRAW,
-            )
+        capacity = max(count, 32, self._particle_instance_capacity * 2)
+        self._particle_instance_capacity = capacity
+        self._particle_instance_data = np.empty(
+            (capacity, self.PARTICLE_INSTANCE_FLOATS), dtype=np.float32
+        )
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._particle_instance_vbo)
+        gl.glBufferData(
+            gl.GL_ARRAY_BUFFER,
+            self._particle_instance_data.nbytes,
+            None,
+            gl.GL_DYNAMIC_DRAW,
+        )
+        # The buffer was reallocated: what it held is gone.
+        self._particle_uploaded = None
 
-    def _ensure_model_instance_vao(self, vao):
-        key = int(vao)
-        if key in self._model_instanced_vaos:
-            return
-        if self._model_instance_vbo is None:
-            self._ensure_model_instance_buffer(1)
-        gl.glBindVertexArray(vao)
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._model_instance_vbo)
-        stride = 29 * 4
-        offsets = (0, 16, 32, 48, 64, 80, 96)
-        for location, offset in zip(range(3, 10), offsets):
+    def _ensure_particle_instance_vao(self):
+        """The billboard quad plus the emitter rows, each row stepping once
+        per PARTICLES_PER_EMITTER instances: one row is one emitter, and
+        gl_InstanceID % PARTICLES_PER_EMITTER is the particle."""
+        if self._particle_instance_vao is not None:
+            return self._particle_instance_vao
+        self._ensure_particle_instance_buffer(1)
+        vao = gl.glGenVertexArrays(1)
+        gl_state.glBindVertexArray(vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_vbo)
+        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+        gl.glEnableVertexAttribArray(0)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._particle_instance_vbo)
+        stride = self.PARTICLE_INSTANCE_FLOATS * 4
+        for location in range(1, 6):
             gl.glVertexAttribPointer(
-                location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(offset))
+                location, 4, gl.GL_FLOAT, gl.GL_FALSE,
+                stride, ctypes.c_void_p((location - 1) * 16)
+            )
             gl.glEnableVertexAttribArray(location)
-            gl.glVertexAttribDivisor(location, 1)
-        gl.glVertexAttribPointer(
-            10, 1, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(112))
-        gl.glEnableVertexAttribArray(10)
-        gl.glVertexAttribDivisor(10, 1)
-        gl.glBindVertexArray(0)
-        self._model_instanced_vaos.add(key)
+            gl.glVertexAttribDivisor(location, PARTICLES_PER_EMITTER)
+        gl_state.glBindVertexArray(0)
+        self._particle_instance_vao = vao
+        return vao
 
-    def _fill_model_instance_buffer_numeric(self, table, slots):
-        """Gather model transforms directly from dense entity columns."""
+    #: Floats per model instance row: model matrix (16), normal matrix as
+    #: three vec4 rows (12) and alpha.
+    MODEL_INSTANCE_FLOATS = 29
+
+    def _model_instance_stream(self, key):
+        """The model instance buffer a draw_models_instanced call (*key*, from
+        :meth:`_stream_key`) packs into. Each use per view has its own, as the
+        brush passes' streams do: every run of one call is packed into it and
+        uploaded once, where all calls used to share one buffer rewritten
+        with glBufferSubData once per recipe between draws still reading it
+        (an implicit sync per run on tiled mobile GPUs)."""
+        streams = self.__dict__.setdefault('_model_instance_streams', {})
+        stream = streams.get(key)
+        if stream is None:
+            stream = streams[key] = ModelInstanceStream()
+        return stream
+
+    def _fill_model_instance_stream(self, stream, table, slots):
+        """Gather *slots*' model rows from the dense entity columns into
+        *stream* and upload them -- once, whole, into fresh storage (orphaned,
+        so no draw still reading the old rows waits) -- unless they are what
+        the buffer already holds.
+
+        The entity table keeps no version for its transform columns, so
+        "unchanged" is told by comparing the gathered rows with the last
+        upload: a memcmp over 116 bytes a model, against a buffer upload."""
         count = len(slots)
-        self._ensure_model_instance_buffer(count)
-        out = self._model_instance_data[:count]
+        stream.ensure(count, self.MODEL_INSTANCE_FLOATS)
+        out = stream.data[:count]
         np.take(table.model_base_matrix, slots, axis=0, out=out[:, :16])
         np.take(table.model_normal_matrix, slots, axis=0, out=out[:, 16:28])
         np.take(table.render_alpha, slots, out=out[:, 28])
@@ -693,8 +784,80 @@ class InstancingMixin:
             np.take(table.pos[:, 0], slots, out=out[:, 12])
             np.take(table.pos[:, 1], slots, out=out[:, 13])
             np.take(table.pos[:, 2], slots, out=out[:, 14])
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._model_instance_vbo)
-        gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, out)
+        if stream.vbo is None:
+            stream.vbo = gl.glGenBuffers(1)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, stream.vbo)
+        held = stream.held
+        if held is not None and held.shape == out.shape and np.array_equal(held, out):
+            stream.skipped += 1
+            return
+        buffer_orphan(gl.GL_ARRAY_BUFFER, stream.data.nbytes, gl.GL_DYNAMIC_DRAW)
+        buffer_sub_data(gl.GL_ARRAY_BUFFER, 0, out)
+        stream.held = out.copy()
+        stream.uploads += 1
+
+    #: The most vertex arrays one model stream keeps for its runs; past it
+    #: the set starts again.
+    MODEL_RUN_VAOS = 256
+
+    def _model_run_vao(self, stream, obj, base):
+        """A vertex array over model *obj*'s vertices and *stream*'s instance
+        rows read from row *base*.
+
+        The model's own vertex array used to be given the instance
+        attributes and re-aimed at each run's first row, eight pointer calls
+        a run every frame (OpenGL 3.3 has no base-instance draw). A run has
+        its own now -- the model's vertex layout (position, normal,
+        texcoord: 32 bytes a vertex in both loaders) and its element buffer,
+        plus the stream's rows from *base* -- and the model's is left as its
+        loader made it.
+        """
+        vaos = stream.run_vaos
+        key = (int(obj.vao), int(base))
+        vao = vaos.get(key)
+        if vao is not None:
+            return vao
+        if len(vaos) >= self.MODEL_RUN_VAOS:
+            names = list(vaos.values())
+            gl_state.glDeleteVertexArrays(len(names), names)
+            vaos.clear()
+            stream.plan = None              # it names the arrays just deleted
+        vao = gl.glGenVertexArrays(1)
+        gl_state.glBindVertexArray(vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, obj.vbo)
+        for location, size, offset in ((0, 3, 0), (1, 3, 12), (2, 2, 24)):
+            vertex_attrib_pointer(location, size, gl.GL_FLOAT, gl.GL_FALSE, 32, offset)
+            gl.glEnableVertexAttribArray(location)
+        ebo = getattr(obj, 'ebo', None)
+        if ebo is not None:
+            gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, ebo)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, stream.vbo)
+        stride = self.MODEL_INSTANCE_FLOATS * 4
+        origin = int(base) * stride
+        for location in range(3, 10):
+            vertex_attrib_pointer(location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride,
+                                  origin + (location - 3) * 16)
+            gl.glEnableVertexAttribArray(location)
+            gl.glVertexAttribDivisor(location, 1)
+        vertex_attrib_pointer(10, 1, gl.GL_FLOAT, gl.GL_FALSE, stride, origin + 112)
+        gl.glEnableVertexAttribArray(10)
+        gl.glVertexAttribDivisor(10, 1)
+        gl_state.glBindVertexArray(0)
+        vaos[key] = vao
+        return vao
+
+    def _release_model_instance_streams(self):
+        """Delete every model instance buffer (renderer cleanup)."""
+        streams = self.__dict__.get('_model_instance_streams') or {}
+        for stream in streams.values():
+            if stream.run_vaos:
+                names = list(stream.run_vaos.values())
+                gl_state.glDeleteVertexArrays(len(names), names)
+                stream.run_vaos.clear()
+            stream.plan = None
+            if stream.vbo:
+                gl.glDeleteBuffers(1, [stream.vbo])
+        streams.clear()
 
     @staticmethod
     def lit_instance_payload(table, row_slots, selected_slot=-1):

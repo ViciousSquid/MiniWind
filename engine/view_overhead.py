@@ -59,14 +59,14 @@ class ViewOverhead:
                 size=float(view.overhead_sprite_size),
                 facing_offset_deg=float(view.overhead_sprite_facing_offset))
         # Every head, weapon and torch of the frame goes to the GPU together.
-        renderer = view._overhead_sprite_renderer
-        begin = getattr(renderer, "begin", None)    # a stand-in may not batch
+        sprites = view._overhead_sprite_renderer
+        begin = getattr(sprites, "begin", None)    # a stand-in may not batch
         batching = bool(begin) and begin(view.projection_matrix, view.view_matrix)
         try:
             self._draw_actors(render_state, session, coop)
         finally:
             if batching:
-                renderer.end()
+                sprites.end()
         return True
 
     def _draw_actors(self, render_state, sess, coop):
@@ -105,8 +105,8 @@ class ViewOverhead:
             except Exception:
                 flash = 0.0
         tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else (0.0, 0.0, 0.0, 0.0)
-        renderer = view._overhead_sprite_renderer
-        renderer.draw(view.projection_matrix, view.view_matrix, gpos,
+        sprites = view._overhead_sprite_renderer
+        sprites.draw(view.projection_matrix, view.view_matrix, gpos,
                       ctrl.facing, ctrl.frame(), tint=tint)
         held = getattr(sess, "overhead_player_weapon", None)
         if held is None:
@@ -127,7 +127,7 @@ class ViewOverhead:
             facing = ctrl.facing
             if len(entry) > 3:
                 facing += float(entry[3] or 0.0)
-            renderer.draw_weapon(
+            sprites.draw_weapon(
                 view.projection_matrix, view.view_matrix, gpos, facing, weapon_path,
                 now, attacking=bool(entry[2]) if len(entry) > 2 else shooting,
                 weapon_kind=self.weapon_kind(weapon_id, sess), handed=handed,
@@ -145,7 +145,7 @@ class ViewOverhead:
             debug_log("Error", f"overhead_actor_weapons failed: {exc}")
             return
         view = self.view
-        renderer = view._overhead_sprite_renderer
+        sprites = view._overhead_sprite_renderer
         now = time.perf_counter()
         player_size = max(1.0, float(view.overhead_sprite_size))
         for entry in held_list:
@@ -153,7 +153,7 @@ class ViewOverhead:
             path = self.weapon_asset_path(a_weapon)
             if not path:
                 continue
-            renderer.draw_weapon(
+            sprites.draw_weapon(
                 view.projection_matrix, view.view_matrix, a_pos, a_facing, path,
                 now, attacking=a_attacking,
                 weapon_kind=self.weapon_kind(a_weapon, sess),

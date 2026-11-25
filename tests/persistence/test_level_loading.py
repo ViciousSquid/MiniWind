@@ -56,7 +56,7 @@ def test_a_load_failing_midway_detaches_the_previous_map(main_window, tmp_path, 
     path = tmp_path / "level.json"
     path.write_text(json.dumps(LEVEL))
     window = main_window
-    def fail_apply(data):
+    def fail_apply(data, **_kw):
         window.state.load_from_data(data)
         raise RuntimeError("entity failed to build")
     monkeypatch.setattr(window, "_apply_level_data", fail_apply)
@@ -66,7 +66,8 @@ def test_a_load_failing_midway_detaches_the_previous_map(main_window, tmp_path, 
     assert window.file_path is None, (
         "a half-built scene is still attached to %r" % window.file_path)
     assert window.unsaved_changes
-    assert window.ui.notification_label.text()
+    from editor.debug_console import get_debug_logger
+    assert get_debug_logger().toasts()[-1][1] == 'error'
 
 
 def test_an_unreadable_file_leaves_the_open_level_alone(main_window, tmp_path):

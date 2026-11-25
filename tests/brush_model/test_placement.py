@@ -31,7 +31,7 @@ from engine import render_table as rt
 from engine.constants import brush_aabb_bounds
 from engine.logic_render import LogicRender
 from engine.mover_table import travel_range
-from engine.physics import SpatialGrid
+from engine.spatial_grid import SpatialGrid
 from engine.render_table import RenderTable
 from engine.view_filters import brush_bounds
 from plugins.bigworld.cell import cells_for_aabb
@@ -448,6 +448,39 @@ def test_the_editor_pickers_hit_a_spinning_bar_where_it_is_drawn(main_window, mo
 
 
 @pytest.mark.qt
+@pytest.mark.parametrize("angled", [False, True])
+def test_face_pick_looks_through_a_volume_the_camera_is_inside(main_window, monkeypatch, angled):
+    """A face-mode click on a wall must texture that wall, not the volume
+    (a trigger, a fog or water volume, a room-sized brush) the camera is
+    standing in. A ray from inside used to hit a box at distance 0 -- with a
+    face chosen from where the camera stood -- and an angled one on the far
+    face it leaves through, so the click retextured a different brush."""
+    view = main_window.view_3d
+    wall = box_brush("wall", (-400, 0, 0), (32, 256, 512))
+    if angled:
+        volume = angled_brush("volume", (0, 0, 0), (300, 200, 300),
+                              clip_normal=(0.3, 1.0, 0.2), is_trigger=True)
+    else:
+        volume = box_brush("volume", (0, 0, 0), (300, 200, 300), is_trigger=True)
+    main_window.state.brushes[:] = [volume, wall]
+    main_window.state.things[:] = []
+    _aim(view, monkeypatch, (0.0, -40.0, 30.0), (-1.0, 0.0, 0.0))   # from inside
+    assert view.picking.get_brush_face_at_coords(0, 0) == (wall, 'east')
+    # From outside, the volume is still a surface like any other.
+    _aim(view, monkeypatch, (300.0, -40.0, 30.0), (-1.0, 0.0, 0.0))
+    picked = view.picking.get_brush_face_at_coords(0, 0)
+    assert picked is not None and picked[0] is volume
+
+
+def test_a_ray_starting_inside_a_box_enters_none_of_its_faces():
+    box = (0.0, 0.0, 0.0, 50.0, 50.0, 50.0)
+    assert bp.ray_box(box, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)) == 0.0
+    assert bp.ray_box_entry(box, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)) is None
+    assert bp.ray_box_entry(box, (-100.0, 0.0, 0.0), (1.0, 0.0, 0.0)) == pytest.approx(50.0)
+    assert bp.ray_box_entry(box, (-100.0, 0.0, 0.0), (-1.0, 0.0, 0.0)) is None
+
+
+@pytest.mark.qt
 def test_the_editor_pickers_ignore_a_stale_copy(main_window, monkeypatch):
     view = main_window.view_3d
     # Since Stage 2d pos places the planes; size is the copy that can go stale.
@@ -464,9 +497,11 @@ def test_the_editor_pickers_ignore_a_stale_copy(main_window, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The shipped brush with a stale copy (MiniWind's world: a roof whose stored
-# pos is 2032 units along X and 4928 along Z from its planes; Fio's test used
-# two clipped terrain brushes of maps MiniWind does not ship)
+# The legacy brush with a stale copy (MiniWind's world as last saved before
+# version 5, ``bs.LEGACY_WORLD``: a roof whose stored pos is 2032 units along
+# X and 4928 along Z from its planes; Fio's test used two clipped terrain
+# brushes of maps MiniWind does not ship). The shipped map is now version 5,
+# where the same roof's pos is its placement.
 # ---------------------------------------------------------------------------
 
 CLIPPED_TERRAIN = 'e23ac095'
@@ -475,7 +510,7 @@ CLIPPED_TERRAIN = 'e23ac095'
 @pytest.mark.parametrize("name", ["miniwind_world.json"])
 def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
     # The world's convex brushes are enough company (it has 16,000 boxes).
-    raws = [b for b in bs.shipped_maps(REPO_ROOT)[name] if bs.encoding(b) == 'convex']
+    raws = [b for b in bs.legacy_maps(REPO_ROOT)[name] if bs.encoding(b) == 'convex']
     brushes = [bs.loaded(b) for b in raws]
     slot = next(i for i, b in enumerate(brushes)
                 if str(b.get('id')).startswith(CLIPPED_TERRAIN))
@@ -489,6 +524,12 @@ def test_the_clipped_terrain_is_drawn_and_bounded_by_its_planes(name):
     assert np.allclose(hi, bs.world_convex(raw).bounds[1], atol=1e-9)
     # Loading either representation leaves the brush's world bound on its planes.
     assert brush['pos'][0] - brush['size'][0] / 2 == pytest.approx(lo[0], abs=1e-9)
+    # The shipped version-5 save of the same roof stores that placement, so
+    # it loads to the same solid with nothing to re-derive.
+    shipped = next(b for b in bs.shipped_maps(REPO_ROOT)[name]
+                   if str(b.get('id')).startswith(CLIPPED_TERRAIN))
+    assert np.allclose(bp.world_bounds(bs.loaded(shipped)), np.concatenate((lo, hi)), atol=1e-9)
+    assert shipped['pos'][0] - shipped['size'][0] / 2 == pytest.approx(lo[0], abs=1e-9)
 
     # Drawn exactly where its planes are.
     table = RenderTable()
@@ -553,3 +594,51 @@ def test_a_turned_box_is_the_same_from_the_turn_memo():
         half = (rng.uniform(0, 600), rng.uniform(0, 600), rng.uniform(0, 600))
         assert bp.turned_half_now(*half, 0.0, ay, 0.0, angle) == bp.turned_half(
             *half, (0.0, ay, 0.0), angle)
+
+
+@pytest.mark.qt
+@pytest.mark.parametrize("angled", [False, True])
+def test_object_pick_looks_through_a_volume_the_camera_is_inside(main_window, monkeypatch, angled):
+    """A click on a wall selects the wall, not the volume (a trigger, fog or
+    water volume, a room-sized brush) the camera is standing in. The object
+    pick hit a box the ray starts inside at distance 0, so that volume won
+    every click in the 3D view until the camera left it."""
+    view = main_window.view_3d
+    wall = box_brush("wall", (-400, 0, 0), (32, 256, 512))
+    if angled:
+        volume = angled_brush("volume", (0, 0, 0), (300, 200, 300),
+                              clip_normal=(0.3, 1.0, 0.2), is_trigger=True)
+    else:
+        volume = box_brush("volume", (0, 0, 0), (300, 200, 300), is_trigger=True)
+    main_window.state.brushes[:] = [volume, wall]
+    main_window.state.things[:] = []
+    _aim(view, monkeypatch, (0.0, -40.0, 30.0), (-1.0, 0.0, 0.0))   # from inside
+    assert view.picking.get_object_at_3d(0, 0) is wall
+    # Drill-select still reaches the volume around the camera, after the wall.
+    walked = [view.picking.get_object_at_3d(0, 0, cycle=True)]
+    main_window.set_selected_objects([walked[0]])
+    walked.append(view.picking.get_object_at_3d(0, 0, cycle=True))
+    assert walked == [wall, volume]
+    # From outside, the volume is picked like anything else.
+    main_window.set_selected_objects([])
+    _aim(view, monkeypatch, (300.0, -40.0, 30.0), (-1.0, 0.0, 0.0))
+    assert view.picking.get_object_at_3d(0, 0) is volume
+
+
+@pytest.mark.qt
+def test_object_pick_misses_the_empty_corner_of_an_angled_brush(main_window, monkeypatch):
+    """An angled brush is picked by its faces, not its bounding box: the air
+    its sloped face cut away does not hide the brush behind it."""
+    view = main_window.view_3d
+    # A wedge: the top-east corner is cut off by a 45-degree face.
+    wedge = angled_brush("wedge", (0, 0, 0), (200, 200, 200),
+                         clip_normal=(1.0, 1.0, 0.0), clip_offset=0.0)
+    behind = box_brush("behind", (0, 0, -400), (400, 400, 32))
+    main_window.state.brushes[:] = [wedge, behind]
+    main_window.state.things[:] = []
+    # Into the cut-away corner (x = y = 80: in the box, above the slope).
+    _aim(view, monkeypatch, (80.0, 80.0, 500.0), (0.0, 0.0, -1.0))
+    assert view.picking.get_object_at_3d(0, 0) is behind
+    # Through the solid half the wedge still wins.
+    _aim(view, monkeypatch, (-80.0, -80.0, 500.0), (0.0, 0.0, -1.0))
+    assert view.picking.get_object_at_3d(0, 0) is wedge

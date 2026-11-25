@@ -72,6 +72,7 @@ head-less test -- still imports this module.
 from __future__ import annotations
 
 import math
+import functools
 import os
 import time
 from itertools import chain
@@ -82,9 +83,11 @@ import numpy as np
 from . import change_detection
 from .change_journal import (JOURNAL, FACING, MOVED, OVERFLOW, STATE,
                              VISIBILITY, is_tracked)
+from .light_cookies import cookie_of, cookie_shadow_floor
 from .portal_transform import basis_from_rotation
 from .render_table import _can_adopt
 from .entity_models import model_path, model_rotation, model_scale
+from .model_rotate import axis_vector
 
 # Defensive, as everywhere else in engine/: editor.things pulls in PyQt5, and
 # the standalone player tier does not have it.  A tier without the classes
@@ -98,6 +101,10 @@ except ImportError:                                   # pragma: no cover
     Thing = PathNode = Portal = Prop = Monster = Effect = None
     LogicGate = LogicRelay = LogicTimer = LevelChanger = Light = None
     LogicSpawner = LogicCamera = ReflectionProbe = None
+from .effect_entity import (
+    EMITTER_SCALE_RANGE, EXPLOSION_FLASH_DECAY, EXPLOSION_FLASH_GAIN,
+    EXPLOSION_LIGHT_FADE_FROM, EXPLOSION_PREVIEW_T, emitter_id,
+    explosion_light_scale)
 
 
 # --------------------------------------------------------------------------
@@ -154,6 +161,8 @@ ENT_PROBE           = 1 << 14
 #: rendering are unaffected by the cull, which is deliberate and predates this
 #: projection.
 ENT_CULL_EXEMPT = ENT_LIGHT | ENT_PORTAL
+#: Rows of the frame's light list: Lights, emissive decals and Effects.
+_LIGHT_ROW = ENT_LIGHT | ENT_EFFECT
 
 # Numeric portal direction codes.  3 means both directions.
 PORTAL_DIRECTION_FORWARD = 1
@@ -221,9 +230,20 @@ def _monster_sprite_candidates(props):
         custom, sprite_type = props.get('custom_shoot', ''), 'shoot'
     else:
         custom, sprite_type = props.get('custom_idle', ''), 'idle'
+    try:
+        return _sprite_recipe(custom, sprite_type, props.get('monster_type', 'human'),
+                              props.get('variant', '<None>'))
+    except TypeError:               # an unhashable authored value: build it
+        return _sprite_recipe.__wrapped__(
+            custom, sprite_type, props.get('monster_type', 'human'),
+            props.get('variant', '<None>'))
 
-    mtype = props.get('monster_type', 'human')
-    variant = props.get('variant', '<None>')
+
+@functools.lru_cache(maxsize=4096)
+def _sprite_recipe(custom, sprite_type, mtype, variant):
+    """The candidates for one monster state. A pure function of its
+    arguments, and asked for the same few again and again, so the answers
+    are kept. (MiniWind: one facing, so no rotation.)"""
     key = 'msprite_%s_%s_%s_%s' % (mtype, variant, sprite_type, custom)
 
     candidates = []
@@ -382,6 +402,11 @@ def _entity_class_bits(thing) -> int:
         bits |= ENT_PROP
     if Light is not None and isinstance(thing, Light):
         bits |= ENT_LIGHT
+    elif _is_emissive_decal(props):
+        # A decal that glows is a row of the light list, like an Effect's
+        # fire. One that does not is not a light in any sense: no bit, no
+        # row in light_slots, nothing read or computed for it.
+        bits |= ENT_LIGHT
     if ReflectionProbe is not None and isinstance(thing, ReflectionProbe):
         bits |= ENT_PROBE
     if Effect is not None and isinstance(thing, Effect):
@@ -440,6 +465,13 @@ def _model_transform_columns(thing):
         mat = glm.rotate(glm.mat4(1.0), glm.radians(float(rot[1])), glm.vec3(0, 1, 0))
         mat = glm.rotate(mat, glm.radians(float(rot[0])), glm.vec3(1, 0, 0))
         mat = glm.rotate(mat, glm.radians(float(rot[2])), glm.vec3(0, 0, 1))
+        # A rotating model (engine.model_rotate): about its own axis, after
+        # its scale and before its placed rotation. Runtime state on the
+        # Prop, 0 outside Play and Preview.
+        turn = float(getattr(thing, '_rotate_angle', 0.0) or 0.0)
+        if turn:
+            axis = axis_vector(getattr(thing, '_rotate_axis', 2))
+            mat = glm.rotate(mat, glm.radians(turn), glm.vec3(*axis))
         mat = glm.scale(mat, glm.vec3(*scale_vec))
         normal = glm.transpose(glm.inverse(glm.mat3(mat)))
     except Exception:
@@ -459,6 +491,46 @@ def _model_transform_columns(thing):
     return model, normal_np
 
 
+#: How far in front of its surface an emissive decal's light stands, world
+#: units: on the face, to all intents, but not in the wall.
+DECAL_LIGHT_STANDOFF = 1.0
+
+
+def _is_emissive_decal(props):
+    if props.get('type') != 'decal':
+        return False
+    from engine.decal_table import is_emissive
+    return is_emissive(props)
+
+
+def _decal_light(thing):
+    """``(colour, (intensity, radius), offset)`` of an emissive decal.
+
+    The colour is the main colour of its image (``decal_textures.
+    dominant_colour``) times its tint. The light is emitted from the decal's
+    face: it stands on the surface the decal is painted on, at its middle
+    (a hair's breadth -- :data:`DECAL_LIGHT_STANDOFF` -- in front, so it is
+    not inside the wall). Light from there reaches everything in front of
+    the face and only grazes the wall the decal is on, as a screen's does:
+    the room is lit, the wall around the screen is not.
+    """
+    props = _light_props(thing)
+    from engine.decal_table import tint_of
+    from engine.decal_textures import dominant_colour
+    colour = np.asarray(dominant_colour(props.get('texture')), dtype=np.float32)
+    colour = colour * np.asarray(tint_of(props.get('tint')), dtype=np.float32)
+    intensity = max(0.0, _light_float(thing, 'emissive_intensity', 1.0))
+    radius = max(0.01, _light_float(thing, 'emissive_radius', 256.0))
+    yaw = math.radians(_light_float(thing, 'yaw', 0.0))
+    pitch = math.radians(_light_float(thing, 'pitch', -90.0))
+    throw = (math.cos(pitch) * math.cos(yaw), math.sin(pitch),
+             -math.cos(pitch) * math.sin(yaw))
+    offset = tuple(-DECAL_LIGHT_STANDOFF * axis for axis in throw)
+    if not all(math.isfinite(v) for v in offset + (intensity, radius)):
+        return colour, (0.0, 0.01), (0.0, 0.0, 0.0)
+    return colour, (intensity, radius), offset
+
+
 def _light_props(thing):
     props = getattr(thing, 'properties', thing if isinstance(thing, dict) else {})
     return props if isinstance(props, dict) else {}
@@ -469,6 +541,20 @@ def _light_float(thing, key, default):
         return float(_light_props(thing).get(key, default))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _light_shadow_filter(thing):
+    """A Light's ``(shadow_softness, shadow_bias, shadow_map_size)`` for the
+    ``light_shadow`` column: each clamped to a sane range, and 0 -- the
+    renderer's default -- when unset, non-positive or not a number."""
+    def value(key, low, high):
+        v = _light_float(thing, key, 0.0)
+        if not math.isfinite(v) or v <= 0.0:
+            return 0.0
+        return min(max(v, low), high)
+    return (value('shadow_softness', 0.05, 16.0),
+            value('shadow_bias', 0.05, 16.0),
+            value('shadow_map_size', 64.0, 4096.0))
 
 
 def _light_bool(thing, key, default=False):
@@ -529,10 +615,21 @@ _EFFECT_ORB_LIGHT_COLOUR = np.asarray(
     (0x4A, 0x9B, 0xFF), dtype=np.float32
 ) / 255.0
 
-# EXPLOSION's atlas is 16 frames, numbered 1..16 for authoring.
-# The editor preview is intentionally locked to frame 10 (atlas index 9).
-_EXPLOSION_FRAME_COUNT = 16.0
-_EXPLOSION_PREVIEW_FRAME = 10
+#: Explosions a tick from which their lights are worked out by NumPy rather
+#: than a Python loop. A small-N crossover (the invariant in
+#: tests/performance/test_small_n_invariant.py): a map plays a handful of
+#: explosions at once, and below this the loop's per-row cost is less than
+#: NumPy's fixed cost a call. Measured (CPython 3.13, NumPy 2; re-measure
+#: with ``pytest tests/performance/test_small_n_invariant.py -k benchmark -s
+#: --run-benchmarks``)::
+#:
+#:     explosions    loop      NumPy
+#:              1     1.1 us   18.5 us
+#:              8     4.2 us   18.7 us
+#:             32    15.4 us   19.1 us
+#:             48    23.1 us   19.1 us
+#:            128    60.0 us   22.3 us
+EXPLOSION_LIGHT_VECTOR_FROM = 40
 
 def _effect_fire_variant(props):
     value = str(
@@ -636,6 +733,25 @@ _COLUMNS = (
     # Per-light terrain receiver mode: zero impact on other surface shaders.
     ('light_terrain_shadow_only', (), bool, False),
     ('light_terrain_shadow_strength', (), np.float32, 0.0),
+    #: A shadow-casting Light's (softness, bias, shadow map size); 0 in any
+    #: of them means the default (engine.shaders / [Renderer] shadow_map_size).
+    ('light_shadow', (3,), np.float32, 0.0),
+    #: Where a row's light stands relative to its entity: zero for all but an
+    #: emissive decal, whose light is just off the surface it is painted on.
+    #: Folded into ``pos`` wherever that is written (the row draws nothing
+    #: itself), so every reader of a light's position is unchanged.
+    ('light_offset', (3,), np.float64, 0.0),
+    #: The size of a light's source, world units: 0 for a point (every Light,
+    #: Effect and decal), half its length for an emissive brush, whose light
+    #: fades in over that distance (shaders.LIGHT_SOURCE_SIZE_GLSL).
+    ('light_size', (), np.float32, 0.0),
+    #: The light's projected image (engine.light_cookies): its interned id,
+    #: 0 for every light that has none -- the default, and anything but a
+    #: Light whose ``cookie_enabled`` is true and ``cookie_texture`` is set.
+    ('light_cookie', (), np.int32, 0),
+    #: A cookie light's visibility in its own shadow never drops below this
+    #: (``cookie_shadow_floor``, 0..1); unused without a cookie.
+    ('light_cookie_floor', (), np.float32, 0.0),
     #: Portal topology/render columns. Target links are resolved to integer
     #: entity slots at reconcile.
     ('portal_target_slot', (), np.int32, -1),
@@ -660,6 +776,15 @@ _COLUMNS = (
     ('effect_custom_loop', (), bool, True),
     ('effect_preview', (), bool, False),
     ('effect_params', (4,), np.float32, 0.0),
+    #: The Effect's particle emitter: preset id (0 = none, see
+    #: effect_entity.EMITTER_PRESETS), (rate 0..1, scale, extent width,
+    #: extent height) and tint 0..1. Authored, so resolved with the other
+    #: static Effect columns and never touched by the clock.
+    #: Where an explosion's playback starts, 0..0.9 (explosion_skip).
+    ('effect_skip', (), np.float32, 0.0),
+    ('effect_emitter', (), np.uint8, 0),
+    ('effect_emitter_params', (4,), np.float32, 0.0),
+    ('effect_emitter_tint', (3,), np.float32, 1.0),
     ('effect_color', (3,), np.float32, 1.0),
     ('effect_light_color', (3,), np.float32, 1.0),
     ('effect_light_enabled', (), bool, False),
@@ -729,7 +854,7 @@ class EntityTable:
         '_sprite_ids', '_sprite_recipes', '_fight_frames', '_model_ids', '_model_recipes',
         '_effect_custom_ids', '_effect_custom_paths',
         '_epoch', '_slot_of_obj', '_poll_slots', '_row_tuple', '_row_list',
-        '_row_list_version', 'rows_read',
+        '_row_list_version', 'rows_read', '_light_offsets', '_aux_lights',
         '_effect_published', '_effect_static',
         '__weakref__'))
 
@@ -757,6 +882,12 @@ class EntityTable:
         #: Every row, as a slot vector; rebuilt only when the rows change.
         self.all_slots = np.empty(0, dtype=np.int32)
         self.light_slots = np.empty(0, dtype=np.int32)
+        #: Whether any row has ever had a light_offset: while none has, the
+        #: position writes skip the offset altogether.
+        self._light_offsets = False
+        #: How many rows past ``count`` are lights that are not entities
+        #: (:meth:`set_aux_lights`): emissive brushes.
+        self._aux_lights = 0
         self.portal_slots = np.empty(0, dtype=np.int32)
         self.path_node_slots = np.empty(0, dtype=np.int32)
         self.monster_slots = np.empty(0, dtype=np.int32)
@@ -994,6 +1125,8 @@ class EntityTable:
         for name, *_ in _COLUMNS:
             setattr(self, name, getattr(peer, name).copy())
         self.count = peer.count
+        self._light_offsets = peer._light_offsets
+        self._aux_lights = peer._aux_lights
         self.ids = list(peer.ids)
         self.slot_of_id = dict(peer.slot_of_id)
         self.things = list(peer.things)
@@ -1078,6 +1211,8 @@ class EntityTable:
             moved_slots_array = np.asarray(moved_slots, dtype=np.intp)
             self.pos[moved_slots_array] = np.asarray(
                 moved_values, dtype=np.float64)
+            if self._light_offsets:
+                self.pos[moved_slots_array] += self.light_offset[moved_slots_array]
             if effect_store is not None:
                 effect_mask = (
                     self.class_bits[moved_slots_array] & ENT_EFFECT
@@ -1118,6 +1253,8 @@ class EntityTable:
         self.pos[slots] = np.fromiter(
             chain.from_iterable(_pos_of(things[s]) for s in slots.tolist()),
             dtype=np.float64, count=len(slots) * 3).reshape(-1, 3)
+        if self._light_offsets:
+            self.pos[slots] += self.light_offset[slots]
 
     def _poll(self, things):
         """Rows whose objects cannot journal: read what may have changed."""
@@ -1248,36 +1385,34 @@ class EntityTable:
             ).astype(np.float32)
             explosion_active = None
             preview_explosion = explosion & preview
+            if any_explosion:
+                # An explosion played in the editor (the panel's Play): it
+                # runs on its own clock, lit, as it would in a game, and the
+                # frozen Preview frame stands aside while it does.
+                playing = explosion & active
+                if playing.any():
+                    elapsed = np.where(
+                        playing, np.maximum(now - spawn, 0.0), elapsed
+                    ).astype(np.float32)
+                    explosion_active = playing & (elapsed < lifetime)
+                    preview_explosion = preview_explosion & ~playing
+                    if not explosion_active.any():
+                        explosion_active = None     # played out: as if idle
 
         if any_explosion:
-            if effect_runtime:
-                explosion_elapsed = elapsed[explosion]
-                flash_active = (
-                    explosion_active[explosion]
-                    & (explosion_elapsed < np.minimum(
-                        lifetime[explosion], 0.12))
-                )
-                decay = np.exp(-explosion_elapsed / 0.035).astype(
-                    np.float32
-                )
-                self.light_enabled[explosion_slots] = (
-                    explosion_light & flash_active
-                )
-                self.light_params[explosion_slots, 0] = (
-                    explosion_intensity * (1.0 + 2.0 * decay)
-                )
+            if explosion_active is not None:
+                self._explosion_lights(
+                    explosion_slots, elapsed[explosion], lifetime[explosion],
+                    explosion_active[explosion], explosion_light,
+                    explosion_intensity)
             else:
                 self.light_enabled[explosion_slots] = False
                 self.light_params[explosion_slots, 0] = explosion_intensity
 
         if preview_explosion is not None and preview_explosion.any():
-            preview_t = (
-                (float(_EXPLOSION_PREVIEW_FRAME) - 0.5)
-                / _EXPLOSION_FRAME_COUNT
-            )
             elapsed = np.where(
                 preview_explosion,
-                (lifetime * preview_t).astype(np.float32),
+                (lifetime * EXPLOSION_PREVIEW_T).astype(np.float32),
                 elapsed,
             )
         self.effect_elapsed[effect_ls] = elapsed
@@ -1294,8 +1429,101 @@ class EntityTable:
 
         if effect_runtime:
             self.effect_alive[effect_ls] = fire | explosion_active
+        elif explosion_active is not None:
+            self.effect_alive[effect_ls] = (
+                fire | explosion_active | preview_explosion)
         else:
             self.effect_alive[effect_ls] = fire | preview_explosion
+
+    def _explosion_lights(self, slots, elapsed, lifetime, playing, light_on,
+                          intensity):
+        """Light the explosions in *slots* for this tick: on for as long as
+        each plays, at ``light_intensity`` times
+        :func:`~engine.effect_entity.explosion_light_scale` -- a flash that
+        eases to nothing as the fireball fades. A Python loop below
+        :data:`EXPLOSION_LIGHT_VECTOR_FROM` explosions, NumPy from it; the
+        same lights either way."""
+        if len(slots) < EXPLOSION_LIGHT_VECTOR_FROM:
+            self._explosion_lights_loop(
+                slots, elapsed, lifetime, playing, light_on, intensity)
+        else:
+            self._explosion_lights_table(
+                slots, elapsed, lifetime, playing, light_on, intensity)
+
+    def _explosion_lights_loop(self, slots, elapsed, lifetime, playing,
+                               light_on, intensity):
+        enabled, params = self.light_enabled, self.light_params
+        for slot, e, life, play, on, base in zip(
+                slots.tolist(), elapsed.tolist(), lifetime.tolist(),
+                playing.tolist(), light_on.tolist(), intensity.tolist()):
+            scale = explosion_light_scale(e, life) if play else 0.0
+            enabled[slot] = on and scale > 0.0
+            params[slot, 0] = base * scale
+
+    def _explosion_lights_table(self, slots, elapsed, lifetime, playing,
+                                light_on, intensity):
+        e = elapsed.astype(np.float64)
+        t = e / lifetime.astype(np.float64)
+        flash = 1.0 + EXPLOSION_FLASH_GAIN * np.exp(
+            -np.maximum(e, 0.0) / EXPLOSION_FLASH_DECAY)
+        u = np.clip((t - EXPLOSION_LIGHT_FADE_FROM)
+                    / (1.0 - EXPLOSION_LIGHT_FADE_FROM), 0.0, 1.0)
+        scale = np.where(playing & (t < 1.0),
+                         flash * (1.0 - u * u * (3.0 - 2.0 * u)), 0.0)
+        self.light_enabled[slots] = light_on & (scale > 0.0)
+        self.light_params[slots, 0] = intensity * scale
+
+    def set_aux_lights(self, lights):
+        """Put the lights that are not entities into the frame's light list.
+
+        *lights* is ``(positions, colours, (intensity, radius), on, sizes)`` -- what
+        ``RenderTable.brush_lights`` gives for the emissive Glow brushes --
+        or None for none. They are written as rows past ``count``: no entity
+        owns them, nothing draws them, and every reader of the light list
+        (which reads these columns by slot) lights from them unchanged. They
+        cast no shadows.
+
+        Called after :meth:`begin_frame`, every frame. With none now and none
+        before -- any map without an emissive brush -- it returns at once.
+        """
+        k = 0 if lights is None else len(lights[0])
+        if not k and not self._aux_lights:
+            return
+        n = self.count
+        slots = self.light_slots
+        if self._aux_lights or (len(slots) and int(slots[-1]) >= n):
+            slots = slots[slots < n]
+        if k:
+            self._resize(n + k)
+            rows = slice(n, n + k)
+            positions, colours, params, on, sizes = lights
+            # The renderer uploads the light list again when the table's
+            # generation moves: a neon that moved, or changed colour, has to
+            # move it. One that did not must not.
+            changed = (k != self._aux_lights
+                       or not np.array_equal(self.pos[rows], positions)
+                       or not np.array_equal(self.light_color[rows], colours)
+                       or not np.array_equal(self.light_params[rows], params)
+                       or not np.array_equal(self.light_enabled[rows], on)
+                       or not np.array_equal(self.light_size[rows], sizes))
+            self.pos[rows] = positions
+            self.light_color[rows] = colours
+            self.light_params[rows] = params
+            self.light_enabled[rows] = on
+            self.light_size[rows] = sizes
+            self.light_casts_shadows[rows] = False
+            self.light_shadow[rows] = 0.0
+            self.light_cookie[rows] = 0
+            self.hidden[rows] = False
+            self.class_bits[rows] = 0
+            slots = np.concatenate(
+                (slots, np.arange(n, n + k, dtype=np.int32))).astype(np.int32)
+        else:
+            changed = True
+        self.light_slots = slots
+        self._aux_lights = k
+        if changed:
+            self.generation += 1
 
     def sync(self, things, epoch=None, dirty_objects=None) -> bool:
         """Reconcile without the frame's journal step.  Returns whether it did.
@@ -1466,6 +1694,7 @@ class EntityTable:
                     1 if effect_type == 'EXPLOSION'
                     else 2 if effect_type == 'ORB'
                     else 3 if effect_type == 'CUSTOM'
+                    else 4 if effect_type == 'PARTICLES'
                     else 0
                 )
             self.effect_fire_variant[slot] = (
@@ -1506,6 +1735,19 @@ class EntityTable:
 
             self.effect_params[slot] = (
                 width, visual_intensity, light_intensity, light_radius
+            )
+            self.effect_emitter[slot] = emitter_id(props)
+            self.effect_skip[slot] = max(0.0, min(0.9, _effect_float(
+                props, 'explosion_skip', 0.0)))
+            self.effect_emitter_params[slot] = (
+                max(0.0, min(1.0, _effect_float(props, 'emitter_rate', 1.0))),
+                max(EMITTER_SCALE_RANGE[0], min(EMITTER_SCALE_RANGE[1],
+                    _effect_float(props, 'emitter_scale', 1.0))),
+                width,
+                height,
+            )
+            self.effect_emitter_tint[slot] = _effect_colour(
+                props, 'emitter_tint', [255, 255, 255]
             )
             self.effect_color[slot] = _effect_colour(
                 props, 'colour', [255, 110, 25]
@@ -1565,6 +1807,8 @@ class EntityTable:
             self.light_casts_shadows[slot] = False
             self.light_terrain_shadow_only[slot] = False
             self.light_terrain_shadow_strength[slot] = 0.0
+            self.light_shadow[slot] = 0.0
+            self.light_cookie[slot] = 0
         else:
             if (self._effect_published is not None
                     and (self.effect_slots == slot).any()):
@@ -1578,6 +1822,10 @@ class EntityTable:
             self.effect_custom_loop[slot] = True
             self.effect_preview[slot] = False
             self.effect_params[slot].fill(0.0)
+            self.effect_emitter[slot] = 0
+            self.effect_skip[slot] = 0.0
+            self.effect_emitter_params[slot].fill(0.0)
+            self.effect_emitter_tint[slot] = 1.0
             self.effect_color[slot] = 1.0
             self.effect_light_color[slot] = 1.0
             self.effect_light_enabled[slot] = False
@@ -1610,7 +1858,20 @@ class EntityTable:
             self.model_normal_matrix[slot, 5] = 1.0
             self.model_normal_matrix[slot, 10] = 1.0
 
-        if (self.class_bits[slot] & (ENT_LIGHT | ENT_EFFECT)) == ENT_LIGHT:
+        offset = None
+        if ((self.class_bits[slot] & (ENT_LIGHT | ENT_EFFECT)) == ENT_LIGHT
+                and _is_emissive_decal(props)):
+            colour, params, offset = _decal_light(thing)
+            self.light_color[slot] = colour
+            self.light_params[slot] = params
+            # A hidden decal paints nothing, in the editor too: nor does it glow.
+            self.light_enabled[slot] = not self.hidden[slot]
+            self.light_casts_shadows[slot] = False
+            self.light_terrain_shadow_only[slot] = False
+            self.light_terrain_shadow_strength[slot] = 0.0
+            self.light_shadow[slot] = 0.0
+            self.light_cookie[slot] = 0
+        elif (self.class_bits[slot] & (ENT_LIGHT | ENT_EFFECT)) == ENT_LIGHT:
             self.light_color[slot] = _light_color_of(thing)
             self.light_params[slot] = (_light_float(thing, 'intensity', 1.0),
                                        _light_float(thing, 'radius', 512.0))
@@ -1623,6 +1884,13 @@ class EntityTable:
             self.light_terrain_shadow_strength[slot] = (
                 max(0.0, min(1.0, strength)) if np.isfinite(strength) else 0.5
             )
+            self.light_shadow[slot] = _light_shadow_filter(thing)
+            # Independent of shadows: a cookie light that casts them darkens
+            # its image in its own shadow, down to this floor.
+            self.light_cookie[slot] = cookie_of(_light_props(thing))
+            self.light_cookie_floor[slot] = (
+                cookie_shadow_floor(_light_props(thing))
+                if self.light_cookie[slot] else 0.0)
         elif not (self.class_bits[slot] & ENT_EFFECT):
             # A reused slot must not keep its previous occupant's light.
             self.light_color[slot] = 0.0
@@ -1631,6 +1899,14 @@ class EntityTable:
             self.light_casts_shadows[slot] = False
             self.light_terrain_shadow_only[slot] = False
             self.light_terrain_shadow_strength[slot] = 0.0
+            self.light_shadow[slot] = 0.0
+            self.light_cookie[slot] = 0
+
+        if offset is not None:
+            self.light_offset[slot] = offset
+            self._light_offsets = True
+        elif self._light_offsets:
+            self.light_offset[slot] = 0.0
 
         self.probe_radius[slot] = (thing.get_radius()
                                    if self.class_bits[slot] & ENT_PROBE else 0.0)
@@ -1679,14 +1955,26 @@ class EntityTable:
         """Re-resolve every column of *slots* from their entities."""
         slots = list(slots)
         self.rows_read += len(slots)
+        lights_changed = False
         for slot in slots:
             slot = int(slot)
             thing = things[slot]
             self.pos[slot] = _pos_of(thing)
+            was_light = self.class_bits[slot] & _LIGHT_ROW
             if effect_store is None:
                 self._resolve_row(slot, thing)
             else:
                 self._resolve_row(slot, thing, effect_store=effect_store)
+            if self._light_offsets:
+                self.pos[slot] += self.light_offset[slot]
+            if (self.class_bits[slot] & _LIGHT_ROW) != was_light:
+                lights_changed = True
+        if lights_changed:
+            # A decal's Emissive box ticked or cleared: the one way a row
+            # joins or leaves the light list without the row set changing.
+            self.light_slots = np.flatnonzero(
+                self.class_bits[:self.count] & _LIGHT_ROW).astype(np.int32)
+            self.generation += 1
 
 
 _EMPTY: dict = {}

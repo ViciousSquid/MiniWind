@@ -7,13 +7,13 @@ composited is technique-specific and lives with each renderer.
 """
 
 import math
+import weakref
 from dataclasses import dataclass
 
 import glm
 import numpy as np
 
-from engine import render_table
-from engine.render_cull import shadow_casters_in_reach
+from engine import change_detection, render_table
 from engine import entity_table as entity_projection
 from engine.portal_transform import (
     map_point as _portal_map_point,
@@ -46,10 +46,14 @@ class VisibilityMixin:
 
     PORTAL_RENDER_DISTANCE = 2048.0
 
-    # Render-only inset for the portal aperture.  Physical portal size and
-    # transit geometry remain authored; this keeps coplanar floor/wall edges
-    # from bleeding into the portal image at its boundary.
-    PORTAL_APERTURE_INSET = 4.0
+    # Render-only inset for the portal aperture (world units on every side).
+    # It was 4: the drawn aperture was smaller than the authored one, so a
+    # portal standing on the floor showed a band of the real floor behind it
+    # along its bottom edge (and of whatever was behind it along the others).
+    # The aperture is now drawn at its authored size; a wall coplanar with the
+    # portal is kept from z-fighting its image by the polygon offset on the
+    # depth flatten (PortalsMixin._portal_flatten_depth) instead.
+    PORTAL_APERTURE_INSET = 0.0
 
     #: How close (world units) a published glasses position must be to the
     #: frame camera to count as the viewer's own body. Both are the player's
@@ -249,7 +253,10 @@ class VisibilityMixin:
         if table is None or not hasattr(table, 'light_color'):
             raise RuntimeError("dense EntityTable is required for light rendering")
         hidden = config.get('thing_hidden')
-        if not config.get('play_mode', False):
+        if not (config.get('play_mode', False)
+                or config.get('hide_hidden_lights', False)):
+            # Editing: a light hidden with H still lights, unless the
+            # editor's "Hidden lights give no light" setting is on.
             hidden = None
         elif hidden is not None:
             hidden = np.asarray(hidden)
@@ -260,7 +267,15 @@ class VisibilityMixin:
                 # A hidden light is out of the running world -- Big World
                 # parks out-of-range lights exactly this way, and they must
                 # not keep lighting (or take light and shadow slots).
-                keep = keep & ~hidden[slots]
+                if len(slots) and int(np.max(slots)) >= len(hidden):
+                    # Rows past the entities are lights no entity owns (an
+                    # emissive brush): they have no entry here, and their own
+                    # on/off is light_enabled.
+                    entity = np.asarray(slots) < len(hidden)
+                    keep = keep.copy()
+                    keep[entity] &= ~hidden[np.asarray(slots)[entity]]
+                else:
+                    keep = keep & ~hidden[slots]
             return keep
 
         focus = config.get('light_focus')
@@ -333,7 +348,155 @@ class VisibilityMixin:
         these bytes say -- and comparing them is a memcmp over a few kilobytes
         instead of building thousands of Python tuples.
         """
-        return shadow_casters_in_reach(table, slots, lx, ly, lz, reach)
+        if not len(slots):
+            return slots, ()
+        center = table.center[slots]
+        dx = center[:, 0] - lx
+        dy = center[:, 1] - ly
+        dz = center[:, 2] - lz
+        # A brush counts when the light reaches its bounding sphere: the reach plus
+        # the half diagonal, which holds every corner under any rotation (the
+        # largest half-extent missed a turned box's corners).
+        limit = reach + np.linalg.norm(table.half[slots], axis=1)
+        sel = slots[(dx * dx + dy * dy + dz * dz) <= limit * limit]
+        if not len(sel):
+            return sel, ()
+        geometry = np.concatenate((table.center[sel].ravel(),
+                                   table.half[sel].ravel(),
+                                   table.rot[sel].ravel().astype(np.float64)))
+        # And each caster's geometry epoch, so a convex edit that
+        # keeps its box (new planes, same extents) still redraws the shadow.
+        return sel, (sel.tobytes(), geometry.tobytes(),
+                     table.geo_epoch[sel].tobytes())
+
+    #: Tables a shadow memo keeps entries for: the two render buffers', and
+    #: room for one being replaced.
+    SHADOW_MEMO_TABLES = 4
+
+    def _kept_shadow_casters(self, table, all_slots):
+        """:meth:`_shadow_caster_slots`, kept per table: the same read-only
+        array while the published rows (*all_slots*, the logic thread's
+        immutable ``shown()`` array) and the rows' classes stand.
+
+        Handing out the same array is what lets :meth:`_kept_casters_in_reach`
+        know a light's candidates by identity on a still frame."""
+        kept = self.__dict__.setdefault('_shadow_caster_memo', {})
+        held = kept.get(id(table))
+        if held is not None and held[0]() is not table:
+            held = None
+        state = (table.generation, table.material_version)
+        if (held is not None and held[1] == state and held[2] is all_slots
+                and isinstance(all_slots, np.ndarray)
+                and not all_slots.flags.writeable):
+            if change_detection.ORACLE and not np.array_equal(
+                    held[3], self._shadow_caster_slots(
+                        table, np.asarray(all_slots, dtype=np.int32))):
+                change_detection.missed(
+                    "kept shadow casters differ from a fresh selection")
+            return held[3]
+        casters = self._shadow_caster_slots(
+            table, np.asarray(all_slots, dtype=np.int32))
+        if held is not None and np.array_equal(held[3], casters):
+            casters = held[3]
+        else:
+            casters = np.array(casters, dtype=np.int32, copy=True)
+            casters.flags.writeable = False
+        self._prune_shadow_memo(kept, held is None)
+        kept[id(table)] = (weakref.ref(table), state, all_slots, casters)
+        return casters
+
+    def _kept_casters_in_reach(self, key, table, slots, lx, ly, lz, reach):
+        """:meth:`_casters_in_reach` for one light, kept per *key* (its shadow
+        slot) and table.
+
+        Every frame used to gather the centre and half-extents of every
+        caster in the level, for each of up to eight lights, and copy the ones
+        in reach into a signature -- 13 ms a frame at 20 000 casters with
+        nothing moving. The answer depends on the light (where it is, how far
+        it reaches), the candidates (*slots*) and the candidates' transforms,
+        so an entry is reused while the light and *slots* -- an array
+        :meth:`_kept_shadow_casters` hands out, told by identity -- are the
+        same and the table is at the same generation. Transforms written
+        since are asked of the table (M4, ``transforms_since``): the result
+        can change only through a written row that was in reach before or is
+        in reach now, so only those rows are tested. A still frame costs a
+        few integer compares; the signature handed back is then the same
+        object, and comparing it with the cube-map's is an identity test.
+
+        The cube-map is still invalidated exactly as before -- by the
+        signature changing -- because an entry is reused only where a fresh
+        :meth:`_casters_in_reach` would return the same rows and bytes."""
+        kept = self.__dict__.setdefault('_shadow_reach_memo', {})
+        tables = kept.get(key)
+        if tables is None:
+            tables = kept[key] = {}
+        held = tables.get(id(table))
+        if held is not None and held[0]() is not table:
+            held = None
+        light = (lx, ly, lz, reach)
+        if (held is not None and held[1] == table.generation
+                and held[2] is slots and held[3] == light
+                and isinstance(slots, np.ndarray) and not slots.flags.writeable):
+            version = table.transform_version
+            if held[4] != version:
+                rows = table.transforms_since(held[4])
+                if rows is None or self._casters_touched(
+                        table, rows, held[5], light):
+                    held = None
+                else:
+                    held = held[:4] + (version,) + held[5:]
+                    tables[id(table)] = held
+            if held is not None:
+                if change_detection.ORACLE and VisibilityMixin._casters_in_reach(
+                        table, slots, lx, ly, lz, reach)[1] != held[6]:
+                    change_detection.missed(
+                        "kept shadow casters for %r differ from a fresh scan"
+                        % (key,))
+                return held[5], held[6]
+        sel, sig = self._casters_in_reach(table, slots, lx, ly, lz, reach)
+        sel.flags.writeable = False             # shared, as kept arrays are
+        # The other buffer's table's signature, when it is the same: then the
+        # two tables taking turns hand the cube-map cache one object, and a
+        # still frame compares it by identity instead of byte by byte.
+        for other_tid, other in tables.items():
+            if (other_tid != id(table) and other[0]() is not None
+                    and other[6] == sig):
+                sig = other[6]
+                break
+        self._prune_shadow_memo(tables, id(table) not in tables)
+        tables[id(table)] = (weakref.ref(table), table.generation, slots,
+                             light, table.transform_version, sel, sig)
+        return sel, sig
+
+    @staticmethod
+    def _casters_touched(table, rows, sel, light):
+        """Whether any of *rows* (written since a light's casters were found)
+        was among them (*sel*) or is in the light's reach now -- the only way
+        the light's casters or their signature can have changed. The same
+        reach test as :meth:`_casters_in_reach`, over the written rows only."""
+        rows = np.asarray(rows, dtype=np.intp)
+        rows = rows[rows < table.count]
+        if not len(rows):
+            return False
+        if len(sel) and np.isin(rows, sel).any():
+            return True
+        lx, ly, lz, reach = light
+        center = table.center[rows]
+        dx = center[:, 0] - lx
+        dy = center[:, 1] - ly
+        dz = center[:, 2] - lz
+        limit = reach + table.half[rows].max(axis=1)
+        return bool(((dx * dx + dy * dy + dz * dz) <= limit * limit).any())
+
+    def _prune_shadow_memo(self, entries, adding):
+        """Make room in a per-table shadow memo before *adding* an entry: the
+        dead tables go first, then the longest kept."""
+        if not adding:
+            return
+        for dead in [t for t, e in entries.items() if e[0]() is None]:
+            del entries[dead]
+        while len(entries) >= self.SHADOW_MEMO_TABLES:
+            del entries[next(iter(entries))]
 
     @staticmethod
     def _dense_shadow_model_slots(table, hidden=None):
@@ -526,6 +689,43 @@ class VisibilityMixin:
         new_fwd=glm.normalize(glm.vec3(*nf)); new_up=glm.normalize(glm.vec3(*nu))
         return glm.lookAt(virtual_cam,virtual_cam+new_fwd,new_up),virtual_cam
 
+    def _kept_portal_cull(self, table, all_slots, planes):
+        """The world rows a portal camera's frustum (*planes*) keeps, as a
+        read-only array kept per portal view and table: the same array while
+        the published rows, the camera and the table's transforms stand, and
+        the last array again when a recomputed result is equal to it."""
+        kept = self.__dict__.setdefault('_portal_culls', {})
+        key = (getattr(self, '_instance_view', None), id(table))
+        inputs = (planes.tobytes(), table.generation, table.transform_version,
+                  getattr(table, 'extent_version', 0))
+        held = kept.get(key)
+        if held is not None and held[1]() is not table:
+            held = None
+        if (held is not None and held[0] is all_slots and held[2] == inputs
+                and isinstance(all_slots, np.ndarray) and not all_slots.flags.writeable):
+            return held[3]
+        if all_slots is None:
+            slots = np.empty(0, dtype=np.int32)
+        else:
+            slots = np.asarray(all_slots, dtype=np.int32)
+        if len(slots):
+            centres = table.center[slots]
+            radii = np.linalg.norm(table.half[slots], axis=1)
+            distances = centres @ planes[:, :3].T + planes[:, 3]
+            slots = slots[np.all(distances >= -radii[:, None], axis=1)]
+        if held is not None and np.array_equal(held[3], slots):
+            slots = held[3]
+        else:
+            slots = np.array(slots, dtype=np.int32, copy=True)
+            slots.flags.writeable = False
+        if held is None:
+            for dead in [k for k, e in kept.items() if e[1]() is None]:
+                del kept[dead]
+            while len(kept) >= 32:
+                del kept[next(iter(kept))]
+        kept[key] = (all_slots, weakref.ref(table), inputs, slots)
+        return slots
+
     def _portal_numeric_scene_inputs(self, projection, view, config):
         """Resolve a portal virtual scene entirely from the dense projections.
 
@@ -542,23 +742,18 @@ class VisibilityMixin:
         if table is None:
             raise RuntimeError("Portal virtual view requires RenderTable")
 
-        slots = config.get('all_brush_slots')
-        if slots is None:
-            slots = np.empty(0, dtype=np.int32)
-        else:
-            slots = np.asarray(slots, dtype=np.int32)
-
         planes = np.asarray(
             self._frustum_planes(projection * view),
             dtype=np.float64,
         )
-        if len(slots):
-            centres = table.center[slots]
-            radii = np.linalg.norm(table.half[slots], axis=1)
-            distances = centres @ planes[:, :3].T + planes[:, 3]
-            slots = slots[np.all(distances >= -radii[:, None], axis=1)]
-
-        groups = self._classify_brush_slots(table, slots, config)
+        slots = self._kept_portal_cull(table, config.get('all_brush_slots'), planes)
+        # Classified as the main view's rows are: kept while the culled rows
+        # stand, so a still portal view hands its passes the same immutable
+        # arrays frame after frame (M4) instead of classifying afresh.
+        groups = dict(self._pass_memo(
+            ('classify', getattr(self, '_instance_view', None)), table, slots,
+            (bool(config.get('play_mode', False)),), (),
+            lambda: self._classify_brush_slots(table, slots, config)))
 
         etable = config.get('entity_table')
         thing_hidden = config.get('thing_hidden')

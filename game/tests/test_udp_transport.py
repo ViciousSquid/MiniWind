@@ -513,3 +513,60 @@ def test_every_packet_carries_a_crc():
     damaged[9] ^= 0x10
     assert udp._unseal(bytes(damaged)) is None
     assert udp._unseal(sealed[:-1]) is None
+
+
+def test_an_os_chosen_port_taken_on_udp_is_passed_over(monkeypatch):
+    """Friend codes need the host's port on UDP as well as TCP. Windows can
+    reserve a port for one protocol only (Hyper-V / WinNAT exclusions): an
+    OS-chosen TCP port that UDP may not bind is given back for another."""
+    import socket
+    held = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    held.bind(("127.0.0.1", 0))
+    taken = held.getsockname()[1]
+    real_bind = socket.socket.bind
+    first = {"done": False}
+
+    def bind(self, addr):
+        # The first TCP port the "OS" offers is the one UDP cannot have.
+        if self.type == socket.SOCK_STREAM and addr[1] == 0 and not first["done"]:
+            first["done"] = True
+            return real_bind(self, (addr[0], taken))
+        return real_bind(self, addr)
+
+    monkeypatch.setattr(socket.socket, "bind", bind)
+    network = NetworkService()
+    try:
+        network.host(port=0, address="127.0.0.1")
+        assert first["done"] and network.port != taken, "the UDP-taken port was kept"
+        assert network.udp is not None and network.udp.port == network.port
+    finally:
+        network.close()
+        held.close()
+
+
+def test_a_udp_reservation_over_every_tcp_choice_still_hosts(monkeypatch):
+    """A Windows x64 CI host refused UDP on every port its TCP stack offered,
+    20 in a row (a UDP-only exclusion over TCP's whole ephemeral stretch):
+    hosting on ``port=0`` failed outright. With UDP choosing a port on
+    alternate tries, the party still gets one port on both protocols."""
+    import errno
+    import socket
+    tcp_choices = set()
+    real_bind = socket.socket.bind
+
+    def bind(self, addr):
+        if self.type == socket.SOCK_DGRAM and addr[1] in tcp_choices:
+            raise OSError(errno.EACCES, "excluded for UDP")
+        result = real_bind(self, addr)
+        if self.type == socket.SOCK_STREAM and addr[1] == 0:
+            tcp_choices.add(self.getsockname()[1])
+        return result
+
+    monkeypatch.setattr(socket.socket, "bind", bind)
+    network = NetworkService()
+    try:
+        network.host(port=0, address="127.0.0.1")
+        assert tcp_choices and network.port not in tcp_choices
+        assert network.udp is not None and network.udp.port == network.port
+    finally:
+        network.close()

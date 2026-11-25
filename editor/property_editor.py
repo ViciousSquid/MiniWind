@@ -1,5 +1,9 @@
 from engine.asset_qt import load_icon
+import copy
+import math
+import re
 import json
+from types import SimpleNamespace
 import os
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
                              QFormLayout, QCheckBox, QComboBox, QPushButton,
@@ -11,17 +15,30 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5 import sip
 from engine.items import ITEM_IDS
-from engine.prop_entity import (MODEL_PRESETS, model_preset_name, model_settings,
+from engine.effect_entity import (EFFECT_TYPES, EMITTER_NONE, EMITTER_PRESETS,
+                                  EMITTER_SCALE_RANGE, EXPLOSION_DEFAULT_EMITTER,
+                                  PARTICLES_DEFAULT_EMITTER,
+                                  PARTICLES_DEFAULT_SIZE)
+from engine.explosions import returns_after_explosion
+from engine.prop_entity import (MODEL_PRESETS, OIL_BARREL_VARIANTS, oil_barrel_variant,
+                                 model_preset_name, model_settings,
                                  normalise_collect_type)
 from editor.things import (Thing, Light, Effect, Prop, Monster, Speaker,
                            LogicGate, PathNode, LogicCamera, LogicSpawner, Portal,
-                           LogicState, PlayerStart, LevelChanger, Decal)
+                           LogicState, PlayerStart, LevelChanger, Decal, Shake,
+                           LightVolume)
+from editor.terrain_selection import TerrainHandle
 from engine import player_starts as start_rules
 from editor import state_values as _sv
 from editor.sky_assets import store_sky_image_in_project
+# Every Browse button picks from Fio's filesystem: loose files and the
+# ones packed in mounted .fiopak archives (editor/asset_dialog.py).
+from editor.asset_dialog import get_open_asset_file
 from editor.portal_links import sync_group_to
 from engine.brush_geometry import GEO_RUNTIME_KEYS
 from engine.monster_constants import MONSTER_VARIANTS
+from engine.constants import (WATER_FLOW_DIRECTIONS, WATER_FLOW_SPEED_MAX,
+                              WATER_FLOW_SPEED_MIN, water_flow_speed)
 from editor.tooltips import set_tooltips_enabled
 from editor.form_layout import configure_property_forms
 
@@ -206,6 +223,13 @@ def _project_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
 
+def _truthy(value) -> bool:
+    """A property flag that may be saved as a bool or a "true"/"false" str."""
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
+
 def _normalise_project_asset_path(path: object) -> str:
     """Return an authored asset path relative to Fio's project root.
 
@@ -284,7 +308,7 @@ class _Style:
               "QPushButton:hover { background-color: #7B4AB9; border: 2px solid #A875D6; } "
               "QPushButton:pressed { background-color: #5A2E96; }")
     ID_FIELD = ("QLineEdit { background-color: #6C3BAA; color: white; font-weight: bold; padding: 6px; "
-                "border: 2px solid #8B5AC2; border-radius: 3px; font-family: 'IBM Plex Mono'; } "
+                "border: 2px solid #8B5AC2; border-radius: 3px; font-family: 'Fio Mono'; } "
                 "QLineEdit:focus { border: 2px solid #A875D6; background-color: #7B4AB9; }")
 
     @staticmethod
@@ -293,6 +317,61 @@ class _Style:
                 f"border-radius: 4px; margin-top: 12px; padding-top: 8px; }}"
                 f"QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; left: 8px; "
                 f"padding: 0 4px; background-color: {title_bg}; }}")
+
+    # -- one shared style sheet --------------------------------------------
+    #
+    # A style sheet of its own on a control makes Qt build and match a
+    # separate sheet for it as it is polished: about a quarter of building a
+    # page. The panel's recurring looks are instead rules in ONE sheet, set
+    # once on the PropertyEditor, each scoped to a dynamic property
+    # (``fio="key"``) that :meth:`apply` sets on the control. Rules for the
+    # control itself match it alone; rules for other kinds of widget (a tab
+    # widget's tab bar) match its descendants, as its own sheet did.
+
+    #: ``sheet text -> (key, Qt class name)`` for every shared look.
+    _shared = {}
+
+    @classmethod
+    def register(cls, key, class_name, sheet):
+        cls._shared[sheet] = (key, class_name)
+
+    @classmethod
+    def apply(cls, widget, sheet):
+        """Give *widget* the look *sheet*: through the shared sheet when it is
+        registered for this kind of widget, otherwise its own style sheet."""
+        entry = cls._shared.get(sheet)
+        if entry is not None and widget.inherits(entry[1]):
+            widget.setProperty('fio', entry[0])
+            if widget.testAttribute(Qt.WA_WState_Polished):
+                # Already styled (a scroll area's own scroll bar): a property
+                # set now is read only when the widget is polished again.
+                style = widget.style()
+                style.unpolish(widget)
+                style.polish(widget)
+            return
+        widget.setStyleSheet(sheet)
+
+    @classmethod
+    def panel_sheet(cls):
+        """The shared sheet: every registered look, scoped to its key."""
+        rules = []
+        for sheet, (key, class_name) in cls._shared.items():
+            scope = f'{class_name}[fio="{key}"]'
+            body = sheet.strip()
+            if '{' not in body:                 # bare declarations: the widget itself
+                rules.append(f'{scope} {{ {body} }}')
+                continue
+            for selectors, declarations in re.findall(r'([^{}]+)\{([^{}]*)\}', body):
+                scoped = []
+                for selector in selectors.split(','):
+                    selector = selector.strip()
+                    head = re.match(r'[A-Za-z_][A-Za-z0-9_]*', selector)
+                    if head and head.group(0) == class_name:
+                        scoped.append(scope + selector[head.end():])
+                    else:
+                        scoped.append(f'{scope} {selector}')
+                rules.append(f'{", ".join(scoped)} {{{declarations}}}')
+        return '\n'.join(rules)
 
 
 # ────────────────────────────
@@ -334,7 +413,7 @@ def _make_checkbox(label: str, checked: bool, callback, style=None) -> QCheckBox
     cb = QCheckBox(label)
     cb.setChecked(checked)
     if style:
-        cb.setStyleSheet(style)
+        _Style.apply(cb, style)
     if callback is not None:
         cb.toggled.connect(callback)
     return cb
@@ -398,6 +477,45 @@ def _make_spin(value, range0, range1, suffix="", decimals=0, step=1, callback=No
     return s
 
 
+#: The five FIRE variants, as the Effect panel lists them.
+FIRE_VARIANTS = tuple(
+    (f"Fire {index:02d}", f"assets/textures/effects/fire{index:02d}.gif")
+    for index in range(1, 6))
+_FIRE_ICONS = {}
+
+
+def _fire_icon(path):
+    """A small still of a FIRE variant (its first frame), cached."""
+    icon = _FIRE_ICONS.get(path)
+    if icon is None:
+        from PyQt5.QtGui import QPixmap
+        pixmap = QPixmap(path)
+        icon = QIcon(pixmap.scaled(36, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                     if not pixmap.isNull() else pixmap)
+        if not pixmap.isNull():
+            # A still that failed to load (the path is relative to the
+            # project, and the working directory was elsewhere) is tried
+            # again next time, not remembered blank for the session.
+            _FIRE_ICONS[path] = icon
+    return icon
+
+
+def _fire_variant_combo(current_path, tooltip=""):
+    """A chooser of the five FIRE variants, each shown by a still of it;
+    an item's data is its GIF path."""
+    from PyQt5.QtCore import QSize
+    combo = QComboBox()
+    combo.setIconSize(QSize(24, 32))
+    for label, path in FIRE_VARIANTS:
+        combo.addItem(_fire_icon(path), label, path)
+    current = str(current_path or FIRE_VARIANTS[0][1]).replace("\\", "/")
+    combo.setCurrentIndex(next(
+        (i for i, (_, path) in enumerate(FIRE_VARIANTS) if path == current), 0))
+    if tooltip:
+        combo.setToolTip(tooltip)
+    return combo
+
+
 def _kv_suggestions(store):
     """Plugin-supplied preset keys for the LogicState editor (API 1.5.0).
 
@@ -442,7 +560,7 @@ class CollapsibleSection(QWidget):
         self.toggle.setText(label)
         self.toggle.setCheckable(True)
         self.toggle.setChecked(expanded)
-        self.toggle.setStyleSheet(self.HEADER)
+        _Style.apply(self.toggle, self.HEADER)
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -466,9 +584,35 @@ class CollapsibleSection(QWidget):
         self.content_layout.addWidget(w)
 
 
+
+# The panel's recurring looks, shared through one sheet (_Style.apply).
+for _key, _cls, _sheet in (
+        ('check', 'QCheckBox', _Style.CHECKBOX),
+        ('name_lbl', 'QLabel', _Style.NAME_LBL),
+        ('name_inp', 'QLineEdit', _Style.NAME_INP),
+        ('id_btn', 'QPushButton', _Style.ID_BTN),
+        ('id_field', 'QLineEdit', _Style.ID_FIELD),
+        ('targeted', 'QLabel', _Style.TARGETED),
+        ('section', 'QLabel', _Style.SECTION),
+        ('tabs', 'QTabWidget', _Style.TAB_BAR),
+        ('scroll', 'QScrollBar', _Style.SCROLL_V),
+        ('header', 'QToolButton', CollapsibleSection.HEADER)):
+    _Style.register(_key, _cls, _sheet)
+for _colour, _title in (
+        ('#00BFFF', '#2b3d3b'), ('#00CED1', '#2b3d3b'), ('#26A69A', '#1a2f2d'),
+        ('#42A5F5', '#1a2a3d'), ('#48D1CC', '#2b3d3b'), ('#87CEEB', '#2b3d3b'),
+        ('#98FB98', '#2b3d3b'), ('#AB47BC', '#2a1a3d'), ('#B0C4DE', '#2b3d3b'),
+        ('#F08000', '#2b3d3b'), ('#FFD700', '#2b3d3b')):
+    _Style.register('group_%s_%s' % (_colour[1:], _title[1:]), 'QGroupBox',
+                    _Style.group_box(_colour, _title))
+del _key, _cls, _sheet, _colour, _title
+
 class PropertyEditor(QWidget):
     def __init__(self, editor):
         super().__init__()
+        # The panel's recurring control looks, once (_Style.apply), rather
+        # than a style sheet on each control of every page built.
+        self.setStyleSheet(_Style.panel_sheet())
         self.editor = editor
         self.current_object = None
         self._populating = False
@@ -490,18 +634,29 @@ class PropertyEditor(QWidget):
         self._page = None                 # the QScrollArea currently shown
         self._page_cache = []             # [(obj, signature, page, state)], LRU
 
-        # Parked pages live in here rather than being reparented to nothing.
-        # A widget with no parent is a top-level window, and Qt walks every
-        # top-level window when it propagates style/font/palette changes — so
-        # parking pages that way made building the *next* page measurably
-        # slower, in proportion to how many were parked.
-        self._parking = QWidget(self)
-        self._parking.setVisible(False)
+        # Parked pages stay children of this panel, hidden. Never reparented
+        # to nothing: a widget with no parent is a top-level window, and Qt
+        # walks every top-level window when it propagates style/font/palette
+        # changes. Nor moved under a holder widget: reparenting makes Qt
+        # re-polish the page's whole widget tree against the style sheet, on
+        # parking and again on restore -- 37 ms of a 6 ms switch back to a
+        # page that is kept.
 
         # Settings > Editor > Tooltips.  Held here rather than read from the
         # config on every build: a page is rebuilt often enough that this sits
         # on the hot path.
         self._tooltips_enabled = True
+
+        # A multi-selection edit checkpoints the whole scene for undo. A
+        # slider or spin box sends valueChanged on every step, so one drag is
+        # one undo step: the checkpoint stays open across a run of edits to
+        # the same property of the same objects until they pause, as the
+        # Surface Inspector's spin boxes and the 2D views' nudges do.
+        self._shared_edit_burst = None    # (key, object ids, undo entry)
+        self._shared_edit_idle = QTimer(self)
+        self._shared_edit_idle.setSingleShot(True)
+        self._shared_edit_idle.setInterval(self.SHARED_EDIT_IDLE_MS)
+        self._shared_edit_idle.timeout.connect(self._close_shared_edit_burst)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(5, 5, 5, 5)
@@ -576,7 +731,7 @@ class PropertyEditor(QWidget):
     #: page is on screen; everything else is part of a page's state.
     _PERSISTENT_ATTRS = frozenset({
         'editor', 'current_object', 'main_layout', '_populating',
-        '_signature', '_page', '_page_cache', '_parking',
+        '_signature', '_page', '_page_cache',
         '_tooltips_enabled',
     })
 
@@ -614,20 +769,38 @@ class PropertyEditor(QWidget):
         """Everything the panel would read to build itself for ``obj``.
 
         Two calls returning the same value mean the panel that is already on
-        screen is exactly the panel a rebuild would produce.  The I/O
-        revision is folded in because the "Targeted by" line depends on other
-        entities' connections, not on this object at all.
+        screen is exactly the panel a rebuild would produce.
+
+        The page also shows things read from the rest of the scene. The
+        "Targeted by" line (other entities' connections to this one) is in the
+        signature itself, looked up through the I/O reverse index. The global
+        I/O revision -- bumped by every undo checkpoint -- stands in for the
+        rest (the names listed in target, path-node and portal pickers): it
+        decides whether a *parked* page may be reused (see
+        :meth:`_same_page_on_screen`), but no longer rebuilds the page on
+        screen after every edit, which cost ~100 ms an edit.
         """
         if obj is None:
             return ('none',)
+        if isinstance(obj, TerrainHandle):
+            return ('terrain', self.editor.terrain_locked(),
+                    self.editor.scene_hierarchy._get_terrain_display_name())
 
         revision = _io_system.io_revision() if _io_system is not None else 0
         if isinstance(obj, dict):
             source = obj
             kind = 'brush'
+            target_name, target_id = obj.get('name', ''), obj.get('id', '')
         else:
             source = obj.properties
             kind = type(obj).__name__
+            target_name = getattr(obj, 'name', '') or source.get('name', '')
+            target_id = source.get('id', '')
+        try:
+            targeted_by = tuple(self._find_targeting_sources(target_name, target_id)
+                                if (target_name or target_id) else ())
+        except Exception:
+            targeted_by = None
 
         fields = []
         # A snapshot, taken in one step: the logic thread adds its cache keys
@@ -646,7 +819,18 @@ class PropertyEditor(QWidget):
             else:
                 fields.append((key, self._hashable(value)))
         fields.sort()
-        return (kind, id(obj), revision, tuple(fields))
+        return (kind, id(obj), revision, tuple(fields), self._hashable(targeted_by))
+
+    @staticmethod
+    def _same_page_on_screen(current, signature):
+        """Whether the page built for signature *current* still shows what a
+        rebuild for *signature* would: equal apart from the global I/O
+        revision (index 2 of an object's signature)."""
+        if current == signature:
+            return True
+        if current is None or len(current) != 5 or len(signature) != 5:
+            return False
+        return current[:2] == signature[:2] and current[3:] == signature[3:]
 
     def _capture_page_state(self):
         """The instance attributes the page on screen owns.
@@ -671,7 +855,6 @@ class PropertyEditor(QWidget):
         page = self._page
         if page is not None:
             self.main_layout.removeWidget(page)
-            page.setParent(self._parking)
             page.setVisible(False)
         self._page = None
         return page
@@ -730,7 +913,7 @@ class PropertyEditor(QWidget):
             return
         # A page already parked for this object was built for an older
         # signature and is superseded; destroy it rather than just forgetting
-        # it, or it stays parented to _parking for the rest of the session.
+        # it, or it stays parented (hidden) for the rest of the session.
         kept = []
         for entry in self._page_cache:
             if entry[0] is self.current_object:
@@ -826,8 +1009,11 @@ class PropertyEditor(QWidget):
         """
         signature = self._object_signature(obj)
 
-        if not force and obj is self.current_object and self._signature == signature \
+        if not force and obj is self.current_object \
+                and self._same_page_on_screen(self._signature, signature) \
                 and (self._page is not None or obj is None):
+            # self._signature keeps the revision the page was *built* at, so
+            # once parked it is reused only if nothing changed since.
             return
 
         saved_tab_index = None
@@ -878,6 +1064,9 @@ class PropertyEditor(QWidget):
             elif obj is None:
                 self.main_layout.addWidget(QLabel("Nothing selected."))
                 self._strip_tooltips()
+            elif isinstance(obj, TerrainHandle):
+                self.populate_for_terrain()
+                self._strip_tooltips()
             elif isinstance(obj, dict):
                 self.populate_for_brush(obj)
                 self._strip_tooltips()
@@ -908,13 +1097,53 @@ class PropertyEditor(QWidget):
         self._populating = False
 
     # ────────────────────────────
+    # Terrain
+    # ────────────────────────────
+    def populate_for_terrain(self):
+        """The selected terrain: its name, its lock, and the way into its
+        editor. Everything else about a terrain is edited there."""
+        from editor.surface_inspector import ACCENT_BUTTON_STYLE
+        editor = self.editor
+        content = QWidget(self)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        title = QLabel("Terrain: %s" % editor.scene_hierarchy._get_terrain_display_name())
+        title.setStyleSheet("font-weight: bold; color: #8FBC8F;")
+        layout.addWidget(title)
+
+        locked = editor.terrain_locked()
+        lock_cb = _make_checkbox("Prevent selection/editing", locked,
+                                 lambda c: editor.set_terrain_locked(bool(c)),
+                                 _Style.CHECKBOX)
+        lock_cb.setToolTip(
+            "Locked, the terrain is not picked by Shift+click in the 3D view and\n"
+            "its editor does not open -- the same lock a brush has.\n"
+            "Select it from the Scene Hierarchy to unlock it.")
+        layout.addWidget(lock_cb)
+        self._widgets['terrain_lock_cb'] = lock_cb
+
+        edit_btn = QPushButton("EDIT")
+        edit_btn.setStyleSheet(ACCENT_BUTTON_STYLE)
+        edit_btn.setToolTip("Open the Terrain Editor")
+        edit_btn.setEnabled(not locked)
+        edit_btn.clicked.connect(editor.open_terrain_editor)
+        layout.addWidget(edit_btn)
+        self._widgets['terrain_edit_btn'] = edit_btn
+
+        layout.addStretch()
+        self.main_layout.addWidget(content)
+        self._page = None
+
+    # ────────────────────────────
     # Brush population
     # ────────────────────────────
     def populate_for_brush(self, brush):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.verticalScrollBar().setStyleSheet(_Style.SCROLL_V)
+        _Style.apply(scroll.verticalScrollBar(), _Style.SCROLL_V)
 
         content = QWidget(scroll)
         layout = QVBoxLayout(content)
@@ -925,14 +1154,14 @@ class PropertyEditor(QWidget):
         form = QFormLayout()
         form.setSpacing(4)
         name_lbl = QLabel("Name:")
-        name_lbl.setStyleSheet(_Style.NAME_LBL)
+        _Style.apply(name_lbl, _Style.NAME_LBL)
         name_inp = QLineEdit(brush.get('name', ''))
-        name_inp.setStyleSheet(_Style.NAME_INP)
+        _Style.apply(name_inp, _Style.NAME_INP)
         name_inp.setPlaceholderText("Enter name...")
         name_inp.editingFinished.connect(lambda: self.update_object_prop('name', name_inp.text()))
 
         id_btn = QPushButton("ID")
-        id_btn.setStyleSheet(_Style.ID_BTN)
+        _Style.apply(id_btn, _Style.ID_BTN)
         id_btn.setFixedWidth(32)
         id_btn.setToolTip("Show/hide UUID")
 
@@ -945,7 +1174,7 @@ class PropertyEditor(QWidget):
         self._widgets['name_input'] = name_inp
 
         uuid_field = QLineEdit(brush.get('id', ''))
-        uuid_field.setStyleSheet(_Style.ID_FIELD)
+        _Style.apply(uuid_field, _Style.ID_FIELD)
         uuid_field.setReadOnly(True)
         uuid_field.setVisible(False)
         form.addRow("", uuid_field)
@@ -959,7 +1188,7 @@ class PropertyEditor(QWidget):
             if sources:
                 txt = ", ".join(f"{n} ({t})" for n, t in sources)
                 lbl = QLabel(txt)
-                lbl.setStyleSheet(_Style.TARGETED)
+                _Style.apply(lbl, _Style.TARGETED)
                 lbl.setWordWrap(True)
                 form.addRow("Targeted by:", lbl)
 
@@ -967,7 +1196,7 @@ class PropertyEditor(QWidget):
 
         # Tabs
         self.tab_widget = QTabWidget(content)
-        self.tab_widget.setStyleSheet(_Style.TAB_BAR)
+        _Style.apply(self.tab_widget, _Style.TAB_BAR)
 
         is_trigger = brush.get('is_trigger', False)
         is_mover = brush.get('is_mover', False)
@@ -976,17 +1205,19 @@ class PropertyEditor(QWidget):
 
         self.tab_widget.addTab(self._create_general_tab(brush), "General")
 
-        self.trigger_tab = self._create_trigger_tab(brush)
-        self.trigger_tab_index = self.tab_widget.addTab(self.trigger_tab, load_icon("assets/ui/controls/target.svg"), "Trigger")
-        self.tab_widget.setTabVisible(self.trigger_tab_index, is_trigger)
-
-        self.mover_tab = self._create_mover_tab(brush)
-        self.mover_tab_index = self.tab_widget.addTab(self.mover_tab, load_icon("assets/ui/controls/move.svg"), "Mover")
-        self.tab_widget.setTabVisible(self.mover_tab_index, is_mover)
-
-        self.door_tab = self._create_door_tab(brush)
-        self.door_tab_index = self.tab_widget.addTab(self.door_tab, load_icon("assets/ui/controls/door.svg"), "Door")
-        self.tab_widget.setTabVisible(self.door_tab_index, is_door)
+        # A tab the brush does not use yet (Trigger, Mover, Door on a plain
+        # brush) is added empty and built the first time it is shown -- when
+        # the brush is made one, which switches to it. Building three hidden
+        # tabs on every selection was a quarter of selecting a brush.
+        self.trigger_tab, self.trigger_tab_index = self._add_brush_tab(
+            lambda: self._create_trigger_tab(brush), "assets/ui/controls/target.svg",
+            "Trigger", is_trigger)
+        self.mover_tab, self.mover_tab_index = self._add_brush_tab(
+            lambda: self._create_mover_tab(brush), "assets/ui/controls/move.svg",
+            "Mover", is_mover)
+        self.door_tab, self.door_tab_index = self._add_brush_tab(
+            lambda: self._create_door_tab(brush), "assets/ui/controls/door.svg",
+            "Door", is_door)
 
         self.shader_tab = self._create_shader_tab(brush)
         self.shader_tab_index = self.tab_widget.addTab(self.shader_tab, load_icon("assets/ui/controls/shader.svg"), "Shader")
@@ -1007,6 +1238,56 @@ class PropertyEditor(QWidget):
         scroll.setWidget(content)
         self.main_layout.addWidget(scroll)
         self._page = scroll
+
+    def _add_brush_tab(self, builder, icon, title, shown):
+        """``(widget, index)`` of a brush tab: built now when *shown*,
+        otherwise added hidden and empty, and built on its first showing
+        (the tab bar is the same either way)."""
+        if shown:
+            widget = builder()
+            index = self.tab_widget.addTab(widget, load_icon(icon), title)
+            return widget, index
+        holder = QWidget(self.tab_widget)
+        QVBoxLayout(holder).setContentsMargins(0, 0, 0, 0)
+        index = self.tab_widget.addTab(holder, load_icon(icon), title)
+        self.tab_widget.setTabVisible(index, False)
+        tabs = self.tab_widget
+
+        def fill(current, _index=index, _holder=holder):
+            if current != _index or _holder.property('tab_built'):
+                return
+            _holder.setProperty('tab_built', True)
+            inner = builder()
+            configure_property_forms(inner)
+            if not self._tooltips_enabled:
+                set_tooltips_enabled(inner, False)
+            _holder.layout().addWidget(inner)
+
+        tabs.currentChanged.connect(fill)
+        return holder, index
+
+    def _add_deferred_tab(self, builder, title):
+        """Add tab *title* empty now and fill it with ``builder()`` the first
+        time it is shown (the tab bar looks the same). Returns its index."""
+        holder = QWidget(self.tab_widget)
+        QVBoxLayout(holder).setContentsMargins(0, 0, 0, 0)
+        index = self.tab_widget.addTab(holder, title)
+        tabs = self.tab_widget
+
+        def fill(current, _index=index, _holder=holder):
+            if current != _index or _holder.property('tab_built'):
+                return
+            _holder.setProperty('tab_built', True)
+            inner = builder()
+            configure_property_forms(inner)
+            if not self._tooltips_enabled:
+                set_tooltips_enabled(inner, False)
+            _holder.layout().addWidget(inner)
+
+        tabs.currentChanged.connect(fill)
+        if tabs.currentIndex() == index:
+            fill(index)
+        return index
 
     def _defer_io_tab(self, builder):
         """Add the I/O tab now, but build its contents the first time it is shown.
@@ -1119,6 +1400,9 @@ class PropertyEditor(QWidget):
         inputs = IOInputsWidget()
         inputs.set_entity(etype)
         layout.addWidget(inputs)
+        # Spare height goes below everything, not into gaps inside the
+        # sections (the Disabled indicator sits right under its header).
+        layout.addStretch(1)
 
         # I/O participation checkbox
         io_cb = _make_checkbox(
@@ -1172,7 +1456,7 @@ class PropertyEditor(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
 
         type_group = QGroupBox("Brush Type")
-        type_group.setStyleSheet(_Style.group_box("#F08000"))
+        _Style.apply(type_group, _Style.group_box("#F08000"))
         type_layout = QVBoxLayout(type_group)
 
         # Shader + Lock row
@@ -1204,7 +1488,7 @@ class PropertyEditor(QWidget):
         group_inp = QLineEdit(brush.get('brush_group', ''))
         group_inp.setPlaceholderText("e.g. front_door")
         group_inp.setToolTip("Assign the same group name to a door/mover and its companion brushes.")
-        group_inp.editingFinished.connect(lambda: self.update_object_prop('brush_group', group_inp.text().strip()))
+        group_inp.editingFinished.connect(lambda: self._on_brush_group_edited(group_inp))
         type_layout.addLayout(_hbox(QLabel("Brush Group:"), group_inp, stretch=False))
         self._widgets['brush_group_input'] = group_inp
 
@@ -1214,7 +1498,7 @@ class PropertyEditor(QWidget):
 
     def _section(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet(_Style.SECTION)
+        _Style.apply(lbl, _Style.SECTION)
         return lbl
 
     def _create_trigger_tab(self, brush):
@@ -1319,7 +1603,7 @@ class PropertyEditor(QWidget):
         # Detection filters are independent of the trigger action. Any selected
         # category can activate the trigger when its object enters the volume.
         filter_group = QGroupBox("Detection Filters")
-        filter_group.setStyleSheet(_Style.group_box("#42A5F5", "#1a2a3d"))
+        _Style.apply(filter_group, _Style.group_box("#42A5F5", "#1a2a3d"))
         filter_layout = QVBoxLayout(filter_group)
         filter_layout.setSpacing(4)
         filter_layout.setContentsMargins(8, 8, 8, 8)
@@ -1515,7 +1799,7 @@ class PropertyEditor(QWidget):
 
         # PathNode waypoint
         path_group = QGroupBox("PathNode Waypoint")
-        path_group.setStyleSheet(_Style.group_box("#26A69A", "#1a2f2d"))
+        _Style.apply(path_group, _Style.group_box("#26A69A", "#1a2f2d"))
         path_form = QFormLayout(path_group)
         path_target = self._pathnode_combo(brush.get('path_target', ''))
         path_target.currentTextChanged.connect(
@@ -1526,7 +1810,7 @@ class PropertyEditor(QWidget):
 
         # Options
         opt_group = QGroupBox("Options")
-        opt_group.setStyleSheet(_Style.group_box("#F08000"))
+        _Style.apply(opt_group, _Style.group_box("#F08000"))
         opt_layout = QVBoxLayout(opt_group)
 
         start_cb = _make_checkbox("Start moving immediately", brush.get('start_on', False),
@@ -1601,7 +1885,7 @@ class PropertyEditor(QWidget):
         layout.addLayout(form)
 
         opt_group = QGroupBox("Door Options")
-        opt_group.setStyleSheet(_Style.group_box("#F08000"))
+        _Style.apply(opt_group, _Style.group_box("#F08000"))
         opt_layout = QVBoxLayout(opt_group)
 
         for key, label in (('door_auto_open', "Auto-open when player is near"),
@@ -1669,7 +1953,7 @@ class PropertyEditor(QWidget):
 
     def _create_glass_properties(self, brush):
         group = QGroupBox("Glass Properties")
-        group.setStyleSheet(_Style.group_box("#00BFFF"))
+        _Style.apply(group, _Style.group_box("#00BFFF"))
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
         form = QFormLayout()
@@ -1688,7 +1972,7 @@ class PropertyEditor(QWidget):
 
         # Distortion
         dist_group = QGroupBox("Distortion Effects")
-        dist_group.setStyleSheet(_Style.group_box("#87CEEB", "#2b3d3b"))
+        _Style.apply(dist_group, _Style.group_box("#87CEEB", "#2b3d3b"))
         dist_form = QFormLayout(dist_group)
         for key, label_txt, default, tip in (
             ('glass_distortion', "Warp Strength:", 0.5, "How much the view through glass is warped"),
@@ -1724,7 +2008,7 @@ class PropertyEditor(QWidget):
 
         # Fresnel
         fres_group = QGroupBox("Fresnel Effect")
-        fres_group.setStyleSheet(_Style.group_box("#98FB98", "#2b3d3b"))
+        _Style.apply(fres_group, _Style.group_box("#98FB98", "#2b3d3b"))
         fres_form = QFormLayout(fres_group)
         slider, label = _make_slider(self, brush.get('glass_fresnel', 0.5), 0, 100,
                                      callback=lambda v: self.update_object_prop('glass_fresnel', v),
@@ -1737,13 +2021,18 @@ class PropertyEditor(QWidget):
 
     def _create_glow_properties(self, brush):
         group = QGroupBox("Glow Properties")
-        group.setStyleSheet(_Style.group_box("#FFD700"))
+        _Style.apply(group, _Style.group_box("#FFD700"))
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
         form = QFormLayout()
 
-        color_btn = self._color_button(brush.get('glow_color', [1.0, 0.9, 0.7]),
-                                       lambda: self._pick_color('glow_color', color_btn, [1.0, 0.9, 0.7]))
+        # The brush's one colour (Appearance > Brush Colour, the Asset
+        # Browser's Tint): what it glows in, and lights with when emissive.
+        color_btn = self._color_button(self.editor.brush_colour(brush),
+                                       lambda: self._pick_brush_colour(color_btn))
+        color_btn.setToolTip("The brush's colour -- the same setting as Appearance >\n"
+                             "Brush Colour and the Asset Browser's Tint button: what it\n"
+                             "glows in, and lights its surroundings with when Emissive.")
         form.addRow("Glow Color:", color_btn)
         self._widgets['glow_color_btn'] = color_btn
 
@@ -1752,12 +2041,64 @@ class PropertyEditor(QWidget):
         form.addRow("Intensity:", _hbox(slider, label, stretch=False))
         self._widgets['glow_intensity_slider'] = slider
 
+        self._add_emissive_rows(
+            form, brush, 'glow',
+            "The brush lights its surroundings in the colour it glows: its tint,\n"
+            "if it has one, else its colour. This is how neon is made.\n"
+            "Off, the brush is not a light and costs nothing extra.")
+
         layout.addLayout(form)
         return group
 
+    def _add_emissive_rows(self, form, brush, prefix, tooltip):
+        """The Emissive checkbox with its Light Intensity and Light Radius.
+
+        The one set of controls for everything that can glow -- a decal, a
+        Glow brush, water -- so the amount of light is always set the same
+        way: two numeric fields, never a slider in one place and a number in
+        another. *brush* is the object's properties (a brush is its own).
+        """
+        emissive_cb = _make_checkbox(
+            "Emissive", bool(brush.get('emissive', False)),
+            lambda checked: self.update_object_prop('emissive', bool(checked)),
+            _Style.CHECKBOX)
+        emissive_cb.setToolTip(tooltip)
+        form.addRow("", emissive_cb)
+        self._widgets[prefix + '_emissive_cb'] = emissive_cb
+        emissive_rows = []
+        for key, label_text, default, top, tip in (
+                ('emissive_intensity', "Light Intensity:", 1.0, 100.0,
+                 "How bright the emitted light is, as a Light's intensity."),
+                ('emissive_radius', "Light Radius:", 256.0, 100000.0,
+                 "How far the emitted light reaches, in world units.")):
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, top)
+            spin.setDecimals(2)
+            spin.setSingleStep(0.1 if top <= 100.0 else 16.0)
+            try:
+                spin.setValue(float(brush.get(key, default)))
+            except (TypeError, ValueError):
+                spin.setValue(default)
+            spin.setToolTip(tip)
+            spin.valueChanged.connect(
+                lambda value, k=key: self.update_object_prop(k, float(value)))
+            label = QLabel(label_text)
+            form.addRow(label, spin)
+            emissive_rows.append((label, spin))
+            self._widgets[prefix + '_' + key] = spin
+            self._widgets[prefix + '_' + key + '_label'] = label
+
+        def set_emissive_rows_visible(visible):
+            for label, spin in emissive_rows:
+                label.setVisible(bool(visible))
+                spin.setVisible(bool(visible))
+
+        emissive_cb.toggled.connect(set_emissive_rows_visible)
+        set_emissive_rows_visible(bool(brush.get('emissive', False)))
+
     def _create_water_properties(self, brush):
         group = QGroupBox("Water Properties")
-        group.setStyleSheet(_Style.group_box("#00CED1"))
+        _Style.apply(group, _Style.group_box("#00CED1"))
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
 
@@ -1788,10 +2129,15 @@ class PropertyEditor(QWidget):
             form.addRow(label_txt, _hbox(slider, label, stretch=False))
             self._widgets[f'{key}_slider'] = slider
 
+        self._add_emissive_rows(
+            form, brush, 'water',
+            "The water glows in its Water Tint and lights its surroundings\n"
+            "in that colour, from its surface: lava, toxic waste, a lit pool.\n"
+            "Off, the water is not a light and costs nothing extra.")
         layout.addLayout(form)
 
         dist_group = QGroupBox("Distortion Effects")
-        dist_group.setStyleSheet(_Style.group_box("#87CEEB", "#2b3d3b"))
+        _Style.apply(dist_group, _Style.group_box("#87CEEB", "#2b3d3b"))
         dist_form = QFormLayout(dist_group)
         dist_form.setSpacing(6)
         for key, label_txt, default, tip in (
@@ -1828,7 +2174,7 @@ class PropertyEditor(QWidget):
         layout.addWidget(dist_group)
 
         wave_group = QGroupBox("Surface")
-        wave_group.setStyleSheet(_Style.group_box("#48D1CC", "#2b3d3b"))
+        _Style.apply(wave_group, _Style.group_box("#48D1CC", "#2b3d3b"))
         wave_layout = QFormLayout(wave_group)
         wave_layout.setSpacing(6)
 
@@ -1857,13 +2203,95 @@ class PropertyEditor(QWidget):
         wave_layout.addRow("Wave Spacing:", _hbox(slider, label, stretch=False))
         self._widgets['water_wave_spread_slider'] = slider
 
+        self._add_water_flow_rows(brush, wave_layout)
+
         layout.addWidget(wave_group)
 
         return group
 
+    def _add_water_flow_rows(self, brush, form):
+        """"Direction": ticked, the water flows -- N, S, E or W, at its Flow
+        Speed -- and both controls show; unticked, they hide and the brush's
+        flow keys go, leaving the water exactly as it was before. The
+        controls keep their values while the panel is open, so ticking it
+        again brings the same flow back."""
+        flow = brush.get('water_flow')
+        direction = flow.strip().upper() if isinstance(flow, str) else ''
+        flowing = direction in WATER_FLOW_DIRECTIONS
+        directions = list(WATER_FLOW_DIRECTIONS)
+
+        flow_cb = _make_checkbox("Direction", flowing, None, _Style.CHECKBOX)
+        flow_cb.setToolTip("Make the water flow: its waves, ripples, foam and "
+                           "caustics drift the way chosen beside it.\nOff: still "
+                           "water, exactly as before.")
+        combo = _make_combo(directions, direction if flowing else directions[0],
+                            tooltip="The way the water flows: north (+Z), south, "
+                                    "east (+X) or west")
+        # One letter: as wide as that and its arrow, beside the checkbox.
+        from editor.form_layout import SNUG
+        combo.setProperty(SNUG, True)
+        widest = max(combo.fontMetrics().horizontalAdvance(d) for d in directions)
+        combo.setFixedWidth(widest + 54)
+        combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        form.addRow("", _hbox(flow_cb, combo, spacing=10))
+        speed = water_flow_speed(brush)
+        slider, value_label = _make_slider(
+            self, speed, int(WATER_FLOW_SPEED_MIN), int(WATER_FLOW_SPEED_MAX),
+            fmt="{:.0f}", tooltip="How fast the water flows, in world units a "
+                                  "second (a player is about 64 tall)")
+        speed_label = QLabel("Flow Speed:")
+        form.addRow(speed_label, _hbox(slider, value_label, stretch=False))
+        self._widgets['water_flow_cb'] = flow_cb
+        self._widgets['water_flow_combo'] = combo
+        self._widgets['water_flow_speed_slider'] = slider
+
+        flow_rows = (combo, speed_label, slider, value_label)
+
+        def show_rows(on):
+            for widget in flow_rows:
+                widget.setVisible(on)
+
+        def toggled(on):
+            show_rows(on)
+            if on:
+                self.update_object_prop('water_flow', combo.currentText())
+                self.update_object_prop('water_flow_speed', float(slider.value()))
+            else:
+                self._remove_object_props(('water_flow', 'water_flow_speed'))
+
+        def direction_chosen(text):
+            if flow_cb.isChecked():
+                self.update_object_prop('water_flow', text)
+
+        def speed_chosen(value):
+            if flow_cb.isChecked():
+                self.update_object_prop('water_flow_speed', float(value))
+
+        show_rows(flowing)
+        flow_cb.toggled.connect(toggled)
+        combo.currentTextChanged.connect(direction_chosen)
+        slider.valueChanged.connect(speed_chosen)
+
+    def _remove_object_props(self, keys):
+        """Take *keys* off the current brush (back to how it was without
+        them), as a property edit: journalled, repainted, unsaved."""
+        obj = self.current_object
+        if not isinstance(obj, dict):
+            return
+        removed = [obj.pop(key) for key in keys if key in obj]
+        if not removed:
+            return
+        self.editor.state.mark_world_changed([obj])
+        if not self._populating:
+            self.editor.view_3d.update()
+            for v in ('view_top', 'view_front', 'view_side'):
+                if hasattr(self.editor, v):
+                    getattr(self.editor, v).update()
+            self.editor.mark_as_modified()
+
     def _create_fog_properties(self, brush):
         group = QGroupBox("Fog Properties")
-        group.setStyleSheet(_Style.group_box("#B0C4DE"))
+        _Style.apply(group, _Style.group_box("#B0C4DE"))
         layout = QFormLayout(group)
         layout.setSpacing(8)
 
@@ -1887,8 +2315,8 @@ class PropertyEditor(QWidget):
         form = QFormLayout()
         form.setSpacing(8)
 
-        current = brush.get('colour', [0.8, 0.8, 0.8])
-        btn = self._color_button(current, lambda: self._pick_color('colour', btn, [0.8, 0.8, 0.8]), size=(140, 32))
+        current = self.editor.brush_colour(brush)
+        btn = self._color_button(current, lambda: self._pick_brush_colour(btn), size=(140, 32))
         reset = QPushButton("Reset")
         reset.setFixedSize(60, 32)
         reset.setToolTip("Reset to default grey")
@@ -1907,7 +2335,7 @@ class PropertyEditor(QWidget):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.verticalScrollBar().setStyleSheet(_Style.SCROLL_V)
+        _Style.apply(scroll.verticalScrollBar(), _Style.SCROLL_V)
 
         content = QWidget(scroll)
         layout = QVBoxLayout(content)
@@ -1918,14 +2346,14 @@ class PropertyEditor(QWidget):
         name_layout = QFormLayout()
         name_layout.setSpacing(4)
         name_lbl = QLabel("Name:")
-        name_lbl.setStyleSheet(_Style.NAME_LBL)
+        _Style.apply(name_lbl, _Style.NAME_LBL)
         name_inp = QLineEdit(str(thing.properties.get('name', '')))
-        name_inp.setStyleSheet(_Style.NAME_INP)
+        _Style.apply(name_inp, _Style.NAME_INP)
         name_inp.setPlaceholderText("Enter name...")
         name_inp.editingFinished.connect(lambda: self.update_object_prop('name', name_inp.text()))
 
         id_btn = QPushButton("ID")
-        id_btn.setStyleSheet(_Style.ID_BTN)
+        _Style.apply(id_btn, _Style.ID_BTN)
         id_btn.setFixedWidth(32)
         id_btn.setToolTip("Show/hide UUID")
 
@@ -1937,7 +2365,7 @@ class PropertyEditor(QWidget):
         name_layout.addRow(name_lbl, name_row)
 
         uuid_field = QLineEdit(thing.properties.get('id', ''))
-        uuid_field.setStyleSheet(_Style.ID_FIELD)
+        _Style.apply(uuid_field, _Style.ID_FIELD)
         uuid_field.setReadOnly(True)
         uuid_field.setVisible(False)
         name_layout.addRow("", uuid_field)
@@ -1951,22 +2379,35 @@ class PropertyEditor(QWidget):
         if sources:
             txt = ", ".join(f"{n} ({t})" for n, t in sources)
             lbl = QLabel(txt)
-            lbl.setStyleSheet(_Style.TARGETED)
+            _Style.apply(lbl, _Style.TARGETED)
             lbl.setWordWrap(True)
             name_layout.addRow("Targeted by:", lbl)
 
         layout.addLayout(name_layout)
 
         self.tab_widget = QTabWidget(content)
-        self.tab_widget.setStyleSheet(_Style.TAB_BAR)
+        _Style.apply(self.tab_widget, _Style.TAB_BAR)
         self.tab_widget.setUsesScrollButtons(True)
 
         props_tab = self._create_thing_properties_tab(thing)
         self.tab_widget.addTab(props_tab, "Properties")
 
         if isinstance(thing, Prop):
-            physics_tab = self._create_prop_physics_tab(thing)
-            self.tab_widget.addTab(physics_tab, "Physics")
+            # Never the tab on screen when a page appears: added empty and
+            # built, from the Prop's values then, the first time it is shown.
+            # Building it with every Prop page was over half the page's
+            # widgets (a placed model is a Prop: the commonest selection).
+            self._add_deferred_tab(lambda t=thing: self._create_prop_physics_tab(t),
+                                   "Physics")
+            # Animation (a model's Rotate): on every Prop page, built on first
+            # showing like Physics, and hidden unless the Prop shows a model.
+            # Always present, so the tabs after it keep their indexes, and
+            # switching Representation shows or hides it without a rebuild
+            # (_refresh_animation_tab).
+            index = self._add_deferred_tab(
+                lambda t=thing: self._create_prop_animation_tab(t), "Animation")
+            self._widgets['animation_tab'] = self.tab_widget.widget(index)
+            self._refresh_animation_tab(thing)
 
         advanced_tab = self._create_thing_advanced_tab(thing)
         if advanced_tab is not None:
@@ -2075,7 +2516,7 @@ class PropertyEditor(QWidget):
                 sprite_btn.setFixedWidth(30)
 
                 def pick_sprite():
-                    fp, _ = QFileDialog.getOpenFileName(
+                    fp, _ = get_open_asset_file(
                         self, "Select Billboard Sprite", "assets/sprites",
                         "Image Files (*.png *.jpg *.jpeg *.bmp)"
                     )
@@ -2122,6 +2563,8 @@ class PropertyEditor(QWidget):
                 self._widgets['prop_sprite_size_inputs'] = sprite_inputs
 
                 model_path_row = form.getWidgetPosition(model_path_widget)[0]
+                variant_combo = self._prop_variant_combo
+                variant_row = form.getWidgetPosition(variant_combo)[0]
                 scale_row = scale_before
                 rotation_row = rotation_before
                 tint_row = tint_before
@@ -2142,13 +2585,19 @@ class PropertyEditor(QWidget):
                     # when the field is empty: an authored model is never
                     # replaced, and nothing is added to a billboard Prop.
                     if is_model:
-                        # A Prop model representation always has a concrete mesh.
-                        # Set the path before switching the render mode so the
-                        # dense projection never observes a model row with no recipe.
+                        # A Prop model representation always has a concrete mesh:
+                        # with none chosen yet it is the Oil Barrel -- the whole
+                        # preset, as if picked from Presets (Browse changes it).
                         default_model = getattr(
                             type(thing), 'DEFAULT_MODEL_PATH', '')
                         if not thing.properties.get('model_path') and default_model:
-                            self.update_object_prop('model_path', default_model)
+                            for key, value in (model_settings(default_model)
+                                               or {'model_path': default_model}).items():
+                                self.update_object_prop(key, value)
+                            preset_combo = self._widgets.get('prop_model_preset_combo')
+                            if preset_combo is not None:
+                                preset_combo.setCurrentText('Oil Barrel')
+                            variant_combo.setCurrentText('None')
                     else:
                         # Restore the Prop's resolved visual asset rather than a
                         # generic placeholder: weapon -> gun1, key -> its key,
@@ -2171,12 +2620,21 @@ class PropertyEditor(QWidget):
                         self._set_form_row_visible(form, row, is_model)
                     for row in (sprite_path_row, sprite_size_row):
                         self._set_form_row_visible(form, row, not is_model)
+                    refresh_variant_row()
+                    self._refresh_animation_tab(thing)
+
+                def refresh_variant_row():
+                    shown = (thing.properties.get('render_mode', 'model') != 'billboard'
+                             and oil_barrel_variant(thing.properties.get('model_path'))
+                             is not None)
+                    self._set_form_row_visible(form, variant_row, shown)
 
                 mode_combo.currentTextChanged.connect(set_representation)
                 for row in (model_path_row, scale_row, rotation_row, tint_row):
                     self._set_form_row_visible(form, row, model_mode)
                 for row in (sprite_path_row, sprite_size_row):
                     self._set_form_row_visible(form, row, not model_mode)
+                refresh_variant_row()
 
                 # Collection type can own the sprite path, so the appearance row
                 # is further narrowed by _refresh_prop_collection_appearance().
@@ -2197,6 +2655,7 @@ class PropertyEditor(QWidget):
         if isinstance(thing, Light):
             self.add_color_picker_widget(form, thing, 'colour')
             self._build_attach_to_mover(form, thing)
+            self._build_follow_path(form, thing)
 
         if isinstance(thing, Portal):
             self._build_attach_to_mover(form, thing, prefix='portal_')
@@ -2208,6 +2667,7 @@ class PropertyEditor(QWidget):
         if isinstance(thing, Prop):
             self._prop_form = form
             self._build_collect_ui(form, thing)
+            self._build_explosive_ui(form, thing)
 
         # Explicit primary properties. Props have a dedicated editor above:
         # do not expose their serialized implementation fields as a flat list.
@@ -2227,6 +2687,8 @@ class PropertyEditor(QWidget):
         if isinstance(thing, PlayerStart):
             self._build_player_start_primary(form, thing)
             self._build_player_start_sky_image(form, thing)
+            from editor.hd_sky_panel import build_hd_sky_section
+            build_hd_sky_section(self, form, thing, CollapsibleSection)
 
         if isinstance(thing, LevelChanger):
             self._build_destination_spawn(form, thing)
@@ -2240,6 +2702,9 @@ class PropertyEditor(QWidget):
 
         if isinstance(thing, LogicSpawner):
             self._build_spawner_group(tab_layout, thing)
+
+        if isinstance(thing, Shake):
+            self._build_shake_group(tab_layout, thing)
 
         if isinstance(thing, LogicState):
             self._build_keyvalue_group(tab_layout, thing)
@@ -2328,7 +2793,7 @@ class PropertyEditor(QWidget):
             _Style.CHECKBOX,
         )
         physics_cb.setToolTip(
-            "Enable gravity, pushing and dropped-object physics for this prop"
+            "Enable dynamic simulation (gravity and pushing). This is independent of Solid."
         )
 
         solid_cb = _make_checkbox(
@@ -2338,31 +2803,24 @@ class PropertyEditor(QWidget):
             _Style.CHECKBOX,
         )
         solid_cb.setToolTip(
-            "Make this prop physically solid. Solid and Physics can be "
-            "controlled independently after enabling either one."
+            "Enable collision with this model. Leave Physics Enabled off for stationary scenery."
         )
 
         def set_checkbox(widget, value):
-            widget.blockSignals(True)
-            widget.setChecked(bool(value))
-            widget.blockSignals(False)
+            previous_block = widget.blockSignals(True)
+            try:
+                widget.setChecked(bool(value))
+            finally:
+                widget.blockSignals(previous_block)
 
         def on_physics_toggled(checked):
+            # Dynamics and collision are separate authoring choices:
+            # gravity/pushing must not be switched on merely to make scenery
+            # solid, and disabling dynamics must not remove static collision.
             self.update_object_prop('physics_enabled', bool(checked))
-            # Enabling physics implies collision, but disabling physics does
-            # not force collision off. This leaves the two properties
-            # independently editable after the initial enable.
-            if checked and not solid_cb.isChecked():
-                set_checkbox(solid_cb, True)
-                self.update_object_prop('no_collision', False)
 
         def on_solid_toggled(checked):
             self.update_object_prop('no_collision', not bool(checked))
-            # Enabling solidity implies physics, but disabling solidity does
-            # not force physics off. This permits physics-without-collision.
-            if checked and not physics_cb.isChecked():
-                set_checkbox(physics_cb, True)
-                self.update_object_prop('physics_enabled', True)
 
         physics_cb.toggled.connect(on_physics_toggled)
         solid_cb.toggled.connect(on_solid_toggled)
@@ -2464,6 +2922,36 @@ class PropertyEditor(QWidget):
         physics_form.addRow("", rolls_cb)
         self._widgets['prop_rolls_cb'] = rolls_cb
 
+        topples_cb = _make_checkbox(
+            "Falls over like a barrel",
+            bool(thing.properties.get('topples', False)),
+            None,
+            _Style.CHECKBOX,
+        )
+
+        def on_topples_toggled(checked):
+            self.update_object_prop('topples', bool(checked))
+            # Only a simulated, solid body can fall over: ticking this says
+            # that is what the prop is (unticking leaves both as they are).
+            if checked:
+                if not physics_cb.isChecked():
+                    set_checkbox(physics_cb, True)
+                    self.update_object_prop('physics_enabled', True)
+                if not solid_cb.isChecked():
+                    set_checkbox(solid_cb, True)
+                    self.update_object_prop('no_collision', False)
+
+        topples_cb.toggled.connect(on_topples_toggled)
+        topples_cb.setToolTip(
+            "Needs Physics Enabled and Solid; ticking this ticks both. "
+            "Knocked hard enough -- run into, hit by another prop, dropped, "
+            "or stood on a steep slope -- it goes over and lies on its side, "
+            "rolling across its length. Picking it up stands it up again. "
+            "A prop that rolls like a ball does not."
+        )
+        physics_form.addRow("", topples_cb)
+        self._widgets['prop_topples_cb'] = topples_cb
+
         bounciness = min(1.0, max(0.0, float(thing.properties.get('bounciness', 0.0) or 0.0)))
         bounciness_spin = QDoubleSpinBox()
         bounciness_spin.setRange(0.0, 1.0)
@@ -2480,19 +2968,26 @@ class PropertyEditor(QWidget):
         physics_form.addRow("Bounciness:", bounciness_spin)
         self._widgets['prop_bounciness_spin'] = bounciness_spin
 
-        shape_mode = str(thing.properties.get('collision_shape', 'auto')).lower()
+        # Two shapes, both taken from the model: a box around it (AABB, the
+        # default and the cheap one) or its actual triangles (Mesh). Physics
+        # honours the choice. 'auto', which older maps hold, is AABB.
+        shape_mode = str(thing.properties.get('collision_shape', 'aabb')).lower()
         shape_labels = {
-            'auto': 'Automatic',
             'aabb': 'AABB',
             'mesh': 'Mesh',
         }
         shape_combo = _make_combo(
             list(shape_labels.values()),
-            shape_labels.get(shape_mode, 'Automatic'),
+            shape_labels.get(shape_mode, 'AABB'),
             None,
             tooltip=(
-                "Automatic uses mesh collision where supported and otherwise "
-                "uses the model bounds. AABB always uses a box around the model."
+                "AABB: collisions use a box derived from the model's bounds. "
+                "Cheap, and the steady choice for anything stacked.\n"
+                "Mesh: collisions use the model's actual shape -- other physics "
+                "objects rest on its real surface and are stopped by its real "
+                "sides. Costs more, in proportion to the model's triangles.\n"
+                "Newly placed custom models use Mesh by default; the Ball and "
+                "Oil Barrel presets and older maps keep AABB."
             ),
         )
         reverse_shape_labels = {label: value for value, label in shape_labels.items()}
@@ -2500,7 +2995,7 @@ class PropertyEditor(QWidget):
         def on_shape_changed(label):
             self.update_object_prop(
                 'collision_shape',
-                reverse_shape_labels.get(label, 'auto'),
+                reverse_shape_labels.get(label, 'aabb'),
             )
 
         shape_combo.currentTextChanged.connect(on_shape_changed)
@@ -2527,12 +3022,236 @@ class PropertyEditor(QWidget):
         section.addLayout(physics_form)
         parent_layout.addWidget(section)
 
+    @staticmethod
+    def _shows_animation_tab(thing):
+        """Whether *thing* has an Animation tab: a Prop showing a model."""
+        if not isinstance(thing, Prop):
+            return False
+        props = thing.properties
+        return (str(props.get('render_mode', 'model')).lower() == 'model'
+                and bool(props.get('model_path')))
+
+    def _refresh_animation_tab(self, thing):
+        """Show the page's Animation tab only while *thing* shows a model;
+        hidden, a Rotate preview of it stops."""
+        holder = self._widgets.get('animation_tab')
+        tabs = self.tab_widget
+        if holder is None or tabs is None:
+            return
+        index = tabs.indexOf(holder)
+        if index < 0:
+            return
+        shown = self._shows_animation_tab(thing)
+        tabs.setTabVisible(index, shown)
+        preview = getattr(self.editor, 'rotate_preview', None)
+        if not shown and preview is not None and preview.prop is thing:
+            self.editor.stop_rotate_preview()
+
+    #: The Animation tab's Axis and Mode choices, in the order of
+    #: model_rotate.ROTATE_AXES and ROTATE_MODES.
+    ROTATE_AXIS_LABELS = ("Auto (thinnest side)", "X", "Y", "Z")
+    ROTATE_MODE_LABELS = ("Continuous", "Swing", "Turn to angle")
+
+    def _create_prop_animation_tab(self, thing):
+        """A model Prop's Animation tab: its Rotate, and a Preview of it."""
+        w = QWidget(self.tab_widget)
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+        form = QFormLayout()
+        form.setSpacing(4)
+        self._build_rotate_ui(form, thing)
+        section = CollapsibleSection("Rotate", expanded=True, count=form.rowCount())
+        section.addLayout(form)
+        layout.addWidget(section)
+        layout.addStretch()
+        return w
+
+    def _build_rotate_ui(self, form, thing):
+        """The Rotate rows (engine.model_rotate): off by default; on, the
+        model turns about its own axis in Play -- continuously, swinging or
+        turning to an angle -- from the start, or when an I/O input starts
+        it."""
+        from engine.model_rotate import (ROTATE_DEFAULTS, ROTATE_AXES, ROTATE_MODES,
+                                         MAX_ROTATE_SPEED, MAX_ROTATE_ANGLE,
+                                         MAX_ROTATE_EASE, CONTINUOUS, SWING, TURN,
+                                         rotate_mode)
+        props = thing.properties
+
+        def number(key):
+            try:
+                value = float(props.get(key, ROTATE_DEFAULTS[key]))
+            except (TypeError, ValueError):
+                return ROTATE_DEFAULTS[key]
+            return value if math.isfinite(value) else ROTATE_DEFAULTS[key]
+
+        rotate_cb = _make_checkbox("Rotate", bool(props.get('rotate_enabled', False)),
+                                   None, _Style.CHECKBOX)
+        rotate_cb.setToolTip(
+            "The model rotates about one of its own axes in Play -- round and "
+            "round, swinging back and forth, or turning to an angle -- from the "
+            "start, or when an I/O input starts it.")
+        form.addRow("", rotate_cb)
+        from engine.model_rotate import physics_owns_turn
+        if physics_owns_turn(props):
+            note = QLabel("Physics is on, so the physics simulation turns this "
+                          "model: Rotate does not run in Play.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #FFAC1C;")
+            self._widgets['rotate_physics_note'] = note
+            form.addRow("", note)
+
+        mode_labels = self.ROTATE_MODE_LABELS
+        mode = rotate_mode(props)
+        mode_combo = _make_combo(
+            list(mode_labels), mode_labels[ROTATE_MODES.index(mode)],
+            tooltip="Continuous: round and round (a fan, a wheel, a reel).\n"
+                    "Swing: back and forth across Angle, centred on how it was "
+                    "placed (a CCTV camera, a sign, a pendulum).\n"
+                    "Turn to angle: turns by Angle and stops; again, it turns "
+                    "back (a valve, a lever, a hatch).")
+        form.addRow("Mode:", mode_combo)
+
+        labels = self.ROTATE_AXIS_LABELS
+        axis = str(props.get('rotate_axis', 'auto')).lower()
+        if axis not in ROTATE_AXES:
+            axis = 'auto'
+        axis_combo = _make_combo(
+            list(labels), labels[ROTATE_AXES.index(axis)],
+            tooltip="The model's own axis it rotates about. Auto: its thinnest "
+                    "side -- a reel's, a fan's, a wheel's or a valve's hub.")
+        form.addRow("Axis:", axis_combo)
+
+        speed_spin = _make_spin(
+            number('rotate_speed'), -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED,
+            suffix=" °/s", decimals=1, step=15.0,
+            tooltip="Degrees a second. Continuous: its full speed, negative "
+                    "turns the other way. Swing and Turn: how fast it moves.")
+        form.addRow("Speed:", speed_spin)
+
+        angle_label = QLabel("Angle:")
+        angle_spin = _make_spin(
+            number('rotate_angle'), -MAX_ROTATE_ANGLE, MAX_ROTATE_ANGLE,
+            suffix=" °", decimals=1, step=15.0,
+            tooltip="Swing: the whole arc it sweeps, centred on how it was "
+                    "placed. Turn to angle: how far it turns (negative: the "
+                    "other way).")
+        form.addRow(angle_label, angle_spin)
+
+        ease_label = QLabel("Ease in / out:")
+        ease_spin = _make_spin(
+            number('rotate_ease'), 0.0, MAX_ROTATE_EASE, suffix=" s", decimals=2,
+            step=0.1,
+            tooltip="Seconds to get up to speed when started and to come to "
+                    "rest when stopped. 0: at once. (Turn to angle always "
+                    "eases in and out.)")
+        form.addRow(ease_label, ease_spin)
+
+        autostart_cb = _make_checkbox(
+            "Rotating at start", bool(props.get('rotate_autostart', False)),
+            None, _Style.CHECKBOX)
+        autostart_cb.setToolTip(
+            "Rotating from the moment Play starts (Turn to angle: already "
+            "turned). Off, it waits for a StartRotate or ToggleRotate input.")
+        form.addRow("", autostart_cb)
+
+        note = QLabel(
+            "In Play, the I/O inputs StartRotate, StopRotate, ToggleRotate, "
+            "ReverseRotate and SetRotateSpeed control it, and the outputs "
+            "OnRotateStarted and OnRotateStopped fire as it starts and comes "
+            "to rest.")
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            "QLabel { color: #88AAFF; font-style: italic; padding: 4px; }")
+        form.addRow("", note)
+
+        preview_btn = self._preview_button("▶ Preview Rotate", self.toggle_rotate_preview)
+        preview_btn.setToolTip(
+            "Rotate the model in the 3D view, as it will in Play (Turn to "
+            "angle: there and back again). Stops when pressed again, the "
+            "selection changes, the map is saved or Play starts; the model "
+            "goes back as placed.")
+        preview = getattr(self.editor, 'rotate_preview', None)
+        if preview is not None and preview.prop is thing:
+            # Rebuilt while its preview runs: the button shows it running.
+            preview_btn.blockSignals(True)
+            preview_btn.setChecked(True)
+            preview_btn.setText("■ Stop Preview")
+            preview_btn.blockSignals(False)
+        form.addRow("", preview_btn)
+
+        self._widgets.update({
+            'rotate_enabled_cb': rotate_cb,
+            'rotate_mode_combo': mode_combo,
+            'rotate_axis_combo': axis_combo,
+            'rotate_speed_spin': speed_spin,
+            'rotate_angle_spin': angle_spin,
+            'rotate_ease_spin': ease_spin,
+            'rotate_autostart_cb': autostart_cb,
+            'rotate_preview_btn': preview_btn,
+        })
+        rows = (mode_combo, axis_combo, speed_spin, angle_label, angle_spin,
+                ease_label, ease_spin, autostart_cb, preview_btn)
+
+        def previewing():
+            preview = getattr(self.editor, 'rotate_preview', None)
+            return (preview is not None and preview.active
+                    and preview.prop is self.current_object)
+
+        def refresh():
+            on = rotate_cb.isChecked()
+            for widget in rows:
+                widget.setEnabled(on)
+            chosen = ROTATE_MODES[mode_labels.index(mode_combo.currentText())] \
+                if mode_combo.currentText() in mode_labels else CONTINUOUS
+            # Angle: Swing's arc, Turn's angle. Ease: Continuous and Swing.
+            angle_label.setText("Swing arc:" if chosen == SWING else "Turn angle:")
+            for widget in (angle_label, angle_spin):
+                widget.setVisible(chosen != CONTINUOUS)
+            for widget in (ease_label, ease_spin):
+                widget.setVisible(chosen != TURN)
+
+        def on_rotate(checked):
+            self.update_object_prop('rotate_enabled', bool(checked))
+            if not checked and previewing():
+                self.editor.stop_rotate_preview()
+            refresh()
+
+        def on_mode(label):
+            if label not in mode_labels:
+                return
+            self.update_object_prop('rotate_mode', ROTATE_MODES[mode_labels.index(label)])
+            refresh()           # the running preview restarts in the new mode
+
+        def on_axis(label):
+            if label not in labels:
+                return
+            self.update_object_prop('rotate_axis', ROTATE_AXES[labels.index(label)])
+            if previewing():
+                # The axis is chosen as a preview starts (Auto measures the
+                # model): start again about the new one.
+                self.editor.start_rotate_preview(self.current_object)
+
+        # Speed, Angle and Ease are read by the preview every tick.
+        rotate_cb.toggled.connect(on_rotate)
+        mode_combo.currentTextChanged.connect(on_mode)
+        axis_combo.currentTextChanged.connect(on_axis)
+        speed_spin.valueChanged.connect(
+            lambda v: self.update_object_prop('rotate_speed', float(v)))
+        angle_spin.valueChanged.connect(
+            lambda v: self.update_object_prop('rotate_angle', float(v)))
+        ease_spin.valueChanged.connect(
+            lambda v: self.update_object_prop('rotate_ease', float(v)))
+        autostart_cb.toggled.connect(
+            lambda checked: self.update_object_prop('rotate_autostart', bool(checked)))
+        refresh()
+
     def _build_effect_ui(self, form, thing):
         """Compact authoring UI for the one Effect primitive."""
         props = thing.properties
 
         type_combo = QComboBox()
-        type_combo.addItems(["FIRE", "ORB", "EXPLOSION", "CUSTOM"])
+        type_combo.addItems(list(EFFECT_TYPES))
         type_combo.setCurrentText(
             str(props.get('effect_type', 'FIRE')).upper()
         )
@@ -2545,34 +3264,13 @@ class PropertyEditor(QWidget):
         preview_check.setChecked(bool(props.get('preview', False)))
         form.addRow("Preview:", preview_check)
 
-        silent_check = QCheckBox("Silent")
-        silent_check.setToolTip(
-            "Do not play the explosion sound when this Effect is triggered."
-        )
-        silent_check.setChecked(bool(props.get("silent", False)))
-        silent_check.toggled.connect(
-            lambda value: self.update_object_prop("silent", bool(value))
-        )
-        silent_label = QLabel("Audio:")
-        form.addRow(silent_label, silent_check)
+        volume_widget, _volume_slider = self._explosion_volume_row(thing)
+        form.addRow("Volume:", volume_widget)
+        from engine.explosions import BLAST_DEFAULTS
+        form.addRow(self._section("Blast"))
+        self._blast_rows(form, thing, BLAST_DEFAULTS, "the middle of its fireball")
 
-        fire_combo = QComboBox()
-        fire_textures = [
-            (f"Fire {index:02d}", f"assets/textures/effects/fire{index:02d}.gif")
-            for index in range(1, 6)
-        ]
-        for label, path in fire_textures:
-            fire_combo.addItem(label, path)
-
-        current_fire = str(
-            props.get("fire_texture", fire_textures[0][1])
-        ).replace("\\", "/")
-        fire_index = next(
-            (index for index, (_, path) in enumerate(fire_textures)
-             if path == current_fire),
-            0,
-        )
-        fire_combo.setCurrentIndex(fire_index)
+        fire_combo = _fire_variant_combo(props.get("fire_texture"))
         fire_label = QLabel("Fire:")
         form.addRow(fire_label, fire_combo)
 
@@ -2612,7 +3310,7 @@ class PropertyEditor(QWidget):
                 project_root, "assets", "textures", "effects"
             )
             os.makedirs(start, exist_ok=True)
-            fp, _ = QFileDialog.getOpenFileName(
+            fp, _ = get_open_asset_file(
                 self,
                 "Select Custom Effect GIF",
                 start,
@@ -2657,9 +3355,6 @@ class PropertyEditor(QWidget):
             loop_label.setVisible(show_custom)
             loop_check.setVisible(show_custom)
             loop_check.setEnabled(show_custom)
-            show_silent = effect_type == "EXPLOSION"
-            silent_label.setVisible(show_silent)
-            silent_check.setVisible(show_silent)
             preview_check.setEnabled(True)
 
         def fire_texture_changed(index):
@@ -2741,21 +3436,91 @@ class PropertyEditor(QWidget):
         lifetime_slider, lifetime_label = add_scaled_slider(
             "Lifetime", "lifetime", 0.05, 3.0, 0.5, "{:.2f} s"
         )
+        lifetime_slider.setToolTip(
+            "How long its explosion plays: an EXPLOSION's, or any Effect's "
+            "when it is sent Explode.")
+
+        # Explosion: play it here, what happens after, fires around it.
+        play_button = QPushButton("\u25B6 Play explosion")
+        play_button.setToolTip(
+            "Play this Effect's explosion in the 3D view, with its light, "
+            "sound and particles. In the editor it is a preview (nothing "
+            "changes, no outputs fire); in Play it sends Explode.")
+        play_button.clicked.connect(lambda: self._play_effect_explosion(thing))
+        form.addRow("Explosion:", play_button)
+
+        return_check = QCheckBox("Burns again after exploding")
+        return_check.setToolTip(
+            "When sent Explode, play the explosion and then go back to this "
+            "type (a FIRE burns again). Off: it becomes an EXPLOSION for good.")
+        return_check.setChecked(returns_after_explosion(props))
+        return_check.toggled.connect(
+            lambda on: self.update_object_prop('return_after_explosion', bool(on)))
+        form.addRow("", return_check)
+
+        flames = self._leaves_flames_rows(form, thing, "this Effect")
+
+        def refresh_explosion_controls():
+            kind = str(thing.properties.get('effect_type', 'FIRE')).upper()
+            return_check.setVisible(kind != 'EXPLOSION')
+            return_check.setText(
+                "Burns again after exploding" if kind == 'FIRE'
+                else "Back to %s after exploding" % kind)
+            flames.refresh()
+
+        # Particle emitter: optional on every type, the whole of PARTICLES.
+        emitter_combo = QComboBox()
+        emitter_combo.addItems(list(EMITTER_PRESETS))
+        emitter_combo.setToolTip(
+            "Stateless GPU particles drawn with this Effect. On a PARTICLES "
+            "Effect, Width and Height are the emitter's extent."
+        )
+        current_emitter = str(props.get("emitter", EMITTER_NONE)).upper()
+        if current_emitter not in EMITTER_PRESETS:
+            current_emitter = EMITTER_NONE
+        emitter_combo.setCurrentText(current_emitter)
+        form.addRow("Emitter:", emitter_combo)
+        rate_slider, _ = add_scaled_slider(
+            "Rate", "emitter_rate", 0.0, 1.0, 1.0, "{:.2f}"
+        )
+        rate_slider.setToolTip("Fraction of the emitter's particles alive at once.")
+        scale_slider, _ = add_scaled_slider(
+            "Particle Scale", "emitter_scale",
+            EMITTER_SCALE_RANGE[0], EMITTER_SCALE_RANGE[1], 1.0, "{:.2f}x"
+        )
+        scale_slider.setToolTip("Scales particle size, speed and spread.")
+        tint_widget = self.add_color_picker_widget(
+            form, thing, 'emitter_tint',
+            label="Particle Tint:",
+            dialog_title="Choose Particle Tint",
+        )
+
+        def refresh_emitter():
+            on = str(thing.properties.get("emitter", EMITTER_NONE)) != EMITTER_NONE
+            rate_slider.setEnabled(on)
+            scale_slider.setEnabled(on)
+            if tint_widget is not None:
+                tint_widget.setEnabled(on)
+
+        def emitter_changed(value):
+            self.update_object_prop("emitter", str(value).upper())
+            refresh_emitter()
+
+        emitter_combo.currentTextChanged.connect(emitter_changed)
 
         def refresh_lifetime():
-            explosion = str(
-                thing.properties.get('effect_type', 'FIRE')
-            ).upper() == 'EXPLOSION'
-            lifetime_slider.setEnabled(explosion)
-            if explosion:
+            # Every type can explode, for this long: always editable.
+            lifetime_slider.setEnabled(True)
+            try:
                 lifetime = float(thing.properties.get('lifetime', 0.5))
-                lifetime = max(0.05, min(3.0, lifetime))
-                lifetime_slider.blockSignals(True)
-                lifetime_slider.setValue(int(round(lifetime * 100)))
-                lifetime_slider.blockSignals(False)
-                lifetime_label.setText(f"{lifetime:.2f} s")
-            else:
-                lifetime_label.setText("∞")
+            except (TypeError, ValueError):
+                lifetime = 0.5
+            lifetime = max(0.05, min(3.0, lifetime))
+            lifetime_slider.blockSignals(True)
+            lifetime_slider.setValue(int(round(lifetime * 100)))
+            lifetime_slider.blockSignals(False)
+            lifetime_label.setText(f"{lifetime:.2f} s")
+            refresh_explosion_controls()
 
         def effect_type_changed(value):
             value = str(value).upper()
@@ -2772,6 +3537,26 @@ class PropertyEditor(QWidget):
                     slider.setValue(3200)
                     slider.blockSignals(False)
                     label.setText("32.0")
+            elif value == 'PARTICLES':
+                # The emitter alone: width/height become its extent, it has
+                # no light of its own, and it emits something.
+                sizes = PARTICLES_DEFAULT_SIZE
+                self.update_object_prop('width', float(sizes[0]))
+                self.update_object_prop('height', float(sizes[1]))
+                for slider, label, size in (
+                    (width_slider, width_label, sizes[0]),
+                    (height_slider, height_label, sizes[1]),
+                ):
+                    slider.blockSignals(True)
+                    slider.setValue(int(round(max(4.0, size) * 100)))
+                    slider.blockSignals(False)
+                    label.setText(f"{size:.1f}")
+                self.update_object_prop('light_enabled', False)
+                light_check.blockSignals(True)
+                light_check.setChecked(False)
+                light_check.blockSignals(False)
+                if thing.properties.get('emitter', EMITTER_NONE) == EMITTER_NONE:
+                    emitter_combo.setCurrentText(PARTICLES_DEFAULT_EMITTER)
 
             refresh_fire_texture()
             if value == 'EXPLOSION':
@@ -2781,11 +3566,16 @@ class PropertyEditor(QWidget):
                     lifetime = 0.5
                 if lifetime < 0.05:
                     self.update_object_prop('lifetime', 0.5)
+                # A burst of sparks with the fireball, unless the Effect
+                # already has an emitter of its own.
+                if thing.properties.get('emitter', EMITTER_NONE) == EMITTER_NONE:
+                    emitter_combo.setCurrentText(EXPLOSION_DEFAULT_EMITTER)
             refresh_lifetime()
 
         type_combo.currentTextChanged.connect(effect_type_changed)
         refresh_fire_texture()
         refresh_lifetime()
+        refresh_emitter()
 
     def _build_attach_to_mover(self, form, thing, prefix=''):
         """Shared attach-to-mover logic for Light and Portal."""
@@ -2865,6 +3655,73 @@ class PropertyEditor(QWidget):
         combo.currentTextChanged.connect(on_changed)
         form.addRow(lbl, combo)
 
+    def _build_follow_path(self, form, thing):
+        """A Light travelling along a path-node chain in Play
+        (engine.light_paths): its first node, speed and whether it sets off
+        with Play. A light attached to a mover follows the mover instead."""
+        from engine.light_paths import LIGHT_PATH_DEFAULTS, MAX_PATH_SPEED
+        props = thing.properties
+        current = str(props.get('path_target') or '')
+        cb = _make_checkbox("Follow Path", bool(current), None)
+        cb.setToolTip("Travel along a chain of path nodes in Play, pausing at\n"
+                      "each node's Wait Time; a chain that loops back keeps going.\n"
+                      "I/O: StartPath, StopPath, TogglePath; OnPathNodeReached,\n"
+                      "OnPathEnd. Ignored while attached to a mover.")
+        form.addRow("", cb)
+
+        combo = ClickableComboBox()
+        combo.addItem("(none)")
+        nodes = sorted({t.properties.get('name', '') for t in self.editor.state.things
+                        if isinstance(t, PathNode) and t.properties.get('name')})
+        for name in nodes:
+            combo.addItem(name)
+        if current:
+            idx = combo.findText(current)
+            if idx < 0:
+                combo.addItem(current + " (missing)")
+                idx = combo.count() - 1
+            combo.setCurrentIndex(idx)
+        combo.setToolTip("The path node the light travels to first")
+        start_lbl = QLabel("Path Start:")
+        form.addRow(start_lbl, combo)
+
+        speed = _make_spin(props.get('path_speed', LIGHT_PATH_DEFAULTS['path_speed']),
+                           0.0, MAX_PATH_SPEED, suffix=" u/s", decimals=1, step=8.0,
+                           tooltip="World units a second, times each node's Speed")
+        speed_lbl = QLabel("Path Speed:")
+        form.addRow(speed_lbl, speed)
+
+        start_on = _make_checkbox("Start moving with Play",
+                                  bool(props.get('path_start_on', True)), None)
+        start_on.setToolTip("Off: the light waits where it is for StartPath")
+        form.addRow("", start_on)
+
+        rows = (start_lbl, combo, speed_lbl, speed, start_on)
+
+        def refresh():
+            on = cb.isChecked()
+            for w in rows:
+                w.setVisible(on)
+                w.setEnabled(not props.get('parent_mover'))
+
+        def on_toggle(checked):
+            if not checked:
+                self.update_object_prop('path_target', '')
+                combo.blockSignals(True)
+                combo.setCurrentIndex(0)
+                combo.blockSignals(False)
+            refresh()
+
+        def on_node(text):
+            clean = text.replace(" (missing)", "")
+            self.update_object_prop('path_target', '' if clean == "(none)" else clean)
+
+        cb.toggled.connect(on_toggle)
+        combo.currentTextChanged.connect(on_node)
+        speed.valueChanged.connect(lambda v: self.update_object_prop('path_speed', float(v)))
+        start_on.toggled.connect(lambda c: self.update_object_prop('path_start_on', bool(c)))
+        refresh()
+
     def _build_portal_target(self, form, thing):
         current = thing.properties.get('portal_target', '')
         others = [t for t in self.editor.state.things if isinstance(t, Portal) and t is not thing]
@@ -2903,6 +3760,374 @@ class PropertyEditor(QWidget):
 
         sel_btn.clicked.connect(on_select)
         form.addRow("Portal Target:", _hbox(combo, sel_btn, stretch=False))
+
+    def _play_effect_explosion(self, thing):
+        """The Effect panel's Play: a preview in the editor, Explode in Play."""
+        view = getattr(self.editor, 'view_3d', None)
+        logic = getattr(view, 'logic_thread', None) if view is not None else None
+        if logic is None:
+            return
+        from engine.explosions import preview_explosion
+        with logic._tick_lock:
+            if getattr(view, 'play_mode', False) and logic.io_manager is not None:
+                logic.io_manager._execute_input(
+                    thing.properties.get('name', ''), 'Explode', '', 'editor',
+                    target_id=thing.properties.get('id', ''))
+            else:
+                preview_explosion(thing, logic.session_runtime.effect_store,
+                                  logic.game_state)
+        view.update()
+
+    def _linked_fire_spawner(self, thing):
+        """The LogicSpawner *thing*'s OnExplode spawns from, or None."""
+        from editor.things import LogicSpawner
+        if _io_system is None:
+            return None
+        for conn in _io_system.get_connections(thing):
+            if conn.output_name != 'OnExplode' or conn.input_name.lower() != 'spawn':
+                continue
+            for other in self.editor.state.things:
+                if not isinstance(other, LogicSpawner):
+                    continue
+                props = other.properties
+                if ((conn.target_id and props.get('id') == conn.target_id)
+                        or (not conn.target_id and props.get('name') == conn.target_name)):
+                    return other
+        return None
+
+    #: The fires an "Add fire spawner" spawner makes: how many, how far out,
+    #: and what each is (a small FIRE with a little smoke and a warm light).
+    FIRE_SPAWNER_COUNT = 4
+    FIRE_SPAWNER_RADIUS = 96.0
+    FIRE_SPAWNER_FIRE = {
+        'effect_type': 'FIRE', 'width': 22.0, 'height': 32.0,
+        'light_enabled': True, 'light_radius': 160.0, 'light_intensity': 1.2,
+        'emitter': 'SMOKE', 'emitter_rate': 0.5,
+    }
+
+    def _explosion_volume_row(self, thing):
+        """A 0..100 % slider for how loud *thing*'s explosion is. Every
+        explosion plays its sound from where it is; 0 % is silent (and is
+        how a map's old ``silent`` reads). Returns ``(widget, slider)``."""
+        from engine.explosions import explosion_volume
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(int(round(explosion_volume(thing.properties) * 100)))
+        slider.setToolTip(
+            "How loud its explosion is. The sound always plays from the "
+            "explosion itself, panned and fading with distance; 0 % is silent.")
+        label = QLabel("%d %%" % slider.value())
+        label.setMinimumWidth(44)
+
+        def changed(value):
+            label.setText("%d %%" % value)
+            self.update_object_prop('explosion_volume', value / 100.0)
+            if thing.properties.get('type') == 'effect':
+                # Kept in step for anything that still reads it.
+                self.update_object_prop('silent', value == 0)
+
+        slider.valueChanged.connect(changed)
+        row.addWidget(slider, 1)
+        row.addWidget(label)
+        return widget, slider
+
+    def _leaves_flames_rows(self, form, thing, what):
+        """The "Leaves flames behind" checkbox and, while it is ticked, the
+        rows it brings: "Select fire spawner" and "Fires:". Ticked means a
+        LogicSpawner is wired to *thing*'s OnExplode: ticking adds and wires
+        one, unticking removes it and its connection. Returns a namespace
+        (``check``, ``select_button``, ``combo``, ``refresh()``)."""
+        check = QCheckBox("Leaves flames behind")
+        check.setToolTip(
+            "When %s explodes, fires are left burning around where it was: a "
+            "LogicSpawner wired to its OnExplode output, added for you (and "
+            "removed again when this is unticked)." % what)
+        form.addRow("", check)
+        select_button = QPushButton()
+        select_button.setToolTip(
+            "Select the LogicSpawner that scatters the fires, to adjust it "
+            "like any entity.")
+        form.addRow("", select_button)
+        combo = self._explosion_fire_row(form, thing)
+
+        def show(widget, visible):
+            widget.setVisible(visible)
+            label = form.labelForField(widget)
+            if label is not None:
+                label.setVisible(visible)
+
+        def refresh():
+            linked = self._linked_fire_spawner(thing)
+            check.blockSignals(True)
+            check.setChecked(linked is not None)
+            check.blockSignals(False)
+            if linked is not None:
+                select_button.setText(
+                    "Select fire spawner (%s)" % linked.properties.get('name', ''))
+            show(select_button, linked is not None)
+            show(combo, linked is not None)
+            combo.refresh()
+
+        def toggled(on):
+            if on:
+                self._add_fire_spawner(thing, select=False)
+            else:
+                self._remove_fire_spawner(thing)
+            refresh()
+
+        def select():
+            linked = self._linked_fire_spawner(thing)
+            if linked is not None:
+                self.editor.set_selected_objects([linked])
+
+        check.toggled.connect(toggled)
+        select_button.clicked.connect(select)
+        refresh()
+        return SimpleNamespace(check=check, select_button=select_button,
+                               combo=combo, refresh=refresh)
+
+    def _remove_fire_spawner(self, thing):
+        """Remove the LogicSpawner *thing*'s OnExplode spawns fires from, and
+        the connection to it. Undoable. Returns whether there was one."""
+        linked = self._linked_fire_spawner(thing)
+        if linked is None:
+            return False
+        state = self.editor.state
+        state.save_state()
+        props = linked.properties
+        for conn in list(_io_system.get_connections(thing)):
+            if (conn.output_name == 'OnExplode' and conn.input_name.lower() == 'spawn'
+                    and ((conn.target_id and conn.target_id == props.get('id'))
+                         or (not conn.target_id
+                             and conn.target_name == props.get('name')))):
+                _io_system.remove_connection(thing, conn)
+        if linked in state.things:
+            state.things.remove(linked)
+        if linked in state.selected_objects:
+            self.editor.set_selected_objects(
+                [o for o in state.selected_objects if o is not linked])
+        state.mark_world_changed([thing])
+        if hasattr(self.editor, 'update_all_ui'):
+            self.editor.update_all_ui()
+        return True
+
+    def _explosion_fire_row(self, form, thing):
+        """The "Fires:" chooser beside Add fire spawner: which of the five
+        FIRE variants the explosion's spawner scatters. With a spawner wired
+        it edits that spawner; before one is, the choice is what the next
+        Add fire spawner makes. Returns the combo (``.refresh()`` re-reads)."""
+        combo = _fire_variant_combo(
+            None, tooltip="Which fire the explosion's fire spawner scatters.")
+        form.addRow("Fires:", combo)
+        chosen = self.__dict__.setdefault('_explosion_fire_choice', {})
+
+        def refresh():
+            linked = self._linked_fire_spawner(thing)
+            if linked is not None:
+                path = linked.properties.get('spawn_properties', {}).get('fire_texture')
+            else:
+                path = chosen.get(id(thing))
+            combo.blockSignals(True)
+            combo.setCurrentIndex(next(
+                (i for i, (_, p) in enumerate(FIRE_VARIANTS) if p == path), 0))
+            combo.blockSignals(False)
+
+        def changed(index):
+            path = combo.itemData(index)
+            linked = self._linked_fire_spawner(thing)
+            if linked is None:
+                chosen[id(thing)] = path
+                return
+            spawn = dict(linked.properties.get('spawn_properties', {}))
+            spawn['fire_texture'] = path
+            linked.properties['spawn_properties'] = spawn
+            self.editor.state.mark_world_changed([linked])
+
+        combo.refresh = refresh
+        combo.currentIndexChanged.connect(changed)
+        refresh()
+        return combo
+
+    def _add_fire_spawner(self, thing, select=True):
+        """Make (or, with *select*, select) a LogicSpawner that scatters fires
+        around *thing* (an Effect, or an Explosive Prop) when it explodes:
+        placed at it, wired to its OnExplode, spawning one batch partway into
+        the explosion. Undoable like any placement."""
+        from editor.things import LogicSpawner
+        linked = self._linked_fire_spawner(thing)
+        if linked is not None:
+            if select:
+                self.editor.set_selected_objects([linked])
+            return linked
+        state = self.editor.state
+        state.save_state()
+        base = (thing.properties.get('name') or 'explosion') + '_fires'
+        taken = set(state.get_all_entity_names())
+        name, n = base, 2
+        while name in taken:
+            name, n = '%s_%d' % (base, n), n + 1
+        # The fires stand on what the explosion stands on. A FIRE (or ORB...)
+        # Effect's position is the centre of its billboard; an EXPLOSION's,
+        # and a Prop's, is its base. A spawned fire is placed by its centre.
+        x, y, z = (float(v) for v in thing.pos)
+        props = thing.properties
+        if (props.get('type') == 'effect'
+                and str(props.get('effect_type', 'FIRE')).upper() != 'EXPLOSION'):
+            try:
+                y -= float(props.get('height', 46.0)) * 0.5
+            except (TypeError, ValueError):
+                pass
+        y += float(self.FIRE_SPAWNER_FIRE['height']) * 0.5
+        spawner = LogicSpawner(pos=[x, y, z], properties={
+            'name': name,
+            'spawn_type': 'Effect',
+            'spawn_count': self.FIRE_SPAWNER_COUNT,
+            'spawn_radius': self.FIRE_SPAWNER_RADIUS,
+            'max_spawn': self.FIRE_SPAWNER_COUNT,
+            'spawn_properties': dict(
+                self.FIRE_SPAWNER_FIRE,
+                fire_texture=self.__dict__.get('_explosion_fire_choice', {}).get(
+                    id(thing), FIRE_VARIANTS[0][1])),
+        })
+        state.things.append(spawner)
+        try:
+            lifetime = float(thing.properties.get('lifetime', 0.5))
+        except (TypeError, ValueError):
+            lifetime = 0.5
+        _io_system.add_connection(thing, _io_system.OutputConnection(
+            output_name='OnExplode', target_name=name, input_name='Spawn',
+            delay=round(lifetime * 0.4, 2),
+            target_id=spawner.properties.get('id', '')))
+        state.mark_world_changed([spawner, thing])
+        if hasattr(self.editor, 'update_all_ui'):
+            self.editor.update_all_ui()
+        if hasattr(self.editor, 'show_toast'):
+            self.editor.show_toast(
+                "Added fire spawner '%s': %d fires within %d u when this explodes"
+                % (name, self.FIRE_SPAWNER_COUNT, int(self.FIRE_SPAWNER_RADIUS)))
+        return spawner
+
+    def _build_explosive_ui(self, form, thing):
+        """The Explosive section of a Prop: off by default; on, damage sets it
+        off (engine.explosions) -- the model goes and an EXPLOSION Effect is
+        spawned where it was, carrying the Damage, Radius, Push and Volume set
+        here, which explodes. The eye shows the radius in the 2D views."""
+        from engine.explosions import EXPLOSIVE_DEFAULTS
+        props = thing.properties
+
+        def value(key):
+            raw = props.get(key, EXPLOSIVE_DEFAULTS[key])
+            try:
+                return int(round(float(raw)))
+            except (TypeError, ValueError):
+                return int(EXPLOSIVE_DEFAULTS[key])
+
+        form.addRow(self._section("Explosive"))
+        explosive = bool(props.get('explosive', False))
+        explosive_cb = _make_checkbox("Explodes when damaged", explosive, None,
+                                      _Style.CHECKBOX)
+        explosive_cb.setToolTip(
+            "Shots, projectiles and other explosions damage it. Once it has "
+            "taken its Health it explodes: the model is removed and, at that "
+            "same moment, an EXPLOSION Effect is spawned where it was and goes "
+            "off with the settings below -- everything within the Radius takes "
+            "the Damage and is pushed away, other explosive props too, which "
+            "may go off in turn.")
+        form.addRow("", explosive_cb)
+
+        health_spin = _make_spin(value('explosive_health'), 1, 9999,
+                                 tooltip="Damage it takes, in total, before it explodes.")
+        form.addRow("Health:", health_spin)
+        damage_spin, radius_spin, radius_btn, force_spin = self._blast_rows(
+            form, thing, EXPLOSIVE_DEFAULTS, "the prop's centre")
+        volume_widget, volume_slider = self._explosion_volume_row(thing)
+        form.addRow("Volume:", volume_widget)
+
+        flames = self._leaves_flames_rows(form, thing, "this prop")
+
+        rows = (health_spin, damage_spin, radius_spin, radius_btn, force_spin,
+                volume_slider, flames.check, flames.select_button, flames.combo)
+
+        def refresh():
+            on = bool(thing.properties.get('explosive', False))
+            for widget in rows:
+                widget.setEnabled(on)
+
+        def on_explosive(checked):
+            self.update_object_prop('explosive', bool(checked))
+            if checked:
+                # Write the settings out, so the map says what it does.
+                for key in ('explosive_health', 'explosion_damage',
+                            'explosion_radius', 'explosion_force',
+                            'explosion_volume'):
+                    thing.properties.setdefault(key, EXPLOSIVE_DEFAULTS[key])
+            refresh()
+            self._repaint_viewport()
+
+        explosive_cb.toggled.connect(on_explosive)
+        health_spin.valueChanged.connect(
+            lambda v: self.update_object_prop('explosive_health', int(v)))
+        refresh()
+
+    def _blast_rows(self, form, thing, defaults, centre_name):
+        """Damage, Radius (with the eye that shows it in the 2D views, dark
+        orange, as a monster's sight is) and Push rows for *thing*'s
+        explosion, bound to its explosion_damage / _radius / _force. For an
+        Effect they are its own blast; for an explosive Prop, those of the
+        Effect it spawns when it goes. Returns the four widgets."""
+        props = thing.properties
+
+        def value(key):
+            try:
+                return int(round(float(props.get(key, defaults[key]))))
+            except (TypeError, ValueError):
+                return int(defaults[key])
+
+        damage_spin = _make_spin(value('explosion_damage'), 0, 9999,
+                                 tooltip="Damage dealt to everything within the radius "
+                                         "that the blast can see (walls stop it): the "
+                                         "player, monsters, explosive props. 0: none.")
+        form.addRow("Damage:", damage_spin)
+        radius_spin = _make_spin(value('explosion_radius'), 0, 4096, suffix=" u",
+                                 tooltip="How far the blast reaches, from %s." % centre_name)
+        radius_btn = QToolButton()
+        radius_btn.setIcon(load_icon("assets/ui/controls/eye.svg"))
+        radius_btn.setCheckable(True)
+        radius_btn.setToolTip("Show the blast radius in the 2D views")
+        radius_btn.setChecked(getattr(self.editor, '_explosion_preview_thing', None) is thing)
+        radius_btn.setStyleSheet("""
+            QToolButton { background-color: #425f5d; color: white; border-radius: 4px; padding: 3px 8px; font-size: 14px; border: 1px solid #555; }
+            QToolButton:checked { background-color: #B34700; border-color: #B34700; }
+            QToolButton:hover { background-color: #5a7a82; }
+        """)
+        form.addRow("Radius:", _hbox(radius_spin, radius_btn, stretch=False))
+        force_spin = _make_spin(value('explosion_force'), 0, 5000,
+                                tooltip="How hard the blast pushes at its centre, falling to "
+                                        "nothing at the radius. Monsters, the player and props "
+                                        "with Physics on are shoved away; a prop with Physics "
+                                        "off is never moved, nor is any when physics is off "
+                                        "in Settings. 0: no push.")
+        form.addRow("Push:", force_spin)
+
+        def on_radius(v):
+            self.update_object_prop('explosion_radius', float(v))
+            if getattr(self.editor, '_explosion_preview_thing', None) is thing:
+                self._repaint_viewport()
+
+        def on_preview(checked):
+            self.editor._explosion_preview_thing = thing if checked else None
+            self._repaint_viewport()
+
+        damage_spin.valueChanged.connect(
+            lambda v: self.update_object_prop('explosion_damage', int(v)))
+        radius_spin.valueChanged.connect(on_radius)
+        radius_btn.toggled.connect(on_preview)
+        force_spin.valueChanged.connect(
+            lambda v: self.update_object_prop('explosion_force', float(v)))
+        return damage_spin, radius_spin, radius_btn, force_spin
 
     def _build_collect_ui(self, form, thing):
         """Build the compact, human-facing Prop interaction editor.
@@ -3350,7 +4575,7 @@ class PropertyEditor(QWidget):
 
         presets = (
             ("None", ""),
-            ("Cloudy sky", "assets/backgrounds/cloudy-sky-panorama.webp"),
+            ("Clouds", "assets/backgrounds/cloudy-sky-panorama.webp"),
             ("Space", "assets/backgrounds/void-panorama-q80.webp"),
         )
         preset_paths = {path for _label, path in presets}
@@ -3362,7 +4587,7 @@ class PropertyEditor(QWidget):
         sky_combo = QComboBox()
         sky_combo.setToolTip(
             "Background panorama used in the editor and Play mode. Choose "
-            "Cloudy sky or Space, or Browse for a custom 360-degree image."
+            "Clouds or Space, or Browse for a custom 360-degree image."
         )
         for label, path in presets:
             sky_combo.addItem(label, path)
@@ -3410,7 +4635,7 @@ class PropertyEditor(QWidget):
                 start_path = os.path.dirname(start_path)
             if not os.path.isdir(start_path):
                 start_path = _project_root()
-            filepath, _ = QFileDialog.getOpenFileName(
+            filepath, _ = get_open_asset_file(
                 self,
                 "Select Sky Image",
                 start_path,
@@ -3419,7 +4644,12 @@ class PropertyEditor(QWidget):
             if not filepath:
                 return
             try:
-                relative = store_sky_image_in_project(filepath, _project_root())
+                if (not os.path.isfile(filepath)
+                        and filepath.replace('\\', '/').startswith('assets/')):
+                    # Packed in a mounted .fiopak: referenced where it is.
+                    relative = filepath.replace('\\', '/')
+                else:
+                    relative = store_sky_image_in_project(filepath, _project_root())
             except OSError as exc:
                 QMessageBox.warning(
                     self, "Sky Image", f"Could not import sky image:\n{exc}")
@@ -3448,9 +4678,11 @@ class PropertyEditor(QWidget):
         if self._populating or thing.primary:
             return
         sky_image = self.editor.sky_image_path_from_map()
+        hd_sky = self.editor.hd_sky_properties_from_map()
         self.editor.save_state()
         self.editor.state.set_primary_player_start(thing)
         self.editor.canonicalize_sky_image_ownership(sky_image)
+        self.editor.canonicalize_hd_sky_ownership(hd_sky)
         self.editor.mark_as_modified()
         self.editor.update_all_ui()
 
@@ -3555,8 +4787,17 @@ class PropertyEditor(QWidget):
             if property_keys is not None
             else None
         )
+        # Explicit property tuples define the intended UI order (for example,
+        # a decal's Width and Height belong together). Keep alphabetical order
+        # only for legacy/unclassified properties.
+        property_items = (
+            sorted(thing.properties.items())
+            if property_keys is None
+            else ((key, thing.properties[key]) for key in property_keys
+                  if key in thing.properties)
+        )
 
-        for key, value in sorted(thing.properties.items()):
+        for key, value in property_items:
             # Explicit property selection.
             if allowed_keys is not None and key not in allowed_keys:
                 continue
@@ -3570,6 +4811,9 @@ class PropertyEditor(QWidget):
                 'colour',
                 'parent_mover',
                 'parent_offset',
+                'path_target',
+                'path_speed',
+                'path_start_on',
             ):
                 continue
 
@@ -3649,12 +4893,18 @@ class PropertyEditor(QWidget):
             ):
                 continue
 
+            # Shake properties handled by its dedicated group.
+            if isinstance(thing, Shake) and key in ('intensity', 'duration'):
+                continue
+
             # LogicSpawner properties handled by its dedicated group.
             if isinstance(thing, LogicSpawner) and key in (
                 'spawn_type',
                 'target_node',
                 'max_spawn',
                 'spawn_properties',
+                'spawn_count',
+                'spawn_radius',
             ):
                 continue
 
@@ -3701,7 +4951,7 @@ class PropertyEditor(QWidget):
                 continue
 
             # Light state.
-            if isinstance(thing, Light) and key == 'state':
+            if isinstance(thing, (Light, LightVolume)) and key == 'state':
                 cb = _make_checkbox(
                     "Enabled",
                     bool(value),
@@ -3748,18 +4998,109 @@ class PropertyEditor(QWidget):
                 form.addRow(QLabel("Terrain Shadow Strength:"), spin)
                 continue
 
-            # Light shadow-map size.
-            if isinstance(thing, Light) and key == 'shadow_map_size':
-                spin = QSpinBox()
-                spin.setRange(64, 4096)
-                spin.setSingleStep(64)
-                spin.setValue(int(value or 512))
+            # A projected image (engine.light_cookies). Independent of Casts
+            # Shadows: with both, the light's own shadow darkens the image
+            # down to Cookie Shadow Floor rather than erasing it.
+            if isinstance(thing, Light) and key == 'cookie_enabled':
+                cb = _make_checkbox(
+                    "Project Image (Cookie)", _truthy(value),
+                    lambda checked: self.update_object_prop('cookie_enabled', checked),
+                    _Style.CHECKBOX)
+                cb.setToolTip(
+                    "Project the Cookie Image onto everything around the light,\n"
+                    "in every direction (a square, octahedral-mapped image).\n"
+                    "Without Casts Shadows it lights through walls, as any\n"
+                    "non-shadow light does.")
+                self._widgets['light_cookie_enabled'] = cb
+                form.addRow("", cb)
+                continue
 
+            if isinstance(thing, Light) and key == 'cookie_shadow_floor':
+                spin = QDoubleSpinBox()
+                spin.setRange(0.0, 1.0)
+                spin.setSingleStep(0.05)
+                spin.setDecimals(2)
+                try:
+                    spin.setValue(float(value))
+                except (TypeError, ValueError):
+                    spin.setValue(0.15)
+                spin.setToolTip(
+                    "How bright the projected image stays inside this light's\n"
+                    "own shadow (needs Casts Shadows): 0 erases it, 1 ignores\n"
+                    "the shadow. Other lights' shadows never affect it.")
+                spin.valueChanged.connect(
+                    lambda v: self.update_object_prop('cookie_shadow_floor', float(v)))
+                self._widgets['light_cookie_shadow_floor'] = spin
+                form.addRow(QLabel("Cookie Shadow Floor:"), spin)
+                continue
+
+            if isinstance(thing, Light) and key == 'cookie_texture':
+                self.add_cookie_texture_widget(form, thing, str(value or ''))
+                continue
+
+            # Light shadow-map size: 0 is the renderer's ([Renderer]
+            # shadow_map_size), shown as "Default".
+            if isinstance(thing, (Light, LightVolume)) and key == 'shadow_map_size':
+                spin = QSpinBox()
+                spin.setRange(0, 4096)
+                spin.setSingleStep(128)
+                spin.setSpecialValueText("Default (settings)")
+                try:
+                    spin.setValue(max(0, int(float(value or 0))))
+                except (TypeError, ValueError):
+                    spin.setValue(0)
+                spin.setToolTip(
+                    "Shadow-map resolution per cube face for this light.\n"
+                    "Default uses [Renderer] shadow_map_size in settings.ini.\n"
+                    "Higher is sharper and costs 6 x size x size depth texels.")
                 spin.valueChanged.connect(
                     lambda v: self.update_object_prop('shadow_map_size', v)
                 )
 
                 form.addRow(QLabel("Shadow Map Size:"), spin)
+                continue
+
+            # Light shadow filter: edge softness and acne bias.
+            if isinstance(thing, (Light, LightVolume)) and key in ('shadow_softness', 'shadow_bias'):
+                from engine.constants import SHADOW_BIAS_DEFAULT, SHADOW_SOFTNESS_DEFAULT
+                softness = key == 'shadow_softness'
+                default = SHADOW_SOFTNESS_DEFAULT if softness else SHADOW_BIAS_DEFAULT
+                spin = QDoubleSpinBox()
+                spin.setDecimals(2)
+                spin.setRange(0.05, 16.0)
+                spin.setSingleStep(0.25 if softness else 0.1)
+                try:
+                    spin.setValue(float(value) if float(value) > 0 else default)
+                except (TypeError, ValueError):
+                    spin.setValue(default)
+                spin.setToolTip(
+                    "Shadow edge softness: the blur radius in shadow-map pixels.\n"
+                    "Lower is sharper (and shows the map's pixels); higher is softer.\n"
+                    "Default %.2f." % SHADOW_SOFTNESS_DEFAULT
+                    if softness else
+                    "Multiplier on the shadow's depth bias.\n"
+                    "Raise it if lit surfaces show speckled self-shadowing (acne);\n"
+                    "lower it if thin objects near a surface lose their shadow.\n"
+                    "Default %.2f." % SHADOW_BIAS_DEFAULT)
+                spin.valueChanged.connect(
+                    lambda v, k=key: self.update_object_prop(k, v)
+                )
+                form.addRow(QLabel("Shadow Softness:" if softness else "Shadow Bias:"), spin)
+                continue
+
+            # A light volume's box and light source: X, Y, Z fields.
+            if isinstance(thing, LightVolume) and key in ('volume_size', 'source_offset'):
+                current = (thing.get_volume_size() if key == 'volume_size'
+                           else thing.get_source_offset())
+                row, _inputs = self._vec3_row(
+                    [round(v, 3) for v in current],
+                    lambda v, k=key: self.update_object_prop(k, [float(c) for c in v]))
+                row.setToolTip(
+                    "The box that is lit: its width, height and depth, centred on\n"
+                    "the entity's position." if key == 'volume_size' else
+                    "Where the light (and its shadows) come from, relative to the\n"
+                    "box's centre. It may be outside the box.")
+                form.addRow(QLabel("Volume Size:" if key == 'volume_size' else "Light Source:"), row)
                 continue
 
             # Speaker sound file.
@@ -3816,6 +5157,12 @@ class PropertyEditor(QWidget):
                             _hbox(slider, label, stretch=False))
                 continue
 
+            if isinstance(thing, Decal) and key == 'tint':
+                self._add_tint_widget(
+                    form, thing, key='decal_tint_button',
+                    tooltip="Multiplies the decal's colour. White leaves it as it is.")
+                continue
+
             if isinstance(thing, Decal) and key == 'text_colour':
                 from engine import decal_text
                 combo = _make_combo(
@@ -3824,6 +5171,21 @@ class PropertyEditor(QWidget):
                     tooltip="Black lettering, or white (which brightens the surface)")
                 form.addRow(QLabel("Text Colour:"), combo)
                 continue
+
+            # A decal that glows (engine.entity_table: _decal_light): the
+            # same three controls a Glow brush and water have.
+            if isinstance(thing, Decal) and key == 'emissive':
+                self._add_emissive_rows(
+                    form, thing.properties, 'decal',
+                    "The decal glows like a screen: its whole face is equally bright,\n"
+                    "and its face emits light into the room in the main colour of its\n"
+                    "image (times its tint).\n"
+                    "Light Intensity and Light Radius set how bright and how far.\n"
+                    "Off, the decal is not a light and costs nothing extra.")
+                continue
+            if isinstance(thing, Decal) and key in ('emissive_intensity',
+                                                     'emissive_radius'):
+                continue                    # added with the checkbox, above
 
             # Logic gate type.
             if isinstance(thing, LogicGate) and key == 'logic_type':
@@ -3987,7 +5349,7 @@ class PropertyEditor(QWidget):
             thing.properties.setdefault(k, v)
 
         group = QGroupBox("Path Node")
-        group.setStyleSheet(_Style.group_box("#26A69A", "#1a2f2d"))
+        _Style.apply(group, _Style.group_box("#26A69A", "#1a2f2d"))
         form = QFormLayout(group)
         form.setSpacing(6)
         form.setContentsMargins(8, 8, 8, 8)
@@ -4068,7 +5430,7 @@ class PropertyEditor(QWidget):
 
     def _build_logic_camera_group(self, tab_layout, thing):
         group = QGroupBox("Cinematic Camera")
-        group.setStyleSheet(_Style.group_box("#42A5F5", "#1a2a3d"))
+        _Style.apply(group, _Style.group_box("#42A5F5", "#1a2a3d"))
         form = QFormLayout(group)
         form.setSpacing(6)
         form.setContentsMargins(8, 8, 8, 8)
@@ -4167,10 +5529,65 @@ class PropertyEditor(QWidget):
 
         tab_layout.addWidget(group)
 
+    def _build_shake_group(self, tab_layout, thing):
+        """The Shake entity: how hard (a slider), how long, and a Test that
+        shakes the 3D view. Purely visual: nothing in the world moves."""
+        from engine.shake import SHAKE_DURATION_RANGE, shake_settings
+        intensity, duration = shake_settings(thing.properties)
+        group = QGroupBox("Shake")
+        _Style.apply(group, _Style.group_box("#F08000"))
+        form = QFormLayout(group)
+        form.setSpacing(6)
+        form.setContentsMargins(8, 8, 8, 8)
+
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(int(round(intensity * 100)))
+        slider.setToolTip("How hard it shakes the screen. Purely visual: the "
+                          "view wobbles; the player, physics and the world do not move.")
+        value_label = QLabel("%d %%" % slider.value())
+        value_label.setMinimumWidth(44)
+
+        def intensity_changed(value):
+            value_label.setText("%d %%" % value)
+            self.update_object_prop('intensity', value / 100.0)
+
+        slider.valueChanged.connect(intensity_changed)
+        h.addWidget(slider, 1)
+        h.addWidget(value_label)
+        form.addRow("Intensity:", row)
+
+        duration_spin = _make_spin(duration, SHAKE_DURATION_RANGE[0], SHAKE_DURATION_RANGE[1],
+                                   suffix=" s", decimals=2, step=0.1,
+                                   tooltip="How long it lasts, dying away to nothing.")
+        duration_spin.valueChanged.connect(
+            lambda v: self.update_object_prop('duration', float(v)))
+        form.addRow("Duration:", duration_spin)
+
+        test = QPushButton("\u25B6 Test shake")
+        test.setToolTip("Shake the 3D view now, as it will in a game.")
+        test.clicked.connect(lambda: self._test_shake(thing))
+        form.addRow("", test)
+        tab_layout.addWidget(group)
+
+    def _test_shake(self, thing):
+        """The Shake panel's Test: shake the 3D view (in the editor too)."""
+        from engine.shake import shake_settings
+        view = getattr(self.editor, 'view_3d', None)
+        logic = getattr(view, 'logic_thread', None) if view is not None else None
+        if logic is None:
+            return
+        with logic._tick_lock:
+            logic.shake_runtime.start(*shake_settings(thing.properties))
+        view.update()
+
     def _build_spawner_group(self, tab_layout, thing):
         from editor.things import ENTITY_TYPES
         group = QGroupBox("Spawner")
-        group.setStyleSheet(_Style.group_box("#AB47BC", "#2a1a3d"))
+        _Style.apply(group, _Style.group_box("#AB47BC", "#2a1a3d"))
         form = QFormLayout(group)
         form.setSpacing(6)
         form.setContentsMargins(8, 8, 8, 8)
@@ -4210,11 +5627,48 @@ class PropertyEditor(QWidget):
         max_spin.valueChanged.connect(lambda v: thing.properties.update({'max_spawn': int(v)}))
         form.addRow("Max Spawn:", max_spin)
 
+        count_spin = _make_spin(int(thing.properties.get('spawn_count', 1) or 1), 1, 64,
+                                tooltip="Entities made by each Spawn.")
+        count_spin.valueChanged.connect(
+            lambda v: thing.properties.update({'spawn_count': int(v)}))
+        form.addRow("Per Spawn:", count_spin)
+        radius_spin = _make_spin(int(float(thing.properties.get('spawn_radius', 0.0) or 0)), 0, 4096,
+                                 suffix=" u",
+                                 tooltip="Scatter each Spawn's entities this far around "
+                                         "the spawn point. 0 = all on it.")
+        radius_spin.valueChanged.connect(
+            lambda v: thing.properties.update({'spawn_radius': float(v)}))
+        form.addRow("Scatter:", radius_spin)
+
+        spawned = thing.properties.setdefault('spawn_properties', {})
+        spawner_fire = _fire_variant_combo(
+            spawned.get('fire_texture'),
+            tooltip="Which fire it spawns (when it spawns a FIRE Effect).")
+        fire_row_label = QLabel("Fire:")
+        form.addRow(fire_row_label, spawner_fire)
+
+        def spawner_fire_changed(index):
+            thing.properties.setdefault('spawn_properties', {})['fire_texture'] = (
+                spawner_fire.itemData(index))
+            self.editor.state.mark_world_changed([thing])
+
+        def refresh_spawner_fire(*_args):
+            props = thing.properties
+            fire = (str(props.get('spawn_type', '')).lower() == 'effect'
+                    and str(props.get('spawn_properties', {}).get(
+                        'effect_type', 'FIRE')).upper() == 'FIRE')
+            spawner_fire.setVisible(fire)
+            fire_row_label.setVisible(fire)
+
+        spawner_fire.currentIndexChanged.connect(spawner_fire_changed)
+        spawn_combo.currentTextChanged.connect(refresh_spawner_fire)
+        refresh_spawner_fire()
+
         tab_layout.addWidget(group)
 
         # Monster spawn settings (conditional)
         monster_group = QGroupBox("Monster Spawn Settings")
-        monster_group.setStyleSheet(_Style.group_box("#F08000"))
+        _Style.apply(monster_group, _Style.group_box("#F08000"))
         mform = QFormLayout(monster_group)
         mform.setSpacing(6)
         mform.setContentsMargins(8, 8, 8, 8)
@@ -4365,7 +5819,7 @@ class PropertyEditor(QWidget):
         # Type / Value / State columns say what it is. Two more labels saying
         # the same thing cost a row of height each and add nothing.
         group = QGroupBox()
-        group.setStyleSheet(_Style.group_box("#26A69A", "#1a2f2d"))
+        _Style.apply(group, _Style.group_box("#26A69A", "#1a2f2d"))
         layout = QVBoxLayout(group)
         layout.setSpacing(6)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -4612,7 +6066,7 @@ class PropertyEditor(QWidget):
 
         # AI group
         ai_group = QGroupBox("AI")
-        ai_group.setStyleSheet(_Style.group_box("#F08000"))
+        _Style.apply(ai_group, _Style.group_box("#F08000"))
         aform = QFormLayout(ai_group)
         aform.setSpacing(6)
         aform.setContentsMargins(8, 8, 8, 8)
@@ -4679,7 +6133,7 @@ class PropertyEditor(QWidget):
         def pick_proj():
             start = os.path.join(os.getcwd(), 'assets', 'sprites', 'monsters')
             os.makedirs(start, exist_ok=True)
-            fp, _ = QFileDialog.getOpenFileName(self, "Select Projectile Sprite", start,
+            fp, _ = get_open_asset_file(self, "Select Projectile Sprite", start,
                                                 "Image Files (*.png *.jpg *.jpeg *.bmp *.tga)")
             if fp:
                 rel = os.path.relpath(fp, os.getcwd()).replace('\\', '/')
@@ -4790,7 +6244,7 @@ class PropertyEditor(QWidget):
 
         # Flags
         flags_group = QGroupBox("Behaviour Flags")
-        flags_group.setStyleSheet(_Style.group_box("#F08000"))
+        _Style.apply(flags_group, _Style.group_box("#F08000"))
         flay = QVBoxLayout(flags_group)
         flay.setSpacing(6)
         for prop_key, label_text, tooltip in (
@@ -4920,17 +6374,40 @@ class PropertyEditor(QWidget):
         color = QColorDialog.getColor(qc, self, f"Choose {prop_name.replace('_', ' ').title()}")
         if color.isValid():
             new_color = [color.redF(), color.greenF(), color.blueF()]
-            self.current_object[prop_name] = new_color
+            # Through the shared path, so a multi-selection takes it too.
+            self.update_object_prop(prop_name, new_color)
             self._update_color_button(button, new_color)
             self.editor.update_all_ui()
 
+    def _pick_brush_colour(self, button):
+        """Pick the brush's one colour (MainWindow.set_brush_colour): its
+        Brush Colour, its Glow Color and the Asset Browser's Tint alike."""
+        brush = self.current_object
+        if not isinstance(brush, dict):
+            return
+        current = self.editor.brush_colour(brush)
+        color = QColorDialog.getColor(
+            QColor(int(current[0] * 255), int(current[1] * 255), int(current[2] * 255)),
+            self, "Choose Brush Colour")
+        if color.isValid():
+            rgb = [color.redF(), color.greenF(), color.blueF()]
+            self.editor.save_state()
+            self._update_color_button(button, rgb)
+            # Every selected brush takes it (a group recoloured at once).
+            selected = getattr(self.editor.state, 'selected_objects', None) or ()
+            for other in selected:
+                if other is not brush and isinstance(other, dict):
+                    other['colour'] = [float(c) for c in rgb]
+                    other.pop('tint', None)
+                    self.editor.state.mark_world_changed([other])
+            self.editor.set_brush_colour(brush, rgb)
+
     def _reset_brush_colour(self, button):
-        if self.current_object is None:
+        if not isinstance(self.current_object, dict):
             return
         default = [0.8, 0.8, 0.8]
-        self.current_object['colour'] = default
         self._update_color_button(button, default)
-        self.editor.update_all_ui()
+        self.editor.set_brush_colour(self.current_object, default)
 
     def _repaint_viewport(self):
         for attr in ('gl_widget', 'viewport', 'canvas', 'render_widget', 'opengl_widget', 'view_3d'):
@@ -4961,9 +6438,11 @@ class PropertyEditor(QWidget):
             self.current_object['is_fog'] = False
             shader_keys = ('glass_color', 'glass_opacity', 'glass_distortion', 'glass_refraction',
                            'glass_roughness', 'glass_fresnel', 'glow_color', 'glow_intensity',
+                           'emissive', 'emissive_intensity', 'emissive_radius',
                            'water_tint', 'water_opacity', 'water_reflectivity', 'water_wave_enabled',
                            'water_wave_height', 'water_wave_spread', 'water_plane', 'water_high_quality', 'water_reflections',
                            'water_distortion', 'water_refraction', 'water_roughness', 'water_fresnel',
+                           'water_flow', 'water_flow_speed',
                            'fog_color', 'fog_density')
             for key in shader_keys:
                 self.current_object.pop(key, None)
@@ -5062,8 +6541,45 @@ class PropertyEditor(QWidget):
         self.editor.update_views()
         self.editor.scene_hierarchy.refresh_list()
 
+    def _on_brush_group_edited(self, field):
+        """The Brush Group field: join the named group, if it has room for
+        this brush (a group holds at most one mover)."""
+        brush = self.current_object
+        if not isinstance(brush, dict):
+            return
+        name = field.text().strip()
+        if name == str(brush.get('brush_group') or ''):
+            return
+        if name and not self.editor.brush_group_allowed([brush], name):
+            field.setText(str(brush.get('brush_group') or ''))
+            return
+        self.update_object_prop('brush_group', name)
+        self.editor._brush_groups_changed()
+
+    def _second_mover_refused(self, key):
+        """Refuse to make this brush a mover or a door when its group has
+        one already: untick the box and say why."""
+        from editor import brush_groups
+        brush = self.current_object
+        group = brush_groups.group_of(brush)
+        if not group or brush_groups.is_mover(brush):
+            return False
+        others = [b for b in brush_groups.members(self.editor.state.brushes, group)
+                  if b is not brush]
+        if not any(brush_groups.is_mover(b) for b in others):
+            return False
+        box = self._widgets.get(key)
+        if box is not None:
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+        self.editor.show_toast(brush_groups.MAX_MOVERS_MESSAGE, is_error=True)
+        return True
+
     def on_mover_changed(self, is_mover):
         if self.current_object is None:
+            return
+        if is_mover and self._second_mover_refused('is_mover_cb'):
             return
         if is_mover and self.current_object.get('is_door', False):
             self.current_object['is_door'] = False
@@ -5090,6 +6606,8 @@ class PropertyEditor(QWidget):
 
     def on_door_changed(self, is_door):
         if self.current_object is None:
+            return
+        if is_door and self._second_mover_refused('is_door_cb'):
             return
         if is_door and self.current_object.get('is_mover', False):
             self.current_object['is_mover'] = False
@@ -5210,6 +6728,21 @@ class PropertyEditor(QWidget):
                     btn.setText("▶ Preview Door")
                 self.editor.stop_mover_preview()
 
+    def toggle_rotate_preview(self, checked):
+        """The Animation tab's Preview button: rotate the model in the 3D view."""
+        if not self.editor:
+            return
+        btn = self._widgets.get('rotate_preview_btn')
+        if checked:
+            if btn:
+                btn.setText("■ Stop Preview")
+            if not self.editor.start_rotate_preview(self.current_object):
+                self.editor.stop_rotate_preview()   # nothing to rotate: button up
+        else:
+            if btn:
+                btn.setText("▶ Preview Rotate")
+            self.editor.stop_rotate_preview()
+
     def on_respawn_toggled(self, state):
         collect_respawns = bool(state)
         self.update_object_prop('collect_respawns', collect_respawns)
@@ -5240,7 +6773,7 @@ class PropertyEditor(QWidget):
             return
         start = os.path.join(_project_root(), 'assets', 'sprites')
         os.makedirs(start, exist_ok=True)
-        fp, _ = QFileDialog.getOpenFileName(
+        fp, _ = get_open_asset_file(
             self,
             "Select Sprite Image",
             start,
@@ -5410,7 +6943,9 @@ class PropertyEditor(QWidget):
                 choose(MODEL_PRESETS[name]['model_path'])
 
         def browse():
-            fp, _ = QFileDialog.getOpenFileName(
+            # Fio's own filesystem: models packed in a mounted .fiopak are
+            # listed with the loose ones (the system dialog cannot see them).
+            fp, _ = get_open_asset_file(
                 self, "Select Model", "assets/models", "Model Files (*.obj *.glb)"
             )
             if fp:
@@ -5429,6 +6964,26 @@ class PropertyEditor(QWidget):
         layout.addRow("Presets:", widget)
         self._widgets['prop_model_preset_combo'] = combo
         self._widgets['prop_model_browse_button'] = btn
+
+        # The Oil Barrel's look, always the first row under the model: shown
+        # for an Oil Barrel only (the oil drum models are reached this way and
+        # not through the asset browser).
+        variant_combo = QComboBox()
+        variant_combo.addItems(list(OIL_BARREL_VARIANTS))
+        variant_combo.setToolTip("Which Oil Barrel: the standard drum, or the grey one.")
+        variant_combo.setCurrentText(oil_barrel_variant(current) or 'None')
+
+        def on_variant(index):
+            path = OIL_BARREL_VARIANTS.get(variant_combo.itemText(index))
+            if path:
+                # The same barrel in another finish: only the model changes.
+                self.update_object_prop('model_path', path)
+                combo.setToolTip(path)
+
+        variant_combo.activated.connect(on_variant)
+        layout.addRow("Variant:", variant_combo)
+        self._widgets['prop_model_variant_combo'] = variant_combo
+        self._prop_variant_combo = variant_combo
         return widget
 
     def add_vector3_widget(self, layout, thing, key):
@@ -5445,16 +7000,70 @@ class PropertyEditor(QWidget):
 
             def update_vec(text, idx=i):
                 try:
-                    vec = thing.properties.get(key, [0, 0, 0])
-                    vec[idx] = float(text)
-                    self.update_object_prop(key, vec)
+                    number = float(text)
                 except ValueError:
-                    pass
+                    return
+                vec = thing.properties.get(key, [0, 0, 0])
+                vec = list(vec) if isinstance(vec, list) and len(vec) == 3 else [0, 0, 0]
+                vec[idx] = number
+                # Only this component changes on the rest of a multi-selection:
+                # three props at different yaws keep their own yaw when one
+                # axis is typed.
+                self.update_object_prop(key, vec, component=idx)
 
             le.editingFinished.connect(lambda l=le, idx=i: update_vec(l.text(), idx))
             h.addWidget(le)
             inputs.append(le)
         layout.addRow(key.title() + ":", widget)
+
+    def add_cookie_texture_widget(self, form_layout, thing, value):
+        """The Light's projected image: a square picture from assets/."""
+        widget = QWidget()
+        h = QHBoxLayout(widget)
+        h.setContentsMargins(0, 0, 0, 0)
+        line_edit = QLineEdit(value)
+        line_edit.setReadOnly(True)
+        line_edit.setPlaceholderText("No image")
+        line_edit.setToolTip(
+            "A square image laid out as an octahedral map: its centre lands\n"
+            "straight below the light, its edges on the walls, its corners\n"
+            "on the ceiling. Image right is +X, image top is -Z.")
+        button = QPushButton("Browse...")
+        button.setFixedWidth(80)
+        clear = QPushButton("Clear")
+        clear.setFixedWidth(50)
+
+        def open_dialog():
+            from engine.asset_paths import project_asset_path
+            root = _project_root()
+            start = os.path.join(root, 'assets', 'textures', 'cookies')
+            if not os.path.isdir(start):
+                start = os.path.join(root, 'assets', 'textures')
+            fp, _ = get_open_asset_file(
+                self, "Select Cookie Image", start,
+                "Images (*.png *.jpg *.jpeg *.bmp *.tga)")
+            if not fp:
+                return
+            rel = _normalise_project_asset_path(fp)
+            if project_asset_path(rel) is None:
+                QMessageBox.warning(
+                    self, "Cookie Image",
+                    "Cookie images must be inside the project's assets folder.")
+                return
+            self.update_object_prop('cookie_texture', rel)
+            line_edit.setText(rel)
+
+        def clear_image():
+            self.update_object_prop('cookie_texture', '')
+            line_edit.setText('')
+
+        button.clicked.connect(open_dialog)
+        clear.clicked.connect(clear_image)
+        h.addWidget(line_edit, 1)
+        h.addWidget(button)
+        h.addWidget(clear)
+        self._widgets['light_cookie_texture'] = line_edit
+        form_layout.addRow(QLabel("Cookie Image:"), widget)
 
     def add_sound_file_widget(self, form_layout, thing, key, value):
         widget = QWidget()
@@ -5471,7 +7080,7 @@ class PropertyEditor(QWidget):
             from engine.speaker_audio import speaker_sound_path
             start = os.path.join(_project_root(), 'assets', 'sounds')
             os.makedirs(start, exist_ok=True)
-            fp, _ = QFileDialog.getOpenFileName(
+            fp, _ = get_open_asset_file(
                 self,
                 "Select Sound File",
                 start,
@@ -5501,16 +7110,16 @@ class PropertyEditor(QWidget):
         widget = QWidget()
         h = QHBoxLayout(widget)
         h.setContentsMargins(0, 0, 0, 0)
-        rgb = thing.properties.get(key, [255, 255, 255])
+        rgb = thing.properties.get(key) or [255, 255, 255]
         swatch = QPushButton()
         swatch.setFixedSize(200, 32)
 
         def update_swatch():
-            rgb = thing.properties.get(key, [255, 255, 255])
+            rgb = thing.properties.get(key) or [255, 255, 255]
             swatch.setStyleSheet(f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]});")
 
         def open_dialog():
-            rgb = thing.properties.get(key, [255, 255, 255])
+            rgb = thing.properties.get(key) or [255, 255, 255]
             color = QColorDialog.getColor(QColor(*rgb), self, dialog_title)
             if color.isValid():
                 self.update_object_prop(key, [color.red(), color.green(), color.blue()])
@@ -5520,11 +7129,14 @@ class PropertyEditor(QWidget):
         update_swatch()
         h.addWidget(swatch)
         form_layout.addRow(label, widget)
+        return widget
 
-    def _add_tint_widget(self, form_layout, thing):
-        """A model's Tint: a swatch that multiplies the model's colour.
+    def _add_tint_widget(self, form_layout, thing, key='prop_tint_button',
+                         tooltip="Multiplies the model's colour. White leaves it as it is."):
+        """A Tint: a swatch that multiplies a model's -- or a decal's --
+        colour.
 
-        Stored as 0..1 floats; white (the default) leaves the model as it is.
+        Stored as 0..1 floats; white (the default) leaves it as it is.
         """
         widget = QWidget()
         h = QHBoxLayout(widget)
@@ -5551,7 +7163,7 @@ class PropertyEditor(QWidget):
                 set_tint([color.redF(), color.greenF(), color.blueF()])
 
         swatch = self._color_button(current(), pick, size=(140, 28))
-        swatch.setToolTip("Multiplies the model's colour. White leaves it as it is.")
+        swatch.setToolTip(tooltip)
         reset = QPushButton("Reset")
         reset.setToolTip("No tint (white)")
         reset.clicked.connect(lambda: set_tint([1.0, 1.0, 1.0]))
@@ -5559,7 +7171,7 @@ class PropertyEditor(QWidget):
         h.addWidget(reset)
         h.addStretch()
         form_layout.addRow("Tint:", widget)
-        self._widgets['prop_tint_button'] = swatch
+        self._widgets[key] = swatch
 
     def _on_prop_sprite_size_changed(self, thing, index, value):
         size = thing.properties.get('sprite_size', [32.0, 32.0])
@@ -5570,9 +7182,111 @@ class PropertyEditor(QWidget):
         size[index] = float(value)
         self.update_object_prop('sprite_size', size)
 
-    def update_object_prop(self, key, value):
+    #: Properties a multi-selection edit never copies to the other selected
+    #: objects: what identifies or places each one (names must stay unique;
+    #: there is one primary PlayerStart), its own I/O wiring, and the brush
+    #: toggles that change what a brush *is* (a group may hold one mover).
+    _PER_OBJECT_KEYS = frozenset({
+        'name', 'id', 'pos', 'type', 'brush_group', '_io_connections',
+        'io_connections', 'primary', 'creation_index', 'targetname',
+    })
+
+    def _shared_edit_targets(self, key):
+        """The other selected objects an edit of *key* also applies to.
+
+        A multi-selection (a whole group, say) is edited together: the panel
+        shows the primary object, and a change made in it goes to every other
+        selected object that has the same property -- brushes to brushes,
+        entities to entities. Keys in :data:`_PER_OBJECT_KEYS`, a brush's
+        ``is_*`` toggles and internal ``_`` keys stay per object.
+        """
+        primary = self.current_object
+        selected = getattr(self.editor.state, 'selected_objects', None) or ()
+        if len(selected) < 2 or primary is None or key in self._PER_OBJECT_KEYS \
+                or str(key).startswith('_'):
+            return []
+        targets = []
+        if isinstance(primary, dict):
+            if str(key).startswith('is_'):
+                return []
+            for obj in selected:
+                if obj is not primary and isinstance(obj, dict) and key in obj:
+                    targets.append(obj)
+        elif isinstance(primary, Thing):
+            for obj in selected:
+                if obj is not primary and isinstance(obj, Thing) \
+                        and key in obj.properties:
+                    targets.append(obj)
+        return targets
+
+    @staticmethod
+    def _set_prop(obj, key, value):
+        """Store one property on a brush dict or a Thing (a float property
+        stays a float)."""
+        if isinstance(obj, dict):
+            obj[key] = value
+            return
+        if key in obj.properties and type(obj.properties.get(key)) == float:
+            try:
+                value = float(value)
+            except (ValueError, TypeError):
+                value = 0.0
+        obj.properties[key] = value
+        if isinstance(obj, Portal) and key == 'angle':
+            rot = obj.properties.get('rotation', [0.0, 0.0, 0.0])
+            if isinstance(rot, list) and len(rot) > 0:
+                rot[0] = float(value)
+
+    #: Milliseconds without a further edit that end a multi-selection edit
+    #: burst (see :meth:`_checkpoint_shared_edit`).
+    SHARED_EDIT_IDLE_MS = 500
+
+    def _checkpoint_shared_edit(self, key, objects):
+        """One undo checkpoint for a run of edits of *key* on *objects*.
+
+        Every valueChanged of a slider used to checkpoint the whole scene:
+        60 ticks of one drag on a 20k-brush map took 3.4 s, and filled the
+        undo stack with near-identical steps that pushed the user's real
+        history off the bottom. The checkpoint is reused while the edits
+        keep coming (:attr:`SHARED_EDIT_IDLE_MS`), to the same property of
+        the same objects, and nothing else has checkpointed, undone or
+        redone since (the newest undo entry is still the one taken here).
+        Anything else starts a new step, so a single edit is still one.
+        """
+        stack = self.editor.state.undo_stack
+        signature = (key, tuple(id(obj) for obj in objects))
+        burst = self._shared_edit_burst
+        if (burst is None or burst[0] != signature or not stack
+                or stack[-1] is not burst[1]):
+            self.editor.save_state()
+            stack = self.editor.state.undo_stack
+            burst = (signature, stack[-1] if stack else None)
+        self._shared_edit_burst = burst
+        self._shared_edit_idle.start()
+
+    def _close_shared_edit_burst(self):
+        """End the current multi-selection edit burst: the next edit
+        checkpoints again."""
+        self._shared_edit_burst = None
+
+    def update_object_prop(self, key, value, component=None):
+        """Set *key* to *value* on the object on the panel, and on every other
+        selected object sharing the property (:meth:`_shared_edit_targets`).
+
+        *component*: *value* is a list of which only that index was edited;
+        the other selected objects get just that element, keeping the rest of
+        their own list.
+        """
         if self.current_object is None:
             return
+        shared = self._shared_edit_targets(key)
+        if not self._populating:
+            # One undo step puts every object the edit reaches back -- one per
+            # gesture, not one per valueChanged. An edit of a single object
+            # is a step too: it used to take none, so Ctrl+Z either did
+            # nothing or took the edit back together with whatever came
+            # before it.
+            self._checkpoint_shared_edit(key, [self.current_object] + shared)
         if isinstance(self.current_object, dict):
             self.current_object[key] = value
         elif isinstance(self.current_object, Thing):
@@ -5585,10 +7299,25 @@ class PropertyEditor(QWidget):
                         value = 0.0
             self.current_object.properties[key] = value
 
+        # The rest of a multi-selection gets the same value -- each its own
+        # copy, so no two objects ever share one list or dict.
+        for obj in shared:
+            if component is not None:
+                own = obj.get(key) if isinstance(obj, dict) else obj.properties.get(key)
+                if not (isinstance(own, list) and isinstance(value, list)
+                        and 0 <= component < min(len(own), len(value))):
+                    continue
+                own = list(own)
+                own[component] = value[component]
+                self._set_prop(obj, key, own)
+                continue
+            self._set_prop(obj, key, copy.deepcopy(value)
+                           if isinstance(value, (list, dict)) else value)
+
         # Property edits are live scene mutations, not merely UI state.  The
         # dense render/entity projections cache their cold columns behind the
         # editor's world epoch, so journal this exact object immediately.
-        self.editor.state.mark_world_changed([self.current_object])
+        self.editor.state.mark_world_changed([self.current_object] + shared)
         if isinstance(self.current_object, PlayerStart) and key == 'sky_image':
             # This is an explicit authoring action, so the selected value
             # (including an empty value) replaces any legacy copies.

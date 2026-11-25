@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QComboBox, QGridLayout, QToolButton, QButtonGroup
 )
 from PyQt5.QtCore import Qt, QSize
+from engine import hd_graphics
 from PyQt5.QtGui import QIcon, QPixmap
 import sys
 import os
@@ -116,6 +117,13 @@ class SettingsWindow(QDialog):
         self.click_select_3d_checkbox.setToolTip("Allow selecting brushes/things by clicking in the 3D view (without Shift)")
         view_3d_layout.addWidget(self.click_select_3d_checkbox)
 
+        self.hide_hidden_lights_checkbox = QCheckBox("Hidden lights give no light")
+        self.hide_hidden_lights_checkbox.setToolTip(
+            "When enabled, a light hidden with H stops lighting the 3D view until\n"
+            "it is shown again (Shift+H). Off: a hidden light still lights the\n"
+            "editor, as before. In Play a hidden light never lights.")
+        view_3d_layout.addWidget(self.hide_hidden_lights_checkbox)
+
         self.place_camera_at_player_start_checkbox = QCheckBox("Focus Player_Start on load")
         self.place_camera_at_player_start_checkbox.setToolTip(
             "When enabled, loading a map moves the 3D editor camera to the Player Start location\n"
@@ -148,20 +156,6 @@ class SettingsWindow(QDialog):
         
         self.locked_not_selectable_checkbox = QCheckBox("Locked items not selectable")
         view_2d_layout.addWidget(self.locked_not_selectable_checkbox)
-        
-        glow_arrow_layout = QHBoxLayout()
-        glow_arrow_layout.addWidget(QLabel("Glow Arrow Scale:"))
-        self.glow_arrow_scale_slider = QSlider(Qt.Horizontal)
-        self.glow_arrow_scale_slider.setRange(50, 300)
-        self.glow_arrow_scale_slider.setValue(100)
-        self.glow_arrow_scale_slider.setTickPosition(QSlider.TicksBelow)
-        self.glow_arrow_scale_slider.setTickInterval(25)
-        glow_arrow_layout.addWidget(self.glow_arrow_scale_slider)
-        self.glow_arrow_scale_label = QLabel("100%")
-        self.glow_arrow_scale_slider.valueChanged.connect(
-            lambda v: self.glow_arrow_scale_label.setText(f"{v}%"))
-        glow_arrow_layout.addWidget(self.glow_arrow_scale_label)
-        view_2d_layout.addLayout(glow_arrow_layout)
         
         view_2d_group.setLayout(view_2d_layout)
         layout.addWidget(view_2d_group)
@@ -198,8 +192,6 @@ class SettingsWindow(QDialog):
         self.always_show_io_debug_checkbox.setToolTip("If enabled, the debug console will open automatically when the app starts.")
         layout.addWidget(self.always_show_io_debug_checkbox)
         
-        self.disable_toasts_checkbox = QCheckBox("Disable Toast Notifications")
-        layout.addWidget(self.disable_toasts_checkbox)
 
         font_layout = QHBoxLayout()
         font_layout.addWidget(QLabel("UI Font Size:"))
@@ -256,6 +248,22 @@ class SettingsWindow(QDialog):
         )
         renderer_layout.addWidget(self.lowpower_mode_checkbox)
         
+        from engine import hd_graphics
+        renderer_row = QHBoxLayout()
+        renderer_row.addWidget(QLabel("Renderer:"))
+        self.renderer_combo = QComboBox()
+        for name in hd_graphics.RENDERERS:
+            self.renderer_combo.addItem(hd_graphics.RENDERER_LABELS[name], name)
+        self.renderer_combo.setToolTip(
+            "Classic is Fio's original renderer.\n"
+            "HD_High is a separate, physically based renderer: a sun with shadows,\n"
+            "sky light, material maps and HDR post-processing, set per map on the\n"
+            "primary PlayerStart (HD Sky).\n\n"
+            "The change applies at once: Fio swaps renderers while running.\n"
+            "Low-power Mode always uses Classic.")
+        renderer_row.addWidget(self.renderer_combo, 1)
+        renderer_layout.addLayout(renderer_row)
+
         self.shadows_enabled_checkbox = QCheckBox("Enable Dynamic Shadows")
         self.shadows_enabled_checkbox.setToolTip(
             "Enable depth cube-map shadows from lights with 'casts_shadows' enabled.\n"
@@ -329,6 +337,11 @@ class SettingsWindow(QDialog):
         gameplay_layout = QVBoxLayout()
         
         self.physics_checkbox = QCheckBox("Enable physics")
+        self.physics_checkbox.setToolTip(
+            "Physics for Play. Off, the player is not held by gravity or walls, "
+            "and the physics engine (Soma) is switched off altogether: it is not "
+            "loaded, and physics Props are ordinary scenery. Takes effect the "
+            "next time Play starts.")
         gameplay_layout.addWidget(self.physics_checkbox)
         
         self.show_hud_checkbox = QCheckBox("Show HUD (health, etc.)")
@@ -422,6 +435,14 @@ class SettingsWindow(QDialog):
         res_layout.addRow("Height:", self.kiosk_res_h)
         self.res_group.setLayout(res_layout)
         layout.addWidget(self.res_group)
+
+        self.native_surface_checkbox = QCheckBox("Present the game on its own window (experimental)")
+        self.native_surface_checkbox.setToolTip(
+            "Kiosk mode draws on a native window of its own instead of through\n"
+            "the editor's 3D view, so the frame is not composited a second time.\n"
+            "The same renderer draws either way; if the platform cannot, kiosk\n"
+            "mode carries on in the 3D view.")
+        layout.addWidget(self.native_surface_checkbox)
 
         self.launch_in_editor_checkbox = QCheckBox("Launch packages in editor mode")
         self.launch_in_editor_checkbox.setToolTip(
@@ -617,14 +638,13 @@ class SettingsWindow(QDialog):
         self.show_caulk_checkbox.setChecked(self.config.getboolean('Display', 'show_caulk', fallback=True))
         self.sync_selection_checkbox.setChecked(self.config.getboolean('Display', 'sync_selection', fallback=True))
         self.click_select_3d_checkbox.setChecked(self.config.getboolean('Display', 'click_select_3d', fallback=False))
+        self.hide_hidden_lights_checkbox.setChecked(
+            self.config.getboolean('Display', 'hide_hidden_lights', fallback=False))
         selection_trans = self.config.getint('Display', 'selection_transparency', fallback=50)
         self.selection_transparency_slider.setValue(selection_trans)
         self.selection_transparency_label.setText(f"{selection_trans}%")
         self.show_connections_checkbox.setChecked(self.config.getboolean('Display', 'show_connections', fallback=True))
         self.locked_not_selectable_checkbox.setChecked(self.config.getboolean('Display', 'locked_not_selectable_2d', fallback=True))
-        glow_arrow_scale = self.config.getint('Display', 'glow_arrow_scale', fallback=100)
-        self.glow_arrow_scale_slider.setValue(glow_arrow_scale)
-        self.glow_arrow_scale_label.setText(f"{glow_arrow_scale}%")
         
         self.property_editor_tooltips_checkbox.setChecked(
             self.config.getboolean('Editor', 'property_editor_tooltips', fallback=True))
@@ -636,7 +656,6 @@ class SettingsWindow(QDialog):
         self.show_fps_checkbox.setChecked(self.config.getboolean('Display', 'show_fps', fallback=True))
         self.always_show_sysmon_checkbox.setChecked(self.config.getboolean('Display', 'always_show_sysmon', fallback=False))
         self.always_show_io_debug_checkbox.setChecked(self.config.getboolean('Display', 'always_show_io_debug', fallback=True))
-        self.disable_toasts_checkbox.setChecked(self.config.getboolean('Display', 'disable_toasts', fallback=False))
         self.font_size_spinbox.setValue(self.config.getint('Display', 'font_size', fallback=10))
         ui_scale = parse_ui_scale(read_ui_scale_setting(self.config))
         ui_scale_key = 'auto' if ui_scale is None else str(ui_scale)
@@ -656,6 +675,9 @@ class SettingsWindow(QDialog):
         default_shadows = not is_low_power
         self.lowpower_mode_checkbox.setChecked(self.config.getboolean('Renderer', 'lowpower_mode', fallback=default_lowpower_mode))
         self.shadows_enabled_checkbox.setChecked(self.config.getboolean('Renderer', 'shadows_enabled', fallback=default_shadows))
+        from engine import hd_graphics
+        self.renderer_combo.setCurrentIndex(max(0, self.renderer_combo.findData(
+            hd_graphics.renderer_from(self.config))))
 
         self.physics_checkbox.setChecked(self.config.getboolean('Settings', 'physics', fallback=True))
         from editor.main_window import gore_level_from
@@ -700,6 +722,8 @@ class SettingsWindow(QDialog):
             self.kiosk_mode_combo.setCurrentIndex(idx)
         self.kiosk_res_w.setValue(self.config.getint('Kiosk', 'res_width', fallback=1280))
         self.kiosk_res_h.setValue(self.config.getint('Kiosk', 'res_height', fallback=720))
+        self.native_surface_checkbox.setChecked(
+            self.config.getboolean('Kiosk', 'native_surface', fallback=False))
         self.launch_in_editor_checkbox.setChecked(
             self.config.getboolean('Kiosk', 'launch_in_editor', fallback=False)
         )
@@ -714,36 +738,25 @@ class SettingsWindow(QDialog):
     def keyPressEvent(self, event):
         super().keyPressEvent(event)
 
-    def _has_unsaved_work(self):
-        if not self.main_window:
-            return False
-        
-        has_content = False
-        if hasattr(self.main_window, 'state'):
-            state = self.main_window.state
-            has_content = (len(getattr(state, 'brushes', [])) > 0 or 
-                          len(getattr(state, 'things', [])) > 0)
-        
-        no_file = not getattr(self.main_window, 'file_path', None)
-        
-        has_undo_history = False
-        if hasattr(self.main_window, 'undo_stack'):
-            has_undo_history = len(self.main_window.undo_stack) > 0
-        
-        return (has_content and no_file) or has_undo_history
+    def _confirm_restart(self):
+        """Settle unsaved work before a restart; False means "do not restart".
+
+        The restart replaces the process, so this is the only prompt the user
+        gets. It is the editor's own Save / Discard / Cancel, after leaving
+        Play so that "Save" writes the authored map.
+        """
+        window = self.main_window
+        if not window:
+            return True
+        view = getattr(window, 'view_3d', None)
+        if view is not None and getattr(view, 'play_mode', False):
+            window._exit_play_mode()
+        return bool(window.check_unsaved_changes())
 
     def _apply_and_restart(self):
-        if self._has_unsaved_work():
-            reply = QMessageBox.warning(
-                self,
-                "Unsaved Work",
-                "Unsaved work will be lost!\n\nAre you sure you want to restart?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if reply != QMessageBox.Yes:
-                return
-        
+        if not self._confirm_restart():
+            return
+
         self._save_settings()
         
         if self.main_window and hasattr(self.main_window, 'save_config'):
@@ -758,15 +771,15 @@ class SettingsWindow(QDialog):
         self.config.set('Display', 'show_caulk', str(self.show_caulk_checkbox.isChecked()))
         self.config.set('Display', 'sync_selection', str(self.sync_selection_checkbox.isChecked()))
         self.config.set('Display', 'click_select_3d', str(self.click_select_3d_checkbox.isChecked()))
+        self.config.set('Display', 'hide_hidden_lights',
+                        str(self.hide_hidden_lights_checkbox.isChecked()))
         self.config.set('Display', 'selection_transparency', str(self.selection_transparency_slider.value()))
         self.config.set('Display', 'show_connections', str(self.show_connections_checkbox.isChecked()))
         self.config.set('Display', 'locked_not_selectable_2d', str(self.locked_not_selectable_checkbox.isChecked()))
-        self.config.set('Display', 'glow_arrow_scale', str(self.glow_arrow_scale_slider.value()))
         
         self.config.set('Display', 'show_fps', str(self.show_fps_checkbox.isChecked()))
         self.config.set('Display', 'always_show_sysmon', str(self.always_show_sysmon_checkbox.isChecked()))
         self.config.set('Display', 'always_show_io_debug', str(self.always_show_io_debug_checkbox.isChecked()))
-        self.config.set('Display', 'disable_toasts', str(self.disable_toasts_checkbox.isChecked()))
         self.config.set('Display', 'font_size', str(self.font_size_spinbox.value()))
         self.config.set('Display', 'ui_scale', self.ui_scale_combo.currentData())
         self.config.set('Display', 'vsync', str(self.vsync_checkbox.isChecked()))
@@ -787,6 +800,8 @@ class SettingsWindow(QDialog):
             self.config.add_section('Renderer')
         self.config.set('Renderer', 'lowpower_mode', str(self.lowpower_mode_checkbox.isChecked()))
         self.config.set('Renderer', 'shadows_enabled', str(self.shadows_enabled_checkbox.isChecked()))
+        self.config.set('Renderer', 'renderer',
+                        self.renderer_combo.currentData() or hd_graphics.DEFAULT_RENDERER)
         # Water quality is per water brush now; drop the old global key.
         self.config.remove_option('Renderer', 'water_quality')
         
@@ -822,6 +837,8 @@ class SettingsWindow(QDialog):
         self.config.set('Kiosk', 'window_mode', self.kiosk_mode_combo.currentText())
         self.config.set('Kiosk', 'res_width', str(self.kiosk_res_w.value()))
         self.config.set('Kiosk', 'res_height', str(self.kiosk_res_h.value()))
+        self.config.set('Kiosk', 'native_surface',
+                        str(self.native_surface_checkbox.isChecked()))
         self.config.set('Kiosk', 'launch_in_editor',
                         str(self.launch_in_editor_checkbox.isChecked()))
 
@@ -829,16 +846,35 @@ class SettingsWindow(QDialog):
                 str(self.place_camera_at_player_start_checkbox.isChecked()))
 
     def _restart_application(self):
-        
-        python = sys.executable
-        script = sys.argv[0]
-        args = sys.argv[1:]
-        
-        if self.main_window:
+        """Close the editor through its normal shutdown, then start it again.
+
+        Unsaved work has already been settled by :meth:`_confirm_restart`, so
+        the close does not prompt again, but it still runs the usual teardown
+        (layout saved, logic thread stopped). The new process is started with
+        an argument list -- no shell, and no ``os.execl`` that splits a path
+        containing spaces on Windows -- and only once the close went through.
+        """
+        import subprocess
+        from PyQt5.QtWidgets import QApplication
+
+        frozen = getattr(sys, 'frozen', False) or "__compiled__" in globals()
+        if frozen:
+            command = [sys.executable] + sys.argv[1:]
+        else:
+            command = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+
+        window = self.main_window
+        if window is not None:
+            window._quit_without_prompt = True
             try:
-                self.main_window.closeEvent = lambda e: e.accept()
-                self.main_window.close()
+                closed = window.close()
             except Exception:
-                pass
-        
-        os.execl(python, python, script, *args)
+                closed = False
+            if not closed:
+                window._quit_without_prompt = False
+                return
+        try:
+            subprocess.Popen(command, cwd=os.getcwd())
+        except OSError as error:
+            print(f"Restart failed: {error}")
+        QApplication.quit()

@@ -80,14 +80,73 @@ def read_image(name):
     if source is not None:
         return source.read(name)
     from engine.asset_archives import asset_source
+    from engine.asset_paths import confined_path, warn_refused
+    # The name comes from the map (an emissive decal's image): it may only
+    # name a file inside the decal folder, never an absolute, '..' or UNC path.
+    path = confined_path(DECAL_FOLDER, name)
+    if path is None:
+        warn_refused(name, 'decal image')
+        return None
     try:
-        found = asset_source(os.path.join(DECAL_FOLDER, name))
+        found = asset_source(path)
         if hasattr(found, 'read'):
             return found.read()
         with open(found, 'rb') as handle:
             return handle.read()
     except (OSError, TypeError, ValueError):
         return None
+
+
+_average = {}
+
+
+def dominant_colour(name):
+    """The main colour of decal image *name*, ``(r, g, b)`` in 0..1.
+
+    What an emissive decal glows: the colour most of its opaque area is --
+    a yellow sign with black lettering is yellow, not the darker yellow an
+    average would give. Pixels are weighed by how opaque they are and sorted
+    into coarse colour bins (8 levels a channel); the answer is the mean of
+    the fullest bin. White for no image, or one that cannot be read. Worked
+    out once per image and project (the image is read small, not at full
+    size), and only when a decal asks: a map with no emissive decal never
+    decodes anything here.
+    """
+    white = (1.0, 1.0, 1.0)
+    if not name:
+        return white
+    key = (_where(), str(name))
+    cached = _average.get(key)
+    if cached is not None:
+        return cached
+    colour = white
+    data = read_image(str(name))
+    if data:
+        try:
+            import io
+            import numpy as np
+            from PIL import Image
+            with Image.open(io.BytesIO(data)) as image:
+                image.draft('RGB', (64, 64))          # a JPEG decodes small
+                image = image.convert('RGBA')
+                image.thumbnail((64, 64))
+                pixels = np.asarray(image, dtype=np.uint8).reshape(-1, 4)
+            alpha = pixels[:, 3].astype(np.float64) / 255.0
+            if float(alpha.sum()) > 1e-6:
+                rgb = pixels[:, :3].astype(np.int64)
+                bins = (rgb[:, 0] >> 5) * 64 + (rgb[:, 1] >> 5) * 8 + (rgb[:, 2] >> 5)
+                fullest = int(np.bincount(bins, weights=alpha, minlength=512).argmax())
+                chosen = bins == fullest
+                weight = alpha[chosen]
+                mean = (rgb[chosen] * weight[:, None]).sum(axis=0) / (weight.sum() * 255.0)
+                colour = tuple(float(min(max(v, 0.0), 1.0)) for v in mean)
+        except Exception:
+            colour = white
+    with _lock:
+        if len(_average) > 512:                       # other projects' images
+            _average.clear()
+        _average[key] = colour
+    return colour
 
 
 def _where():
@@ -133,6 +192,7 @@ def _publish():
 
 def refresh():
     """Read the folder again (an image was added); returns ``images()``."""
+    _average.clear()
     where = _where()
     names = _read()
     with _lock:

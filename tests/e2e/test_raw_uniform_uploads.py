@@ -303,8 +303,20 @@ def test_fio_gl_debug_checks_every_upload_and_the_app_takes_the_raw_path(tmp_pat
 
 def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
         fio_session, monkeypatch):
-    """Fails before the change: 149 wrapped array uploads on this frame (it
-    also refreshes the shadow maps; ~47 a steady-state showcase frame)."""
+    """Fails before the change: 149 wrapped array uploads on a frame that
+    refreshes the shadow maps (~47 a steady-state showcase frame).
+
+    The two paints compared are steady-state ones, both re-rendering the
+    shadow maps, as the subprocess test above paints once before it measures.
+    The session's first paint does one-off work, and on the hosted runner's
+    Mesa 26 llvmpipe it lights one model of the showcase differently from
+    every later paint *whichever path the uploads take*: CI showed a later
+    raw paint matching a wrapped one, and that neither re-rendering the shadow
+    maps, finishing the shadow pass (glFinish), rebuilding the model instance
+    streams, reloading the textures nor reloading the models makes a later
+    frame come out as the first did. That is not what this test is about; it
+    is recorded in docs/MIGRATION_FIO_3.5.md (Known limitations). The first
+    paint still sends no row through the wrappers."""
     import OpenGL.GL as gl
     from engine.renderer.core import uniform_rows as ur
 
@@ -313,6 +325,10 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
     # (the last frame's draws, VRAM) differ from one paint to the next, so it
     # made this pixel comparison flaky. The renderer is what is compared.
     session.view.sysmon.set_active(False)
+    # MiniWind's water sky reads clouds baked on a thread of their own: both
+    # paints must find them baked, or the first is cloudless.
+    from engine import sky_clouds
+    assert sky_clouds.wait(60) is not None
     session.start_play()
     session.step(20)
     session.publish()
@@ -330,15 +346,74 @@ def test_a_showcase_frame_sends_no_row_uniform_through_the_wrappers(
             return _real(*args)
         monkeypatch.setattr(gl, name, recording)
 
-    raw = session.paint()
-    assert not wrapped, "%d row uniforms still went through the wrappers: %s" % (
+    renderer = session.view.renderer
+
+    def paint_rerendering_shadows():
+        # Every shadow slot out of date: the paint renders the shadow maps
+        # again, so the shadow pass's uploads are in both compared frames.
+        renderer._shadow_slot_sig = [None] * len(renderer._shadow_slot_sig)
+        return session.paint()
+
+    session.paint()                    # the session's first paint (see above)
+    assert not wrapped, "%d row uniforms of the first paint went through the wrappers: %s" % (
         len(wrapped), sorted(set(wrapped)))
 
+    raw = paint_rerendering_shadows()
+    raw_stats = _stats(session)
+    assert not wrapped, "%d row uniforms still went through the wrappers: %s" % (
+        len(wrapped), sorted(set(wrapped)))
+    assert raw_stats.get('shadow_draw_calls'), "the compared frame rendered no shadow map"
+
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: False)
-    through_wrappers = session.paint()
+    through_wrappers = paint_rerendering_shadows()
+    wrapped_stats = _stats(session)
     assert wrapped, "the wrapper path sent nothing: the frame drew no row-uploading pass"
+    assert wrapped_stats.get('shadow_draw_calls') == raw_stats.get('shadow_draw_calls')
     monkeypatch.setattr(ur, "raw_uploads_enabled", lambda: True)
     assert raw.max() > 0, "the frame is blank"
-    assert np.array_equal(raw, through_wrappers), (
-        "raw and wrapped uploads drew different frames (%d pixels differ)"
-        % int(np.any(raw != through_wrappers, axis=2).sum()))
+    if not np.array_equal(raw, through_wrappers):
+        raise AssertionError(_frames_differ(raw, through_wrappers) + (
+            "; render stats that differ, raw -> wrapped: %s" % {
+                k: (raw_stats.get(k), wrapped_stats.get(k))
+                for k in sorted(set(raw_stats) | set(wrapped_stats))
+                if raw_stats.get(k) != wrapped_stats.get(k)}))
+
+
+def _stats(session):
+    """The renderer's per-frame counters after a paint (flattened)."""
+    stats = getattr(session.view.renderer, 'render_stats', None)
+    names = getattr(type(stats), '__slots__', ()) if stats is not None else ()
+    items = {name: getattr(stats, name, None) for name in names
+             if name not in ('details', 'pass_ms')}      # (timings always differ)
+    flat = {}
+    for key, value in items.items():
+        if isinstance(value, dict):
+            for inner, item in value.items():
+                flat['%s.%s' % (key, inner)] = item
+        else:
+            flat[key] = value
+    return flat
+
+
+def _frames_differ(a, b):
+    """What a mismatch looks like: how many pixels, where (the box holding
+    them, in a frame of ``height x width``), and by how much. With
+    ``FIO_TEST_ARTIFACTS`` set the two frames are saved there as PNGs (CI
+    uploads them), so a difference seen only on another machine can be
+    looked at."""
+    import os
+    differ = np.any(a != b, axis=2)
+    ys, xs = np.nonzero(differ)
+    message = ("raw and wrapped uploads drew different frames (%d pixels differ, "
+               "in x %d..%d, y %d..%d of %dx%d; largest channel difference %d)"
+               % (int(differ.sum()), xs.min(), xs.max(), ys.min(), ys.max(),
+                  a.shape[1], a.shape[0],
+                  int(np.abs(a.astype(np.int16) - b.astype(np.int16)).max())))
+    folder = os.environ.get("FIO_TEST_ARTIFACTS")
+    if folder:
+        from PIL import Image
+        os.makedirs(folder, exist_ok=True)
+        Image.fromarray(a).save(os.path.join(folder, "raw_uploads.png"))
+        Image.fromarray(b).save(os.path.join(folder, "wrapped_uploads.png"))
+        message += "; frames saved in " + folder
+    return message

@@ -473,7 +473,7 @@ def test_dead_companion_respawns_and_uses_roads_without_tethering_the_party(coop
 
 def test_returning_companion_collides_with_parked_scenery():
     import glm
-    from engine.physics import SpatialGrid
+    from engine.spatial_grid import SpatialGrid
     from engine.player import Player
     from engine.spatial import PARKED_HIDDEN_KEY
     from game.multiplayer.world import CompanionCollisionGrid

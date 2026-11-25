@@ -28,15 +28,21 @@ def _read(rel):
 # ---------------------------------------------------------------------------
 
 def _render_scene_source():
-    """The body of ForwardRenderer.render_scene, as source text."""
+    """ForwardRenderer.render_scene and the view it draws, as source text.
+
+    ``render_scene`` opens a ``core.gl_state`` frame and hands the view to
+    ``_render_view``, so the two are read together."""
     src = _read("engine/renderer/forward/renderer.py")
     tree = ast.parse(src)
+    found = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             for fn in node.body:
-                if isinstance(fn, ast.FunctionDef) and fn.name == "render_scene":
-                    return ast.get_source_segment(src, fn)
-    raise AssertionError("render_scene not found")
+                if isinstance(fn, ast.FunctionDef) and fn.name in ("render_scene", "_render_view"):
+                    found[fn.name] = ast.get_source_segment(src, fn)
+    if "render_scene" not in found:
+        raise AssertionError("render_scene not found")
+    return "\n\n".join(found[name] for name in ("render_scene", "_render_view") if name in found)
 
 
 def test_cull_output_feeds_the_dense_brush_pipeline():
@@ -396,11 +402,14 @@ def test_property_editor_has_no_hard_debug_console_dependency():
 def test_tick_exception_enters_a_controlled_fault_state():
     src = _read("engine/logic_thread.py")
     tree = ast.parse(src)
-    fn = next(
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_step_frame"
+    # The frame loop catches the failure; _tick_failed (which it calls from
+    # its ``except``) reports it and ends the session.
+    block = "\n".join(
+        ast.get_source_segment(src, node) for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name in ("_step_frame", "_tick_failed")
     )
-    block = ast.get_source_segment(src, fn)
+    assert "self._tick_failed()" in block
     assert "try:" in block and "self._tick(self.TICK_DURATION)" in block
     assert "except Exception:" in block
     assert "traceback.format_exc()" in block, "traceback must be reported"

@@ -123,3 +123,14 @@ def ready():
     if _baked is None and _baking is None:
         prepare()
     return _baked
+
+
+def wait(timeout=None):
+    """The baked clouds once they are ready (starting the bake if need be),
+    or None if *timeout* seconds pass first. For tools and tests that
+    compare frames: a frame painted before the bake lands has no clouds."""
+    ready()
+    baking = _baking
+    if _baked is None and baking is not None:
+        baking.join(timeout)
+    return _baked

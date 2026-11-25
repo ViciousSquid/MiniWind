@@ -14,7 +14,9 @@ change) and its target test pass unexpectedly (remove the marker). Stage 1
 fixed behaviour as regression tests, and Stage 2 has done the same for the
 position targets as each substage delivered them. Shipped maps are not modified here; the
 snapshot (``test_semantics_snapshot``) records which maps each behaviour
-reaches. See ``docs/brush-model-proposal.md`` for the stages.
+reaches. ``miniwind_world`` is now saved as version 5 and carries none of
+them; its last legacy save is kept as ``bs.LEGACY_WORLD`` for the tests that
+characterise legacy data. See ``docs/brush-model-proposal.md`` for the stages.
 
 What a face renders is read through ``tests/helpers/brush_semantics``, which
 ``test_semantics_anchor`` ties to the engine and
@@ -36,9 +38,12 @@ from tests.helpers.paths import REPO_ROOT
 from tests.helpers.worlds import angled_brush, box_brush
 
 MAPS = bs.shipped_maps(REPO_ROOT)
+#: ``miniwind_world``'s convex brushes as its last pre-version-5 save stored
+#: them (``bs.LEGACY_WORLD``): the legacy data the load-time migration reads.
+LEGACY = bs.legacy_maps(REPO_ROOT)
 
-#: ``miniwind_world``'s one convex brush whose stored ``pos`` is not where its
-#: planes are (see test_shipped_convex_bounds_drift_but_contain_what_is_drawn).
+#: The legacy record's one convex brush whose stored ``pos`` is not where its
+#: planes are (see test_legacy_convex_bounds_drift_but_contain_what_is_drawn).
 STALE_COPY = 'e23ac095'
 
 STAGE_2 = "Stage 2 (unambiguous position) delivers this"
@@ -212,7 +217,7 @@ def test_every_loaded_shipped_convex_face_has_one_material_record():
     no tagged convex face keeps a per-tag copy -- and every face draws what
     the precedence rule (restated in the helper) says."""
     from engine import brush_faces
-    for name, brushes in MAPS.items():
+    for name, brushes in list(MAPS.items()) + list(LEGACY.items()):
         for original in brushes:
             if bs.encoding(original) != 'convex':
                 continue
@@ -229,18 +234,18 @@ def test_every_loaded_shipped_convex_face_has_one_material_record():
 # Position: geometry, bound and transform at once (Stage 2)
 # ---------------------------------------------------------------------------
 
-def test_shipped_convex_bounds_drift_but_contain_what_is_drawn():
-    """MiniWind's shipped maps: seven convex brushes of ``miniwind_world``
-    *store* ``pos``/``size`` that are not their planes' AABB bit for bit. Six
-    differ by float noise, and within 1e-4 of a unit their stored bound
-    contains the drawn geometry. The seventh (``e23ac095``, a roof) stores a
-    stale ``pos``: the right size, 4928 units from where its planes draw it.
-    Since Stage 2a nothing reads that copy for a bound (``brush_placement``
-    derives it from the planes) and loading re-derives it; the files
-    themselves are not modified. (Fio's own maps, which this test was
-    written against, are not shipped with MiniWind.)"""
+def test_legacy_convex_bounds_drift_but_contain_what_is_drawn():
+    """``miniwind_world`` as last saved before version 5 (``bs.LEGACY_WORLD``):
+    seven of its convex brushes *store* ``pos``/``size`` that are not their
+    planes' AABB bit for bit. Six differ by float noise, and within 1e-4 of a
+    unit their stored bound contains the drawn geometry. The seventh
+    (``e23ac095``, a roof) stores a stale ``pos``: the right size, 4928 units
+    from where its planes draw it. Since Stage 2a nothing reads that copy for
+    a bound (``brush_placement`` derives it from the planes) and loading
+    re-derives it. (Fio's own maps, which this test was written against, are
+    not shipped with MiniWind.)"""
     drifted = stale = 0
-    for name, brushes in MAPS.items():
+    for name, brushes in LEGACY.items():
         for brush in brushes:
             found = bs.inconsistencies(brush)
             if 'bound_drift' not in found:
@@ -258,6 +263,22 @@ def test_shipped_convex_bounds_drift_but_contain_what_is_drawn():
     assert (drifted, stale) == (7, 1)   # 1 pinned by the snapshot, 6 noise
 
 
+def test_shipped_convex_bounds_no_longer_drift():
+    """The shipped ``miniwind_world`` is saved as version 5: each convex
+    brush's ``pos`` is its placement and ``size`` is its local planes'
+    extents, bit for bit -- the stale roof included. No shipped brush carries
+    a bound drift for the load to settle."""
+    convex = 0
+    for name, brushes in MAPS.items():
+        for brush in brushes:
+            if bs.encoding(brush) != 'convex':
+                continue
+            convex += 1
+            assert not brush.get(bs.WORLD_PLANES), (name, brush.get('id'))
+            assert 'bound_drift' not in bs.inconsistencies(brush), (name, brush.get('id'))
+    assert convex == 12
+
+
 def test_shipped_convex_bounds_are_derived_from_the_planes():
     """Stage 2a: every shipped convex brush's derived bounds -- what culling,
     collision rows, the physics grid, Big World and picking read -- are its
@@ -266,7 +287,7 @@ def test_shipped_convex_bounds_are_derived_from_the_planes():
     becomes ``pos``, and re-derives the ``size`` copy: nothing it holds
     drifts from the planes."""
     checked = 0
-    for name, brushes in MAPS.items():
+    for name, brushes in list(MAPS.items()) + list(LEGACY.items()):
         for raw in brushes:
             if not bg.brush_has_geometry(raw):
                 continue
@@ -278,7 +299,7 @@ def test_shipped_convex_bounds_are_derived_from_the_planes():
             assert np.allclose(hi, g_centre + g_size / 2, atol=1e-9), (name, brush['id'])
             assert bs.inconsistencies(brush).get('bound_drift', 0.0) <= bs.DRIFT_NOISE, (name, brush['id'])
             checked += 1
-    assert checked >= 7
+    assert checked == 24    # twelve shipped, twelve in the legacy record
 
 
 def test_a_size_only_write_does_not_stretch_a_convex_brush():

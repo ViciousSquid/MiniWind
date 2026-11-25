@@ -22,8 +22,9 @@ chunks, :meth:`engine.terrain.Terrain.paint_resolution_for`) with *texture*
   (tiled at :data:`Terrain.STAMP_TILE_UNITS_PER_PIXEL`, unturned), so a road
   stamped later in the editor with the same texture continues it.
 
-Only ``terrain_data``'s paint changes; it is saved in ``<map>.stamp``
-beside the map (:func:`engine.terrain_stamp.write_level`). It bakes from the road paint
+Only ``terrain_data``'s paint changes; it is saved in ``<map>.paint``
+beside the map (:func:`engine.terrain_stamp.split_level` and
+:func:`~engine.terrain_stamp.write_map_stamps`, as the editor saves it). It bakes from the road paint
 make_road_map left; a map it has already baked with these settings is left
 alone, and one it baked with others is refused (feathering the feathered
 paint again would widen it twice): restore the map's paint first.
@@ -42,6 +43,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from engine import terrain_stamp  # noqa: E402
+from engine.fileio import write_json_atomic  # noqa: E402
 from engine.terrain import Terrain  # noqa: E402
 
 MAP = os.path.join(ROOT, "maps", "miniwind_world.json")
@@ -177,8 +179,10 @@ def retexture(terrain: Terrain, texture: str) -> int:
 
 
 def rebake(path: str = MAP, texture: str = TEXTURE) -> dict:
-    with open(path, encoding="utf-8") as fh:
-        data = terrain_stamp.merge_level_paint(json.load(fh), path)
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    minified = b"\n" not in raw.strip()
+    data = terrain_stamp.join_level(json.loads(raw.decode("utf-8-sig")), path)
     td = data["terrain_data"]
     meta = data.setdefault("_miniwind_world", {})
     terrain = Terrain()
@@ -200,8 +204,12 @@ def rebake(path: str = MAP, texture: str = TEXTURE) -> dict:
     td["texture_paint_resolution"] = res
     td.pop("texture_paint_base", None)
     meta["road_paint"] = settings
-    # The map in its own layout; the paint in <map>.stamp beside it.
-    terrain_stamp.write_level(path, data, indent=4)
+    # The map in its own layout; the paint in <map>.paint beside it (the
+    # paint file first, so the map never names paint that is not there yet).
+    level, paint = terrain_stamp.split_level(data)
+    terrain_stamp.write_map_stamps(path, paint)
+    layout = {"separators": (",", ":")} if minified else {"indent": 4}
+    write_json_atomic(path, level, **layout)
     return dict(changed=True, chunks=chunks, feathered=feathered, resolution=res, was=old_res)
 
 

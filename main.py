@@ -41,7 +41,6 @@ dark_stylesheet = """
     QWidget {
         background-color: #2b2b2b;
         color: #e0e0e0;
-        font-family: "Fio UI";
     }
     QPushButton {
         background-color: #3c3f41;
@@ -196,7 +195,14 @@ if __name__ == "__main__":
 
     os.chdir(root_directory)
 
-    # Errors go to logs/miniwind.log, the console and the screen from here on
+    # Before anything that can fail: a windowed build has no console, so an
+    # exception during startup otherwise leaves no trace at all.
+    from editor import crash_log
+    from editor.user_paths import settings_path, writable_dir
+    crash_log.install(os.path.dirname(settings_path(root_directory))
+                      or writable_dir(root_directory))
+
+    # Errors also go to logs/miniwind.log, the console and the screen from here on
     # (engine/error_report.py), including crashes and exceptions on any thread.
     from engine import error_report
     log_file = error_report.configure(os.path.join(root_directory, 'logs'))
@@ -234,20 +240,16 @@ if __name__ == "__main__":
     # ---------------------------------------------------------
     # Configure OpenGL BEFORE QApplication is created
     # ---------------------------------------------------------
-    fmt = QSurfaceFormat()
-    fmt.setVersion(3, 3)
-    fmt.setProfile(QSurfaceFormat.CoreProfile)
-    fmt.setDepthBufferSize(24)
-    fmt.setStencilBufferSize(8)
-
-    import configparser
-    config = configparser.ConfigParser()
-    from editor.user_paths import settings_path
-    config.read(settings_path(root_directory))
+    # A damaged settings.ini falls back to the defaults (and is set aside);
+    # it must never be the reason Fio does not start.
+    from editor.settings_file import SettingsParser, read_settings
+    config = SettingsParser()
+    read_settings(config, settings_path(root_directory))
     vsync = config.getboolean('Display', 'vsync', fallback=True)
-    fmt.setSwapInterval(1 if vsync else 0)
-
-    QSurfaceFormat.setDefaultFormat(fmt)
+    # The editor's top-level windows take this format too: the 3D view's
+    # context can share with theirs only if they agree (engine/gl_format.py).
+    from engine.gl_format import set_default_surface_format
+    set_default_surface_format(1 if vsync else 0)
 
     # Qt reads the UI scale only when the QApplication is created.
     from editor.ui_scale import apply_ui_scale
@@ -312,6 +314,7 @@ if __name__ == "__main__":
     # callback, losing the open map.
     from editor.debug_console import install_excepthook
     install_excepthook()
+    crash_log.wrap_current()
     # Qt builds without QtSvg (Windows on ARM) draw the sheet's check marks
     # and arrows from their pre-rendered PNGs instead.
     app.setStyleSheet(portable_stylesheet(dark_stylesheet))
@@ -377,9 +380,10 @@ if __name__ == "__main__":
         if launch_choice == "quit":
             sys.exit(0)
         config.read('settings.ini')
-        fmt.setSwapInterval(
+        # The launcher may have changed VSync: the default format (and so the
+        # 3D view's, engine/gl_format.py) takes the saved choice.
+        set_default_surface_format(
             1 if config.getboolean('Display', 'vsync', fallback=True) else 0)
-        QSurfaceFormat.setDefaultFormat(fmt)
         splash.show()
 
     # Freeze static worlds only for a game launch. The editor must still be

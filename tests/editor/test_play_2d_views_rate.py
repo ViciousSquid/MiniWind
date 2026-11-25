@@ -16,24 +16,16 @@ def MAP():
 
 
 def _frames(session, count):
-    """*count* frames of the view's own loop, each with a new published frame.
-
-    MiniWind's view repaints the visible 2D views themselves at that rate
-    rather than calling ``update_views()`` (which also rescans terrain
-    settings and resets editor interactions, even with every view hidden in
-    a game's kiosk): the repaints of the Top view are what is counted.
-    """
+    """*count* frames of the view's own loop, each with a new published frame."""
     calls = []
-    top = session.window.view_top
-    real = top.update
-    top.update = lambda *args: calls.append(1) or real(*args)
-    top.isVisible = lambda: True          # the offscreen window is never shown
+    real = session.window.update_views
+    session.window.update_views = lambda: calls.append(1) or real()
     try:
         for _ in range(count):
             session.step(1)
             session.view.update_loop()
     finally:
-        del top.update, top.isVisible
+        del session.window.update_views
     return len(calls)
 
 
@@ -67,6 +59,7 @@ def test_the_2d_views_own_timers_stand_down_in_play(fio_session):
     view = session.window.view_top
     asked = []
     view.update = lambda *a: asked.append(1)
+    view._request_overlay_frame = lambda: asked.append(1)   # the camera cone
     try:
         view._last_camera_pos = None               # "the camera has moved"
         view._check_camera_changed()
@@ -80,3 +73,4 @@ def test_the_2d_views_own_timers_stand_down_in_play(fio_session):
         session.stop_play()
     finally:
         del view.update
+        del view._request_overlay_frame

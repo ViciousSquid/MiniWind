@@ -12,9 +12,12 @@ import time
 
 import numpy as np
 import OpenGL.GL as gl
+from . import gl_state
 from OpenGL.GL.shaders import compileProgram, compileShader
 from PyQt5.QtCore import QByteArray, QBuffer, QIODevice
 from engine.asset_archives import asset_bytes, asset_exists, asset_source
+from engine.asset_paths import (
+    companion_path, confined_path, project_asset_path, warn_refused)
 from PyQt5.QtGui import QImage, QImageReader
 
 from engine import shaders
@@ -38,15 +41,29 @@ _RENDERER_PREFIX = "\x1b[38;2;240;128;0m[Renderer]\x1b[0m"
 _MODEL_RETRY_S = 5.0
 
 
+def texture_cache_key(subfolder, name):
+    """The texture cache's key for *name* in *subfolder*: one per file.
+
+    Keys use '/' throughout. On Windows ``os.path.join`` puts a '\\' beside
+    the '/' a name already has, so "monsters/human/idle.png" in "sprites" and
+    "idle.png" in "sprites/monsters/human" were two keys -- and two uploads --
+    for one file.
+    """
+    key = os.path.join(subfolder, name)
+    return key if os.sep == '/' else key.replace(os.sep, '/')
+
+
 # ---------- Utility classes ----------
 class UniformCache(dict):
-    """Uniform locations by name for one program, asked for on first use.
+    """A program's uniform locations by name, looked up from GL the first
+    time each is asked for.
 
-    A ``dict`` whose ``__missing__`` asks GL: every lookup after the first is
-    a plain dict hit, made in C -- a pass reads a dozen of these per frame,
-    and a Python ``__getitem__`` was a call each."""
-    __slots__ = ('program', 'shadow_slots', 'env', 'active_lights')
-
+    A dict, so that ``uniforms[name]`` for a location already known is one
+    lookup in C: a frame reads a few hundred of them, and each used to be a
+    Python method call and a ``dict.get`` beneath it.
+    """
+    __slots__ = ('program', 'shadow_slots', 'env', 'active_lights',
+                 'cookie_unit')
     def __init__(self, shader_program):
         super().__init__()
         self.program = shader_program
@@ -59,32 +76,19 @@ class UniformCache(dict):
         # The shadowMaps[i] slots this program samples, once their sampler
         # units are assigned (see Renderer._bind_shadow_maps); None before.
         self.shadow_slots = None
-
+        # Whether the program's light-cookie sampler has its unit (see
+        # Renderer._bind_light_cookies).
+        self.cookie_unit = False
     def __missing__(self, name):
-        loc = gl.glGetUniformLocation(self.program, name)
-        self[name] = loc
+        loc = self[name] = gl.glGetUniformLocation(self.program, name)
         return loc
-
-    @property
-    def _cache(self):
-        return self
-
     def preload(self, names):
         for name in names:
             if name not in self:
                 self[name] = gl.glGetUniformLocation(self.program, name)
-
     def get(self, name, default=-1):
+        """The location if it has been looked up, else *default*; never asks GL."""
         return dict.get(self, name, default)
-
-    def __bool__(self):             # a program's cache, however few names it holds
-        return True
-
-    def __hash__(self):             # used as a key (memo per program)
-        return id(self)
-
-    def __eq__(self, other):
-        return self is other
 
 
 class ShaderLoader:
@@ -158,9 +162,11 @@ class ModelDrawGroup:
     or index range and the material's values, with its texture already a GL
     name. Built by :meth:`ResourcesMixin._model_draw_groups`."""
 
-    __slots__ = ('start', 'count', 'indexed', 'alpha', 'colour', 'textured', 'texture')
+    __slots__ = ('start', 'count', 'indexed', 'alpha', 'colour', 'textured',
+                 'texture', 'emissive')
 
-    def __init__(self, start, count, indexed, alpha, colour, textured, texture):
+    def __init__(self, start, count, indexed, alpha, colour, textured, texture,
+                 emissive):
         self.start = start
         self.count = count
         self.indexed = indexed
@@ -168,6 +174,7 @@ class ModelDrawGroup:
         self.colour = colour
         self.textured = textured
         self.texture = texture
+        self.emissive = emissive
 
 
 class ResourcesMixin:
@@ -195,7 +202,7 @@ class ResourcesMixin:
     # Texture management
     # --------------------------------------------------------------------------
     def load_texture(self, texture_name, subfolder):
-        tex_cache_name = os.path.join(subfolder, texture_name)
+        tex_cache_name = texture_cache_key(subfolder, texture_name)
         if tex_cache_name in self.texture_manager:
             return self.texture_manager[tex_cache_name]
 
@@ -207,7 +214,7 @@ class ResourcesMixin:
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
             self._texture_dimensions[tex_cache_name] = (1, 1)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+            gl_state.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
             gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, 1, 1, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
                            (gl.GLubyte * 4)(255, 255, 255, 255))
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
@@ -220,27 +227,38 @@ class ResourcesMixin:
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
             self._texture_dimensions[tex_cache_name] = (2, 2)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+            gl_state.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
             gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, 2, 2, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
                            (gl.GLubyte * 16)(255, 0, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 255, 255))
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
             return tex_id
 
-        texture_path = os.path.join('assets', subfolder, texture_name)
+        # Both names can come from a map: never leave the assets folder.
+        texture_path = confined_path('assets', subfolder, texture_name)
+        if texture_path is None:
+            if not str(texture_name).startswith('data:'):
+                warn_refused(os.path.join(str(subfolder), str(texture_name)), 'texture')
+            return self.load_texture('default.png', 'textures')
         if not asset_exists(texture_path):
             return self.load_texture('default.png', 'textures')
 
         try:
             from PIL import Image
-            from engine.animated_texture import cumulative, decode_gif_frames, is_animated_gif
+            from engine.animated_texture import (
+                cumulative, decode_gif_frames, is_animated_gif, open_still_rgba)
             frames = None
             if is_animated_gif(texture_path):
+                # Size-capped: an over-budget GIF comes back as one frame.
                 images, seconds = decode_gif_frames(texture_path)
-                frames = [im.transpose(Image.FLIP_TOP_BOTTOM).tobytes() for im in images]
                 img = images[0].transpose(Image.FLIP_TOP_BOTTOM)
+                if len(images) > 1:
+                    frames = [img.tobytes()]
+                    for index in range(1, len(images)):
+                        frames.append(images[index].transpose(Image.FLIP_TOP_BOTTOM).tobytes())
+                        images[index] = None      # one copy of a frame at a time
             else:
-                img = Image.open(asset_source(texture_path)).convert("RGBA")
+                img = open_still_rgba(texture_path)
                 img = img.transpose(Image.FLIP_TOP_BOTTOM)
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
@@ -249,7 +267,7 @@ class ResourcesMixin:
                 # The file it holds, so the sprite array can take its pixels
                 # from there rather than read them back (texture_pixels).
                 self.__dict__.setdefault('_texture_files', {})[int(tex_id)] = texture_path
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+            gl_state.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR)
@@ -305,13 +323,13 @@ class ResourcesMixin:
                 continue
             anim['shown'] = index
             width, height = anim['size']
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+            gl_state.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
             gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, width, height,
                                gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, anim['frames'][index])
             gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
             changed = True
         if changed:
-            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+            gl_state.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
     def _load_3d_texture(self, filepath, size=32):
         data = asset_bytes(filepath)
@@ -330,7 +348,7 @@ class ResourcesMixin:
         texture_id = 0
         try:
             texture_id = gl.glGenTextures(1)
-            gl.glBindTexture(gl.GL_TEXTURE_3D, texture_id)
+            gl_state.glBindTexture(gl.GL_TEXTURE_3D, texture_id)
             for param in [(gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT), (gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT),
                           (gl.GL_TEXTURE_WRAP_R, gl.GL_REPEAT), (gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
                           (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)]:
@@ -341,7 +359,7 @@ class ResourcesMixin:
         except Exception as exc:
             if texture_id:
                 try:
-                    gl.glDeleteTextures([texture_id])
+                    gl_state.glDeleteTextures([texture_id])
                 except Exception:
                     pass
             print(f"{_RENDERER_PREFIX} Could not upload 3D texture '{filepath}': {exc}")
@@ -350,11 +368,11 @@ class ResourcesMixin:
     # ------------------------------------------------------------------
     def _tex_cache_path(self, tex_name):
         """Return the ``textures/<name>`` cache key for *tex_name*, memoizing the
-        os.path.join. Called for every drawn face every frame in play mode, so
-        the join is done once per unique texture name and reused thereafter."""
+        join. Called for every drawn face every frame in play mode, so the join
+        is done once per unique texture name and reused thereafter."""
         path = self._tex_path_cache.get(tex_name)
         if path is None:
-            path = os.path.join('textures', tex_name)
+            path = texture_cache_key('textures', tex_name)
             self._tex_path_cache[tex_name] = path
         return path
 
@@ -363,7 +381,7 @@ class ResourcesMixin:
 
     def _texture_pixel_size(self, tex_name):
         """Pixel dimensions of a loaded texture, with the usual 128 fallback."""
-        cache_name = os.path.join('textures', tex_name)
+        cache_name = texture_cache_key('textures', tex_name)
         return getattr(self, '_texture_dimensions', {}).get(cache_name, (128, 128))
 
     # --------------------------------------------------------------------------
@@ -371,7 +389,12 @@ class ResourcesMixin:
     # --------------------------------------------------------------------------
     def _fire_asset_bytes(self, asset_path):
         """Read an effect asset's bytes: the loose file, or the archive's."""
-        return asset_bytes(os.path.join(os.getcwd(), asset_path))
+        # A custom effect GIF is a path from the map: project assets only.
+        safe_path = project_asset_path(asset_path)
+        if safe_path is None:
+            warn_refused(asset_path, 'effect texture')
+            return None
+        return asset_bytes(os.path.join(os.getcwd(), safe_path))
 
     def _upload_fire_frame(self, cache_key, image):
         """Upload one already-decoded FIRE frame and return its GL texture id."""
@@ -391,7 +414,7 @@ class ResourcesMixin:
 
         tex_id = gl.glGenTextures(1)
         self.texture_manager[cache_key] = tex_id
-        gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+        gl_state.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
         gl.glTexParameteri(
             gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE
         )
@@ -433,12 +456,18 @@ class ResourcesMixin:
         # Primary animated-GIF path. ImageSequence.Iterator handles GIF
         # disposal/compositing, so each uploaded texture is the complete frame
         # the player should actually display.
+        from engine.animated_texture import (
+            TextureTooLarge, frame_budget, frames_allowed)
         try:
             from PIL import Image, ImageSequence
 
             with Image.open(io.BytesIO(data)) as gif:
+                # Every frame becomes a full-canvas GL texture: budgeted.
+                allowed = frame_budget(gif, asset_path)
                 if getattr(gif, 'is_animated', False):
                     for frame_index, frame in enumerate(ImageSequence.Iterator(gif)):
+                        if frame_index >= allowed:
+                            break
                         rgba = frame.convert("RGBA")
                         qimage = QImage(
                             rgba.tobytes(),
@@ -483,6 +512,9 @@ class ResourcesMixin:
                     np.asarray(durations, dtype=np.float32),
                     dtype=np.float32,
                 )
+        except TextureTooLarge as exc:
+            print(f"{_RENDERER_PREFIX} FIRE texture refused: {exc}")
+            return [], np.empty(0, dtype=np.float32)
         except Exception as exc:
             print(
                 f"{_RENDERER_PREFIX} Error decoding FIRE GIF "
@@ -501,6 +533,9 @@ class ResourcesMixin:
             image_count = reader.imageCount()
             if image_count < 0:
                 image_count = 0
+            size = reader.size()
+            image_count = min(image_count, frames_allowed(
+                size.width(), size.height(), image_count, asset_path))
 
             for frame_index in range(image_count):
                 if not reader.jumpToImage(frame_index):
@@ -624,13 +659,19 @@ class ResourcesMixin:
             self.loaded_models[filename] = model
             return model
 
-        full_path = normalized_filename
-        if not os.path.isabs(full_path):
-            candidate = os.path.join('assets', 'models', full_path)
-            if asset_exists(candidate):
-                full_path = candidate
-            elif asset_exists(original_filename):
-                full_path = original_filename
+        # A model path is map data: a bare name is looked up in
+        # assets/models, anything else must be a project asset path. An
+        # absolute path is taken only when it lies inside the project.
+        bare = (None if os.path.isabs(normalized_filename)
+                else confined_path('assets', 'models', original_filename))
+        if bare and asset_exists(bare):
+            full_path = bare
+        else:
+            full_path = project_asset_path(original_filename)
+            if full_path is None:
+                if not bare:
+                    warn_refused(original_filename, 'model')
+                return self._model_load_failed(filename)
 
         if not asset_exists(full_path):
             return self._model_load_failed(filename)
@@ -711,6 +752,7 @@ class ResourcesMixin:
                 group['material'], {'color': [0.8, 0.8, 0.8], 'texture': None})
             texture = material.get('texture')
             colour = material.get('color', [0.8, 0.8, 0.8])
+            emissive = material.get('emissive', (0.0, 0.0, 0.0))
             resolved.append(ModelDrawGroup(
                 int(group['start']), int(group['count']),
                 bool(group.get('indexed', False)) and has_ebo,
@@ -718,7 +760,8 @@ class ResourcesMixin:
                 (float(colour[0]), float(colour[1]), float(colour[2])),
                 bool(texture),
                 int(self._model_texture_id(texture, material, manual=False))
-                if texture else 0))
+                if texture else 0,
+                (float(emissive[0]), float(emissive[1]), float(emissive[2]))))
         # Ink and edge geometry must establish depth before the acrylic
         # surfaces (a stable sort: authored order within each half).
         resolved.sort(key=lambda g: g.alpha < 1.0)
@@ -751,11 +794,12 @@ class ResourcesMixin:
             return tex_id
         try:
             from PIL import Image
-            img = Image.open(asset_source(resolved_path)).convert('RGBA')
+            from engine.animated_texture import open_still_rgba
+            img = open_still_rgba(resolved_path)
             img = img.transpose(Image.FLIP_TOP_BOTTOM)
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+            gl_state.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR)
@@ -781,39 +825,27 @@ class ResourcesMixin:
         if not texture_name:
             return None
 
-        # Normalise separators from MTL files authored on another platform.
-        texture_name = (
-            str(texture_name)
-            .strip()
-            .strip('"')
-            .replace('\\', os.sep)
-            .replace('/', os.sep)
-        )
+        # The name comes from a model file (or a map's manual texture): it
+        # is resolved only inside the model's own assets folder or the
+        # project's, never as an absolute, drive, UNC or '..'-escaping path.
+        texture_name = str(texture_name).strip().strip('"')
 
         # 1. Try relative to the MTL file's directory (most correct for MTL refs)
         mtl_dir = material.get('mtl_dir', '')
         if mtl_dir:
-            mtl_dir = (
-                str(mtl_dir)
-                .replace('\\', os.sep)
-                .replace('/', os.sep)
-            )
-            resolved = os.path.normpath(os.path.join(mtl_dir, texture_name))
-            if asset_exists(resolved):
-                return resolved
+            resolved = companion_path(os.path.join(str(mtl_dir), '_'), texture_name)
+            if resolved and asset_exists(resolved):
+                return os.path.normpath(resolved)
 
-        # 2. Try assets/textures/ (global fallback)
-        resolved = os.path.normpath(os.path.join('assets', 'textures', texture_name))
-        if asset_exists(resolved):
-            return resolved
+        # 2. assets/textures/ (global fallback), 3. assets/models/ (legacy)
+        for folder in ('textures', 'models'):
+            resolved = confined_path('assets', folder, texture_name)
+            if resolved and asset_exists(resolved):
+                return os.path.normpath(resolved)
 
-        # 3. Try assets/models/ (legacy fallback)
-        resolved = os.path.normpath(os.path.join('assets', 'models', texture_name))
-        if asset_exists(resolved):
-            return resolved
-
-        # 4. Return as-is and let the loader handle errors
-        return texture_name
+        # 4. A project path as authored (assets/..., plugins/<name>/assets/...)
+        resolved = project_asset_path(texture_name)
+        return os.path.normpath(resolved) if resolved else None
 
     def _compile_overlay_shader(self):
         """Compile the ``simple`` program the core overlays draw with.

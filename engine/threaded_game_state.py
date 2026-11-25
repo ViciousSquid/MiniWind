@@ -12,6 +12,26 @@ from .entity_table import EntityTable
 # common empty path avoids allocating a throwaway list on every rendered frame.
 _EMPTY_DRAIN: tuple = ()
 
+
+def _frozen_empty(dtype, shape=(0,)):
+    array = np.empty(shape, dtype=dtype)
+    array.setflags(write=False)
+    return array
+
+
+# The defaults RenderState.reset() puts back, shared rather than built on every
+# swap: every one of these fields is replaced by assignment when a frame is
+# prepared (LogicRender), never changed in place, so one instance serves all.
+_IDENTITY = glm.mat4(1.0)
+_ORIGIN = glm.vec3(0, 0, 0)
+_DEFAULT_TINT = (0.0, 0.4, 0.6)
+_NO_KEYS = frozenset()
+_NO_OBJECTS = _frozen_empty(object)
+_NO_SLOTS = _frozen_empty(np.int32)
+_NO_FLAGS = _frozen_empty(bool)
+_NO_POSITIONS = _frozen_empty(np.float32, (0, 3))
+
+
 class RenderState:
     """
     A snapshot of the game state specifically for the renderer.
@@ -48,6 +68,9 @@ class RenderState:
         self.shot_ready = False
         self.player_underwater = False
         self.underwater_tint = [0.0, 0.4, 0.6]
+        #: Waist deep with the eye above the water: the lens's bottom-half
+        #: drops (engine.lens_water.wets_bottom_half).
+        self.player_wading = False
 
         # Player 2 (split-screen)
         self.player2_pos = glm.vec3(0, 0, 0)
@@ -137,21 +160,26 @@ class RenderState:
         self.total_brushes = 0
         self.culled_brushes = 0
         self.timestamp = 0.0
+        self.publication_serial = 0
         #: Logic-thread milliseconds spent preparing this frame.
         self.prepare_ms = 0.0
 
     def reset(self):
-        """Reset all fields to defaults for reuse (avoids per-frame allocation)."""
-        self.camera_view_matrix = glm.mat4(1.0)
+        """Reset all fields to defaults for reuse (avoids per-frame allocation).
+
+        The defaults are the module's shared instances (_IDENTITY, _NO_SLOTS
+        and the rest), not new objects: a swap used to build about twenty.
+        """
+        self.camera_view_matrix = _IDENTITY
         self.camera_frames = None
-        self.projection_matrix = glm.mat4(1.0)
+        self.projection_matrix = _IDENTITY
         self.is_play_mode = False
-        self.editor_camera_pos = glm.vec3(0, 0, 0)
+        self.editor_camera_pos = _ORIGIN
         self.editor_camera_yaw = 0.0
         self.editor_camera_pitch = 0.0
         self.editor_camera_fov = 90.0
-        self.player_pos = glm.vec3(0, 0, 0)
-        self.light_fade_range = None
+        self.player_pos = _ORIGIN
+        self.light_fade_range = None  # optional live-world boundary, in world units
         self.player_angle = 0.0
         self.player_pitch = 0.0
         self.player_health = 100
@@ -167,11 +195,14 @@ class RenderState:
         self.player_armor = 0
         self.shot_ready = False
         self.player_underwater = False
-        self.underwater_tint = [0.0, 0.4, 0.6]
-        self.player2_pos = glm.vec3(0, 0, 0)
+        self.underwater_tint = _DEFAULT_TINT
+        #: Waist deep with the eye above the water: the lens's bottom-half
+        #: drops (engine.lens_water.wets_bottom_half).
+        self.player_wading = False
+        self.player2_pos = _ORIGIN
         self.player2_angle = 0.0
         self.player2_pitch = 0.0
-        self.player2_view_matrix = glm.mat4(1.0)
+        self.player2_view_matrix = _IDENTITY
         self.player2_health = 100
         self.player2_max_health = 100
         self.player2_dead = False
@@ -184,9 +215,9 @@ class RenderState:
         # same tables without allocating a RenderTable/EntityTable per frame.
         if self.entity_table is None:
             self.entity_table = EntityTable()
-        self.entity_refs = np.empty(0, dtype=object)
-        self.visible_thing_slots = np.empty(0, dtype=np.int32)
-        self.thing_hidden = np.empty(0, dtype=bool)
+        self.entity_refs = _NO_OBJECTS
+        self.visible_thing_slots = _NO_SLOTS
+        self.thing_hidden = _NO_FLAGS
         self.has_portals = False
         if self.render_table is None:
             self.render_table = RenderTable()
@@ -194,30 +225,31 @@ class RenderState:
         #: for a mover or a door the per-frame snapshot. Indexed by the slot
         #: arrays below, so a consumer converts an index to an object once, at
         #: the point it actually needs one, rather than up front for everything.
-        self.render_refs = np.empty(0, dtype=object)
-        self.visible_brush_slots = np.empty(0, dtype=np.int32)
-        self.all_brush_slots = np.empty(0, dtype=np.int32)
-        self.collected_keys = set()
+        self.render_refs = _NO_OBJECTS
+        self.visible_brush_slots = _NO_SLOTS
+        self.all_brush_slots = _NO_SLOTS
+        self.collected_keys = _NO_KEYS
         self.hud_message = ""
         self.hud_prompt_key = None
-        self.bullet_marks = []
+        self.bullet_marks = ()
         self.decals = None
         #: Directional damage for the HUD: ((x, y, z, strength 0..1), ...) --
         #: where recent hits on the player came from -- or () (LogicRender).
         self.damage_marks = ()
         #: Live monster projectiles, as an ``(N, 3)`` float32 array of positions.
-        self.projectiles = np.empty((0, 3), dtype=np.float32)
+        self.projectiles = _NO_POSITIONS
         self.muzzle_flash_active = False
         self.camera_transition_active = False
         self.cinematic_camera_active = False
         self.hud_alpha = 1.0
         self.hud_health_alpha = 0.5
         self.monster_debug_active = False
-        self.monster_debug_rays = []
+        self.monster_debug_rays = ()
         self.monster_hitboxes = None
         self.total_brushes = 0
         self.culled_brushes = 0
         self.timestamp = 0.0
+        self.publication_serial = 0
         self.prepare_ms = 0.0
 
 
@@ -255,6 +287,10 @@ class ThreadedGameState:
 
     #: Pending sound requests kept while the UI is not draining them.
     SOUND_QUEUE_LIMIT = 256
+    #: Console commands queued by map logic (logic_command) between frames. A
+    #: timer firing every tick cannot grow the queue without bound; the
+    #: oldest are dropped, as with sounds.
+    CONSOLE_QUEUE_LIMIT = 256
     def __init__(self):
         self._render_state_lock = _OwnedLock()
         #: Lease releases a finalizer could not take the lock for (it ran on
@@ -285,10 +321,19 @@ class ThreadedGameState:
         #: handed to the renderer, and swaps declined because it was reading.
         self.published_frames = 0
         self.declined_swaps = 0
+        #: Published frames replaced by a newer one before the renderer took
+        #: them (try_swap): publications no paint ever showed.
+        self.superseded_frames = 0
+        #: Called (no arguments, outside the lock, on whichever thread
+        #: published) each time a frame is published. Kiosk mode sets it so
+        #: the view paints a frame the moment it exists rather than on its
+        #: next timer tick; None otherwise.
+        self.publish_listener = None
 
         # Input state
         self._keys_lock = threading.Lock()
         self._keys = set()
+        self._movement_axes = None
         self._mouse_lock = threading.Lock()
         self._mouse_delta = (0.0, 0.0)
         self._gamepad_lock = threading.Lock()
@@ -340,7 +385,7 @@ class ThreadedGameState:
         # main thread, where the console handler and its Qt widgets are safe to
         # touch. Mirrors the sound queue pattern.
         self._console_cmd_lock = threading.Lock()
-        self.console_command_queue = deque()
+        self.console_command_queue = deque(maxlen=self.CONSOLE_QUEUE_LIMIT)
 
     @staticmethod
     def _release_render_state_lease(owner_ref) -> None:
@@ -356,12 +401,16 @@ class ThreadedGameState:
             # A collection inside a locked section of this very thread.
             owner._deferred_releases.append(1)
             return
+        published = False
         with owner._render_state_lock:
             owner._fold_deferred_releases()
             if owner._read_leases > 0:
                 owner._read_leases -= 1
             if owner._read_leases == 0 and owner._write_ready:
                 owner._swap_locked()
+                published = True
+        if published:
+            owner._notify_published()
 
     def _fold_deferred_releases(self) -> None:
         """Apply lease releases deferred by a finalizer (caller holds the lock)."""
@@ -453,15 +502,31 @@ class ThreadedGameState:
                 self._write_ready = True
                 return False
             self._swap_locked()
-            return True
+        self._notify_published()
+        return True
+
+    def _notify_published(self) -> None:
+        """Tell :attr:`publish_listener` a frame was published. Never raises
+        into the publisher (the logic thread)."""
+        listener = self.publish_listener
+        if listener is not None:
+            try:
+                listener()
+            except Exception:
+                pass
 
     def _swap_locked(self) -> None:
         self.published_frames += 1
+        if self._has_new_frame:
+            self.superseded_frames += 1
         self._write_ready = False
         old_read = self._read_state
         self._read_state = self._write_state
         old_read.reset()
         self._write_state = old_read
+        # Which publication this is: a paint can tell a frame it already
+        # showed (a duplicate) from a new one, and count those it skipped.
+        self._read_state.publication_serial = self.published_frames
         self._has_new_frame = True
 
     def try_swap(self) -> bool:
@@ -482,6 +547,14 @@ class ThreadedGameState:
         with self._keys_lock:
             return self._keys.copy()
             
+    def set_movement_axes(self, x, z):
+        with self._keys_lock:
+            self._movement_axes = (max(-1., min(1., x)), max(-1., min(1., z)))
+
+    def get_movement_axes(self):
+        with self._keys_lock:
+            return self._movement_axes
+
     def set_mouse_delta(self, dx, dy):
         with self._mouse_lock:
             self._mouse_delta = (self._mouse_delta[0] + dx, self._mouse_delta[1] + dy)

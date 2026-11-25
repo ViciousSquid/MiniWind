@@ -5,8 +5,6 @@ import pytest
 
 pytest.importorskip('PyQt5')
 
-from PyQt5.QtGui import QSurfaceFormat
-
 from tests.helpers.worlds import level_data, make_thing, room
 from editor.things import PlayerStart
 
@@ -44,19 +42,17 @@ def test_camera_samples_use_tick_boundaries_and_survive_an_empty_iteration(fio_s
         assert state.player_pos == logic.player_runtime.player.pos
 
 
-def test_a_completed_swap_schedules_play_even_without_a_new_tick(fio_session, monkeypatch):
+def test_play_paints_follow_publications_not_the_display(fio_session, monkeypatch):
+    """Fio paints a Play frame when it is published (set_paint_on_publish);
+    neither a completed swap nor an update-loop tick without a new frame
+    paints the frame already on screen again."""
     session = playing(fio_session)
     view = session.view
     calls = []
-    surface = QSurfaceFormat()
-    surface.setSwapInterval(1)
-    monkeypatch.setattr(view, 'format', lambda: surface)
     monkeypatch.setattr(view, 'update', lambda: calls.append(True))
     view.frameSwapped.emit()
-    assert calls == [True]
-    calls.clear()
-    surface.setSwapInterval(0)
-    view.frameSwapped.emit()
+    monkeypatch.setattr(view.game_state, 'try_swap', lambda: False)
+    view.update_loop()
     assert calls == []
 
 
