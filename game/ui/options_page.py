@@ -497,14 +497,12 @@ class OptionsPage:
             y += row_h
             if key == "game_mode":
                 # The banner: the chosen mode in a line, under its row.
-                # Under the value column, its line centred over the slider
-                # track below (the same track _draw_slider lays out).
+                # Under the value column, centred on the mode's name above.
                 text = GAME_MODE_BANNERS.get(self._game_mode(), GAME_MODE_BANNERS["normal"])
                 font = text_font(max(9, label_pt - 2))
                 font.setItalic(True)
                 painter.setFont(font)
-                label_w = max(value_w * 0.22, row_h * 3.2)
-                track_mid = value_x + 4 + (value_w - label_w - 14) / 2.0
+                track_mid = value_x + value_w / 2.0     # under the mode's name
                 strip_w = painter.fontMetrics().horizontalAdvance(text) + 28
                 banner = QRectF(track_mid - strip_w / 2.0, y, strip_w, banner_h - 4)
                 painter.setPen(Qt.NoPen)
