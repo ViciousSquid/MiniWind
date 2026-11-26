@@ -48,6 +48,7 @@ from .solid_lit import SolidLitMixin
 from .wireframe import WireframeMixin
 from .overlay import OverlayMixin
 from .shaders import ShadersMixin
+from .edge_sky import EdgeSkyMixin
 
 
 
@@ -68,7 +69,7 @@ def _forget_dead_tables(kept, ref_index):
 
 class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin,
                       PassesMixin, LightingMixin, PortalsMixin, InstancingMixin, DecalsMixin,
-                      OcclusionMixin, ShadersMixin, RendererCore):
+                      OcclusionMixin, ShadersMixin, EdgeSkyMixin, RendererCore):
     """Fio's forward OpenGL 3.3 renderer, registered as ``"Forward"``.
 
     *config* is the application ConfigParser (or None). *texture_loader*
@@ -194,6 +195,10 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
         except (TypeError, ValueError):
             sky_size = self.SKY_CUBEMAP_SIZE
         self.sky_cubemap_size = max(64, min(2048, int(sky_size)))
+        # The sky behind the world (forward/edge_sky.py): 0, the sky as it
+        # always was; 1, space on the sky's walls near the world's edge; 2,
+        # the whole sky turning to space there; 3, space all the time.
+        self.sky_style = self.sky_style_from_config(settings)
 
         self.fog_quality = 'low'      # 'low' = 16 steps, 'high' = 32 steps
         # OpenGL diagnostics are deliberately opt-in. Keep GL state probing out
@@ -498,6 +503,28 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
             print(f"[Renderer] Void panorama not found: {path}")
             self._background_failed_path = path
             return False
+        textures = self._panorama_textures(path, source)
+        if textures is None:
+            self._background_failed_path = path
+            return False
+        self._background_image_texture, self._background_cube_texture = textures
+        return True
+
+    def _panorama_textures(self, path, source=None):
+        """``(equirectangular texture, cube map)`` of the panorama at *path*
+        (*source*: where it was found, else looked up as an asset), or None
+        when it cannot be loaded (reported)."""
+        if source is None:
+            from engine.asset_archives import asset_source
+            source = asset_source(path)
+            if source is None:
+                project_root = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), os.pardir,
+                                 os.pardir, os.pardir))
+                source = asset_source(os.path.join(project_root, path))
+            if source is None:
+                print(f"[Renderer] Void panorama not found: {path}")
+                return None
         texture = 0
         try:
             from PIL import Image
@@ -518,16 +545,13 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
             finally:
                 gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 4)
             gl_state.glBindTexture(gl.GL_TEXTURE_2D, 0)
-            self._background_cube_texture = self._build_sky_cube(texture)
-            self._background_image_texture = texture
-            return True
+            return texture, self._build_sky_cube(texture)
         except Exception as exc:
             if texture:
                 gl_state.glDeleteTextures([texture])
             gl_state.glBindTexture(gl.GL_TEXTURE_2D, 0)
             print(f"[Renderer] Could not load background panorama '{path}': {exc}")
-            self._background_failed_path = path
-            return False
+            return None
 
     def _build_sky_cube(self, panorama):
         """The equirectangular *panorama* (GL texture) drawn into a cube map
@@ -859,6 +883,7 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
         self._sky_cube_program = 0
         self._probe_equirect_program = 0
         self._background_image_uniforms = None
+        self._cleanup_edge_sky()
 
     def render_scene(self, projection, view, camera_pos,
                      primary_selection, config, clear=True, brush_slots=None):
@@ -920,7 +945,7 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
             or (config.get('play_mode', False) and self._portal_gl_ready
                 and len(getattr(portal_table, 'portal_slots', ()))))
         if not sky_behind:
-            self._draw_background_image(projection, view)
+            self._draw_sky(projection, view, camera_pos, config)
         self._proj_ptr = glm.value_ptr(projection)
         self._view_ptr = glm.value_ptr(view)
         # Every fog calculation this frame measures from here. Cached because
@@ -1170,7 +1195,7 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
         if sky_behind:
             # Before the models: their clear materials blend over it without
             # writing depth (_model_material).
-            self._draw_background_image(projection, view, behind=True)
+            self._draw_sky(projection, view, camera_pos, config, behind=True)
         fading_model_slots = np.empty(0, dtype=np.int32)
         if len(numeric_model_slots):
             if not (self.shaders.get('lit_instanced')

@@ -1133,8 +1133,10 @@ class ConsoleCommandHandler:
         ]),
     )
 
-    def plugin_commands(self):
-        """``{name: help_text}`` for the plugin commands the console would run.
+    def plugin_command_entries(self):
+        """``{name: (owner, help_text)}`` for the plugin commands the console
+        would run: *owner* the plugin, or the built-in game, that registered
+        it.
 
         The same test :meth:`_dispatch_plugin_command` makes: a command of an
         enabled plugin (API 1.4.0), and not one a built-in command of the same
@@ -1145,9 +1147,14 @@ class ConsoleCommandHandler:
             registered = mgr.console_commands() if mgr is not None else {}
         except Exception:
             registered = {}
-        return {name: str(entry.get("help", "") or "")
+        return {name: (entry.get("plugin"), str(entry.get("help", "") or ""))
                 for name, entry in registered.items()
                 if name not in self.commands}
+
+    def plugin_commands(self):
+        """``{name: help_text}`` for the plugin commands the console would run
+        (:meth:`plugin_command_entries`, without their owners)."""
+        return {name: text for name, (_owner, text) in self.plugin_command_entries().items()}
 
     def accepted_commands(self):
         """Every command name :meth:`handle_command` would run, sorted.
@@ -1162,7 +1169,10 @@ class ConsoleCommandHandler:
 
         :attr:`HELP_SECTIONS` with every name the dispatcher does not accept
         dropped, then an "Other Commands" section for any built-in command
-        the table does not word, then the plugin commands.
+        the table does not word, then the plugin commands, and last a
+        section of its own for each built-in game's (MiniWind's) commands.
+        A command and its aliases -- names its owner registered with the same
+        help -- share one line.
         """
         accepted = set(self.commands)
         sections, worded = [], set()
@@ -1178,13 +1188,35 @@ class ConsoleCommandHandler:
         others = sorted(accepted - worded)
         if others:
             sections.append(('Other Commands', None, [((name,), '') for name in others]))
-        plugin = self.plugin_commands()
-        if plugin:
-            sections.append(('Plugin Commands', None, [
-                ((name,), f'— {html.escape(text, quote=False)}' if text else '')
-                for name, text in sorted(plugin.items())
-            ]))
+        plugins, games = {}, {}
+        for name, (owner, text) in self.plugin_command_entries().items():
+            if getattr(owner, 'is_builtin_game', False):
+                # Its display name (MiniWind's "category"), not its id.
+                label = getattr(owner, 'category', None) or getattr(owner, 'name', None)
+                title = f"{label or 'Game'} Commands"
+                games.setdefault(title, []).append((name, owner, text))
+            else:
+                plugins.setdefault('Plugin Commands', []).append((name, owner, text))
+        for group in (plugins, games):
+            for title in sorted(group):
+                sections.append((title, None, self._command_lines(group[title])))
         return sections
+
+    @staticmethod
+    def _command_lines(commands):
+        """``[(names, usage)]`` for ``(name, owner, help)`` rows: a command
+        and its aliases (same owner, same help) on one line, in the order
+        they were registered, the lines sorted by their first name."""
+        lines = {}
+        for name, owner, text in commands:
+            lines.setdefault((id(owner), text), (text, []))[1].append(name)
+        out = []
+        for text, names in lines.values():
+            text = html.escape(text, quote=False)
+            # A help text that starts with its own dash (no arguments) keeps it.
+            usage = (text if text.startswith('—') else f'— {text}') if text else ''
+            out.append((tuple(names), usage))
+        return sorted(out, key=lambda entry: entry[0][0])
 
     def cmd_help(self, args):
         """help — List every command the console accepts (see help_sections)."""

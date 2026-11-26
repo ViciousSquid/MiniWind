@@ -4465,6 +4465,55 @@ void main() {
     frag_colour = vec4(texture(u_sky, v_direction).rgb, 1.0);
 }
 """
+
+def _edge_sky_source():
+    """``edge_sky.frag``: the sky behind the world with ``[Renderer]
+    skystyle`` 1, 2 or 3 (engine/renderer/forward/edge_sky.py).
+
+    Its sky is the map's panorama when it has one, else the game's own sky
+    -- the very code water.frag reflects (gradient, sun, clouds and weather,
+    the moon and stars), taken from it so the two always agree. Near the
+    world's edge space (the Space panorama) comes in: on the walls of the
+    sky with the clouds kept overhead, blending down the walls (style 1), or
+    over the whole sky (style 2). Style 3 is space everywhere, always."""
+    water = DEFAULT_SHADERS['water.frag']
+    start, end = water.index('uniform vec4 skyState;'), water.index('void main()')
+    sky = water[start:end]
+    return """#version 330 core
+in vec3 v_direction;
+out vec4 frag_colour;
+uniform samplerCube u_sky;        // the map's panorama (u_panorama 1)
+uniform int u_panorama;
+uniform samplerCube u_space;      // the Space panorama
+uniform float u_edge;             // 0 inland .. 1 at the world's edge
+uniform int u_mode;               // 1: space on the walls; 2 and 3: the whole sky
+uniform highp vec3 u_eye;
+uniform highp float time;
+// What water.frag's sky reads that is water.frag's own.
+const int reflectSky = 0;
+uniform sampler2D skyPanorama;
+const vec2 SkyUV = vec2(0.0);
+const vec3 SUN_DIR   = vec3(0.4767, 0.6555, 0.5859);
+const vec3 SUN_COLOR = vec3(1.00, 0.95, 0.82);
+""" + sky + """
+void main() {
+    vec3 d = normalize(v_direction);
+    vec3 base = u_panorama == 1 ? texture(u_sky, d).rgb
+                                : skyColor(d, u_eye) + skyLights(d, u_eye);
+    float w = u_edge;
+    if (u_mode == 1) {
+        // Space on the walls and below; the sky overhead; the blend runs
+        // down the walls.
+        w *= 1.0 - smoothstep(0.05, 0.6, d.y);
+    }
+    vec3 space = texture(u_space, d).rgb;
+    frag_colour = vec4(mix(base, space, smoothstep(0.0, 1.0, w)), 1.0);
+}
+"""
+
+
+DEFAULT_SHADERS['edge_sky.frag'] = _edge_sky_source()
+
 # Made once when a panorama loads: each face of the sky's cube map drawn
 # from the equirectangular image, by the mapping the water reflects it with
 # (panoramaUV), so the sky and its reflection agree.
