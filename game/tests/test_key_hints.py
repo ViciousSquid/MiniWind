@@ -411,8 +411,10 @@ def test_the_ping_waits_for_play_to_be_in_view(monkeypatch):
     assert played == ["ping.mp3"]
 
 
-def test_ping_mp3_is_played_from_assets_sounds_or_a_fiopak_and_skipped_until_it_exists(monkeypatch):
+def test_ping_mp3_is_played_from_assets_sounds_or_a_fiopak_and_skipped_until_it_exists(
+        monkeypatch, tmp_path):
     from .. import runtime
+    monkeypatch.setattr(runtime, "SOUND_DIR", str(tmp_path))           # no loose file
     s = _new()
     queued = []
     from types import SimpleNamespace
