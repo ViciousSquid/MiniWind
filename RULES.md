@@ -536,6 +536,16 @@ says *Metal armour prevents this*.
   rare, 18+ uncommon, else common.
 * **Resurrection** (100 magicka, all of it) raises a fallen body as a
   follower, once a day; each body only once; never one blown apart.
+* **Knock** (base cost 45) opens a locked container, or one jammed by a
+  sheared pick. Readied, the cursor becomes a hand and the next click picks
+  the container; right-click puts the spell away. It is not a bolt. The
+  container must be within **64 units** of you, or "Too far away" floats over
+  your head and the hand stays up (walk closer and click again). Clicking an
+  unlocked container says so and costs nothing. Knock works **twice a game
+  day**: after the first "Can only be used once more" floats over you, after
+  the second (and on any later try that day) "Can't be used again today". A
+  fizzle costs magicka but not one of the two. It opens the lock exactly as
+  the console's `unlock` does (`game/unlocking.py`).
 * **Slow Time** (base cost 45) slows the world to half speed for 5 seconds, a
   second more for each level past the fifth. The caster is not slowed for
   their own spell: they move, swing and recover at their normal speed --
@@ -805,6 +815,11 @@ It does nothing for anything else you do, and hearing is unchanged.
   15`, in your roll box ("YOU: ROLL TO SAVE THE SNAPPED PICK"): fail it and
   the tip shears off, jamming the lock (only Knock opens it). The lock
   window shows the risk the die rolls (`game/rpg/lockpicking.py`).
+* **Unlocked!** Whenever a lock is opened outright -- by Knock or the
+  console -- "Unlocked!" goes in the roll log, bold gold on its own dark
+  strip. The console's `unlock` (Play Mode) pauses the world, highlights the
+  container under the mouse and unlocks the one clicked if it is locked or
+  jammed; one already open is left alone. Esc or a right-click cancels.
 
 ---
 
@@ -896,6 +911,10 @@ It does nothing for anything else you do, and hearing is unchanged.
   in the map. Animals wear their own kind's art, spread evenly over a herd.
 * **No split screen:** F9 does nothing; players on one computer share the
   overhead view through Multiplayer's local co-op.
+* **Roll log** (bottom left): the last explained rolls, newest at the
+  bottom, each in the colour of its outcome -- at most **6 lines**, each
+  shown **8 s** and fading over its last second. A few events (such as
+  "Unlocked!") are drawn prominent: larger, bold gold on a dark strip.
 * **Fonts:** MedievalSharp for names and headings; Texturina Light for small
   text, never under 11 px.
 
@@ -1149,6 +1168,44 @@ Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
   cannot be found sends nobody. A townsperson taken into a scene carries their
   own things and comes home with what they have then. A
   staged party waits 3 game hours, then goes back to ordinary life.
+* **Talk and thoughts.** People in a scene speak and think about it, from
+  the facts the scene was cast from and nothing else; a line needing a fact
+  the scene does not have is never said (`game/living/scene_talk.py`).
+  * *Conversation:* one topic, first on their own conversation (all of which
+    is kept). A waylaid traveller ("What happened here?") names the gang's
+    leader, where they were bound and the camp the gang came from; a captive
+    ("What happened to you?") where they were taken, by whom and how many;
+    an avenger ("Tell me about <culprit>.") the deed, how they know it (saw
+    it, or were told) and where the culprit is; the watch after a fight with
+    brigands whose gang it was; someone grateful ("Do I know you?") what you
+    did for them.
+  * *Thoughts:* each scene has its own for waiting, fleeing and fighting
+    ("My purse... my life...", "Black Rook will pay for Aldo.", "Easy
+    pickings."), shown at once when first seen; any urgent reason of the
+    actor's own (alert, searching, pursuing) still wins.
+  * *On the approach:* within 1,100 units of a scene still in play, every
+    6--11 s someone in it speaks or shows a thought (40% a thought): brigands
+    taunt their victim by name, the victim pleads, cultists chant around the
+    captive, the avenger mutters, the watch calls on brigands to yield.
+    Nobody fighting or fleeing does.
+* **Repayment.** Someone come for what you took ("What do you want?") names
+  it and the sum that squares it: what the stolen thing was worth, at least
+  5 gold; 10 for a picked lock where nothing was taken. You may pay ("Here:
+  N gold.", offered only if you have it), say you haven't got it, or refuse
+  (words only). Paying closes the conversation; they answer in a speech
+  bubble.
+  * *Calm:* they take it. The gold goes to their pack, the theft is
+    settled (they want nothing more for it) and the scene is over.
+  * *Resentful* (disposition under 30) or *infuriated* (under 10, or furious
+    over a burnt field): a d20 in your roll box, "<name> takes the gold", at
+    35% (infuriated) or 60% (resentful) + Speechcraft × 0.2%, 5--95%, told
+    when the die lands. Success: they take it grudgingly, and it is settled
+    as above. Failure: they refuse it ("Gold? You think gold mends this?") and
+    **attack you**, and will never take it later. Then a **d6 + your Luck
+    bonus** (the attack-roll one: +1 per full 20 points of Luck above 40, −1 per
+    full 20 below) of **4 or more** keeps your gold; less, and they take it
+    anyway -- it goes to their inventory -- and still fight. The theft stays
+    unsettled.
 * **Where.** Always on a road you are on (within 900 units of it), ahead of
   you, 1,150--1,900 units away -- beyond any actor's sight -- and, for
   hostile scenes, at least 900 units from a town. A line on screen hints at
