@@ -100,6 +100,21 @@ class ViewOverhead:
             return          # blown apart: no body, and nothing in its hands
         ctrl = view._overhead_sprite_ctrl
         ctrl.update(gpos, angle, time.perf_counter(), armed=armed, shooting=shooting)
+        corpse_fn = getattr(sess, "overhead_player_corpse", None)
+        corpse = corpse_fn() if corpse_fn is not None else None
+        if corpse:
+            # Dead: the head gone grey, the cross over it fading out.
+            from engine.overhead_sprite import ACTOR_Y, CORPSE_MARK_Y
+            grey, cross, alpha = corpse
+            sprites = view._overhead_sprite_renderer
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            sprites.draw_image(view.projection_matrix, view.view_matrix, gpos, ctrl.facing,
+                               os.path.join(root, grey))   # already at its dead opacity
+            sprites.draw_image(view.projection_matrix, view.view_matrix, gpos, ctrl.facing,
+                               os.path.join(root, cross), opacity=alpha,
+                               lift=CORPSE_MARK_Y - ACTOR_Y)
+            self._draw_actor_weapons(sess)
+            return
         flash = 0.0
         flash_fn = getattr(sess, "overhead_player_flash", None)
         if flash_fn is not None:

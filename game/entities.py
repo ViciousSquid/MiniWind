@@ -331,6 +331,10 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
         p["sprite_height"] = tmpl.scale if tmpl else 112
     # After the size: a head overrides it with the one head size.
     _apply_head_sprite(p)
+    # In Play, a corpse is this look with the cross on it (game/corpse_sprites.py).
+    from . import corpse_sprites
+    if corpse_sprites.ACTIVE:
+        corpse_sprites.mark(p)
 
     p.setdefault("inventory", [])
     p.setdefault("persistent", True)

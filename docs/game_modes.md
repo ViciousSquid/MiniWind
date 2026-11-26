@@ -62,15 +62,18 @@ The director decides **when** and **where** something happens. It never
 decides **who** or **why** out of thin air:
 
 * **The people are real.** A victim is a traveller already on the roads, or a
-  townsperson -- as themselves, with their own name, face, dialogue and purse
-  -- taken off their schedule while nobody can see them (they are hidden at
-  home while away, exactly as on a market trip). Gangs, cults and patrols
+  townsperson -- as themselves, with their own name, face, dialogue, things
+  and purse -- taken off their schedule while nobody can see them (they are
+  hidden at home while away, exactly as on a market trip), and coming home
+  with whatever they have by then. Gangs, cults and patrols
   already on the roads are borrowed before any new party is made.
 * **The motives are real.** An avenger sets out only over a grievance they
   actually hold: a death, an attack or a theft by brigands, cultists or
   monsters, which they saw or were told of in the last 10 days, against them
-  or someone close to them. If the very gang the culprit rides with is on the
-  roads, that is the gang they find. Someone who comes to settle a score with
+  or someone close to them -- and only ever after the real culprit: the party
+  the culprit rides with, if it is on the roads, or the culprit wherever they
+  are (their camp, a beast's lair). A culprit who cannot be found sends nobody;
+  no stand-in gang is ever put in their place. Someone who comes to settle a score with
   *you* does so over their own intent toward you, backed by their own memory
   of what you did -- the same evidence the storyteller uses for justified
   journeys.
@@ -108,13 +111,26 @@ As you come within 1,300 units a line on screen may hint at what is ahead --
 *"Shouts carry from the road ahead."*, *"A low chanting drifts through the
 dark."* An ambush only tells you the road has gone very quiet.
 
+### What they say
+
+The people in a scene speak as road travellers do -- greetings, battle
+shouts, cries for help as they run, thanks when saved -- with words from the
+scene itself: an avenger names who wronged them and whom, a captive begs to
+be cut loose, a cult shouts its own words. Someone come to settle a
+vendetta or a reckoning opens the fight one of three ways, at random: a
+brief introduction ("You killed Aldo. I've come for you."), an insult
+("Murdering filth!") or a scream as they charge ("MURDERER!", "For Aldo!")
+-- then they fight at once, and never open twice.
+
 ### Stepping in
 
 * **Rescues.** When the attackers are dead and you come within 380 units of
   whoever they were attacking, the survivors thank you and pay a reward from
-  their own purse (10--120 gold). News that you came to someone's aid spreads
+  the gold they actually hold (about half, at least 10 and at most 120, never
+  more than they have; nothing if their purse is empty). News that you came to someone's aid spreads
   from the nearest place. A freed captive walks home.
-* **Quests.** An avenger's quest is an ordinary quest in your journal, with a
+* **Quests.** An avenger's quest -- to kill the culprit, by name -- offers
+  what the avenger actually has. It is an ordinary quest in your journal, with a
   waypoint on the gang's leader; the reward is what the avenger can afford.
 * **Gifts.** Someone grateful hands you a little gold when you meet.
 

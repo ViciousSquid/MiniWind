@@ -113,3 +113,64 @@ def test_magical_gib_uses_disintegration_splatter():
     assert _mark_gibbed(magical, 200, -100, magical=True) is True
     assert magical["gib_magical"] is True
     assert "disintegrate/" in magical["gib_sprite"]
+
+
+# -- gib.mp3: the body explodes ----------------------------------------------------
+def _gib_session():
+    from types import SimpleNamespace
+    from .test_bow_draw import _session
+    s, _shots = _session()
+    heard = []
+    s.play_sound_at = lambda name, pos, volume=1.0, radius=900.0: heard.append((name, tuple(pos))) or True
+    s.logic.player = SimpleNamespace(pos=(10.0, 64.0, 20.0), angle=0.0)
+    return s, heard
+
+
+def _body(**props):
+    from types import SimpleNamespace
+    return SimpleNamespace(pos=[300.0, 56.0, -40.0],
+                           properties={"health": 0, "max_health": 50, "npc_role": "villager",
+                                       "sprite_width": 96, **props})
+
+
+def test_an_exploding_body_plays_gib_mp3_once_from_where_it_stood():
+    from .. import runtime as rt
+    s, heard = _gib_session()
+    body = _body(gibbed=True)
+    s._gore_hit(body, 200.0, killed=True)
+    s._gore_hit(body, 200.0, killed=True)              # more blows on the pieces: once
+    assert heard == [(rt.GIB_SOUND, (300.0, 56.0, -40.0))] and rt.GIB_SOUND == "gib.mp3"
+
+
+def test_an_ordinary_kill_or_a_disintegration_is_not_an_explosion():
+    s, heard = _gib_session()
+    s._gore_hit(_body(), 40.0, killed=True)            # a clean kill
+    s._gore_hit(_body(gibbed=True, gib_magical=True), 200.0, killed=True, magical=True)
+    assert heard == []
+
+
+def test_the_player_blown_apart_plays_it_too():
+    from types import SimpleNamespace
+    from .. import runtime as rt
+    s, heard = _gib_session()
+    c = s.game.character
+    blow = c.max_health * 3
+    c.health = 0                                      # the killing blow has landed
+    assert s._gib_player(c, blow, SimpleNamespace(pos=(0.0, 0.0, 0.0)))
+    assert heard == [(rt.GIB_SOUND, (10.0, 64.0, 20.0))]
+
+
+def test_gib_mp3_ships_and_is_found():
+    from pathlib import Path
+    from .. import runtime as rt
+    data = (Path(rt.SOUND_DIR) / rt.GIB_SOUND).read_bytes()
+    assert data[:3] == b"ID3" or data[0] == 0xFF
+    assert rt.sound_available(rt.GIB_SOUND)
+
+
+def test_the_explosion_is_heard_from_the_victim_never_the_attacker():
+    from .. import runtime as rt
+    s, heard = _gib_session()
+    body = _body(gibbed=True)
+    s._gore_hit(body, 200.0, killed=True, by_player=False, source=[-900.0, 64.0, 500.0])
+    assert heard == [(rt.GIB_SOUND, (300.0, 56.0, -40.0))]          # the body, not the attacker

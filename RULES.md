@@ -413,6 +413,16 @@ When the fate die fails, the save stands, and the box still shows the die
 
 ### Kills, gore and the dead
 
+* **A corpse keeps its face.** When an NPC, a creature or you die, the head
+  (or the body's own picture) stays as it was but turns greyscale, at 90%
+  opacity, and the cross from the heads folder (`assets/sprites/heads/dead.png`,
+  in its own colours) is laid over it, fitted to the head but never smaller
+  than a crab's (64 px): a chicken, drawn at 50, gets the same 64 px cross,
+  its head staying 50 px in the middle. After 3 seconds the cross fades out
+  over 1 second, leaving the grey head. Brought back to life, it is in colour
+  again, at its own size.
+  A body blown apart leaves no corpse, so nothing is drawn for it but the
+  gore (`game/corpse_sprites.py`).
 * A killing blow of 120% or more of the victim's health — and **every
   critical killing blow** — blows the body apart: mostly blood (a heavy
   spray, dark chunks, pools), and a few jagged pieces of the body's own
@@ -425,6 +435,9 @@ When the fate die fails, the save stands, and the box still shows the die
   a map can give one actor its own (`body_size`). Pieces that fly off: a
   hen 2, a small body 3, a person 4, a bear 6, anything huge 8. Every wound
   and pool of blood is smaller from a smaller body too.
+* A body blown apart is heard exploding (`assets/sounds/gib.mp3`), once, from
+  where it stood -- yours too. A magical killing blow disintegrates rather
+  than explodes, and is not.
 * A body blown apart can never be resurrected, and Death (the reaper, who
   otherwise attends one death in eight) never comes for it.
 * **Crabs feed on the dead.** A body blown apart within 650 units of water
@@ -1131,7 +1144,10 @@ Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
   thank you; the watch fighting brigands; and after dark, ambushes, cult
   processions and cult rites with a townsperson held captive (cults hold
   their rite 2.5 game hours). A rescued party thanks you from 380 units and
-  pays a reward from its own purse (10--120 gold). A
+  pays a reward from the gold it actually holds (about half, 10--120, never
+  more than it has). An avenger only ever pursues the real culprit; one who
+  cannot be found sends nobody. A townsperson taken into a scene carries their
+  own things and comes home with what they have then. A
   staged party waits 3 game hours, then goes back to ordinary life.
 * **Where.** Always on a road you are on (within 900 units of it), ahead of
   you, 1,150--1,900 units away -- beyond any actor's sight -- and, for
