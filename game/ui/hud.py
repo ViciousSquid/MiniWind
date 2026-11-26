@@ -2387,7 +2387,7 @@ ROLL_LOG_FADE = 1.0
 
 
 #: A prominent roll-log line ("Unlocked!"): bright gold, bold and larger, on
-#: a deep plate with a gold edge, so it stands out from the rolls around it.
+#: a deep plate, so it stands out from the rolls around it.
 _LOG_GOLD = (255, 214, 90)
 _LOG_PLATE = (40, 26, 0)
 
@@ -2395,7 +2395,7 @@ _LOG_PLATE = (40, 26, 0)
 def _draw_prominent_log_line(painter, x, y, text, alpha):
     fm = QFontMetrics(T.font(12, True, family="Segoe UI"))
     rect = QRect(x, y - 2, fm.horizontalAdvance(text) + 22, ROLL_LOG_LINE + 2)
-    painter.setPen(QPen(QColor(*_LOG_GOLD, alpha), 1.5))
+    painter.setPen(Qt.NoPen)
     painter.setBrush(QColor(*_LOG_PLATE, int(alpha * 0.85)))
     painter.drawRoundedRect(rect, 3, 3)
     T.text_in(painter, rect.adjusted(10, 0, -6, 0), text, size=12, bold=True,
