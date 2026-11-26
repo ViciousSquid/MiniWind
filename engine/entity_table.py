@@ -224,6 +224,8 @@ def _monster_sprite_candidates(props):
     candidates in order and caches the first one that actually loads, so this
     stays GL-free and does not add per-frame filesystem checks.
     """
+    if props.get('dead') and props.get('gibbed'):
+        return ()                # blown apart: no corpse to draw, only the gore
     if props.get('dead'):
         custom, sprite_type = props.get('custom_dead', ''), 'dead'
     elif props.get('is_shooting'):

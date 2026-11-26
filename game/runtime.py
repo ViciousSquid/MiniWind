@@ -32,7 +32,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from . import controls, fio
+from . import controls, corpse_sprites, fio
 from .facing import face_heading, heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
@@ -2084,6 +2084,7 @@ class MiniwindSession(SettlementLaw):
 
     # ================================================================= setup
     def install(self) -> None:
+        corpse_sprites.ACTIVE = True       # actors built in Play get their corpse image
         """Attach the RPG to the logic thread (damage filter, faction model)."""
         global _current_session
         _current_session = self
@@ -2160,6 +2161,7 @@ class MiniwindSession(SettlementLaw):
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
+        corpse_sprites.ACTIVE = False
         global _current_session
         _current_session = None
         self._restore_district_borders()    # the map's paint as its file has it
@@ -2468,6 +2470,39 @@ class MiniwindSession(SettlementLaw):
         self.shake(*GIB_SHAKE)
         self.gore.flash_red(0.55)
         return True
+
+    def _fade_corpse_crosses(self) -> None:
+        """Each new corpse's cross fades out a few seconds after the death
+        (game/corpse_sprites.py). Walks the dead rows only."""
+        fader = self.__dict__.get("_corpse_fader")
+        if fader is None:
+            fader = self._corpse_fader = corpse_sprites.CorpseFader()
+        wi = self._world_index()
+        if wi is None:
+            corpses = [t for kind in ("npc", "creature", "monster")
+                       for t in self._things_of_type(kind) if t.properties.get("dead")]
+        else:
+            actors = wi.actors
+            corpses = [actors[i] for i in np.flatnonzero(wi.dead[:wi.n]).tolist()]
+        if corpses or fader._dying:
+            fader.update(corpses, touch=_journal)
+
+    def overhead_player_corpse(self):
+        """The player's corpse for the overhead view, or None while alive (or
+        blown apart): ``(grey head path, cross path, cross opacity)`` -- the
+        head gone grey with the cross over it, fading after a few seconds."""
+        c = self.game.character
+        if not c.is_dead or self.player_body_gone():
+            self.__dict__.pop("_player_died_at", None)
+            return None
+        import time as _time
+        now = _time.monotonic()
+        died = self.__dict__.setdefault("_player_died_at", now)
+        look = getattr(self.logic, "player_head_sprite", None) or ""
+        grey = corpse_sprites.corpse_sprite(look, corpse_sprites.FADE_STEPS) if look else None
+        if grey is None:
+            return None
+        return grey, corpse_sprites.CROSS, corpse_sprites.cross_alpha(now - died)
 
     def player_body_gone(self) -> bool:
         """Whether the player was blown apart: the overhead view draws no
@@ -2860,6 +2895,9 @@ class MiniwindSession(SettlementLaw):
                 p.pop("custom_dead", None)
                 _journal(t)
                 changed = True
+            # A corpse is this look with the cross on it (game/corpse_sprites.py).
+            if corpse_sprites.mark(p):
+                _journal(t)
 
         # The board holds real people even when they are not materialised.
         # Reserve them *now*, before an unrelated NPC can claim their face.
@@ -3071,6 +3109,7 @@ class MiniwindSession(SettlementLaw):
         self._update_bolt_lights(delta)
         self.stuck_arrows.update()
         self.near_miss.update()
+        self._fade_corpse_crosses()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
@@ -10085,6 +10124,9 @@ class MiniwindSession(SettlementLaw):
             return False
         p["dead"] = False
         p["hidden"] = False
+        # Its next death has a cross again (game/corpse_sprites.py).
+        p.pop("_cross_faded", None)
+        corpse_sprites.mark(p)
         p["is_shooting"] = False
         _journal(thing)
         try:

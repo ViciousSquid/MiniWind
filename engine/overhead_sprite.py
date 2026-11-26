@@ -841,6 +841,41 @@ class OverheadSpriteRenderer:
                 opacity=opacity,
             )
 
+    def draw_image(
+        self,
+        projection,
+        view,
+        pos,
+        facing: float,
+        path: str,
+        opacity: float = 1.0,
+        lift: float = 0.0,
+    ) -> None:
+        """Draw the image at *path* as the actor's sprite would be -- same
+        place, size and turn -- *lift* above the actor layer, at *opacity*
+        (a corpse's grey head, and the cross fading over it)."""
+        if not path or opacity <= 0.0 or not self._ready():
+            return
+        key = "image:" + str(path)
+        texture = self._textures.get(key)
+        if not texture:
+            texture = self._load_texture(path)
+            if texture:
+                self._textures[key] = texture
+        if not texture:
+            return
+        self._draw_texture(
+            projection,
+            view,
+            pos,
+            facing,
+            texture,
+            self.size,
+            self.y_offset + float(lift),
+            rotation_offset=math.radians(HEAD_FACING_OFFSET_DEG),
+            opacity=float(opacity),
+        )
+
     def draw_weapon(
         self,
         projection,
