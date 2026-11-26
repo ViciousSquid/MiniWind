@@ -61,6 +61,11 @@ class ScenarioContext:
         from .. import scenarios
         return scenarios.RITE_HOURS
 
+    @property
+    def thank_radius(self):
+        from .. import scenarios
+        return scenarios.THANK_RADIUS
+
     def _no(self, why):
         return self._director._no(why)
 

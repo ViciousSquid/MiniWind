@@ -1,5 +1,7 @@
 """Cult Rite: a real resident captive, real cultists and a persistent death consequence."""
 
+import math
+
 from ...sim import story_text
 from .base import BaseScenario
 

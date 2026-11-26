@@ -1,5 +1,7 @@
 """Gratitude: a resident who remembers the player's help comes to thank them."""
 
+import math
+
 from .reckoning import MeetingScenario
 
 
@@ -29,7 +31,7 @@ class GratitudeScenario(MeetingScenario):
         if not things:
             return
         lead = things[0]
-        if math.hypot(lead.pos[0] - px, lead.pos[2] - pz) > THANK_RADIUS:
+        if math.hypot(lead.pos[0] - px, lead.pos[2] - pz) > ctx.thank_radius:
             return
         s = ctx.session
         scene["resolved"] = True
