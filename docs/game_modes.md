@@ -108,6 +108,17 @@ As you come within 1,300 units a line on screen may hint at what is ahead --
 *"Shouts carry from the road ahead."*, *"A low chanting drifts through the
 dark."* An ambush only tells you the road has gone very quiet.
 
+### What they say
+
+The people in a scene speak as road travellers do -- greetings, battle
+shouts, cries for help as they run, thanks when saved -- with words from the
+scene itself: an avenger names who wronged them and whom, a captive begs to
+be cut loose, a cult shouts its own words. Someone come to settle a
+vendetta or a reckoning opens the fight one of three ways, at random: a
+brief introduction ("You killed Aldo. I've come for you."), an insult
+("Murdering filth!") or a scream as they charge ("MURDERER!", "For Aldo!")
+-- then they fight at once, and never open twice.
+
 ### Stepping in
 
 * **Rescues.** When the attackers are dead and you come within 380 units of
