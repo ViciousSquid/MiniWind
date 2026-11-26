@@ -230,3 +230,28 @@ def test_both_windows_collapse_to_their_strip_and_pin_on_top(qt_app):
             assert not win.windowFlags() & Qt.WindowStaysOnTopHint
         finally:
             win.close()
+
+
+@pytest.mark.qt
+def test_debug_menu_storyteller_runs_the_console_command(qt_app, monkeypatch):
+    from PyQt5.QtWidgets import QAction, QMainWindow
+    from .. import integration
+
+    window = QMainWindow()
+    window.debug_menu = window.menuBar().addMenu("Debug")
+    window.position_action = QAction("Position", window)
+    window.debug_menu.addAction(window.position_action)
+    window.debug_menu.addAction(QAction("Project Overview", window))
+    logic = SimpleNamespace(_miniwind=None)
+    window.view_3d = SimpleNamespace(play_mode=True, logic_thread=logic)
+    integration._add_debug_menu_entries(window)
+    integration._add_debug_menu_entries(window)              # added once
+    labels = [a.text() for a in window.debug_menu.actions()]
+    assert labels == ["Position", "Project Overview", "Storyteller", "World Map"]   # alphabetical
+    calls = []
+    monkeypatch.setattr(console, "cmd_storyteller", lambda ctx, args: calls.append((ctx, args)))
+    window.storyteller_action.trigger()
+    ctx, args = calls[-1]
+    assert args == "" and ctx.play_mode is True and ctx.logic_thread is logic
+    assert ctx.main_window is window
+    window.close()

@@ -252,7 +252,7 @@ def _hide_camera_dropdown(MainWindow):
 def _add_debug_menu_entries(MainWindow):
     """Debug > World Map: the world map in a window with the editor camera on
     it (the ``worldmap`` console command), after Position, the other camera
-    tool."""
+    tool; then Debug > Storyteller (the ``storyteller`` console command)."""
     debug = getattr(MainWindow, "debug_menu", None)
     if debug is None or getattr(debug, "_miniwind_world_map_added", False):
         return
@@ -275,6 +275,34 @@ def _add_debug_menu_entries(MainWindow):
         debug.addAction(action)
     MainWindow.world_map_action = action
     debug._miniwind_world_map_added = True
+
+    if not getattr(debug, "_miniwind_storyteller_added", False):
+        story = QAction("Storyteller", MainWindow)
+        story.setToolTip("What the storyteller is doing, and in Dynamic mode every decision the "
+                         "director took and why, in its own window (console: storyteller; Play Mode)")
+        story.triggered.connect(lambda _checked=False: open_storyteller(MainWindow))
+        actions = debug.actions()
+        after = actions.index(action) + 1 if action in actions else len(actions)
+        if after < len(actions):
+            debug.insertAction(actions[after], story)
+        else:
+            debug.addAction(story)
+        MainWindow.storyteller_action = story
+        debug._miniwind_storyteller_added = True
+    # The Debug menu reads alphabetically, MiniWind's entries included.
+    from editor.menu_order import sort_menu_alphabetically
+    sort_menu_alphabetically(debug)
+
+
+def open_storyteller(MainWindow):
+    """Debug > Storyteller: exactly the ``storyteller`` console command, with
+    the same context the console hands it (the 3D view's play session)."""
+    from . import console
+    view = getattr(MainWindow, "view_3d", None)
+    play = bool(getattr(view, "play_mode", False)) if view is not None else False
+    logic = getattr(view, "logic_thread", None) if view is not None else None
+    ctx = console.ConsoleContext(logic_thread=logic, play_mode=play, main_window=MainWindow)
+    return console.cmd_storyteller(ctx, "")
 
 
 def _add_tools_menu_entries(MainWindow):

@@ -11,6 +11,7 @@ from PyQt5.QtCore import Qt, QSize, QByteArray, QRect
 from PyQt5.QtGui import QIcon, QKeySequence, QPainter
 
 from editor.view_2d import View2D
+from editor.menu_order import sort_menu_alphabetically
 from engine.qt_game_view import QtGameView
 from engine.view_distance import (
     DEFAULT_VIEW_DISTANCE, MAX_VIEW_DISTANCE, MIN_VIEW_DISTANCE)
@@ -21,6 +22,7 @@ from editor.asset_browser import THUMBNAIL_SIZES, AssetBrowser
 from editor.debug_console import DebugConsole
 
 import math
+
 
 def snug_width(box):
     """Fix *box*'s width to what its content needs: a spin box's widest value
@@ -852,8 +854,8 @@ class Ui_MainWindow(object):
         MainWindow.debug_tables_action.triggered.connect(_open_debug_tables)
         MainWindow.debug_menu.addAction(MainWindow.project_overview_action)
         MainWindow.debug_menu.addAction(MainWindow.validate_action)
-        MainWindow.debug_menu.addSeparator()
         MainWindow.debug_menu.addAction(MainWindow.debug_tables_action)
+        sort_menu_alphabetically(MainWindow.debug_menu)
 
         view_menu.addSeparator()
         toggle_triggers_action = QAction('Opaque Triggers', MainWindow, checkable=True)
