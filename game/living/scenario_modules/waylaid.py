@@ -2,12 +2,14 @@
 
 from .. import scene_talk
 from ...sim import story_text
-from .base import BaseScenario, _scenarios
+from .base import BaseScenario
 
 
 class WaylaidScenario(BaseScenario):
     kind = "waylaid"
     display_name = "Waylaid Traveller"
+    scene_name = "a traveller waylaid"
+    hints = ("Shouts carry from the road ahead.", "Someone is crying for help up the road.")
     THOUGHTS = {
         "victim": {
             "calm": ("Keep still. Don't look at them.", "Not here... not now.",
@@ -52,7 +54,7 @@ class WaylaidScenario(BaseScenario):
         if spot is None:
             return ctx._no("no road the player is on has a free spot out of sight ahead")
         x, z = spot[7], spot[8]
-        victim = ctx._borrow(_scenarios().PEACEFUL_KINDS, (x, z))
+        victim = ctx._borrow(ctx.peaceful_kinds, (x, z))
         if victim is None:
             return ctx._no("no peaceful traveller off screen within reach to be waylaid")
         gang, borrowed = ctx._gang((x, z), t)

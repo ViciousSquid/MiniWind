@@ -1,12 +1,14 @@
 """Cult Rite: a real resident captive, real cultists and a persistent death consequence."""
 
 from ...sim import story_text
-from .base import BaseScenario, _scenarios
+from .base import BaseScenario
 
 
 class CultRiteScenario(BaseScenario):
     kind = "cult_rite"
     display_name = "Cult Rite"
+    scene_name = "a cult rite with a captive"
+    hints = ("A low chanting drifts through the dark.", "Torchlight flickers off the road ahead.")
     THOUGHTS = {
         "victim": {"calm": ("Someone, please...", "I don't want to die here.",
                             "I should be home in {home}.")},
@@ -20,7 +22,10 @@ class CultRiteScenario(BaseScenario):
                      "Another for the altar.", "Sing, brothers. The night is listening."),
     }
 
-    def topic(self, role, talk, want=""):
+    def thank_line(self, scene):
+        return "You came for me... I thought I was done for. Thank you."
+
+    def topic(self, role, talk, want="")
         if role != "victim":
             return None
         from .. import scene_talk as st
@@ -58,7 +63,7 @@ class CultRiteScenario(BaseScenario):
                         f"by the road near {board.place_name(place)}.", t, place, "death")
         captive.news.append(nid)
         scene["resolved"] = True
-        ctx._narrate(f"Outcome: nobody came for {name} within {_scenarios().RITE_HOURS:g} game hours, so the rite "
+        ctx._narrate(f"Outcome: nobody came for {name} within {ctx.rite_hours:g} game hours, so the rite "
                       f"was finished and {name} is lost. News spread from "
                       f"{board.place_name(place)}, and {name}'s family were told -- a real grievance "
                       "that may send one of them out for revenge.", scene=scene["id"])
@@ -89,9 +94,9 @@ class CultRiteScenario(BaseScenario):
         captive = ctx._new_journey("captive", [member], [(x, z), (x + 1.0, z + 1.0)],
                                     r["home"], t, home=r["home"])
         ctx._take_resident(captive, r["id"])
-        ctx._hold(captive, x, z, sid, "victim", t, hours=_scenarios().RITE_HOURS,
+        ctx._hold(captive, x, z, sid, "victim", t, hours=ctx.rite_hours,
                    greeting="Please -- cut me loose before they come back!", wander=8.0)
-        ctx._hold(cult, x + 70.0, z + 40.0, sid, "attacker", t, hours=_scenarios().RITE_HOURS,
+        ctx._hold(cult, x + 70.0, z + 40.0, sid, "attacker", t, hours=ctx.rite_hours,
                    borrowed=borrowed, wander=140.0)
         ctx._keep_apart(captive, cult)
         name = member["display"]
@@ -105,7 +110,7 @@ class CultRiteScenario(BaseScenario):
                       f"because it is night and {name} was the nearest townsperson nobody could see."),
             result=(f"Spawned {ctx._lead(cult)}'s cult ({ctx._from(cult, borrowed)}) and {name} "
                     f"({ctx._from(captive, False)}), held captive, {ctx._where(x, z)}. If nobody "
-                    f"breaks up the rite within {_scenarios().RITE_HOURS:g} game hours, {name} is lost and their "
+                    f"breaks up the rite within {ctx.rite_hours:g} game hours, {name} is lost and their "
                     "family hear of it."))
 
     def stage_expired(self, ctx, journey, scene, role, t):

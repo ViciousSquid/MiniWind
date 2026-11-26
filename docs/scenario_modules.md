@@ -16,9 +16,11 @@ implementation of each encounter.
 - `procession.py`: cultists travel along a road at night.
 - `cult_rite.py`: cultists hold a real resident captive during a rite.
 
-Each module owns its scene-specific staging, dialogue, thoughts and ambient
-lines. Cult Rite also owns its expiry consequence; Avenger owns its grievance
-and culprit resolution and the behaviour of an avenger who proceeds alone.
+Each module owns its scene-specific staging, dialogue, thoughts, ambient lines,
+decision-log name, approach hints and lifecycle hooks. The Director routes
+approach/watch/rescue events through those hooks and retains only the common
+journey bookkeeping. Cult Rite also owns its expiry consequence; Avenger owns
+its grievance and culprit resolution, remote-culprit watch and quest reward.
 Reckoning and Gratitude share the evidenced-meeting mechanism but own their
 distinct outcomes.
 
@@ -28,8 +30,9 @@ Each module has a stable `kind` and a
 `stage(context, game_hours)` entry point. `ScenarioContext`
 in `base.py` exposes only the shared world operations needed to stage
 an encounter: road selection, party borrowing and creation, resident extraction,
-journey staging, location descriptions and scene recording. Modules do not
-receive the Scenario Director itself.
+journey staging, location descriptions, scene recording and the small set of
+scenario-tuning values used by existing saves. Modules do not receive the
+Scenario Director itself.
 
 The Director still owns Dynamic enablement, tension/intensity, build/sustain/
 fade/relax pacing, weighted selection, concurrent-scene limits, Storyteller

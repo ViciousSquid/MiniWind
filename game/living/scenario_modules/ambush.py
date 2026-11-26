@@ -7,10 +7,15 @@ from .base import BaseScenario
 class AmbushScenario(BaseScenario):
     kind = "ambush"
     display_name = "Ambush"
+    scene_name = "an ambush"
+    hints = ("The road ahead has gone very quiet.",)
     THOUGHTS = {
         "attacker": {"calm": ("Quiet now. Wait for it.", "Here they come...",
                               "Nobody move till they're close.")},
     }
+
+    def watch(self, ctx, scene, px, pz, t):
+        return self.watch_solo_attacker(ctx, scene)
 
     def stage(self, ctx, t):
         spot = ctx._road_ahead(hostile=True)

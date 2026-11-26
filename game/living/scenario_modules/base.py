@@ -31,6 +31,36 @@ class ScenarioContext:
     def scenes(self):
         return self._director.scenes
 
+    @property
+    def peaceful_kinds(self):
+        from .. import scenarios
+        return scenarios.PEACEFUL_KINDS
+
+    @property
+    def outlaw_factions(self):
+        from .. import scenarios
+        return scenarios.OUTLAW_FACTIONS
+
+    @property
+    def grievance_days(self):
+        from .. import scenarios
+        return scenarios.GRIEVANCE_DAYS
+
+    @property
+    def quarry_gap(self):
+        from .. import scenarios
+        return scenarios.QUARRY_GAP
+
+    @property
+    def hold_hours(self):
+        from .. import scenarios
+        return scenarios.HOLD_HOURS
+
+    @property
+    def rite_hours(self):
+        from .. import scenarios
+        return scenarios.RITE_HOURS
+
     def _no(self, why):
         return self._director._no(why)
 
@@ -101,6 +131,12 @@ class ScenarioContext:
     def _live_things(self, jid):
         return self._director._live_things(jid)
 
+    def _party_up(self, jid):
+        return self._director._party_up(jid)
+
+    def _learn_scene(self, scene, stepped_in, how):
+        return self._director._learn_scene(scene, stepped_in, how)
+
     def _purse(self, journey, lead):
         return self._director._purse(journey, lead)
 
@@ -118,8 +154,41 @@ class BaseScenario:
     """Identity plus shared formatting for scene-derived dialogue."""
     kind = ""
     display_name = ""
+    scene_name = ""
+    hints = ()
     THOUGHTS = {}
     AMBIENT = {}
+
+    def watch(self, ctx, scene, px, pz, t):
+        """Handle scenario-specific watch behaviour; return True when consumed."""
+        return False
+
+    def thank_line(self, scene):
+        return "Gods bless you, stranger -- they'd have had everything."
+
+    def reward(self, ctx, scene, journey, lead, purse):
+        if not scene.get("reward") or journey is None:
+            return 0
+        want = min(120, purse // 2 + ctx.session.rng.randint(5, 25))
+        return ctx._pay(journey, lead, min(purse, max(10, want)))
+
+    def learned_intervention(self, name):
+        return f"they came to {name}'s aid"
+
+    def watch_solo_attacker(self, ctx, scene):
+        """Resolve a scene whose only party is the attacking side."""
+        journeys = scene.get("journeys") or {}
+        if set(journeys) != {"attacker"}:
+            return False
+        if not ctx._party_up(journeys["attacker"]) and scene.get("hinted"):
+            from ...sim import story_text
+            scene["resolved"] = True
+            ctx._learn_scene(scene, True, "they took the fight to it")
+            ctx._narrate(
+                f"Outcome: {self.scene_name or self.display_name} is over -- "
+                f"{story_text.PLAYER} came near and the attackers are gone.",
+                scene=scene["id"])
+        return True
 
     def thoughts(self, role, talk, want=""):
         from .. import scene_talk

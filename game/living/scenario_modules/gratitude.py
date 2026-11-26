@@ -6,6 +6,8 @@ from .reckoning import MeetingScenario
 class GratitudeScenario(MeetingScenario):
     kind = "gratitude"
     display_name = "Gratitude"
+    scene_name = "someone grateful to you"
+    hints = ("A familiar face is coming down the road.",)
     THOUGHTS = {
         "seeker": {
             "gratitude": {"calm": ("There they are. I owe them.", "I never thanked them properly.")},
@@ -14,6 +16,12 @@ class GratitudeScenario(MeetingScenario):
 
     def stage(self, ctx, t):
         return self.meet(ctx, t, ("gratitude",), "gratitude", False)
+
+    def watch(self, ctx, scene, px, pz, t):
+        if scene.get("gift"):
+            self.maybe_gift(ctx, scene, px, pz, t)
+            return True
+        return False
 
     def maybe_gift(self, ctx, scene, px, pz, t):
         jid = scene["journeys"].get("seeker")

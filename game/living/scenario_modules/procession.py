@@ -7,6 +7,8 @@ from .base import BaseScenario
 class ProcessionScenario(BaseScenario):
     kind = "procession"
     display_name = "Cult Procession"
+    scene_name = "a cult procession"
+    hints = ("Hooded figures walk the road ahead.",)
     THOUGHTS = {
         "attacker": {"calm": ("Walk in silence. Walk in shadow.", "The dark goes with us.")},
     }
@@ -14,6 +16,9 @@ class ProcessionScenario(BaseScenario):
         "attacker": ("By ash and by ember...", "Walk in shadow. Walk in silence.",
                      "The dark goes before us."),
     }
+
+    def watch(self, ctx, scene, px, pz, t):
+        return self.watch_solo_attacker(ctx, scene)
 
     def stage(self, ctx, t):
         spot = ctx._road_ahead(hostile=True)

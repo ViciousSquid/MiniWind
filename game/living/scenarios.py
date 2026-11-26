@@ -59,7 +59,7 @@ from ..sim import story_text
 from . import journeys as jn
 from . import scene_talk
 from . import roads
-from .scenario_modules import create_modules
+from .scenario_modules import create_modules, MODULE_TYPES
 from .scenario_modules.base import ScenarioContext
 
 #: The store key the director's scenes are saved under.
@@ -123,11 +123,7 @@ GRIEVANCE_DAYS = 10
 DECISION_CAP = 60
 
 #: Each scene kind in plain words, for the decision log.
-SCENE_NAMES = {"waylaid": "a traveller waylaid", "avenger": "a townsperson out for revenge",
-               "reckoning": "someone settling a score with you",
-               "gratitude": "someone grateful to you", "cult_rite": "a cult rite with a captive",
-               "procession": "a cult procession", "ambush": "an ambush",
-               "patrol": "the watch fighting brigands"}
+SCENE_NAMES = {kind: scenario_type.scene_name for kind, scenario_type in MODULE_TYPES.items()}
 PHASE_NAMES = {"build": "Building tension", "sustain": "At the peak",
                "fade": "Easing off", "relax": "Resting"}
 
@@ -181,16 +177,6 @@ def retune(values) -> None:
         target.update(values.get(table) or {})
 
 
-HINTS = {
-    "waylaid": ("Shouts carry from the road ahead.", "Someone is crying for help up the road."),
-    "avenger": ("Someone waits by the road ahead, blade in hand.",),
-    "cult_rite": ("A low chanting drifts through the dark.", "Torchlight flickers off the road ahead."),
-    "procession": ("Hooded figures walk the road ahead.",),
-    "ambush": ("The road ahead has gone very quiet.",),
-    "patrol": ("Steel rings out on the road ahead.",),
-    "reckoning": ("Someone is walking the road toward you with purpose.",),
-    "gratitude": ("A familiar face is coming down the road.",),
-}
 
 
 #: How someone come to settle a score opens the fight: a brief
@@ -1116,33 +1102,22 @@ class ScenarioDirector:
                 anchor = self._anchor(scene)
                 if anchor is not None and math.hypot(anchor[0] - px, anchor[1] - pz) <= HINT_RADIUS:
                     scene["hinted"] = True
-                    lines = HINTS.get(scene["kind"])
+                    module = self.modules.get(scene["kind"])
+                    lines = module.hints if module is not None else ()
                     if lines:
                         s.notify(s.rng.choice(lines), 4.0)
             if scene["resolved"]:
                 continue
             self._ambient(scene, px, pz)
+            module = self.modules.get(scene["kind"])
+            if module is not None and module.watch(self.context, scene, px, pz, t):
+                continue
             js = scene["journeys"]
-            if scene.get("gift"):
-                self._maybe_gift(scene, px, pz, t)
-                continue
-            if set(js) == {"attacker"}:
-                # An ambush or a procession: over when the party is gone; the
-                # player took it on if they had come near it.
-                if not self._party_up(js["attacker"]) and scene["hinted"]:
-                    scene["resolved"] = True
-                    self._learn_scene(scene, True, "they took the fight to it")
-                    self._narrate(f"Outcome: {SCENE_NAMES.get(scene['kind'], scene['kind'])} "
-                                  f"is over -- {story_text.PLAYER} came near and the attackers "
-                                  "are gone.", scene=scene["id"])
-                continue
-            if "avenger" in js and "attacker" not in js:
-                # Gone after a culprit off the roads: settled when they are dead.
-                if self.modules["avenger"].culprit_actor(self.context, scene.get("culprit") or {}) is not None:
+            has_friend = "victim" in js or "avenger" in js
+            if "attacker" in js:
+                if not has_friend or self._party_up(js["attacker"]):
                     continue
-            elif "attacker" not in js or "victim" not in js and "avenger" not in js:
-                continue
-            elif self._party_up(js["attacker"]):
+            elif "avenger" not in js:
                 continue
             friend = js.get("victim") or js.get("avenger")
             things = self._live_things(friend)
@@ -1170,25 +1145,12 @@ class ScenarioDirector:
         scene["resolved"] = True
         j = self.board.journeys.get(jid)
         name = lead.properties.get("display_name") or lead.properties.get("name") or "The traveller"
-        kind = scene["kind"]
-        line = {"cult_rite": "You came for me... I thought I was done for. Thank you.",
-                "patrol": "Good work, citizen. The watch won't forget it.",
-                "avenger": "It's done. I couldn't have -- thank you."}.get(
-            kind, "Gods bless you, stranger -- they'd have had everything.")
+        module = self.modules.get(scene["kind"])
+        line = (module.thank_line(scene) if module is not None else
+                "Gods bless you, stranger -- they'd have had everything.")
         s.bark(lead, line)
-        amount = 0
         purse = self._purse(j, lead)
-        if scene.get("reward") and j is not None:
-            # Only what they really hold: about half, at most 120.
-            want = min(120, purse // 2 + s.rng.randint(5, 25))
-            amount = self._pay(j, lead, min(purse, max(10, want)))
-        elif kind == "avenger" and scene.get("quest") and scene.get("quest_reward"):
-            # The score is settled: the quest's reward was their own purse.
-            quests = getattr(getattr(s, "game", None), "quests", None)
-            if quests is not None and quests.is_complete(scene["quest"]):
-                amount = self._pay(j, lead, min(purse, int(scene["quest_reward"])))
-                scene["quest_reward"] = 0
-                amount = 0                 # the quest paid the player; this is its source
+        amount = module.reward(self.context, scene, j, lead, purse) if module is not None else 0
         if amount:
             credit = getattr(s, "_credit_found_gold", None)
             if credit is not None:
@@ -1201,15 +1163,13 @@ class ScenarioDirector:
             j.news.append(nid)
             if j.resident or (j.stage or {}).get("borrowed"):
                 self._release(j, t)
-        self._learn_scene(scene, True, {"patrol": "they helped the watch beat the brigands",
-                                        "avenger": f"they helped {name} settle the score"}.get(
-            kind, f"they came to {name}'s aid"))
+        how = module.learned_intervention(name) if module is not None else f"they came to {name}'s aid"
+        self._learn_scene(scene, True, how)
         paid = (f" They paid {amount} gold from their own purse." if amount else
                 " They had no gold to give." if scene.get("reward") and not purse else "")
         self._narrate(f"Outcome: {story_text.PLAYER} stepped in -- the attackers are dead and {name} "
                       f"was saved.{paid} News of it spread from {self.board.place_name(place)}.",
                       scene=scene["id"], gold=amount)
-
     def _maybe_gift(self, scene, px, pz, t):
         return self.modules["gratitude"].maybe_gift(self.context, scene, px, pz, t)
     def _forget_finished(self):

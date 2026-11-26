@@ -99,6 +99,8 @@ class ReckoningScenario(MeetingScenario):
         },
     }
     display_name = "Reckoning"
+    scene_name = "someone settling a score with you"
+    hints = ("Someone is walking the road toward you with purpose.",)
 
     def stage(self, ctx, t):
         return self.meet(ctx, t, ("vendetta", "reckoning", "restitution"), "reckoning", True)

@@ -3,12 +3,14 @@
 import math
 from .. import journeys as jn, scene_talk
 from ...sim import story_text
-from .base import BaseScenario, _scenarios
+from .base import BaseScenario
 
 
 class AvengerScenario(BaseScenario):
     kind = "avenger"
     display_name = "Avenger"
+    scene_name = "a townsperson out for revenge"
+    hints = ("Someone waits by the road ahead, blade in hand.",)
     THOUGHTS = {
         "avenger": {
             "calm": ("{culprit} will pay for {whom_first}.", "For {whom_first}.", "Steady. Wait for them."),
@@ -65,9 +67,9 @@ class AvengerScenario(BaseScenario):
             for f in facts:
                 if f.get("kind") not in ("death", "attack", "theft"):
                     continue
-                if f.get("actor_faction") not in _scenarios().OUTLAW_FACTIONS:
+                if f.get("actor_faction") not in ctx.outlaw_factions:
                     continue
-                if float(f.get("certainty", 0)) < 0.5 or day - int(f.get("day", 0) or 0) > _scenarios().GRIEVANCE_DAYS:
+                if float(f.get("certainty", 0)) < 0.5 or day - int(f.get("day", 0) or 0) > ctx.grievance_days:
                     continue
                 victim = f.get("target", "")
                 tie = "" if victim == key else appraisal.relationship_to(
@@ -162,7 +164,7 @@ class AvengerScenario(BaseScenario):
             x, z = spot[7], spot[8]
             if riding is not None:
                 gang, target = riding
-                route, dest = ctx._away_from_player(spot, _scenarios().QUARRY_GAP)
+                route, dest = ctx._away_from_player(spot, ctx.quarry_gap)
                 gx, gz = route[0]
                 quarry_place = None
             else:
@@ -191,7 +193,7 @@ class AvengerScenario(BaseScenario):
             j = ctx._new_journey("avenger", [member], [(x, z), (x + 1.0, z + 1.0)], dest, t,
                                   home=ctx.board.nearest_place(thing.pos[0], thing.pos[2], jn.HOMES))
             ctx._take_resident(j, rid)
-            ctx._hold(j, x, z, sid, "avenger", t, hours=_scenarios().HOLD_HOURS * 0.5, greeting=greeting,
+            ctx._hold(j, x, z, sid, "avenger", t, hours=ctx.hold_hours * 0.5, greeting=greeting,
                        wander=50.0)
             j.stage["onward"] = [list(p) for p in route]
             j.stage["onward_dest"] = dest
@@ -212,7 +214,7 @@ class AvengerScenario(BaseScenario):
             quest_name = f"'{name}'s Score'" if quest else "none"
             if gang is not None:
                 found = (f"put {target_display}'s own band ({ctx._from(gang, True)}) "
-                         f"{_scenarios().QUARRY_GAP:,.0f} units beyond -- the party the culprit rides with")
+                         f"{ctx.quarry_gap:,.0f} units beyond -- the party the culprit rides with")
             else:
                 found = (f"{culprit} is not on the roads but is at "
                          f"{ctx.board.place_name(quarry_place)}, so {name} sets out for there")
@@ -230,12 +232,34 @@ class AvengerScenario(BaseScenario):
                 result=(f"Spawned {name} ({ctx._from(j, False)}), armed, on the road "
                         f"{ctx._where(x, z)}, and {found}. {name} offers {story_text.PLAYER} a "
                         f"quest ({quest_name}) to kill {target_display}, for what they have "
-                        f"({purse} gold); if nobody comes within {_scenarios().HOLD_HOURS * 0.5:g} game hours "
+                        f"({purse} gold); if nobody comes within {ctx.hold_hours * 0.5:g} game hours "
                         "they go alone."))
         if unfound:
             return ctx._no("; ".join(unfound))
         return ctx._no("no townsperson holds a fresh, certain grievance against outlaws "
                         "(and is out of sight, free to leave)")
+
+
+    def watch(self, ctx, scene, px, pz, t):
+        journeys = scene.get("journeys") or {}
+        if "avenger" in journeys and "attacker" not in journeys:
+            # The culprit may be elsewhere in the world rather than on the board.
+            return self.culprit_actor(ctx, scene.get("culprit") or {}) is not None
+        return False
+
+    def thank_line(self, scene):
+        return "It's done. I couldn't have -- thank you."
+
+    def reward(self, ctx, scene, journey, lead, purse):
+        if scene.get("quest") and scene.get("quest_reward"):
+            quests = getattr(getattr(ctx.session, "game", None), "quests", None)
+            if quests is not None and quests.is_complete(scene["quest"]):
+                ctx._pay(journey, lead, min(purse, int(scene["quest_reward"])))
+                scene["quest_reward"] = 0
+        return 0
+
+    def learned_intervention(self, name):
+        return f"they helped {name} settle the score"
 
     def on_stage_expired(self, ctx, journey, stage, scene, t):
         """An unmet avenger continues toward the known culprit on their own."""
@@ -244,7 +268,7 @@ class AvengerScenario(BaseScenario):
         lead = journey.leader()
         ctx._narrate(
             f"Outcome: {lead['display'] if lead else 'The avenger'} waited "
-            f"{_scenarios().HOLD_HOURS * 0.5:g} game hours, but {story_text.PLAYER} never came; they "
+            f"{ctx.hold_hours * 0.5:g} game hours, but {story_text.PLAYER} never came; they "
             "have gone after the gang alone, and the board's dice will settle it.",
             journey=journey.id)
         route = [tuple(p) for p in stage["onward"]]

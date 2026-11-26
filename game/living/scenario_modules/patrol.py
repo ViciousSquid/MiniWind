@@ -8,6 +8,8 @@ from .base import BaseScenario
 class PatrolScenario(BaseScenario):
     kind = "patrol"
     display_name = "Watch Encounter"
+    scene_name = "the watch fighting brigands"
+    hints = ("Steel rings out on the road ahead.",)
     THOUGHTS = {
         "victim": {"calm": ("Brigands about. Stay sharp.",),
                    "combat": ("Hold the line!", "For the watch!")},
@@ -18,7 +20,13 @@ class PatrolScenario(BaseScenario):
         "attacker": ("Come on then, tin-hats!", "Not so brave without your walls!"),
     }
 
-    def topic(self, role, talk, want=""):
+    def thank_line(self, scene):
+        return "Good work, citizen. The watch won't forget it."
+
+    def learned_intervention(self, name):
+        return "they helped the watch beat the brigands"
+
+    def topic(self, role, talk, want="")
         if role != "victim":
             return None
         from .. import scene_talk as st
