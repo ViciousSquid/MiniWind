@@ -968,6 +968,10 @@ class MiniwindSession(SettlementLaw):
         #: Arrows that struck a barrel stay in it, to be pulled out with the
         #: interact key (game/stuck_arrows.py).
         self.stuck_arrows = StuckArrows(self)
+        #: An arrow that flies past the player's head, missing by inches,
+        #: whooshes (game/near_miss.py).
+        from .near_miss import NearMiss
+        self.near_miss = NearMiss(self)
         import game.npc_magic as npc_magic
         self.npc_magic = npc_magic.NpcMagic(self)
         # What magic looks like: casts, bolts, impacts, wards (game/magic_fx.py),
@@ -3058,6 +3062,7 @@ class MiniwindSession(SettlementLaw):
         self.rewind.tick(delta)
         self._update_bolt_lights(delta)
         self.stuck_arrows.update()
+        self.near_miss.update()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.

@@ -458,6 +458,15 @@ shakes, never the HUD (`game/runtime.py`, `game/host.py`).
 | Your overkill | 0.032 | 0.48 |
 | Your critical killing blow | 0.044 | 0.60 |
 
+### Arrows past your head
+
+An arrow someone else loosed that flies past you, missing by inches, whooshes
+(`assets/sounds/whoosh.mp3`, heard as if by your ear). Its path must pass
+within 56 of you -- the 32 hit sphere and a few inches more -- coming toward
+you and flying on past, still in flight; once per arrow. Never your own
+arrow, never a spell, never one that hits you, sticks in something or falls
+short first (`game/near_miss.py`).
+
 ### Arrows in barrels
 
 An arrow or crossbow bolt -- yours or an archer's -- that hits a barrel sticks
