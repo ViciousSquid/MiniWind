@@ -231,3 +231,11 @@ Related implementation:
 - [Simulation subsystem contract](../game/sim/system.py)
 - [Storyteller pacing](storyteller.md)
 - [Faction simulation](factions.md)
+
+## Reusable world scenarios
+
+Dynamic encounter implementations are separate from the pacing controller.
+`game/living/scenario_modules/` contains the eight reusable encounter
+modules; the Director schedules them in Dynamic mode, while other systems can
+invoke the same implementations directly. See [Reusable world-scenario modules](scenario_modules.md)
+for the module contract, context boundary, invocation example and extension steps.
