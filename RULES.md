@@ -140,7 +140,7 @@ fading out. A Mage, and any other character who starts with spells
 (a birthsign's, a race's -- never a Warrior or Barbarian, who never use
 magic), is then shown the spellbook key ("Spellbook") the same way, at
 3 s after the first began or as soon as it has gone, whichever is later --
-never both at once. Each hint plays a ping (`assets/sounds/ping.wav`, loose or
+never both at once. Each hint plays a ping (`assets/sounds/ping.mp3`, loose or
 in a `.fiopak`; silent until that file exists) the moment it starts to fade
 in -- not for a hint that is skipped. Pressing a hint's key (by your own binding, which is
 the key shown) hides it at once; pressed before its hint shows, the hint is

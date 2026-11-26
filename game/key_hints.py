@@ -23,7 +23,7 @@ hint. A hint that has started keeps its clock while a menu, a conversation or
 the pause menu is up, and is simply not drawn meanwhile; a hint that has not
 started yet waits for play to be in view again.
 
-Each hint plays ``assets/sounds/ping.wav`` (loose, or in a ``.fiopak``) the
+Each hint plays ``assets/sounds/ping.mp3`` (loose, or in a ``.fiopak``) the
 moment it starts fading in -- once per hint, never for one that was skipped.
 Until the file exists the hint is silent.
 
@@ -44,7 +44,7 @@ DURATION = FADE_IN + HOLD + FADE_OUT
 SPELLBOOK_DELAY = 3.0
 
 #: The interface sound each hint plays as it starts to fade in.
-PING_SOUND = "ping.wav"
+PING_SOUND = "ping.mp3"
 
 #: (bindable action, the word under its key), in the order they show.
 INVENTORY = ("inventory", "Inventory")

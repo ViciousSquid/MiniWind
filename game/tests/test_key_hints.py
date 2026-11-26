@@ -377,15 +377,15 @@ def test_each_hint_pings_the_moment_it_starts_to_fade_in(monkeypatch):
     kh.arm(s)
     played = _pings(s, monkeypatch)
     kh.current(s, 0.0)                               # the inventory hint begins
-    assert played == ["ping.wav"]
+    assert played == ["ping.mp3"]
     for t in (0.25, 1.0, 2.0, 2.9):                  # fading in, held: no more
         kh.current(s, t)
-    assert played == ["ping.wav"]
+    assert played == ["ping.mp3"]
     kh.current(s, 3.0)                               # the spellbook hint begins
-    assert played == ["ping.wav", "ping.wav"]
+    assert played == ["ping.mp3", "ping.mp3"]
     for t in (3.5, 5.0, 6.5):
         kh.current(s, t)
-    assert played == ["ping.wav", "ping.wav"]
+    assert played == ["ping.mp3", "ping.mp3"]
 
 
 def test_a_skipped_hint_does_not_ping(monkeypatch):
@@ -397,7 +397,7 @@ def test_a_skipped_hint_does_not_ping(monkeypatch):
     s.key_hints.press("spells", 1.0)                 # P before its hint: skipped
     for t in (2.0, 3.25, 4.0, 6.0):
         kh.current(s, t)
-    assert played == ["ping.wav"]
+    assert played == ["ping.mp3"]
 
 
 def test_the_ping_waits_for_play_to_be_in_view(monkeypatch):
@@ -408,10 +408,10 @@ def test_the_ping_waits_for_play_to_be_in_view(monkeypatch):
     assert played == []
     s.open_screen = None
     kh.current(s, 1.0)
-    assert played == ["ping.wav"]
+    assert played == ["ping.mp3"]
 
 
-def test_ping_wav_is_played_from_assets_sounds_or_a_fiopak_and_skipped_until_it_exists(monkeypatch):
+def test_ping_mp3_is_played_from_assets_sounds_or_a_fiopak_and_skipped_until_it_exists(monkeypatch):
     from .. import runtime
     s = _new()
     queued = []
@@ -420,6 +420,6 @@ def test_ping_wav_is_played_from_assets_sounds_or_a_fiopak_and_skipped_until_it_
                         raising=False)
     monkeypatch.setattr(runtime, "_ARCHIVED_SOUNDS", set())          # not shipped yet
     assert s.play_ui_sound(kh.PING_SOUND) is False and queued == []
-    monkeypatch.setattr(runtime, "_ARCHIVED_SOUNDS", {"ping.wav"})   # in sounds.fiopak
+    monkeypatch.setattr(runtime, "_ARCHIVED_SOUNDS", {"ping.mp3"})   # in sounds.fiopak
     assert s.play_ui_sound(kh.PING_SOUND) is True
-    assert queued == [{"file": "ping.wav", "volume": 1.0, "global": True}]
+    assert queued == [{"file": "ping.mp3", "volume": 1.0, "global": True}]
