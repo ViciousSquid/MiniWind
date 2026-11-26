@@ -404,3 +404,30 @@ def test_depth_sort_is_stable_across_equal_distances(reverse):
 
     assert [o["n"] for o in batched] == list(range(20))
     assert [o["n"] for o in scalar] == list(range(20))
+
+
+def test_a_brush_far_bigger_than_the_view_distance_is_kept_where_its_edge_is_near():
+    """The play camera's distance cull measures to a brush's box, not its
+    centre: the sea (one brush ~36 000 x 42 000 units) stayed unseen from its
+    own shore, its centre being far out of the 4096 view distance."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from engine.renderer.core.visibility import VisibilityMixin
+
+    table = SimpleNamespace(
+        center=np.array([[22972.0, 69.0, -19972.0],       # the sea
+                         [9000.0, 0.0, 0.0],              # a small brush far off
+                         [100.0, 0.0, 0.0]], np.float32),  # a small brush nearby
+        half=np.array([[17988.0, 16.0, 20987.0],
+                       [50.0, 50.0, 50.0],
+                       [50.0, 50.0, 50.0]], np.float32))
+    slots = np.arange(3, dtype=np.int32)
+    camera = (39000.0, -8900.0)                          # on the sea, by the east edge
+    kept = VisibilityMixin._distance_cull_slots(table, slots, *camera, 4096.0 ** 2)
+    assert 0 in kept.tolist()
+    # From the middle of the world the sea's nearest edge (x 4984) is out of
+    # reach too, and the far small brush is culled as ever.
+    kept = VisibilityMixin._distance_cull_slots(table, slots, 0.0, 0.0, 4096.0 ** 2)
+    assert kept.tolist() == [2]

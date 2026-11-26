@@ -4,8 +4,9 @@ Bake the district borders into a map's terrain paint, by hand.
     python -m game.tools.bake_districts [map.json]
 
 Draws the borders of ``game/data/districts.json`` (game/districts.py) into
-the map's paint as hand-drawn ink and writes the map's paint file
-(``<map>.paint``) and the drawing's record (``<map>.districts.npz``: what
+the map's paint as hand-drawn ink and writes it -- into the map itself when
+the map carries its own paint (``game/tools/embed_paint.py``), else into its
+paint file (``<map>.paint``) -- and the drawing's record (``<map>.districts.npz``: what
 each inked texel was before). Run it again after changing the districts: it
 first lifts the borders it drew last time (from the record), so the paint is
 never inked twice. In play the borders cost nothing -- they are the map's
@@ -49,8 +50,21 @@ def bake(map_path, report=print):
     t = time.perf_counter()
     drawing = found.bake(terrain)
     report(f"drew {len(drawing.under)} chunks of border in {time.perf_counter() - t:.1f} s")
-    paint = terrain_stamp.paint_file(terrain.to_dict())
-    written = terrain_stamp.write_map_stamps(map_path, paint)
+    if terrain_stamp._wants_paint(level):
+        # The map keeps its paint in its paint file: write that.
+        paint = terrain_stamp.paint_file(terrain.to_dict())
+        written = terrain_stamp.write_map_stamps(map_path, paint)
+    else:
+        # The map carries its own paint (game/tools/embed_paint.py): write it
+        # into the map, minified; a paint file beside it would not be read.
+        from game.tools.embed_paint import write_map
+        baked = terrain.to_dict()
+        td = level[terrain_stamp.TERRAIN_KEY]
+        for key in terrain_stamp.PAINT_KEYS:
+            if baked.get(key):
+                td[key] = baked[key]
+        write_map(map_path, level)
+        written = map_path
     drawing.save(record)
     report(f"wrote {written} and {record}")
     return drawing

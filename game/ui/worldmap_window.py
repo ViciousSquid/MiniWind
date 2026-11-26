@@ -1,6 +1,5 @@
 """
-The world map in a window of its own, for the editor: the ``worldmap``
-console command.
+The world map in a window of its own: the ``worldmap`` console command.
 
 The whole map's picture (:class:`game.ui.worldmap.WorldMap`: terrain, biome
 regions, water, woods and buildings, painted once in the background and
@@ -10,6 +9,9 @@ map and the camera jumps there. A plain Qt tool window:
 it floats over the editor, opens at 800 x 600 and can be shrunk to 320 x
 240 (the map scales to fit), and closing it stops its timer. Only one is
 open at a time; the command raises it again.
+
+In Play it follows the player instead of the editor camera, and a click
+teleports the player there (onto the ground), like Debug Tools' teleports.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ class WorldMapWindow(QWidget):
         # (the window's edges resize it too).
         self._grip = QSizeGrip(self)
         self._grip.resize(16, 16)
-        self._camera = None              # (x, z, yaw degrees)
+        self._camera = None              # (x, z, facing x, facing z, label)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(REFRESH_MS)
@@ -60,6 +62,9 @@ class WorldMapWindow(QWidget):
     # -- data -------------------------------------------------------------
     def _view(self):
         return getattr(self.main_window, "view_3d", None)
+
+    def _playing(self):
+        return bool(getattr(self._view(), "play_mode", False))
 
     def _refresh(self):
         view = self._view()
@@ -71,24 +76,23 @@ class WorldMapWindow(QWidget):
                 worldmap.ensure_for(logic, view)
             except Exception:
                 pass
-        cam = getattr(view, "camera", None)
-        if cam is not None:
-            try:
-                self._camera = (float(cam.pos.x), float(cam.pos.z), float(cam.yaw))
-            except AttributeError:
-                self._camera = (float(cam.pos[0]), float(cam.pos[2]), float(cam.yaw))
+        if self._playing():
+            self._camera = _player_marker(logic)
+        else:
+            self._camera = _camera_marker(getattr(view, "camera", None))
         self.update()
 
     def mousePressEvent(self, event):
         """Click anywhere on the map: the editor camera jumps there, at its
-        own height and facing the way it was."""
+        own height and facing the way it was; in Play the player goes there."""
         if event.button() != Qt.LeftButton:
             return super().mousePressEvent(event)
         world = worldmap.WORLD
         image = world.image()
         view = self._view()
         cam = getattr(view, "camera", None)
-        if image is None or cam is None or world.bounds is None:
+        playing = self._playing()
+        if image is None or world.bounds is None or (cam is None and not playing):
             return
         rect, scale = self._picture_rect(image)
         pos = event.pos()
@@ -97,7 +101,10 @@ class WorldMapWindow(QWidget):
         (min_x, _), (min_z, _) = world.bounds
         x = min_x + (pos.x() - rect.x()) / scale * world.cell
         z = min_z + (pos.y() - rect.y()) / scale * world.cell
-        jump_camera(view, x, z)
+        if playing:
+            teleport_player(x, z)
+        else:
+            jump_camera(view, x, z)
         self._refresh()
 
     def resizeEvent(self, event):
@@ -137,15 +144,12 @@ class WorldMapWindow(QWidget):
         rect, scale = self._picture_rect(image)
         p.drawImage(rect, image)
         if self._camera is not None:
-            x, z, yaw = self._camera
+            x, z, fx, fz, label = self._camera
             ix, iz = world.to_image(x, z)
             at = QPointF(rect.x() + ix * scale, rect.y() + iz * scale)
             inside = rect.adjusted(-1, -1, 1, 1).contains(at)
             at = QPointF(min(max(at.x(), rect.left()), rect.right()),
                          min(max(at.y(), rect.top()), rect.bottom()))
-            # The camera looks along (cos yaw, sin yaw) on the ground.
-            a = math.radians(yaw)
-            fx, fz = math.cos(a), math.sin(a)
             size = 11.0
             tip = QPointF(at.x() + fx * size, at.y() + fz * size)
             left = QPointF(at.x() - fx * size * 0.6 - fz * size * 0.6,
@@ -159,9 +163,54 @@ class WorldMapWindow(QWidget):
             p.setPen(INK)
             p.drawText(QRectF(6, self.height() - 20, self.width() - 28, 18),
                        int(Qt.AlignLeft | Qt.AlignVCenter),
-                       f"Editor camera  x {x:,.0f}   z {z:,.0f}"
+                       f"{label}  x {x:,.0f}   z {z:,.0f}"
                        + ("" if inside else "   (off the map)"))
         p.end()
+
+
+def _camera_marker(cam):
+    """The editor camera: where it is and which way it looks on the ground,
+    along (cos yaw, sin yaw)."""
+    if cam is None:
+        return None
+    try:
+        x, z = float(cam.pos.x), float(cam.pos.z)
+    except AttributeError:
+        x, z = float(cam.pos[0]), float(cam.pos[2])
+    a = math.radians(float(cam.yaw))
+    return (x, z, math.cos(a), math.sin(a), "Editor camera")
+
+
+def _player_marker(logic):
+    """The player: where they are and which way they face, along
+    (sin angle, cos angle) as on the pause menu's map."""
+    from .. import fio
+    player = fio.player(logic) if logic is not None else None
+    if player is None or getattr(player, "pos", None) is None:
+        return None
+    a = float(getattr(player, "angle", 0.0) or 0.0)
+    return (float(player.pos[0]), float(player.pos[2]), math.sin(a), math.cos(a), "Player")
+
+
+def teleport_player(x, z) -> None:
+    """Put the player on the ground at world ``(x, z)``. Queued for the game
+    tick, which owns the session (as Debug Tools' teleports are)."""
+    from .. import fio
+    from . import hits
+
+    def go(session):
+        terrain = fio.terrain(getattr(session, "logic", None))
+        y = None
+        if terrain is not None:
+            try:
+                y = terrain.get_height_at_safe(float(x), float(z))
+            except Exception:
+                y = None
+        player = fio.player(getattr(session, "logic", None))
+        if y is None:
+            y = float(player.pos[1]) if player is not None else 0.0
+        session.teleport_player((float(x), float(y) + 4.0, float(z)))
+    hits.queue(go)
 
 
 def jump_camera(view, x, z) -> None:

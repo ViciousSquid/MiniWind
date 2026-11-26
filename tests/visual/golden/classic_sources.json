@@ -15,7 +15,7 @@
  "engine/renderer/core/tables.py": "3e2837d13e35cabbe90b37c44a1ebd18ffdffc6176a960eab0dcd80d2651695b",
  "engine/renderer/core/terrain_gl.py": "70529ad7431eb42d981026ae9b5fea8c5c59ed1db531835e209ecda12cd062c4",
  "engine/renderer/core/uniform_rows.py": "d5831d6327f9244f15a24c2138f58e95269d8f4b65e3c13be1fdbddac9858a0a",
- "engine/renderer/core/visibility.py": "cc2f52da4d1a3ec472eb13bc9b20e4e56be9b40f6f3161187a5d6a997b0e9eca",
+ "engine/renderer/core/visibility.py": "4562efb2be78bd320272d5920ff1a1944c0d3efefe5d7ffe6911e685c7c74968",
  "engine/renderer/forward/__init__.py": "98ca9c37bf99d3693e6395ebdfeb1bcef692510fa5459941a6287031c0b4a572",
  "engine/renderer/forward/decals.py": "ee2e5a33e08e104d1165e0e103914bc0430cba1912dce303306e1efc43251225",
  "engine/renderer/forward/edge_sky.py": "a3e0d379ea2dd8a9bf4da92fa0c051d2a6e3fbff2aff09afe405c23a741e5bde",

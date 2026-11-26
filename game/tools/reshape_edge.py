@@ -421,7 +421,7 @@ def reshape(path=MAP):
     flags["edge_wall_removed"] = True
     flags["oasis"] = OASIS_NAME
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+        json.dump(data, f, separators=(",", ":"))     # minified: the map is huge
     return dict(pixels_changed=changed, deepest_cut=round(deepest, 1),
                 trees_seated=seated, oasis_surface=round(surface, 1), palms=palms,
                 trees_over_water_felled=felled)

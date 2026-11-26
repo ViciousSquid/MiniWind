@@ -123,7 +123,8 @@ class VisibilityMixin:
 
     @staticmethod
     def _distance_cull_slots(table, slots, cx, cz, limit_sq):
-        """Narrow *slots* to those within *limit_sq* on the XZ plane.
+        """Narrow *slots* to those whose box comes within *limit_sq* (squared
+        distance) of the camera on the XZ plane.
 
         The broad-phase distance cull, as a mask rather than a compaction.  It
         used to run over a Python list and rebuild another one an element at a
@@ -132,8 +133,13 @@ class VisibilityMixin:
         """
         if not len(slots):
             return slots
-        dx = table.center[slots, 0] - cx
-        dz = table.center[slots, 2] - cz
+        # From the nearest point of each brush's box, not its centre: a brush
+        # far bigger than the view distance -- the sea, one brush tens of
+        # thousands of units across -- is in view wherever its edge is near,
+        # however far away its middle lies. (A brush smaller than the
+        # distance is kept a little sooner: by up to its half-size.)
+        dx = np.maximum(np.abs(table.center[slots, 0] - cx) - table.half[slots, 0], 0.0)
+        dz = np.maximum(np.abs(table.center[slots, 2] - cz) - table.half[slots, 2], 0.0)
         return slots[(dx * dx + dz * dz) <= limit_sq]
 
     @staticmethod
