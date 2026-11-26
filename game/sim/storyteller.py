@@ -358,6 +358,13 @@ class Storyteller(SimSystem):
             except Exception:
                 pass
 
+    def narrate(self, kind, text, now=None):
+        """Add a line to the activity feed on another system's behalf.
+
+        Used only by Dynamic game mode (game/living/scenarios.py), so a scene
+        it authored is always on the record; this class still authors nothing."""
+        self._note(kind, text, now)
+
     @property
     def activity(self):
         """The activity feed, newest first, detached for live inspection."""

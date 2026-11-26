@@ -143,11 +143,9 @@ def test_console_watch_logs_activity_live_and_stops(monkeypatch):
 
 # -- the window ----------------------------------------------------------------
 @pytest.mark.qt
-def test_window_opens_once_paints_live_and_opens_studio(qt_app):
-    from PyQt5.QtCore import QPoint
-    from PyQt5.QtGui import QImage, QPainter
-
+def test_window_opens_once_as_a_desktop_window_reads_live_and_opens_studio(qt_app):
     from engine.floating_windows import WindowManager
+    from ..ui import storyteller_now
     from ..ui.storyteller_now import TITLE, StorytellerNowWindow
     from ..ui.storyteller_window import StorytellerWindow
 
@@ -173,27 +171,62 @@ def test_window_opens_once_paints_live_and_opens_studio(qt_app):
     view = View()
     ctx = console.ConsoleContext(logic_thread=view.logic_thread, play_mode=True,
                                  main_window=SimpleNamespace(view_3d=view))
-    console.cmd_storyteller(ctx, "")
-    win = view.window_manager.windows[0]
-    assert isinstance(win, StorytellerNowWindow) and win.title == TITLE
-    console.cmd_storyteller(ctx, "")
-    assert view.window_manager.windows == [win]
     before = copy.deepcopy(store.d)
-    image = QImage(640, 360, QImage.Format_ARGB32)
-    painter = QPainter(image)
+    console.cmd_storyteller(ctx, "")
+    win = storyteller_now._open[-1]
     try:
-        win.draw(painter)
+        assert isinstance(win, StorytellerNowWindow) and win.windowTitle() == TITLE
+        assert win.isWindow() and win.isVisible()          # a window of its own
+        console.cmd_storyteller(ctx, "")
+        assert [w for w in storyteller_now._open if w.view is view] == [win]
+        win.refresh(force=True)
+        assert store.d == before                           # reading changes nothing
+        rows = win.rows()
+        assert any(heading and "Activity" in text for _l, text, heading in rows)
+        assert any(label == "State" for label, _t, _h in rows)
+        assert "State" in win.story.toPlainText()
+        win.tab = "Raw"
+        assert win.raw.rowCount() > 0
+        keys = [win.raw.item(i, 0).text() for i in range(win.raw.rowCount())]
+        assert "state" in keys and any("summary()" in k for k in keys)
+        from ..ui import storyteller_window
+        win.studio_button.click()
+        studio = [w for w in storyteller_window._open if w.view is view]
+        assert studio and isinstance(studio[0], StorytellerWindow)
+        studio[0].close()
     finally:
-        painter.end()
-    assert store.d == before
-    assert win._full_rect().right() < 640 and win._full_rect().bottom() < 360
-    rows = win.rows()
-    assert any(heading and "Activity" in text for _l, text, heading in rows)
-    assert any(label == "State" for label, _t, _h in rows)
-    assert win._scroll_max > 0
-    win.handle_wheel(SimpleNamespace(angleDelta=lambda: QPoint(0, -120)))
-    assert win._scroll > 0
-    rect, action = win._buttons[0]
-    assert action == "studio"
-    assert win.handle_body_click(rect.center().x(), rect.center().y())
-    assert any(isinstance(w, StorytellerWindow) for w in view.window_manager.windows)
+        win.close()
+    assert win not in storyteller_now._open
+
+@pytest.mark.qt
+def test_both_windows_collapse_to_their_strip_and_pin_on_top(qt_app):
+    from PyQt5.QtCore import Qt
+    from engine.floating_windows import WindowManager
+    from ..ui.storyteller_now import StorytellerNowWindow
+    from ..ui.storyteller_window import StorytellerWindow
+
+    story = setup()[0]
+    view = SimpleNamespace(logic_thread=SimpleNamespace(_miniwind=session_for(story)),
+                           window_manager=WindowManager(), update=lambda: None)
+    for cls in (StorytellerNowWindow, StorytellerWindow):
+        win = cls(view)
+        win.resize(600, 500)
+        win.show()
+        qt_app.processEvents()
+        try:
+            strip = win.strip
+            assert strip.arrow.text() == "▼"
+            strip.arrow.click()
+            qt_app.processEvents()
+            assert not win.body.isVisible() and strip.isVisible()
+            assert win.height() < 120 and strip.arrow.text() == "▶"
+            strip.arrow.click()
+            qt_app.processEvents()
+            assert win.body.isVisible() and win.height() == 500
+            assert not win.windowFlags() & Qt.WindowStaysOnTopHint
+            strip.pin.click()
+            assert win.windowFlags() & Qt.WindowStaysOnTopHint and win.isVisible()
+            strip.pin.click()
+            assert not win.windowFlags() & Qt.WindowStaysOnTopHint
+        finally:
+            win.close()

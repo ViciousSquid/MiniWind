@@ -1169,6 +1169,21 @@ class MiniwindSession(SettlementLaw):
         except (AttributeError, TypeError, ValueError):
             return default
 
+    def game_mode(self) -> str:
+        """``normal`` or ``dynamic`` (``[GAME] game_mode``; pause menu ›
+        Options › Game mode). Normal unless set to Dynamic."""
+        try:
+            config = self._editor_config()
+            value = config.get("GAME", "game_mode", fallback="normal") if config is not None else "normal"
+        except (AttributeError, TypeError, ValueError):
+            return "normal"
+        return "dynamic" if str(value).strip().lower() == "dynamic" else "normal"
+
+    def dynamic_mode_enabled(self) -> bool:
+        """Dynamic mode: a director stages scenes on the roads
+        (game/living/scenarios.py). Off in Normal mode."""
+        return self.game_mode() == "dynamic"
+
     def stack_dialogs_enabled(self) -> bool:
         """Roll boxes too close together join one stack (GAME → "Stack
         dialogs"). On unless turned off."""

@@ -1,11 +1,31 @@
-"""Resizable live Storyteller Studio; console ``storyteller``."""
+"""Storyteller Studio, a desktop window of its own; console ``storyteller studio``.
+
+A real top-level Qt window (move it to another monitor, resize it, minimise
+it) with three tabs:
+
+* **Live**   -- the state, live sensors, current levers, journey weights and
+  hours, the decisions and their reasons, and the last observations.
+* **Levers** -- each pacing state's lever table, edited with spin boxes
+  (type, use the arrows or the wheel); an edit applies on the storyteller's
+  ordinary samples and is saved with the session. **Reset state edits** and
+  the pacing switch sit above the table.
+* **World**  -- the world evidence the storyteller reads, explained.
+
+The strip along the top collapses the window to just itself (the arrow) and
+keeps it above other windows (the drawing pin; :mod:`game.ui.window_strip`).
+
+Reading it never samples the storyteller or draws a random number.
+"""
 
 import json
 
-from PyQt5.QtCore import QRect, Qt
-from PyQt5.QtGui import QColor, QFont, QFontMetrics
+import html
 
-from engine.floating_windows import FloatingWindow
+from PyQt5.QtCore import Qt, QTimer
+
+from .window_strip import WindowStrip
+from PyQt5.QtWidgets import (QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QPushButton,
+                             QScrollArea, QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 from ..living.journeys import KINDS
 from ..sim.storyteller import TUNING
@@ -65,242 +85,298 @@ def rows_for(storyteller):
     return rows
 
 
-class StorytellerWindow(FloatingWindow):
-    wants_cursor = True
-    WIDTH = 720
-    MAX_BODY_H = 560
-    FOOTER_H = 30
+_STYLE = """
+QWidget { background: #14171d; color: #e4e6ec; font-size: 10pt; }
+QTabWidget::pane { border: 1px solid #2c3340; }
+QTabBar::tab { background: #2d323c; color: #e4e6ec; padding: 5px 18px; margin-right: 2px; }
+QTabBar::tab:selected { background: #415f7d; }
+QTextBrowser, QScrollArea { background: #101318; border: none; }
+QPushButton { background: #37414f; border: 1px solid #4a5566; padding: 4px 12px; }
+QPushButton:hover { background: #435064; }
+QPushButton:checked { background: #415f7d; }
+QDoubleSpinBox { background: #2d4254; border: 1px solid #44607a; padding: 2px 4px; }
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 18px; background: #3b5670;
+    border-left: 1px solid #44607a; }
+QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover { background: #4d6d8c; }
+QDoubleSpinBox::up-arrow { width: 0; height: 0; border-left: 4px solid transparent;
+    border-right: 4px solid transparent; border-bottom: 5px solid #e4e6ec; }
+QDoubleSpinBox::down-arrow { width: 0; height: 0; border-left: 4px solid transparent;
+    border-right: 4px solid transparent; border-top: 5px solid #e4e6ec; }
+QLabel#heading { color: #96cde1; font-weight: bold; padding-top: 8px; }
+"""
 
-    def __init__(self, view):
-        super().__init__("Storyteller Studio", x=20, y=60, width=self.WIDTH, body_height=self.MAX_BODY_H)
+#: How often the window re-reads the storyteller (milliseconds).
+REFRESH_MS = 500
+
+_open = []
+
+
+def _limits(path):
+    """(low, high, step) for the lever at *path* (the old drag cells' rules)."""
+    step = 0.01 if path[0] in ("market_chance", "writ_hunter_scale", "lair_refill_scale") else 1.0
+    high = 24 if path[0] == "kind_hours" else 1 if path[0] == "market_chance" else 10000
+    low = 0.01 if path[0] == "destination_bias" else 0
+    return low, high, step
+
+
+def _html(rows):
+    out = []
+    for kind, text in rows:
+        if kind == "heading":
+            out.append(f'<p style="color:#96cde1; font-weight:bold; margin-top:10px">{html.escape(text)}</p>')
+        else:
+            out.append(f'<p style="margin:2px 0">{html.escape(text)}</p>')
+    return "".join(out)
+
+
+class StorytellerWindow(QWidget):
+    """Storyteller Studio (module docstring)."""
+
+    TABS = ("Live", "Levers", "World")
+
+    def __init__(self, view, parent=None):
+        super().__init__(parent, Qt.Window)
         self.view = view
-        self.key = "debug:storyteller"
-        self.font = QFont("Arial", 10)
-        self.bold = QFont("Arial", 10, QFont.Bold)
-        self._scroll = 0
-        self._scroll_max = 0
-        self._buttons = []
-        self._cells = []
-        self._tabs = []
-        self.tab = "Live"
+        self.setWindowTitle("Storyteller Studio")
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setStyleSheet(_STYLE)
+        self.resize(560, 640)
+        self.setMinimumSize(380, 300)
         self.edit_state = None
-        self._edit = None
-        self._resize = None
-        self._wanted_width = self.WIDTH
-        self._wanted_height = self.MAX_BODY_H
-        self._message = "Drag the corner to resize."
+        self.message = ""
+        self._spins = {}                 # lever path -> spin box
+        self._levers_for = None          # (storyteller, state) the form shows
 
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(6)
+        self.body = QWidget()
+        layout = QVBoxLayout(self.body)
+        layout.setContentsMargins(4, 0, 4, 4)
+        # The strip: collapse arrow, the live state, the pin.
+        self.strip = WindowStrip(self, self.body)
+        name = QLabel("STORYTELLER STUDIO")
+        name.setStyleSheet("font-weight: bold; background: transparent;")
+        self.live_state = QLabel("")
+        self.live_state.setStyleSheet("font-weight: bold; background: transparent;")
+        self.strip.add(name, 1)
+        self.strip.add(self.live_state)
+        outer.addWidget(self.strip)
+        outer.addWidget(self.body, 1)
+
+        self.tabs = QTabWidget()
+        self.live = QTextBrowser()
+        self.world = QTextBrowser()
+        self.levers = QWidget()
+        lv = QVBoxLayout(self.levers)
+        lv.setContentsMargins(6, 6, 6, 6)
+        states = QHBoxLayout()
+        self._state_buttons = {}
+        for state in TUNING["states"]:
+            button = QPushButton(state)
+            button.setCheckable(True)
+            button.clicked.connect(lambda _c=False, st=state: self.choose_state(st))
+            self._state_buttons[state] = button
+            states.addWidget(button)
+        states.addStretch(1)
+        lv.addLayout(states)
+        actions = QHBoxLayout()
+        self.reset_button = QPushButton("Reset state edits")
+        self.reset_button.clicked.connect(self.reset_state)
+        self.pacing_button = QPushButton("Pacing on")
+        self.pacing_button.clicked.connect(self.toggle_pacing)
+        actions.addWidget(self.reset_button)
+        actions.addWidget(self.pacing_button)
+        actions.addStretch(1)
+        lv.addLayout(actions)
+        self.form_area = QScrollArea()
+        self.form_area.setWidgetResizable(True)
+        lv.addWidget(self.form_area, 1)
+        self.tabs.addTab(self.live, "Live")
+        self.tabs.addTab(self.levers, "Levers")
+        self.tabs.addTab(self.world, "World")
+        self.tabs.currentChanged.connect(lambda _i: self.refresh(force=True))
+        layout.addWidget(self.tabs, 1)
+        self.status = QLabel("")
+        self.status.setStyleSheet("color: #b9bec8;")
+        layout.addWidget(self.status)
+
+        self._shown = {}
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.refresh)
+        self._timer.start(REFRESH_MS)
+        self.refresh(force=True)
+
+    # -- what it reads -------------------------------------------------------
     def _storyteller(self):
         logic = getattr(self.view, "logic_thread", None)
         return getattr(getattr(logic, "_miniwind", None), "storyteller", None)
 
-    def _view_size(self):
-        return (getattr(self.view, "width", lambda: 1280)(),
-                getattr(self.view, "height", lambda: 720)())
+    @property
+    def tab(self) -> str:
+        return self.TABS[self.tabs.currentIndex()]
 
-    def content_height(self):
-        return max(90, min(self._wanted_height, self._view_size()[1] - self.window_rect.y() - self.HEADER_H - 10))
+    @tab.setter
+    def tab(self, name):
+        self.tabs.setCurrentIndex(self.TABS.index(name))
 
-    def draw(self, painter, focused=False):
-        vw, vh = self._view_size()
-        self.width = max(self.MIN_W, min(self._wanted_width, vw - 20))
-        self.window_rect.setWidth(self.width)
-        self.window_rect.moveTo(max(5, min(self.window_rect.x(), vw - self.width - 5)),
-                                max(5, min(self.window_rect.y(), vh - self.HEADER_H - 100)))
-        super().draw(painter, focused)
+    def lever_rows(self, story, state):
+        """``[(heading or None, label, path, value)]`` of *state*'s lever table."""
+        table = story.state_levers(state)
+        rows = []
+        for key, value in table.items():
+            if key not in ("kind_weights", "kind_hours"):
+                rows.append((None, key.replace("_", " "), (key,), value))
+        rows.append(("Journey weights", None, None, None))
+        for kind, spec in KINDS.items():
+            rows.append((None, kind, ("kind_weights", kind), table["kind_weights"].get(kind, spec["weight"])))
+        rows.append(("Departure windows", None, None, None))
+        for kind, spec in KINDS.items():
+            for i, value in enumerate(table["kind_hours"].get(kind, spec["hours"])):
+                rows.append((None, f"{kind} {'from' if i == 0 else 'until'}", ("kind_hours", kind, i), value))
+        return rows
 
-    def draw_body(self, painter, x, y, w):
+    # -- showing it ----------------------------------------------------------
+    def refresh(self, force=False):
         story = self._storyteller()
-        rows = [(kind, text, None) for kind, text in rows_for(story)]
-        if story is not None and self.tab == "World":
-            rows = []
-            for group, label, reason, events in world_explanations(story):
-                rows.extend([("heading", f"{group}: {label}", None), ("text", reason, None)])
-        elif story is not None and self.tab == "Levers":
-            if self.edit_state is None:
-                self.edit_state = story.state
-            table = story.state_levers(self.edit_state)
-            rows = [("text", "Drag a value left/right. Values apply on ordinary samples; edits are saved with this session.", None)]
-            rows.append(("text", "RESPITE hostile weights control local admission; distant ecology uses authored defaults.", None))
-            for key, value in table.items():
-                if key not in ("kind_weights", "kind_hours"):
-                    rows.append(("edit", f"{key.replace('_', ' ')}: {value:g}", ((key,), value)))
-            rows.append(("heading", "Journey weights", None))
-            for kind, spec in KINDS.items():
-                value = table["kind_weights"].get(kind, spec["weight"])
-                rows.append(("edit", f"{kind}: weight {value:g}", (("kind_weights", kind), value)))
-            rows.append(("heading", "Departure windows", None))
-            for kind, spec in KINDS.items():
-                for i, value in enumerate(table["kind_hours"].get(kind, spec["hours"])):
-                    rows.append(("edit", f"{kind} {'from' if i == 0 else 'until'}: {value:g}", (("kind_hours", kind, i), value)))
-        self._tabs = []
-        for i, name in enumerate(("Live", "Levers", "World")):
-            rect = QRect(x + 8 + i * 88, y + 3, 82, 24)
-            painter.fillRect(rect, QColor(65, 95, 125) if self.tab == name else QColor(45, 50, 60))
-            painter.setPen(QColor(225, 230, 240))
-            painter.drawText(rect, Qt.AlignCenter, name)
-            self._tabs.append((rect, "tab", name))
-        if story is not None and w >= 460:
-            painter.drawText(QRect(x + w - 175, y + 3, 165, 24), Qt.AlignRight | Qt.AlignVCenter,
-                             f"Live: {story.state}")
-        header = 32
-        if story is not None and self.tab == "Levers":
-            for i, state in enumerate(TUNING["states"]):
-                rect = QRect(x + 8 + i * 78, y + 31, 74, 24)
-                painter.fillRect(rect, QColor(65, 95, 125) if self.edit_state == state else QColor(45, 50, 60))
-                painter.drawText(rect, Qt.AlignCenter, state)
-                self._tabs.append((rect, "state", state))
-            rect = QRect(x + 8, y + 58, 146, 24)
-            painter.fillRect(rect, QColor(45, 50, 60))
-            painter.drawText(rect, Qt.AlignCenter, "Reset state edits")
-            self._tabs.append((rect, "reset", None))
-            rect = QRect(x + 162, y + 58, 150, 24)
-            painter.fillRect(rect, QColor(45, 50, 60))
-            painter.drawText(rect, Qt.AlignCenter, "Pacing on" if story.enabled else "Pristine ecology")
-            self._tabs.append((rect, "enabled", None))
-            header = 88
-        y += header
-        layout, total = [], 8
-        text_w = w - 32
-        flags = int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap)
-        for kind, text, cell in rows:
-            font = self.bold if kind == "heading" else self.font
-            fm = QFontMetrics(font)
-            height = fm.boundingRect(QRect(0, 0, text_w, 10000), flags, text).height() + 8
-            if kind == "heading":
-                total += 8
-            layout.append((font, text, total, height, kind, cell))
-            total += height
-        height = self.content_height() - header
-        visible = height - self.FOOTER_H
-        self._scroll_max = max(0, total + 8 - visible)
-        self._scroll = max(0, min(self._scroll, self._scroll_max))
-        painter.save()
-        painter.setClipRect(QRect(x, y, w, visible), Qt.IntersectClip)
-        self._cells = []
-        for font, text, top, line_height, kind, cell in layout:
-            painter.setFont(font)
-            painter.setPen(QColor(150, 205, 225) if kind in ("heading", "edit") else QColor(225, 228, 235))
-            rect = QRect(x + 12, y + top - self._scroll, text_w, line_height)
-            if cell is not None:
-                label = text.rsplit(":", 1)[0]
-                painter.drawText(QRect(rect.x(), rect.y(), text_w - 108, line_height), flags, label)
-                value_rect = QRect(x + w - 108, rect.y(), 88, min(28, line_height))
-                painter.fillRect(value_rect, QColor(45, 66, 84))
-                painter.drawText(value_rect, Qt.AlignCenter, f"{cell[1]:g} ↔")
-                clipped = value_rect.intersected(QRect(x, y, w, visible))
-                if not clipped.isEmpty():
-                    self._cells.append((clipped, cell))
-            else:
-                painter.drawText(rect, flags, text)
-        painter.restore()
-        painter.save()
-        painter.setFont(self.font)
-        painter.setPen(QColor(185, 190, 200))
-        painter.drawText(QRect(x + 12, y + visible, w - 130, self.FOOTER_H),
-                         Qt.AlignVCenter, self._message)
-        self._buttons = []
-        for offset, label, direction in ((112, "Up", -1), (58, "Down", 1)):
-            rect = QRect(x + w - offset, y + visible + 3, 50, self.FOOTER_H - 6)
-            painter.fillRect(rect, QColor(55, 65, 80))
-            painter.drawText(rect, Qt.AlignCenter, label)
-            self._buttons.append((rect, direction))
-        self._resize_rect = QRect(x + w - 14, y + height - 14, 14, 14)
-        painter.drawText(self._resize_rect, Qt.AlignCenter, "◢")
-        painter.restore()
-
-    def _scroll_by(self, amount):
-        self._scroll = max(0, min(self._scroll + amount, self._scroll_max))
-        self.view.update()
-
-    def handle_wheel(self, event):
-        self._scroll_by(-event.angleDelta().y())
-        return True
-
-    def handle_body_click(self, x, y):
-        story = self._storyteller()
-        for rect, action, value in self._tabs:
-            if not rect.contains(x, y):
-                continue
-            if action == "tab":
-                self.tab, self._scroll = value, 0
-            elif action == "state":
-                self.edit_state, self._scroll = value, 0
-            elif story is not None and action == "reset":
-                story.reset_edits(self.edit_state)
-                self._message = f"{self.edit_state} edits reset."
-            elif story is not None and action == "enabled":
-                story.set_enabled(not story.enabled)
-            self.view.update()
-            return True
-        if story is not None:
-            for rect, (path, value) in self._cells:
-                if rect.contains(x, y):
-                    self._edit = (story, self.edit_state, path, value, x)
-                    self.mouse_captured = True
-                    return True
-        for rect, direction in self._buttons:
-            if rect.contains(x, y):
-                self._scroll_by(direction * (self.content_height() - self.FOOTER_H))
-                return True
-        return False
-
-    def handle_mouse_press(self, event):
-        if self.expanded and getattr(self, "_resize_rect", QRect()).contains(event.pos()):
-            self._resize = (event.x(), event.y(), self.width, self.content_height())
-            self.mouse_captured = True
-            return True
-        return super().handle_mouse_press(event)
-
-    def handle_mouse_move(self, event, view_w, view_h):
-        if self._resize is not None:
-            x, y, width, height = self._resize
-            self._wanted_width = max(360, min(view_w - self.window_rect.x() - 5, width + event.x() - x))
-            self._wanted_height = max(160, min(view_h - self.window_rect.y() - self.HEADER_H - 5, height + event.y() - y))
-        elif self._edit is not None:
-            story, state, path, start, x = self._edit
-            if story is not self._storyteller():
-                self._edit = None
-                self.mouse_captured = False
-                return True
-            step = 0.01 if path[0] in ("market_chance", "writ_hunter_scale", "lair_refill_scale") else 1.0
-            value = start + round((event.x() - x) / 5) * step
-            high = 24 if path[0] == "kind_hours" else 1 if path[0] == "market_chance" else 10000
-            low = 0.01 if path[0] == "destination_bias" else 0
-            story.edit_lever(state, path, max(low, min(high, round(value, 4))), persist=False)
-            self._message = f"Editing {state} {' / '.join(map(str, path))}"
+        self.live_state.setText(f"Live: {story.state}" if story is not None else "No active storyteller")
+        tab = self.tab
+        if tab == "Levers":
+            self._refresh_levers(story, force)
         else:
-            return super().handle_mouse_move(event, view_w, view_h)
-        self.view.update()
-        return True
+            if story is None:
+                rows = [("text", "No active MiniWind storyteller.")]
+            elif tab == "World":
+                rows = []
+                for group, label, reason, _events in world_explanations(story):
+                    rows += [("heading", f"{group}: {label}"), ("text", reason)]
+            else:
+                rows = rows_for(story)
+            if force or self._shown.get(tab) != rows:
+                self._shown[tab] = rows
+                browser = self.world if tab == "World" else self.live
+                bar = browser.verticalScrollBar()
+                at = bar.value()
+                browser.setHtml(_html(rows))
+                bar.setValue(at)
+        self.status.setText(self.message)
 
-    def handle_mouse_release(self, event):
-        if self._edit is not None or self._resize is not None:
-            if self._edit is not None:
-                self._edit[0].persist()
-                self._message = "Edit saved with session."
-            self._edit = self._resize = None
-            self.mouse_captured = False
-            return True
-        return super().handle_mouse_release(event)
+    def _refresh_levers(self, story, force):
+        enabled = story is not None
+        for button in (*self._state_buttons.values(), self.reset_button, self.pacing_button):
+            button.setEnabled(enabled)
+        if story is None:
+            self.form_area.takeWidget()
+            self._spins, self._levers_for = {}, None
+            return
+        if self.edit_state is None:
+            self.edit_state = story.state
+        for state, button in self._state_buttons.items():
+            button.setChecked(state == self.edit_state)
+        self.pacing_button.setText("Pacing on" if story.enabled else "Pristine ecology")
+        if force or self._levers_for != (story, self.edit_state):
+            self._build_form(story)
+            return
+        # Live values in, without fighting a box being edited.
+        for heading, _label, path, value in self.lever_rows(story, self.edit_state):
+            spin = self._spins.get(path)
+            if spin is not None and not spin.hasFocus() and abs(spin.value() - float(value)) > 1e-9:
+                spin.blockSignals(True)
+                spin.setValue(float(value))
+                spin.blockSignals(False)
 
-    def on_close(self):
-        if self._edit is not None:
-            self._edit[0].persist()
-        self._edit = self._resize = None
-        self.mouse_captured = False
+    def _build_form(self, story):
+        form_widget = QWidget()
+        form = QFormLayout(form_widget)
+        form.setLabelAlignment(Qt.AlignLeft)
+        self._spins = {}
+        for heading, label, path, value in self.lever_rows(story, self.edit_state):
+            if heading:
+                title = QLabel(heading)
+                title.setObjectName("heading")
+                form.addRow(title)
+                continue
+            low, high, step = _limits(path)
+            spin = QDoubleSpinBox()
+            spin.setDecimals(2 if step < 1 or low % 1 else 0)
+            spin.setRange(low, high)
+            spin.setSingleStep(step)
+            spin.setValue(float(value))
+            spin.setFixedWidth(120)
+            spin.valueChanged.connect(lambda v, p=path: self.edit(p, v))
+            spin.editingFinished.connect(self._save)
+            self._spins[path] = spin
+            name = QLabel(label)
+            name.setStyleSheet("color: #96cde1;")
+            form.addRow(name, spin)
+        self.form_area.setWidget(form_widget)
+        self._levers_for = (story, self.edit_state)
+
+    # -- editing -------------------------------------------------------------
+    def choose_state(self, state):
+        self.edit_state = state
+        self.refresh(force=True)
+
+    def edit(self, path, value):
+        """Lever *path* of the state being edited to *value*, live."""
+        story = self._storyteller()
+        if story is None:
+            return
+        story.edit_lever(self.edit_state, path, round(float(value), 4), persist=False)
+        self.message = f"Editing {self.edit_state} {' / '.join(map(str, path))}"
+        self.status.setText(self.message)
+
+    def _save(self):
+        story = self._storyteller()
+        if story is not None:
+            story.persist()
+            self.message = "Edit saved with session."
+            self.status.setText(self.message)
+
+    def reset_state(self):
+        story = self._storyteller()
+        if story is not None:
+            story.reset_edits(self.edit_state)
+            self.message = f"{self.edit_state} edits reset."
+            self.refresh(force=True)
+
+    def toggle_pacing(self):
+        story = self._storyteller()
+        if story is not None:
+            story.set_enabled(not story.enabled)
+            self.refresh(force=True)
+
+    def closeEvent(self, event):
+        self._timer.stop()
+        self._save()
+        if self in _open:
+            _open.remove(self)
+        super().closeEvent(event)
 
 
-def open_storyteller(view):
-    """Open one live window per view, or bring the existing window forward."""
-    manager = getattr(view, "window_manager", None)
+def open_storyteller(view, parent=None):
+    """Open one Studio per view, or bring the open one forward."""
     session = getattr(getattr(view, "logic_thread", None), "_miniwind", None)
-    if manager is None or getattr(session, "storyteller", None) is None:
+    if getattr(session, "storyteller", None) is None:
         return None
-    win = manager.find(lambda w: isinstance(w, StorytellerWindow) and w.active)
-    if win is None:
-        win = manager.add(StorytellerWindow(view))
-    else:
-        manager.raise_(win)
-    view.update()
+    for win in list(_open):
+        try:
+            if win.view is view:
+                win.show()
+                win.raise_()
+                win.activateWindow()
+                win.refresh(force=True)
+                return win
+        except RuntimeError:            # deleted on close
+            _open.remove(win)
+    if not isinstance(parent, QWidget):
+        try:
+            parent = view.window() if hasattr(view, "window") else None
+        except Exception:
+            parent = None
+    if not isinstance(parent, QWidget):
+        parent = None
+    win = StorytellerWindow(view, parent)
+    _open.append(win)
+    win.show()
     return win

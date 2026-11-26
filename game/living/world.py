@@ -89,6 +89,9 @@ ACTOR_ROLES = {
     "wolf": ("wolf", "wildlife", "hostile", True, "", "wolf"),
     "greenskin": ("bandit", "monsters", "hostile", True, "iron_shortsword", "greenskin01"),
     "bounty_hunter": ("guard", "mercenaries", "defensive", True, "steel_longsword", "head"),
+    # Dynamic mode only (game/living/scenarios.py).
+    "cult_leader": ("cultist", "cultists", "hostile", True, "", "head"),
+    "cultist": ("cultist", "cultists", "hostile", True, "", "head"),
 }
 
 #: Wares a road trader carries.
@@ -115,6 +118,8 @@ GREETINGS = {
     "hunters": ("Looking for someone. You'll do.", "Stay out of our way."),
     "bandits": ("Your purse or your life!", "Well, well. What have we here?",
                 "Nobody passes without paying."),
+    "cultists": ("The rite must not be interrupted!", "Another for the altar.",
+                 "You should not have come here."),
 }
 PURPOSE = {
     "trader": "To sell what's in my pack and buy what isn't.",
@@ -303,6 +308,10 @@ class SessionHooks(jn.WorldHooks):
             t.properties["health"] = 0
         self.w.set_hidden(t, False)
 
+    def stage_expired(self, journey, t):
+        scenarios = getattr(self.w, "scenarios", None)
+        return bool(scenarios.stage_expired(journey, t)) if scenarios is not None else False
+
     def resident_arrived(self, journey, t):
         flour = getattr(self.w, "flour_roads", None)
         return flour.arrive(journey, t) if flour is not None else False
@@ -333,6 +342,10 @@ class LivingWorld:
         self._site_index: Dict[str, List] = {}
         self._livestock_index: Dict[str, List] = {}
         self._residents: Dict[str, object] = {}
+        #: Dynamic game mode's scene author (game/living/scenarios.py). It
+        #: stages nothing unless the game mode is Dynamic.
+        from .scenarios import ScenarioDirector
+        self.scenarios = ScenarioDirector(self)
         self._quests_def: List[Dict] = []
         self.enabled = True
 
@@ -362,6 +375,7 @@ class LivingWorld:
             self.board.seed(now)
             self.board.last_t = now
         self._restore_quests()
+        self.scenarios.restore()
         return True
 
     def _classify_places(self, things) -> Dict[str, Dict]:
@@ -511,6 +525,7 @@ class LivingWorld:
                 spine.begin_tick()
                 spine.decide(_now_hours(s.clock))
             made = self.board.update(_now_hours(s.clock))
+            self.scenarios.tick(_now_hours(s.clock))
             self._enforce_away()
             self._stream()
             self._stream_remains()
@@ -521,6 +536,7 @@ class LivingWorld:
             self._decide_t = 0.0
             for jid in list(self.live):
                 self._drive(jid)
+            self.scenarios.watch()
         # Beasts are not NPCs, so the session's mover does not walk them.
         for entry in self.live.values():
             for t in entry["things"]:
@@ -595,7 +611,7 @@ class LivingWorld:
             d = math.hypot(x - px, z - pz)
             if d <= near:
                 local_weight = self.board.hooks.journey_weight(j.kind, (x, z),
-                        j.hostile or bool(jn.KINDS[j.kind].get("hunts_player")))
+                        j.hostile or bool(jn.kind_spec(j.kind).get("hunts_player")))
                 if local_weight <= 0:
                     continue
                 from ..sim.director import actor_key
@@ -610,13 +626,15 @@ class LivingWorld:
             self._spawn(j, t)
             if j.id in self.live:
                 self.board.hooks.journey_sampled(j, t, arrived=True)
-            if j.id in self.live and (j.hostile or jn.KINDS[j.kind].get("hunts_player")):
+            if j.id in self.live and (j.hostile or jn.kind_spec(j.kind).get("hunts_player")):
                 region = self.board.nearest_place(px, pz, jn.TOWNS)
                 if region is not None:
                     counts = self.board.hostile_materialisations
                     counts[region] = counts.get(region, 0) + 1
 
     def _abstract_pos(self, j, t):
+        if j.stage is not None and j.state == "rest" and not j.stage.get("walking"):
+            return float(j.stage["x"]), float(j.stage["z"])
         if getattr(self, "flour_roads", None) is not None and self.flour_roads.handles(j):
             if j.state == "rest":
                 return tuple(j.members[0].get("flour_pos", j.route[-1]))
@@ -733,7 +751,7 @@ class LivingWorld:
             "faction": faction, "team": faction, "aggression": aggression,
             "combatant": combatant, "persistent": False, "respawn": False,
             "schedule": [], "autonomy": True, "home": None,
-            "move_speed": jn.WALK_SPEED * float(jn.KINDS.get(j.kind, {}).get("speed", 1.0)),
+            "move_speed": jn.WALK_SPEED * float(jn.kind_spec(j.kind).get("speed", 1.0)),
             "_journey": j.id, "_member": index, "sight_range": SIGHT,
             "inventory": [], "dialogue": {}, "courage": 0.6 if combatant else 0.25,
         }
@@ -799,6 +817,19 @@ class LivingWorld:
                 props["inventory"] = copy.deepcopy(m["inventory"])
         if getattr(self, "flour_roads", None) is not None and self.flour_roads.handles(j):
             props.update(self.flour_roads.actor_props(j))
+        if m.get("grudge"):
+            # Dynamic mode: someone whose own grievance with the player is real
+            # (a cached intent backed by their own memory) comes to settle it.
+            props["aggression"] = "hostile"
+        if m.get("armed"):
+            # Dynamic mode: a townsperson who took up a blade over a grievance.
+            props["combatant"] = True
+            props["aggression"] = "defensive"
+            props["courage"] = max(0.7, float(props.get("courage", 0.0) or 0.0))
+            if not props.get("equipped_weapon") and rpg_items.get("iron_shortsword"):
+                props["inventory"] = list(props.get("inventory", [])) + [
+                    rpg_items.make("iron_shortsword", 1)]
+                props["equipped_weapon"] = "iron_shortsword"
         return props
 
     def _despawn(self, jid, j) -> None:
@@ -983,7 +1014,9 @@ class LivingWorld:
                 if made:
                     self._overheard(made)
         elif j.state == "rest":
-            if t >= j.rest_until:
+            if j.stage is not None:
+                self._loiter(j, things)     # held where Dynamic mode put it
+            elif t >= j.rest_until:
                 self.board.next_leg(j, t)
             else:
                 self._loiter(j, things)
@@ -1089,6 +1122,15 @@ class LivingWorld:
 
     def _loiter(self, j, things) -> None:
         """Resting at the destination: idle and stroll about the place."""
+        if j.stage is not None and not j.stage.get("walking"):
+            s = self.session
+            for x in things:
+                p = x.properties
+                p["_anchor"] = [float(j.stage["x"]), x.pos[1], float(j.stage["z"])]
+                p["wander_radius"] = float(j.stage.get("wander", 90.0))
+                s._idle_or_wander(x)
+                p["sched_state"] = "RESTING"
+            return
         place = self.places.get(j.dest)
         if place is None:
             return
@@ -1125,6 +1167,8 @@ class LivingWorld:
 
     def _greeting(self, j, leader) -> str:
         s = self.session
+        if j.stage is not None and j.stage.get("greeting"):
+            return str(j.stage["greeting"])
         line = self._justified_line(leader)
         if line:
             leader.properties["_justified_said"] = True
@@ -1299,6 +1343,9 @@ class LivingWorld:
     def _maybe_offer_quest(self, j, things) -> None:
         """Now and then someone on the road has a job for the player."""
         s = self.session
+        if j.stage is not None:
+            self.scenarios.spawned(j, things)
+            return
         if j.hostile or j.quest is not None or s.rng.random() > 0.45:
             return
         giver = things[0]
@@ -1459,6 +1506,7 @@ class LivingWorld:
         # Live flags are a session matter: a loaded game rebuilds them.
         self.session.store.set(STORE_KEY, raw.replace('"live": true', '"live": false'))
         self.session.store.set(QUEST_KEY, json.dumps(self._quests_def))
+        self.scenarios.persist()
         spine = getattr(self.session, "faction_spine", None)
         if spine is not None:
             spine.persist()
@@ -1474,6 +1522,7 @@ class LivingWorld:
         for j in self.board.journeys.values():
             j.live = False
         self._restore_quests()
+        self.scenarios.restore()
 
     # ------------------------------------------------------------ inspection
     def summary(self) -> List[str]:

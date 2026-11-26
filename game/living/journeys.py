@@ -111,9 +111,31 @@ KINDS: Dict[str, Dict] = {
                          dests=HOMES + CAMPS, legs=(2, 2), hours=(0, 24), weight=0, speed=1.0),
 }
 
+#: Party kinds only Dynamic game mode stages (game/living/scenarios.py). They
+#: are kept apart from KINDS so the ordinary board -- Normal mode -- never
+#: picks, lists or tunes them; :func:`kind_spec` reads either table.
+DYNAMIC_KINDS: Dict[str, Dict] = {
+    "cultists": dict(members=[("cult_leader", (1, 1)), ("cultist", (2, 3))],
+                     faction="cultists", origins=CAMPS, dests=CAMPS, legs=(1, 1),
+                     hours=(20, 5), weight=0, speed=0.9, hostile=True),
+    # A townsperson the cult has taken, held at the rite (a resident proxy).
+    "captive": dict(members=[], faction="villagers", origins=HOMES, dests=TOWNS,
+                    legs=(1, 1), hours=(0, 24), weight=0, speed=0.85),
+    # A townsperson out on the road over a grievance of their own.
+    "avenger": dict(members=[], faction="villagers", origins=HOMES, dests=CAMPS,
+                    legs=(1, 1), hours=(0, 24), weight=0, speed=1.0),
+}
+
+
+def kind_spec(kind: str) -> Dict:
+    """The spec of party *kind*, ordinary or Dynamic-only ({} when unknown)."""
+    return KINDS.get(kind) or DYNAMIC_KINDS.get(kind) or {}
+
+
 #: Roles that fight (everyone else runs).
 FIGHTERS = frozenset({"mercenary", "adventurer", "guard", "bandit_chief", "bandit",
-                      "bandit_archer", "wolf", "greenskin", "bounty_hunter"})
+                      "bandit_archer", "wolf", "greenskin", "bounty_hunter",
+                      "cult_leader", "cultist"})
 #: (health, damage, attack style) by role, for the abstract fights and for the
 #: actors a journey becomes.
 ROLE_STATS = {
@@ -124,6 +146,7 @@ ROLE_STATS = {
     "bandit": (85, 13, "melee"), "bandit_archer": (70, 12, "bow"),
     "wolf": (45, 9, "melee"), "greenskin": (75, 12, "melee"),
     "bounty_hunter": (120, 18, "melee"),
+    "cult_leader": (90, 16, "magic"), "cultist": (60, 12, "magic"),
 }
 
 #: Names for the people of the roads.
@@ -137,6 +160,7 @@ EPITHET = {
     "bounty_hunter": ("Iron", "the Hound", "Grim", "Cold", "the Tracker"),
     "adventurer": ("the Bold", "Swift", "the Lucky", "Stout", "the Young"),
     "minstrel": ("the Fair", "Silvertongue", "the Wanderer"),
+    "cult_leader": ("the Pale", "Ashen", "the Hollow", "Thrice-Marked"),
 }
 
 #: Abstract encounters: how near on the road two parties must pass.
@@ -194,6 +218,11 @@ class WorldHooks:
 
     def resident_home(self, resident_id: str, journey, alive: bool) -> None:
         pass
+
+    def stage_expired(self, journey, t: float) -> bool:
+        """A party Dynamic mode staged has waited out its time unmet. True
+        when the hook sent it on its way (it is not finished)."""
+        return False
 
     def resident_arrived(self, journey, t: float) -> bool:
         """An authored supply errand may own its stop and return leg."""
@@ -277,6 +306,9 @@ class Journey:
         self.quest = None                     # radiant quest offered, if any
         self.fought: List[str] = []           # journeys already met on this leg
         self.cause = None                    # faction action's knowledge receipt
+        #: Dynamic mode only: where the party was staged and why (None for
+        #: every journey the ordinary board makes).
+        self.stage = None
 
     # -- where -----------------------------------------------------------
     @property
@@ -322,13 +354,13 @@ class Journey:
     def faction(self) -> str:
         if self.cause:
             return self.cause["faction"]
-        return KINDS.get(self.kind, {}).get("faction", "villagers")
+        return kind_spec(self.kind).get("faction", "villagers")
 
     @property
     def hostile(self) -> bool:
         if self.cause:
             return self.cause["target"] == "player"
-        return bool(KINDS.get(self.kind, {}).get("hostile"))
+        return bool(kind_spec(self.kind).get("hostile"))
 
     def provenance(self):
         """A road party always has a faction, home, purpose and receipts."""
@@ -352,6 +384,8 @@ class Journey:
                 "quest": self.quest, "fought": list(self.fought)}
         if self.cause is not None:
             result["cause"] = self.cause
+        if self.stage is not None:
+            result["stage"] = self.stage
         return result
 
     @classmethod
@@ -366,6 +400,7 @@ class Journey:
         j.quest = d.get("quest")
         j.fought = list(d.get("fought", []))
         j.cause = d.get("cause")
+        j.stage = d.get("stage")
         return j
 
 
@@ -579,6 +614,11 @@ class JourneyBoard:
                 continue
             if j.live:
                 continue                    # actors are walking it; they report back
+            if j.stage is not None and j.state == "rest" and t >= j.rest_until:
+                # A Dynamic-mode party held in place has waited long enough.
+                if not self.hooks.stage_expired(j, t):
+                    j.state = "done"
+                continue
             if j.state == "travel" and t >= j.arrives_at():
                 self.arrive(j, t, made)
             elif j.state == "rest" and t >= j.rest_until and not storm:
@@ -593,7 +633,8 @@ class JourneyBoard:
 
     def _departures(self, t: float) -> None:
         hour = t % 24.0
-        active = sum(1 for j in self.journeys.values() if j.kind not in ("market",))
+        active = sum(1 for j in self.journeys.values()
+                     if j.kind not in ("market",) and j.stage is None)
         tries = 0
         while active < int(self._lever("population", self.population)) and tries < 6:
             tries += 1
@@ -650,7 +691,7 @@ class JourneyBoard:
         place = j.dest
         name = self.place_name(place)
         lead = j.leader()
-        spec = KINDS.get(j.kind, {})
+        spec = kind_spec(j.kind)
         # Tell what they carry; learn what is said here.
         heard = self.heard.setdefault(place, [])
         for nid in j.news:
@@ -744,7 +785,7 @@ class JourneyBoard:
         elif j.kind in ("market", "faction_raid"):
             dest = j.home
         else:
-            spec = KINDS.get(j.kind, {})
+            spec = kind_spec(j.kind)
             options = [d for d in self.places_of(spec.get("dests", TOWNS)) if d != here]
             if j.legs == 1 and j.home != here:
                 dest = j.home
@@ -1043,7 +1084,7 @@ class JourneyBoard:
                 j = Journey.from_dict(jd)
             except Exception:
                 continue
-            if j.kind in KINDS:
+            if j.kind in KINDS or j.kind in DYNAMIC_KINDS:
                 self.journeys[j.id] = j
         self.news = {n["id"]: n for n in d.get("news", []) if isinstance(n, dict)}
         self.heard = {k: list(v) for k, v in (d.get("heard") or {}).items()}

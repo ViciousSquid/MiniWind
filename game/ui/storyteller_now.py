@@ -1,45 +1,121 @@
 """The "Storyteller — what it's doing" window; console ``storyteller``.
 
-A live, read-only view of :mod:`game.storyteller_report`: a badge with the
-pacing state, then labelled rows -- Time, State, Why, Sensing, Roads, Weather,
-Recent -- and the Activity feed (state changes, population caps, Studio edits,
-biased journeys), newest first. **Open Studio** opens the full Storyteller
-Studio for editing. Painting it never samples the storyteller, appraises an
-actor or draws a random number.
+A desktop window of its own (a real top-level Qt window: move it to another
+monitor, resize it, minimise it) showing :mod:`game.storyteller_report` live:
+a badge with the pacing state, then two tabs.
+
+* **Story** -- what the storyteller is doing in plain words: labelled rows
+  (Time, State, Why, Sensing, Roads, Weather, Recent); in Dynamic game mode a
+  **Dynamic director** section with what the director is doing and every
+  decision it took, with its reasons; then the Activity feed (state changes,
+  population caps, Studio edits, biased journeys), newest first.
+* **Raw** -- the data behind it: the storyteller's ``summary()`` and, in
+  Dynamic mode, the director's ``raw()`` (numbers, weights, rejections,
+  journey ids), as a key / value table you can select and copy.
+
+The strip along the top collapses the window to just itself (the arrow) and
+keeps it above other windows (the drawing pin; :mod:`game.ui.window_strip`).
+**Open Studio** opens the full Storyteller Studio for editing. Refreshing it
+never samples the storyteller, appraises an actor or draws a random number.
 """
 
-from PyQt5.QtCore import QRect, Qt
-from PyQt5.QtGui import QColor, QFont, QFontMetrics
+from __future__ import annotations
 
-from engine.floating_windows import FloatingWindow
+import html
+
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel,
+                             QPushButton, QTableWidget, QTableWidgetItem, QTabWidget,
+                             QTextBrowser, QVBoxLayout, QWidget)
 
 from .. import storyteller_report as report
+from .window_strip import WindowStrip
 
 TITLE = "Storyteller — what it's doing"
+#: How often the window re-reads the storyteller (milliseconds).
+REFRESH_MS = 500
+
+_STYLE = """
+QWidget { background: #14171d; color: #e4e6ec; font-size: 10pt; }
+QTabWidget::pane { border: 1px solid #2c3340; }
+QTabBar::tab { background: #2d323c; color: #e4e6ec; padding: 5px 18px; margin-right: 2px; }
+QTabBar::tab:selected { background: #415f7d; }
+QTextBrowser, QTableWidget { background: #101318; border: none; }
+QHeaderView::section { background: #28303c; color: #96cde1; border: none; padding: 4px; }
+QTableWidget { gridline-color: #232a35; selection-background-color: #34506b; }
+QPushButton { background: #37414f; border: 1px solid #4a5566; padding: 4px 14px; }
+QPushButton:hover { background: #435064; }
+"""
+
+_open = []
 
 
-class StorytellerNowWindow(FloatingWindow):
-    wants_cursor = True
-    WIDTH = 600
-    MAX_BODY_H = 520
-    BADGE_H = 34
-    FOOTER_H = 30
-    LABEL_W = 92
+class StorytellerNowWindow(QWidget):
+    """The storyteller's live report in a top-level window (module docstring)."""
 
-    def __init__(self, view):
-        super().__init__(TITLE, x=24, y=64, width=self.WIDTH, body_height=self.MAX_BODY_H)
+    TABS = ("Story", "Raw")
+
+    def __init__(self, view, parent=None):
+        super().__init__(parent, Qt.Window)
         self.view = view
-        self.key = "debug:storyteller_now"
-        self.font = QFont("Arial", 10)
-        self.bold = QFont("Arial", 10, QFont.Bold)
-        self.badge_font = QFont("Arial", 11, QFont.Bold)
-        self._scroll = 0
-        self._scroll_max = 0
-        self._buttons = []
-        self._resize = None
-        self._resize_rect = QRect()
-        self._wanted_width = self.WIDTH
-        self._wanted_height = self.MAX_BODY_H
+        self.setWindowTitle(TITLE)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setStyleSheet(_STYLE)
+        self.resize(720, 640)
+        self.setMinimumSize(420, 300)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(6)
+        self.body = QWidget()
+        layout = QVBoxLayout(self.body)
+        layout.setContentsMargins(4, 0, 4, 4)
+        # The strip: collapse arrow, the state badge and title, the pin.
+        self.strip = WindowStrip(self, self.body)
+        self.badge = QLabel("—")
+        self.badge.setAlignment(Qt.AlignCenter)
+        self.badge.setFixedSize(110, 26)
+        self.badge.setFont(QFont(self.font().family(), 11, QFont.Bold))
+        self.title = QLabel("STORYTELLER")
+        self.title.setFont(QFont(self.font().family(), 11, QFont.Bold))
+        self.title.setStyleSheet("background: transparent;")
+        self.strip.add(self.badge)
+        self.strip.add(self.title, 1)
+        outer.addWidget(self.strip)
+        outer.addWidget(self.body, 1)
+
+        self.tabs = QTabWidget()
+        self.story = QTextBrowser()
+        self.story.setOpenLinks(False)
+        self.raw = QTableWidget(0, 2)
+        self.raw.setHorizontalHeaderLabels(["Key", "Value"])
+        self.raw.verticalHeader().setVisible(False)
+        self.raw.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
+        self.raw.horizontalHeader().setStretchLastSection(True)
+        self.raw.setColumnWidth(0, 220)
+        self.raw.setWordWrap(True)
+        self.raw.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.raw.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tabs.addTab(self.story, "Story")
+        self.tabs.addTab(self.raw, "Raw")
+        self.tabs.currentChanged.connect(lambda _i: self.refresh(force=True))
+        layout.addWidget(self.tabs, 1)
+
+        bottom = QHBoxLayout()
+        self.studio_button = QPushButton("Open Studio")
+        self.studio_button.clicked.connect(self.open_studio)
+        self.note = QLabel("Read-only · live")
+        self.note.setStyleSheet("color: #aaafb9;")
+        bottom.addWidget(self.studio_button)
+        bottom.addWidget(self.note, 1)
+        layout.addLayout(bottom)
+
+        self._shown = {}                 # tab -> the content last put up
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.refresh)
+        self._timer.start(REFRESH_MS)
+        self.refresh(force=True)
 
     # -- what it reads -------------------------------------------------------
     def _session(self):
@@ -48,166 +124,126 @@ class StorytellerNowWindow(FloatingWindow):
     def _storyteller(self):
         return getattr(self._session(), "storyteller", None)
 
-    def rows(self):
-        """``(label, text, heading)`` rows; the Activity feed gets a heading."""
+    @property
+    def tab(self) -> str:
+        return self.TABS[self.tabs.currentIndex()]
+
+    @tab.setter
+    def tab(self, name):
+        self.tabs.setCurrentIndex(self.TABS.index(name))
+
+    def rows(self, tab=None):
+        """``(label, text, heading)`` rows of *tab* (the one showing)."""
         story, session = self._storyteller(), self._session()
+        if (tab or self.tab) == "Raw":
+            return [("", heading, True) if heading else (key, value, False)
+                    for heading, key, value in report.raw_rows(story, session)]
         out = [(label, text, False) for label, text in report.rows(story, session, report.SECTIONS[:-1])]
+        dynamic = report.dynamic_rows(session)
+        if dynamic:
+            out.append(("", "Dynamic director · what it decided and why, newest first", True))
+            out += [(label, text, False) for label, text in dynamic]
         if story is not None:
             out.append(("", "Activity · newest first", True))
             out += [(label, text, False) for label, text in report.rows(story, session, "activity")]
         return out
 
-    # -- layout --------------------------------------------------------------
-    def _view_size(self):
-        return (getattr(self.view, "width", lambda: 1280)(),
-                getattr(self.view, "height", lambda: 720)())
-
-    def content_height(self):
-        return max(120, min(self._wanted_height,
-                            self._view_size()[1] - self.window_rect.y() - self.HEADER_H - 10))
-
-    def draw(self, painter, focused=False):
-        vw, vh = self._view_size()
-        self.width = max(self.MIN_W, min(self._wanted_width, vw - 20))
-        self.window_rect.setWidth(self.width)
-        self.window_rect.moveTo(max(5, min(self.window_rect.x(), vw - self.width - 5)),
-                                max(5, min(self.window_rect.y(), vh - self.HEADER_H - 120)))
-        super().draw(painter, focused)
-
-    def draw_body(self, painter, x, y, w):
+    # -- showing it ----------------------------------------------------------
+    def refresh(self, force=False):
         story = self._storyteller()
-        height = self.content_height()
-        # The badge: which state, and whether pacing is on.
         state = getattr(story, "state", None)
-        colour = QColor(*report.STATE_COLOURS.get(state, (120, 125, 135)))
-        painter.save()
-        painter.setFont(self.badge_font)
-        chip = QRect(x + 10, y + 6, 104, self.BADGE_H - 10)
-        painter.fillRect(chip, colour)
-        painter.setPen(QColor(20, 22, 28))
-        painter.drawText(chip, Qt.AlignCenter, state or "—")
-        painter.setPen(QColor(235, 238, 245))
-        title = "STORYTELLER" if story is None else (
-            "STORYTELLER · pacing ON" if story.enabled else "STORYTELLER · pacing OFF (pristine)")
-        painter.drawText(QRect(chip.right() + 12, y + 4, w - 140, self.BADGE_H - 6),
-                         Qt.AlignVCenter | Qt.AlignLeft, title)
-        painter.restore()
-        top = y + self.BADGE_H
-        visible = height - self.BADGE_H - self.FOOTER_H
-        # Rows: a coloured label column, wrapped text beside it.
-        flags = int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap)
-        text_w = max(80, w - self.LABEL_W - 30)
-        fm = QFontMetrics(self.font)
-        layout, total = [], 4
-        for label, text, heading in self.rows():
+        r, g, b = report.STATE_COLOURS.get(state, (120, 125, 135))
+        self.badge.setText(state or "—")
+        self.badge.setStyleSheet(f"background: rgb({r},{g},{b}); color: #14161c;")
+        self.title.setText("STORYTELLER" if story is None else (
+            "STORYTELLER · pacing ON" if story.enabled else "STORYTELLER · pacing OFF (pristine)"))
+        tab = self.tab
+        rows = self.rows(tab)
+        if not force and self._shown.get(tab) == rows:
+            return                      # unchanged: keep the reader's place
+        self._shown[tab] = rows
+        if tab == "Raw":
+            self._fill_raw(rows)
+        else:
+            self._fill_story(rows)
+
+    def _fill_story(self, rows):
+        bar = self.story.verticalScrollBar()
+        at = bar.value()
+        parts = ['<table cellspacing="0" cellpadding="3" width="100%">']
+        for label, text, heading in rows:
             if heading:
-                total += 6
-                layout.append((label, text, heading, total, 22))
-                total += 24
+                parts.append('<tr><td colspan="2" style="background:#28303c; color:#96cde1; '
+                             f'font-weight:bold; padding:5px">{html.escape(text)}</td></tr>')
                 continue
-            h = fm.boundingRect(QRect(0, 0, text_w, 10000), flags, text).height() + 6
-            layout.append((label, text, heading, total, h))
-            total += h
-        self._scroll_max = max(0, total + 6 - visible)
-        self._scroll = max(0, min(self._scroll, self._scroll_max))
-        painter.save()
-        painter.setClipRect(QRect(x, top, w, visible), Qt.IntersectClip)
-        for label, text, heading, row_y, h in layout:
-            ry = top + row_y - self._scroll
-            if ry > top + visible or ry + h < top:
-                continue
+            dim = label[:4] == "Day " or label == "-"
+            colour = "#aaafb9" if dim else "#96cde1"
+            parts.append(f'<tr><td valign="top" width="1%" style="color:{colour}; font-weight:bold; '
+                         f'white-space:nowrap; padding-right:10px">{html.escape(label)}</td>'
+                         f'<td valign="top">{html.escape(text)}</td></tr>')
+        parts.append("</table>")
+        self.story.setHtml("".join(parts))
+        bar.setValue(at)
+
+    def _fill_raw(self, rows):
+        bar = self.raw.verticalScrollBar()
+        at = bar.value()
+        self.raw.clearSpans()
+        self.raw.setRowCount(len(rows))
+        head_bg, head_fg = QColor(40, 48, 60), QColor(150, 205, 225)
+        for i, (key, value, heading) in enumerate(rows):
             if heading:
-                painter.fillRect(QRect(x + 8, ry, w - 16, 22), QColor(40, 48, 60))
-                painter.setFont(self.bold)
-                painter.setPen(QColor(150, 205, 225))
-                painter.drawText(QRect(x + 14, ry, w - 28, 22), Qt.AlignVCenter, text)
+                item = QTableWidgetItem(value)
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                item.setBackground(head_bg)
+                item.setForeground(head_fg)
+                self.raw.setItem(i, 0, item)
+                self.raw.setItem(i, 1, QTableWidgetItem(""))
+                self.raw.setSpan(i, 0, 1, 2)
                 continue
-            painter.setFont(self.bold)
-            painter.setPen(QColor(150, 205, 225) if label[:4] not in ("Day ", "-") else QColor(170, 175, 185))
-            painter.drawText(QRect(x + 12, ry, self.LABEL_W - 4, h), flags, label)
-            painter.setFont(self.font)
-            painter.setPen(QColor(228, 230, 236))
-            painter.drawText(QRect(x + 12 + self.LABEL_W, ry, text_w, h), flags, text)
-        painter.restore()
-        # Footer: Open Studio, scroll buttons, resize grip.
-        painter.save()
-        painter.setFont(self.font)
-        fy = top + visible
-        self._buttons = []
-        for left, width, label, action in ((x + 10, 110, "Open Studio", "studio"),
-                                           (x + w - 126, 52, "Up", -1), (x + w - 70, 52, "Down", 1)):
-            rect = QRect(left, fy + 3, width, self.FOOTER_H - 6)
-            painter.fillRect(rect, QColor(55, 65, 80))
-            painter.setPen(QColor(225, 230, 240))
-            painter.drawText(rect, Qt.AlignCenter, label)
-            self._buttons.append((rect, action))
-        painter.setPen(QColor(170, 175, 185))
-        painter.drawText(QRect(x + 130, fy, w - 270, self.FOOTER_H), Qt.AlignVCenter,
-                         "Read-only · live")
-        self._resize_rect = QRect(x + w - 14, y + height - 14, 14, 14)
-        painter.drawText(self._resize_rect, Qt.AlignCenter, "◢")
-        painter.restore()
+            k = QTableWidgetItem(key)
+            k.setForeground(head_fg)
+            self.raw.setItem(i, 0, k)
+            self.raw.setItem(i, 1, QTableWidgetItem(value))
+        self.raw.resizeRowsToContents()
+        bar.setValue(at)
 
-    # -- input ---------------------------------------------------------------
-    def _scroll_by(self, amount):
-        self._scroll = max(0, min(self._scroll + amount, self._scroll_max))
-        self.view.update()
+    # -- buttons -------------------------------------------------------------
+    def open_studio(self):
+        from . import storyteller_window
+        storyteller_window.open_storyteller(self.view)
 
-    def handle_wheel(self, event):
-        self._scroll_by(-event.angleDelta().y())
-        return True
-
-    def handle_body_click(self, x, y):
-        for rect, action in self._buttons:
-            if not rect.contains(x, y):
-                continue
-            if action == "studio":
-                from . import storyteller_window
-                storyteller_window.open_storyteller(self.view)
-            else:
-                self._scroll_by(action * max(40, self.content_height() - self.BADGE_H - self.FOOTER_H))
-            return True
-        return False
-
-    def handle_mouse_press(self, event):
-        if self.expanded and self._resize_rect.contains(event.pos()):
-            self._resize = (event.x(), event.y(), self.width, self.content_height())
-            self.mouse_captured = True
-            return True
-        return super().handle_mouse_press(event)
-
-    def handle_mouse_move(self, event, view_w, view_h):
-        if self._resize is None:
-            return super().handle_mouse_move(event, view_w, view_h)
-        x, y, width, height = self._resize
-        self._wanted_width = max(380, min(view_w - self.window_rect.x() - 5, width + event.x() - x))
-        self._wanted_height = max(180, min(view_h - self.window_rect.y() - self.HEADER_H - 5,
-                                           height + event.y() - y))
-        self.view.update()
-        return True
-
-    def handle_mouse_release(self, event):
-        if self._resize is not None:
-            self._resize = None
-            self.mouse_captured = False
-            return True
-        return super().handle_mouse_release(event)
-
-    def on_close(self):
-        self._resize = None
-        self.mouse_captured = False
+    def closeEvent(self, event):
+        self._timer.stop()
+        if self in _open:
+            _open.remove(self)
+        super().closeEvent(event)
 
 
-def open_now(view):
-    """Open the window on *view*, or bring the open one forward."""
-    manager = getattr(view, "window_manager", None)
+def open_now(view, parent=None):
+    """Open the window for *view*'s session, or bring the open one forward."""
     session = getattr(getattr(view, "logic_thread", None), "_miniwind", None)
-    if manager is None or getattr(session, "storyteller", None) is None:
+    if getattr(session, "storyteller", None) is None:
         return None
-    win = manager.find(lambda w: isinstance(w, StorytellerNowWindow) and w.active)
-    if win is None:
-        win = manager.add(StorytellerNowWindow(view))
-    else:
-        manager.raise_(win)
-    view.update()
+    for win in list(_open):
+        try:
+            if win.view is view:
+                win.show()
+                win.raise_()
+                win.activateWindow()
+                return win
+        except RuntimeError:            # deleted on close
+            _open.remove(win)
+    if not isinstance(parent, QWidget):
+        try:
+            parent = view.window() if hasattr(view, "window") else None
+        except Exception:
+            parent = None
+    if not isinstance(parent, QWidget):
+        parent = None
+    win = StorytellerNowWindow(view, parent)
+    _open.append(win)
+    win.show()
     return win
