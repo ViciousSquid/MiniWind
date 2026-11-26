@@ -256,6 +256,14 @@ def _hud_jolt(session, height):
     return (amp * math.sin(now * 67.0), amp * math.cos(now * 53.0))
 
 
+def _labelled(spec, labels):
+    """*spec* (an enum) shown in the editor by *labels* ``{value: label}``
+    while it stores the value -- the editor reads ``_choice_labels``, kept
+    off the plugin API (editor/property_editor.py)."""
+    spec._choice_labels = dict(labels)
+    return spec
+
+
 class MiniwindGame:
     """The native MiniWind game layer.
 
@@ -398,10 +406,18 @@ class MiniwindGame:
                  group="TRIGGER"),
         ])
         api.register_properties("marker", [
-            prop("marker_kind", "enum", "Marker kind", default="idle",
+            _labelled(prop("marker_kind", "enum", "Marker kind", default="idle",
                  choices=list(MARKER_KINDS), group="MARKER",
-                 help="What this anchor is for. NPCs reference it by name "
-                      "(home / work / bed / schedule location)."),
+                 help="What this anchor is for. Home / Work / Bed / Social: places "
+                      "NPCs name in their schedule. Location: a named place the "
+                      "player discovers on reaching it (set its place name and "
+                      "discover radius below). Jail: where the watch takes the "
+                      "player. Guard post / Patrol: where the watch stands and walks."),
+                 {"home": "Home", "bed": "Bed", "work": "Work", "forge": "Forge",
+                  "shop": "Shop", "farm": "Farm", "guardpost": "Guard post",
+                  "patrol": "Patrol", "social": "Social", "idle": "Idle",
+                  "location": "Location (discovery)", "prison": "Jail",
+                  "quest": "Quest"}),
             prop("hidden_in_game", "bool", "Hidden during play", default=True,
                  group="MARKER",
                  help="Markers are authoring aids: shown in the editor, hidden "
