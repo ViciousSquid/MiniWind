@@ -184,6 +184,62 @@ The mode can be switched at any moment; the director reads it live.
 Each switch is written to the director's decisions and the storyteller's
 activity feed.
 
+### Learning
+
+The director tunes itself to you as you play, a small step at a time, and
+explains every step. It learns from two things:
+
+* **How each peak went.** When a peak has played out, it looks at the lowest
+  your health got. Below 30%, that peak was too hard: scenes come a little
+  further apart and hostile scenes a little less often. Never below 80%, it
+  was too easy: the opposite. In between it was about right, and nothing
+  changes (it says that too).
+* **Which scenes you choose.** Stepping into a scene (saving the trader,
+  helping the avenger, breaking up the rite, taking on an ambush) makes that
+  kind of scene a little more likely. Coming within sight of one and going on
+  your way makes it a little less likely. A scene you never came near teaches
+  it nothing -- that was down to where it was staged, not to you.
+
+Each nudge is small (a tenth for the pace, a twentieth up or a tenth down for
+a scene) and stays within limits: scenes never come less than 0.6 or more than
+1.8 times as far apart as tuned, hostile scenes never less than half or more
+than one and a half times as often, and no scene less than 0.4 or more than
+twice as often. Every nudge is written to the director's decisions and the
+storyteller's activity feed:
+
+> The storyteller learned that the last peak was too hard: the player fell to
+> 20% health (below 30%).
+> **Result:** Nudged: scenes now come further apart and hostile scenes less
+> often -- the time between scenes is now ×1.1 (was ×1) and hostile scenes are
+> picked ×0.9 as often (was ×1).
+
+What it has learned is kept **in the save**, as a small minified JSON value
+(store key `living.scenarios.learned`) on top of the tuning files; a save that
+never played in Dynamic mode has none. The Story tab's **Learned** row says
+what it has learned so far. `storyteller unlearn` forgets it all, and
+`[learning] enabled = false` in `storyteller_dynamic.ini` stops it learning
+and sets its lessons aside.
+
+---
+
+## Tuning: two files in the game folder
+
+| File | Tunes | Read by |
+| --- | --- | --- |
+| `game/storyteller_normal.ini` | The storyteller itself: sensing, tension, distances, how strongly grudges draw trips, and each pacing state (CALM, RISING, PEAK, RESPITE) with its levers, party weights and hours. | Both modes (it is all Normal mode has). |
+| `game/storyteller_dynamic.ini` | The director: `[director]` pacing and staging, `[scene weights]`, `[storyteller states]` (how the storyteller's state scales it), and `[learning]`. | Dynamic mode only. |
+
+Every setting ships listed at the value the game uses now, switched off by a
+`;` in front. Delete the `;` to make a setting yours and change its value;
+nothing else changes. Settings you switch on win over the code and (for the
+storyteller) over `game/data/storyteller.json` and mods. A value that cannot
+be read, or an unknown key, is skipped and reported.
+
+Both files are read when the game starts and each time Play starts. In Play,
+`storyteller reload` applies an edit at once; a loaded save keeps the
+storyteller's levers as saved until its next state change or a reload. What
+the director learns is applied on top of `storyteller_dynamic.ini`.
+
 ---
 
 ## Seeing what the director decided
@@ -229,6 +285,8 @@ The same information in the console, under the **Storyteller** category:
 | `storyteller report dynamic` | Prints the director's state and its last 40 decisions. |
 | `storyteller report raw` | Prints the raw data (the window's Raw tab). |
 | `storyteller watch on\|off` | Logs each storyteller activity entry, and each director decision, as it happens. |
+| `storyteller reload` | Reads both tuning files again and applies them now. |
+| `storyteller unlearn` | Dynamic mode: the director forgets what it has learned. |
 
 Reading any of these never samples the storyteller, appraises an actor or
 draws a random number.
@@ -239,7 +297,8 @@ draws a random number.
 
 | File | What it holds |
 | --- | --- |
-| `game/living/scenarios.py` | `ScenarioDirector`: pacing, casting, staging, watching scenes, the decision log, persistence. All tuning constants are at the top. |
+| `game/living/scenarios.py` | `ScenarioDirector`: pacing, casting, staging, watching scenes, learning, the decision log, persistence. All tuning constants are at the top. |
+| `game/sim/tuning_ini.py` | Reading and writing `storyteller_normal.ini` and `storyteller_dynamic.ini`; `write_default()` regenerates both from the code's values. |
 | `game/living/journeys.py` | `DYNAMIC_KINDS` (`cultists`, `captive`, `avenger`) kept apart from `KINDS` so the ordinary board never picks, lists or tunes them; `kind_spec()` reads either. `Journey.stage`; the `stage_expired` hook. |
 | `game/living/world.py` | `LivingWorld.scenarios`; holding a staged party in place, its greeting, its scene's quest, armed or aggrieved townsfolk. |
 | `game/runtime.py` | `game_mode()` and `dynamic_mode_enabled()`. |

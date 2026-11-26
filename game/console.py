@@ -538,6 +538,9 @@ def cmd_storyteller(ctx, args):
       storyteller report raw    the raw data behind it all (the window's Raw tab)
       storyteller watch on|off  log each thing it does here as it happens
                                 (and, in Dynamic mode, each director decision)
+      storyteller reload        read game/storyteller_normal.ini and
+                                storyteller_dynamic.ini again and apply them now
+      storyteller unlearn       Dynamic mode: forget what the director has learned
       storyteller studio        open Storyteller Studio (levers, world, edits)
 
     Reading never samples the storyteller or draws a random number."""
@@ -562,6 +565,26 @@ def cmd_storyteller(ctx, args):
         import game.ui.storyteller_window as storyteller_window
         if storyteller_window.open_storyteller(view) is None:
             debug_log("Error", "storyteller: no game view to open it on.")
+        return None
+    if sub == "reload":
+        from .sim import storyteller as storyteller_mod
+        from .living import scenarios
+        problems = storyteller_mod.reload_tuning() + scenarios.load_ini()
+        story.retune()
+        for problem in problems:
+            debug_log("Error", f"storyteller tuning: {problem}")
+        debug_log("Storyteller", "Reloaded storyteller_normal.ini and storyteller_dynamic.ini: "
+                  "applied now" + (
+            f", {len(problems)} value(s) skipped (see above)." if problems else "."))
+        return None
+    if sub == "unlearn":
+        director = report.director_of(session)
+        if director is None:
+            debug_log("Error", "storyteller unlearn: the living world is not running.")
+            return None
+        director.forget_learning()
+        debug_log("Storyteller", "The director forgot what it had learned; "
+                  "storyteller_dynamic.ini's values apply as they are.")
         return None
     if sub == "report" and len(parts) > 1 and parts[1] in ("dynamic", "director"):
         rows = report.dynamic_rows(session, limit=40)
@@ -621,7 +644,7 @@ def cmd_storyteller(ctx, args):
             "each state change, cap, edit and biased journey is logged here as it happens."
             if want == "on" else "no longer logging."))
         return None
-    debug_log("Error", "storyteller: [report [section] | watch on|off | studio].")
+    debug_log("Error", "storyteller: [report [section] | watch on|off | studio | reload | unlearn].")
     return None
 
 
@@ -869,7 +892,7 @@ COMMANDS = (
      "[events | crimes | actors | why|knows|forget <name> | tell <name> <id> | emit …]"
      " — Reactive simulation (Play Mode)"),
     (("storyteller",), cmd_storyteller,
-     "[report [section|dynamic|raw] | watch on|off | studio] — What the storyteller is doing:"
+     "[report [section|dynamic|raw] | watch on|off | studio | reload | unlearn] — What the storyteller is doing:"
      " a window (Story and Raw tabs); 'report' prints it here (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),

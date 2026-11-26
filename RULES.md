@@ -1134,6 +1134,17 @@ Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
   dynamic` and `storyteller report raw` print the same in the console;
   `storyteller watch on` logs each decision as it happens. Every staged
   scene is also on the storyteller's activity feed.
+* **Learning.** After each peak the director looks at the lowest your health
+  got: below 30% it slows (time between scenes +0.1, hostile scenes −0.1);
+  80% or more it quickens (the reverse); otherwise no change. Stepping into a
+  scene makes that kind +0.05 likelier; seeing one and going on −0.1; one you
+  never came near changes nothing. Limits: time between scenes ×0.6--1.8,
+  hostile scenes ×0.5--1.5, each scene ×0.4--2. Every nudge is explained. What
+  it learned is saved in the save (minified JSON); `storyteller unlearn`
+  forgets it.
+* **Tuning.** `game/storyteller_normal.ini` (the storyteller, both modes) and
+  `game/storyteller_dynamic.ini` (the director, and how it learns). Every
+  setting ships switched off at its current value; switch one on to change it.
 * **Back to Normal.** Staged parties off screen go straight back to
   ordinary life; any in view finish what they were doing.
 

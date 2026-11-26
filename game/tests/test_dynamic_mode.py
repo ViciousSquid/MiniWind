@@ -118,6 +118,7 @@ def test_normal_mode_stages_nothing_and_saves_nothing():
     w.director.persist()
     assert w.board.to_json() == before
     assert not w.director.scenes and sc.STORE_KEY not in w.store
+    assert sc.LEARNED_KEY not in w.store            # nothing learned, nothing saved
 
 
 def test_an_ordinary_journey_saves_exactly_as_before():
@@ -474,3 +475,126 @@ def test_switching_modes_during_play_is_on_the_record():
     assert any(t.startswith("Game mode switched to Dynamic") for t in texts)
     assert any(t.startswith("Game mode switched to Normal") for t in texts)
     assert any("switched to Dynamic" in t for t in w.said)   # the storyteller's feed too
+
+
+# -- learning -------------------------------------------------------------------
+def _peak(w, low):
+    """Play one peak through to its fade with the player's health at *low*."""
+    d = w.director
+    d._enter("build", 0.0)
+    w.character.health = 100
+    d._last_health = 1.0
+    d._cycle_low = 1.0
+    d._enter("sustain", 5.0)
+    d._cycle_low = low
+    d._enter("fade", 0.0)
+
+
+def test_a_peak_that_was_too_hard_slows_the_pace_and_says_why():
+    w = _world()
+    _peak(w, 0.2)
+    L = w.director.learned
+    assert L["gap"] == 1.1 and L["hostile"] == 0.9 and L["peaks"] == 1
+    entry = [d for d in w.director.decisions if d["kind"] == "learn"][-1]
+    assert entry["text"] == ("The storyteller learned that the last peak was too hard: the player "
+                             "fell to 20% health (below 30%).")
+    assert "further apart" in entry["result"] and "was ×1" in entry["result"]
+    assert any(t.startswith("Learned: the last peak was too hard") for t in w.said)
+
+
+def test_a_peak_that_was_too_easy_quickens_it_and_one_about_right_changes_nothing():
+    w = _world()
+    _peak(w, 0.9)
+    assert w.director.learned["gap"] == 0.9 and w.director.learned["hostile"] == 1.1
+    _peak(w, 0.5)
+    entry = [d for d in w.director.decisions if d["kind"] == "learn"][-1]
+    assert "about right" in entry["text"] and entry["result"] == "No change to the pace."
+    assert w.director.learned["gap"] == 0.9
+
+
+def test_nudges_are_small_and_never_leave_their_bounds():
+    w = _world()
+    for _ in range(30):
+        _peak(w, 0.1)
+    L = w.director.learned
+    assert L["gap"] == sc.LEARNING["gap_max"] and L["hostile"] == sc.LEARNING["hostile_min"]
+    last = [d for d in w.director.decisions if d["kind"] == "learn"][-1]
+    assert last["result"].startswith("No change: the pace is already at the limit")
+
+
+def test_stepping_into_a_scene_or_passing_it_by_moves_only_that_scene():
+    w = _world()
+    trader = _trader(w.board)
+    scene = w.director._stage_waylaid(12.0)
+    gang = w.board.journeys[scene["journeys"]["attacker"]]
+    for m in gang.members:
+        m["alive"] = False
+    trader.live = True
+    w.world.live[trader.id] = {"things": [_Thing(2000.0, 100.0, display_name="Hal the Trader")]}
+    w.director.watch()
+    assert w.director.learned["scenes"] == {"waylaid": 1.05}
+    # Seen and passed by: less often.
+    w2 = _world(hour=23.0)
+    scene2 = w2.director._stage_ambush(23.0)
+    scene2["hinted"] = True
+    w2.board.update(23.0)
+    w2.board.update(23.0 + sc.HOLD_HOURS + 0.1)
+    assert w2.director.learned["scenes"] == {"ambush": 0.9}
+    entry = [d for d in w2.director.decisions if d["kind"] == "learn"][-1]
+    assert "passes an ambush by" in entry["text"]
+
+
+def test_a_scene_the_player_never_came_near_teaches_nothing():
+    w = _world(hour=23.0)
+    w.director._stage_ambush(23.0)
+    w.board.update(23.0)
+    w.board.update(23.0 + sc.HOLD_HOURS + 0.1)
+    assert w.director.learned == w.director.fresh_learning()
+
+
+def test_what_it_learned_shapes_the_pace_and_the_choice_of_scene():
+    w = _world()
+    d = w.director
+    d.learned.update(gap=1.5, hostile=0.5, scenes={"waylaid": 2.0})
+    assert d.gap_scale() == 1.5 and d.hostile_scale() == 0.5 and d.scene_scale("waylaid") == 2.0
+    _trader(w.board)
+    _build(w)
+    d.tick(12.0, 1.0)
+    staged = [e for e in d.decisions if e["kind"] == "stage"][-1]
+    assert staged["data"]["options"]["waylaid"] == round(3.0 * 2.0 * 0.5, 2)
+    assert d.gap_left >= sc.BUILD_GAP[0] * 1.5 - 1e-6
+
+
+def test_it_is_saved_in_the_save_as_minified_json_and_comes_back_within_bounds():
+    w = _world()
+    _peak(w, 0.2)
+    w.director.persist()
+    raw = w.store[sc.LEARNED_KEY]
+    assert " " not in raw and json.loads(raw)["gap"] == 1.1      # minified
+    w2 = _world()
+    w2.store.update(w.store)
+    w2.director.restore()
+    assert w2.director.learned["gap"] == 1.1
+    w2.store[sc.LEARNED_KEY] = json.dumps({"gap": 99, "hostile": -4, "scenes": {"ambush": 50}})
+    w2.director.restore()
+    L = w2.director.learned
+    assert (L["gap"], L["hostile"], L["scenes"]["ambush"]) == (
+        sc.LEARNING["gap_max"], sc.LEARNING["hostile_min"], sc.LEARNING["scene_max"])
+
+
+def test_learning_switched_off_neither_learns_nor_applies(monkeypatch):
+    w = _world()
+    w.director.learned.update(gap=1.5)
+    monkeypatch.setitem(sc.LEARNING, "enabled", False)
+    assert w.director.gap_scale() == 1.0
+    _peak(w, 0.1)
+    assert w.director.learned["gap"] == 1.5 and w.director.learned["peaks"] == 0
+
+
+def test_unlearn_forgets_and_says_so():
+    w = _world()
+    _peak(w, 0.1)
+    w.director.forget_learning()
+    assert w.director.learned == w.director.fresh_learning()
+    assert "forgot" in w.director.decisions[-1]["text"]
+    assert json.loads(w.store[sc.LEARNED_KEY])["gap"] == 1.0

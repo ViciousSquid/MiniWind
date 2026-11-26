@@ -176,7 +176,7 @@ def dynamic_rows(session, limit=15):
     if not dynamic_shown(session):
         return []
     director = director_of(session)
-    out = [("Director", director.status())]
+    out = [("Director", director.status()), ("Learned", director.learned_text())]
     for scene in director.scenes.values():
         state = "played out" if scene.get("resolved") else "in play"
         out.append(("Scene", f"{scene.get('text', scene['kind'])} ({state})"))

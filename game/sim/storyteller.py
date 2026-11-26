@@ -117,13 +117,30 @@ DEFAULT_TUNING = {
 }
 
 
-def load_tuning():
-    """Editable content plus mods, with code fallbacks and fixed-size lists."""
-    return data._merge(copy.deepcopy(DEFAULT_TUNING),
-                       data.load("storyteller", replace_lists=True), replace_lists=True)
+def load_tuning(use_ini=True, problems=None):
+    """Editable content plus mods, with code fallbacks and fixed-size lists;
+    then game/storyteller_normal.ini over it all (``game/sim/tuning_ini.py``)."""
+    tuning = data._merge(copy.deepcopy(DEFAULT_TUNING),
+                         data.load("storyteller", replace_lists=True), replace_lists=True)
+    if use_ini:
+        from . import tuning_ini
+        found = tuning_ini.apply_storyteller(tuning)
+        if problems is not None:
+            problems.extend(found)
+    return tuning
 
 
 TUNING = load_tuning()
+
+
+def reload_tuning():
+    """Read game/storyteller_normal.ini (and storyteller.json) again, in place, so
+    every holder of TUNING sees it. Returns the problems found."""
+    problems = []
+    fresh = load_tuning(problems=problems)
+    TUNING.clear()
+    TUNING.update(fresh)
+    return problems
 
 #: Justified kinds whose holder means the player harm; their staging is
 #: discharged by the holder's own later blow, as for kin vendettas.
@@ -313,6 +330,15 @@ class Storyteller(SimSystem):
         self._note("edit", f"Studio set {state} {' / '.join(map(str, path))} to {value:g}.", merge=True)
         if persist:
             self.persist()
+
+    def retune(self):
+        """Apply the current TUNING to this session now (after a reload): the
+        current state's levers are rebased on it; Studio edits stay on top."""
+        self._base_levers = copy.deepcopy(TUNING["states"][self.state]["levers"])
+        sensors = self.sensors if "law" in (self.sensors or {}) else {"law": {}}
+        self._adjust_levers(self.last_sample or 0, sensors)
+        self._note("edit", "Tuning reloaded from game/storyteller_normal.ini.")
+        self.persist()
 
     def reset_edits(self, state):
         self._studio_overrides.pop(state, None)

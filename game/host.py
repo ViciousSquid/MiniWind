@@ -1030,6 +1030,12 @@ class MiniwindGame:
         # loads and the character is made (engine/sky_clouds.py).
         from engine import sky_clouds
         sky_clouds.prepare()
+        # game/storyteller_normal.ini and storyteller_dynamic.ini, read afresh
+        # for each play session.
+        from .sim import storyteller as _storyteller
+        from .living import scenarios as _scenarios
+        for problem in _storyteller.reload_tuning() + _scenarios.load_ini():
+            print(f"[MiniWind] storyteller tuning: {problem}")
         logic._miniwind = None
         logic.game_session = None
         settings = self._find_settings(logic)

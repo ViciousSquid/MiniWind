@@ -89,6 +89,11 @@ MAX_SCENES = 2
 #: The storyteller's state scales the gap between scenes and hostile weights.
 STATE_GAP = {"CALM": 1.0, "RISING": 0.8, "PEAK": 0.7, "RESPITE": 1.6}
 STATE_HOSTILE = {"CALM": 1.0, "RISING": 1.3, "PEAK": 1.5, "RESPITE": 0.4}
+#: How often each scene is picked, against the others that fit the moment.
+#: Cult rites, processions and ambushes are for the night; an ambush is half
+#: as likely at dusk. Hostile scenes are scaled by STATE_HOSTILE.
+SCENE_WEIGHTS = {"gratitude": 4.0, "waylaid": 3.0, "avenger": 3.0, "reckoning": 3.0,
+                 "patrol": 1.5, "cult_rite": 3.0, "ambush": 2.0, "procession": 1.5}
 
 # -- staging (world units; game hours) --------------------------------------
 #: Staged this far from the player at least: out of every actor's sight.
@@ -126,6 +131,52 @@ PHASE_NAMES = {"build": "Building tension", "sustain": "At the peak",
 PEACEFUL_KINDS = ("market", "trader", "caravan", "pilgrims", "courier", "minstrel")
 OUTLAW_FACTIONS = ("bandits", "cultists", "monsters")
 TOWNS = jn.TOWNS
+
+#: How the director learns (storyteller_dynamic.ini [learning]): what it
+#: nudges, by how much, and the bounds it never leaves. Scales multiply the
+#: values above; 1 is as tuned.
+LEARNING = {"enabled": True, "step": 0.1, "scene_step_up": 0.05, "scene_step_down": 0.1,
+            "gap_min": 0.6, "gap_max": 1.8, "hostile_min": 0.5, "hostile_max": 1.5,
+            "scene_min": 0.4, "scene_max": 2.0,
+            "overwhelmed_health": 0.3, "breezed_health": 0.8}
+#: Scenes the player chooses to step into or not (the others come to them).
+CHOOSABLE = ("waylaid", "avenger", "cult_rite", "patrol", "ambush", "procession")
+#: The save's store key for what the director has learned (minified JSON).
+LEARNED_KEY = "living.scenarios.learned"
+
+#: Every tunable value above, by its name in storyteller_dynamic.ini's
+#: [director] section (game/sim/tuning_ini.py), and the module global it sets.
+TUNABLE = {
+    "peak": "PEAK", "relax_below": "RELAX_BELOW", "sustain_seconds": "SUSTAIN_SECONDS",
+    "relax_seconds": "RELAX_SECONDS", "first_relax": "FIRST_RELAX", "build_gap": "BUILD_GAP",
+    "damage_gain": "DAMAGE_GAIN", "engaged_gain": "ENGAGED_GAIN", "calm_decay": "CALM_DECAY",
+    "tense_decay": "TENSE_DECAY", "threat_radius": "THREAT_RADIUS", "hurt": "HURT",
+    "max_scenes": "MAX_SCENES", "stage_min": "STAGE_MIN", "stage_max": "STAGE_MAX",
+    "on_road": "ON_ROAD", "town_clear": "TOWN_CLEAR", "quarry_gap": "QUARRY_GAP",
+    "hold_hours": "HOLD_HOURS", "rite_hours": "RITE_HOURS", "hint_radius": "HINT_RADIUS",
+    "thank_radius": "THANK_RADIUS", "grievance_days": "GRIEVANCE_DAYS",
+}
+
+
+def tuning():
+    """The director's tuning as storyteller.ini names it, detached."""
+    g = globals()
+    return {"dynamic": {k: copy.deepcopy(g[name]) for k, name in TUNABLE.items()},
+            "scene_weights": dict(SCENE_WEIGHTS),
+            "state_gap": dict(STATE_GAP), "state_hostile": dict(STATE_HOSTILE),
+            "learning": dict(LEARNING)}
+
+
+def retune(values) -> None:
+    """Set the director's tuning from *values* (shaped like :func:`tuning`)."""
+    g = globals()
+    for key, value in (values.get("dynamic") or {}).items():
+        if key in TUNABLE:
+            g[TUNABLE[key]] = value
+    for table, target in (("scene_weights", SCENE_WEIGHTS), ("state_gap", STATE_GAP),
+                          ("state_hostile", STATE_HOSTILE), ("learning", LEARNING)):
+        target.update(values.get(table) or {})
+
 
 HINTS = {
     "waylaid": ("Shouts carry from the road ahead.", "Someone is crying for help up the road."),
@@ -185,6 +236,10 @@ class ScenarioDirector:
         self.listeners: List = []
         self._why = ""
         self._was_on = None           # the mode last seen (None: not yet)
+        #: What the director has learned about this player (saved with the
+        #: game as minified JSON under LEARNED_KEY).
+        self.learned = self.fresh_learning()
+        self._cycle_low = 1.0         # lowest health since build-up began
         self.reset_pacing()
 
     def _decide(self, kind, text, merge="", result="", why="", **data):
@@ -214,6 +269,98 @@ class ScenarioDirector:
                 listener(dict(entry))
             except Exception:
                 pass
+
+    # -- learning ------------------------------------------------------------
+    @staticmethod
+    def fresh_learning() -> Dict:
+        return {"gap": 1.0, "hostile": 1.0, "scenes": {}, "peaks": 0, "nudges": 0}
+
+    def learning_on(self) -> bool:
+        return bool(LEARNING.get("enabled", True))
+
+    def gap_scale(self) -> float:
+        return float(self.learned["gap"]) if self.learning_on() else 1.0
+
+    def hostile_scale(self) -> float:
+        return float(self.learned["hostile"]) if self.learning_on() else 1.0
+
+    def scene_scale(self, kind) -> float:
+        return float(self.learned["scenes"].get(kind, 1.0)) if self.learning_on() else 1.0
+
+    @staticmethod
+    def _bounded(value, lo, hi):
+        return round(max(float(lo), min(float(hi), float(value))), 3)
+
+    def _learn_peak(self):
+        """A peak has played out: was it too hard, too easy, or about right?"""
+        if not self.learning_on():
+            return
+        low = self._cycle_low
+        L = self.learned
+        L["peaks"] = int(L.get("peaks", 0)) + 1
+        too_hard, too_easy = LEARNING["overwhelmed_health"], LEARNING["breezed_health"]
+        if low < too_hard:
+            verdict = (f"the last peak was too hard: {story_text.PLAYER} fell to {low:.0%} health "
+                       f"(below {too_hard:.0%})")
+            gap, hostile = L["gap"] + LEARNING["step"], L["hostile"] - LEARNING["step"]
+            change = "scenes now come further apart and hostile scenes less often"
+        elif low >= too_easy:
+            verdict = (f"the last peak was too easy: {story_text.PLAYER} never dropped below "
+                       f"{low:.0%} health ({too_easy:.0%} or more)")
+            gap, hostile = L["gap"] - LEARNING["step"], L["hostile"] + LEARNING["step"]
+            change = "scenes now come closer together and hostile scenes more often"
+        else:
+            self._decide("learn", f"The storyteller judged the last peak about right: "
+                         f"{story_text.PLAYER}'s health got as low as {low:.0%} (between "
+                         f"{too_hard:.0%} and {too_easy:.0%}).",
+                         result="No change to the pace.", low=round(low, 3))
+            return
+        gap = self._bounded(gap, LEARNING["gap_min"], LEARNING["gap_max"])
+        hostile = self._bounded(hostile, LEARNING["hostile_min"], LEARNING["hostile_max"])
+        before = (L["gap"], L["hostile"])
+        if (gap, hostile) == before:
+            result = (f"No change: the pace is already at the limit [learning] allows "
+                      f"(gap ×{gap:g}, hostile ×{hostile:g}).")
+        else:
+            L["gap"], L["hostile"] = gap, hostile
+            L["nudges"] = int(L.get("nudges", 0)) + 1
+            result = (f"Nudged: {change} -- the time between scenes is now ×{gap:g} (was "
+                      f"×{before[0]:g}) and hostile scenes are picked ×{hostile:g} as often "
+                      f"(was ×{before[1]:g}).")
+        self._decide("learn", f"The storyteller learned that {verdict}.", result=result,
+                     low=round(low, 3), gap=[before[0], gap], hostile=[before[1], hostile])
+        self._narrate(f"Learned: {verdict}. {result}", log=False)
+
+    def _learn_scene(self, scene, stepped_in: bool, how: str):
+        """The player stepped into a scene, or saw it and passed it by."""
+        kind = scene.get("kind")
+        if not self.learning_on() or kind not in CHOOSABLE or scene.get("learned"):
+            return
+        scene["learned"] = True
+        L = self.learned
+        before = float(L["scenes"].get(kind, 1.0))
+        step = LEARNING["scene_step_up"] if stepped_in else -LEARNING["scene_step_down"]
+        after = self._bounded(before + step, LEARNING["scene_min"], LEARNING["scene_max"])
+        name = SCENE_NAMES.get(kind, kind)
+        verdict = (f"{story_text.PLAYER} steps into {name}: {how}" if stepped_in else
+                   f"{story_text.PLAYER} passes {name} by: {how}")
+        if after == before:
+            result = (f"No change: {name} is already picked ×{after:g} as often, the limit "
+                      "[learning] allows.")
+        else:
+            L["scenes"][kind] = after
+            L["nudges"] = int(L.get("nudges", 0)) + 1
+            result = (f"Nudged: {name} is now picked ×{after:g} as often (was ×{before:g}).")
+        self._decide("learn", f"The storyteller learned that {verdict}.", result=result,
+                     scene=scene.get("id"), scene_kind=kind, weight=[before, after])
+        self._narrate(f"Learned: {verdict}. {result}", log=False)
+
+    def forget_learning(self):
+        """Back to the values as tuned (console ``storyteller unlearn``)."""
+        self.learned = self.fresh_learning()
+        self._decide("learn", "The storyteller forgot what it had learned about the player.",
+                     result="Pace and scene choice are back to storyteller_dynamic.ini's values.")
+        self.persist(force=True)
 
     def _no(self, why):
         """A scene could not be cast: remember why, for the log."""
@@ -293,7 +440,8 @@ class ScenarioDirector:
         if scene is None:
             self.gap_left = 10.0            # nothing fits here: look again soon
             return
-        gap = self.session.rng.uniform(*BUILD_GAP) * STATE_GAP.get(self._story_state(), 1.0)
+        gap = (self.session.rng.uniform(*BUILD_GAP) * STATE_GAP.get(self._story_state(), 1.0)
+               * self.gap_scale())
         self.gap_left = gap
 
     def _health(self) -> float:
@@ -336,6 +484,7 @@ class ScenarioDirector:
                          f"health): tension up {min(gain, 1.0):.0%}.", merge="hurt",
                          health=round(health, 3), gain=round(gain, 3))
         self._last_health = health
+        self._cycle_low = min(self._cycle_low, health)
         engaged = self._engaged_hostiles()
         self.intensity += engaged * ENGAGED_GAIN * dt
         self.intensity -= (TENSE_DECAY if engaged else CALM_DECAY) * dt
@@ -359,6 +508,8 @@ class ScenarioDirector:
 
     def _enter(self, phase, seconds):
         before = self.phase
+        if phase == "build":
+            self._cycle_low = self._health()
         self.phase, self.phase_left = phase, float(seconds)
         if phase == "relax":
             self._peaceful_done = False
@@ -374,6 +525,8 @@ class ScenarioDirector:
             "build": "The rest is over: building tension again, one scene at a time.",
         }[phase]
         self._decide("phase", text, previous=before, seconds=round(float(seconds), 1))
+        if phase == "fade" and before == "sustain":
+            self._learn_peak()                 # how did that peak go?
 
     def _story_state(self) -> str:
         story = getattr(self.session, "storyteller", None)
@@ -393,17 +546,16 @@ class ScenarioDirector:
     # -- choosing a scene ------------------------------------------------------
     def _cast(self, t: float, peaceful_only: bool) -> Optional[Dict]:
         rng = self.session.rng
-        hostile = STATE_HOSTILE.get(self._story_state(), 1.0)
+        hostile = STATE_HOSTILE.get(self._story_state(), 1.0) * self.hostile_scale()
         night, dusk = is_night(t), is_dusk(t)
-        options = [("gratitude", 4.0)]
+        w = {k: v * self.scene_scale(k) for k, v in SCENE_WEIGHTS.items()}
+        options = [("gratitude", w["gratitude"])]
         if not peaceful_only:
-            options += [("waylaid", 3.0 * hostile), ("avenger", 3.0 * hostile),
-                        ("reckoning", 3.0 * hostile), ("patrol", 1.5 * hostile)]
+            options += [(k, w[k] * hostile) for k in ("waylaid", "avenger", "reckoning", "patrol")]
             if night:
-                options += [("cult_rite", 3.0 * hostile), ("ambush", 2.0 * hostile),
-                            ("procession", 1.5 * hostile)]
+                options += [(k, w[k] * hostile) for k in ("cult_rite", "ambush", "procession")]
             elif dusk:
-                options += [("ambush", 1.0 * hostile)]
+                options += [("ambush", w["ambush"] * 0.5 * hostile)]
         tried, rejected = set(), {}
         while len(tried) < len(options):
             left = [(k, w) for k, w in options if k not in tried and w > 0]
@@ -448,7 +600,7 @@ class ScenarioDirector:
     def _road_keys(self):
         return list(self.board.network.place_node)
 
-    def _road_ahead(self, hostile=True, min_d=STAGE_MIN, max_d=STAGE_MAX, rng_jitter=0.3):
+    def _road_ahead(self, hostile=True, min_d=None, max_d=None, rng_jitter=0.3):
         """A point on a road the player is on, ahead of them and out of sight:
         ``(route, cum, s_player, s_stage, dirn, start_key, end_key, x, z)``."""
         s = self.session
@@ -457,7 +609,8 @@ class ScenarioDirector:
             return None
         px, pz = ppos[0], ppos[2]
         board = self.board
-        max_d = min(max_d, self.world.reach() * 0.92)
+        min_d = STAGE_MIN if min_d is None else min_d
+        max_d = min(STAGE_MAX if max_d is None else max_d, self.world.reach() * 0.92)
         if max_d <= min_d:
             return None
         keys = self._road_keys()
@@ -537,9 +690,10 @@ class ScenarioDirector:
         return min(keys, key=lambda k: math.hypot(board.places[k]["x"] - x,
                                                   board.places[k]["z"] - z)) if keys else ""
 
-    def _hold(self, j, x, z, scene_id, role, t, hours=HOLD_HOURS, greeting="",
+    def _hold(self, j, x, z, scene_id, role, t, hours=None, greeting="",
               wander=90.0, borrowed=False):
         """Stage *j* at (x, z): it waits there (as a rest) for *hours*."""
+        hours = HOLD_HOURS if hours is None else hours
         stage = {"x": float(x), "z": float(z), "scene": scene_id, "role": role,
                  "wander": float(wander), "borrowed": bool(borrowed)}
         if greeting:
@@ -1038,6 +1192,9 @@ class ScenarioDirector:
         stage = j.stage or {}
         scene = self.scenes.get(stage.get("scene", ""))
         role = stage.get("role")
+        if scene is not None and not scene.get("resolved") and scene.get("hinted"):
+            # They came near enough to know and went on their way.
+            self._learn_scene(scene, False, "they came within sight of it and went on their way")
         if scene is not None and scene["kind"] == "cult_rite" and not scene.get("resolved"):
             # Whichever party's time runs out first, the rite is finished if
             # the cult is still there and nobody broke it up.
@@ -1185,6 +1342,16 @@ class ScenarioDirector:
             if scene.get("gift"):
                 self._maybe_gift(scene, px, pz, t)
                 continue
+            if set(js) == {"attacker"}:
+                # An ambush or a procession: over when the party is gone; the
+                # player took it on if they had come near it.
+                if not self._party_up(js["attacker"]) and scene["hinted"]:
+                    scene["resolved"] = True
+                    self._learn_scene(scene, True, "they took the fight to it")
+                    self._narrate(f"Outcome: {SCENE_NAMES.get(scene['kind'], scene['kind'])} "
+                                  f"is over -- {story_text.PLAYER} came near and the attackers "
+                                  "are gone.", scene=scene["id"])
+                continue
             if "attacker" not in js or "victim" not in js and "avenger" not in js:
                 continue
             if self._party_up(js["attacker"]):
@@ -1238,6 +1405,9 @@ class ScenarioDirector:
             j.news.append(nid)
             if j.resident or (j.stage or {}).get("borrowed"):
                 self._release(j, t)
+        self._learn_scene(scene, True, {"patrol": "they helped the watch beat the brigands",
+                                        "avenger": f"they helped {name} settle the score"}.get(
+            kind, f"they came to {name}'s aid"))
         paid = f" They paid {amount} gold from their own purse." if amount else ""
         self._narrate(f"Outcome: {story_text.PLAYER} stepped in -- the attackers are dead and {name} "
                       f"was saved.{paid} News of it spread from {self.board.place_name(place)}.",
@@ -1297,10 +1467,14 @@ class ScenarioDirector:
         self.reset_pacing()
 
     # -- persistence --------------------------------------------------------------
-    def persist(self) -> None:
+    def persist(self, force=False) -> None:
         store = getattr(self.session, "store", None)
         if store is None:
             return
+        # What it has learned rides in the save as minified JSON -- only once
+        # there is something (Normal mode, and an untaught director, write nothing).
+        if force or self.learned != self.fresh_learning() or store.get(LEARNED_KEY, ""):
+            store.set(LEARNED_KEY, json.dumps(self.learned, separators=(",", ":"), sort_keys=True))
         if not self.scenes and not store.get(STORE_KEY, ""):
             return                          # Normal mode leaves the save as it was
         store.set(STORE_KEY, json.dumps({"scenes": list(self.scenes.values()),
@@ -1309,7 +1483,23 @@ class ScenarioDirector:
     def restore(self) -> None:
         self.scenes = {}
         self.reset_pacing()
+        self.learned = self.fresh_learning()
         store = getattr(self.session, "store", None)
+        raw_learned = store.get(LEARNED_KEY, "") if store is not None else ""
+        if raw_learned and raw_learned != "false":
+            try:
+                saved = json.loads(raw_learned)
+            except (TypeError, ValueError):
+                saved = None
+            if isinstance(saved, dict):
+                L = self.learned
+                L["gap"] = self._bounded(saved.get("gap", 1.0), LEARNING["gap_min"], LEARNING["gap_max"])
+                L["hostile"] = self._bounded(saved.get("hostile", 1.0), LEARNING["hostile_min"],
+                                             LEARNING["hostile_max"])
+                L["scenes"] = {k: self._bounded(v, LEARNING["scene_min"], LEARNING["scene_max"])
+                               for k, v in (saved.get("scenes") or {}).items() if k in SCENE_WEIGHTS}
+                L["peaks"] = int(saved.get("peaks", 0) or 0)
+                L["nudges"] = int(saved.get("nudges", 0) or 0)
         raw = store.get(STORE_KEY, "") if store is not None else ""
         if not raw or raw == "false":
             return
@@ -1336,7 +1526,21 @@ class ScenarioDirector:
             line += f" · {math.ceil(self.phase_left):.0f} s left"
         playing = [SCENE_NAMES.get(sc["kind"], sc["kind"]) for sc in self.scenes.values()
                    if not sc.get("resolved")]
-        return line + (" · in play: " + ", ".join(playing) if playing else " · nothing in play")
+        line += " · in play: " + ", ".join(playing) if playing else " · nothing in play"
+        return line
+
+    def learned_text(self) -> str:
+        """What it has learned, in one plain line."""
+        if not self.learning_on():
+            return "Learning is off ([learning] enabled = false): the values are used as tuned."
+        L = self.learned
+        if L == self.fresh_learning():
+            return "Nothing yet: the values are as tuned."
+        scenes = ", ".join(f"{SCENE_NAMES.get(k, k)} ×{v:g}" for k, v in sorted(L["scenes"].items())
+                           if v != 1.0)
+        return (f"After {L['peaks']} peak(s) and {L['nudges']} nudge(s): time between scenes "
+                f"×{L['gap']:g}, hostile scenes ×{L['hostile']:g}"
+                + (f"; {scenes}" if scenes else "") + ".")
 
     def raw(self) -> Dict:
         """Every number behind the decisions, detached (the debug Raw tab)."""
@@ -1346,13 +1550,14 @@ class ScenarioDirector:
             "intensity": round(self.intensity, 3), "gap_seconds_left": round(self.gap_left, 1),
             "peaceful_done": self._peaceful_done, "player_health": round(self._health(), 3),
             "storyteller_state": self._story_state(), "scenes": self.scenes,
+            "learned": self.learned, "learning_on": self.learning_on(),
             "decisions": [{k: v for k, v in d.items() if k != "merge"}
                           for d in reversed(self.decisions)],
             "tuning": {"peak": PEAK, "relax_below": RELAX_BELOW, "hurt": HURT,
                        "max_scenes": MAX_SCENES, "stage_min": STAGE_MIN, "stage_max": STAGE_MAX,
                        "build_gap": BUILD_GAP, "relax_seconds": RELAX_SECONDS,
                        "sustain_seconds": SUSTAIN_SECONDS, "hold_hours": HOLD_HOURS,
-                       "rite_hours": RITE_HOURS},
+                       "rite_hours": RITE_HOURS, "learning": dict(LEARNING)},
         })
 
     def summary(self) -> List[str]:
@@ -1363,3 +1568,20 @@ class ScenarioDirector:
             lines.append(f"  {sc['id']} {sc['kind']}{' (resolved)' if sc['resolved'] else ''}: "
                          f"{sc.get('text', '')}")
         return lines
+
+
+#: The values the code ships with, before storyteller.ini.
+DEFAULTS = tuning()
+
+
+def load_ini(path=None):
+    """Read game/storyteller_dynamic.ini over the code's values.
+    Returns the problems found (each a plain sentence); bad values are skipped."""
+    from ..sim import tuning_ini
+    values, problems = tuning_ini.director_values(DEFAULTS, path)
+    retune(copy.deepcopy(DEFAULTS))
+    retune(values)
+    return problems
+
+
+load_ini()
