@@ -368,6 +368,9 @@ class QtGameView(QOpenGLWidget):
         # Decals: placed, selected, dragged and nudged as stamps are.
         from editor.decal_tool import DecalTool
         self.decal_tool = DecalTool(self)
+        # Trees: click the terrain to plant a random tree brush.
+        from editor.tree_tool import TreeTool
+        self.tree_tool = TreeTool(self)
         self.projection_matrix = glm.mat4(1.0)
         self.view_matrix = glm.mat4(1.0)
         self._cached_aspect_ratio = 1.0
@@ -2110,6 +2113,7 @@ class QtGameView(QOpenGLWidget):
         if not self.play_mode:
             self.stop_editor_mouselook()
             self.decal_tool.set_active(False)
+            self.tree_tool.set_active(False)
         self.play_mode = not self.play_mode
         # A game layer that draws its own HUD re-asserts this every frame of
         # its play session; a new session starts with the stock HUD.
@@ -2579,6 +2583,9 @@ class QtGameView(QOpenGLWidget):
             return
         if self.decal_tool.active and not self.play_mode and event.button() == Qt.LeftButton:
             self.decal_tool.press(event)
+            return
+        if self.tree_tool.active and not self.play_mode and event.button() == Qt.LeftButton:
+            self.tree_tool.press(event)
             return
         if not self.play_mode and self.floating_windows.handle_mouse_press(event):
             if any(getattr(w, "dragging", False) for w in self.floating_windows.windows):
@@ -3294,6 +3301,12 @@ class QtGameView(QOpenGLWidget):
             if (event.key() in (Qt.Key_Delete, Qt.Key_Backspace)
                     and self.decal_tool.delete_selected()):
                 return
+        # The Trees tool owns Escape while it is on.
+        if (self.tree_tool.active and not self.play_mode
+                and event.key() == Qt.Key_Escape):
+            self.tree_tool.escape()
+            self.setFocus()
+            return
         # Sculpt mode owns Escape while active. Do this before normal
         # editor/play-mode escape handling.
         if event.key() == Qt.Key_Escape and self.terrain_sculpt_active and not self.play_mode:

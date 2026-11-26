@@ -7,6 +7,7 @@
   "event_limit": 200,
   "reason_cap": 24,
   "observation_cap": 10,
+  "activity_cap": 40,
   "receipt_cap": 40,
   "healthy": 0.7,
   "danger_health": 0.35,

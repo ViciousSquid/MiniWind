@@ -261,7 +261,8 @@ class PauseActions:
                 return False
         try:
             with open(path, 'r', encoding='utf-8') as fh:
-                block = json.load(fh).get(SAVE_KEY)
+                save = json.load(fh)
+            block = save.get(SAVE_KEY)
         except Exception as exc:
             self._toast(f"{label.capitalize()} cannot be read ({exc}).", error=True)
             return False
@@ -270,7 +271,12 @@ class PauseActions:
                         "Stopping the game" if self._playing() else "Reading the save"):
             if isinstance(block, dict) and isinstance(block.get('values'), dict):
                 if self._playing():
-                    self.window._exit_play_mode()
+                    # The load opens the save's map (maps/<name>, as the
+                    # console resolves it) straight after.
+                    map_name = os.path.basename(str(save.get('map') or ''))
+                    self.window._exit_play_mode_for_reload(
+                        os.path.join(self.window.root_dir, 'maps', map_name)
+                        if map_name else None)
                 saved = (str(block.get('store') or DEFAULT_STORE),
                          dict(block['values']))
                 self._replace_store(*saved)
@@ -344,7 +350,7 @@ class PauseActions:
             return False
         with self._busy("Starting a new game", "Stopping the game"):
             if self._playing():
-                window._exit_play_mode()
+                window._exit_play_mode_for_reload(map_path)
             from .. import GAME
             GAME.reset_progress(window)
             if window.load_level_file(map_path) is False:

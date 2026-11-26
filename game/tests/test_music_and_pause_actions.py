@@ -284,9 +284,11 @@ class _Console:
 class _Window:
     def __init__(self, root, view):
         self.view = view
+        self.root_dir = root
         self.console_handler = _Console(root, self)
         self.toasts = []
         self.exits = 0
+        self.reloads = []
 
     def show_toast(self, message, is_error=False):
         self.toasts.append((message, is_error))
@@ -294,6 +296,10 @@ class _Window:
     def _exit_play_mode(self):
         self.exits += 1
         self.view.play_mode = False
+
+    def _exit_play_mode_for_reload(self, path):
+        self.reloads.append(path)
+        self._exit_play_mode()
 
 
 class _View:
@@ -341,6 +347,8 @@ def test_loading_puts_the_store_back_before_play_restarts(actions):
     assert actions.pause_menu_load_slot(1)
     window = actions.window
     assert window.exits == 1
+    # Stopped for the save's map, which the load opens straight after.
+    assert window.reloads == [os.path.join(window.root_dir, "maps", "village.json")]
     name, values, playing = window.console_handler.loaded[-1]
     assert name == "slot1"
     assert not playing                       # stopped before the store swap

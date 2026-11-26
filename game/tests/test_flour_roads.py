@@ -127,6 +127,24 @@ def test_cargo_survives_live_materialisation_dematerialisation_and_board_save_lo
     assert item_stock(shop, 'flour') == 3 and 'away_on_journey' not in shop.properties
 
 
+def test_a_party_coming_and_going_re_indexes_the_world_once_each_way(roads, monkeypatch):
+    # The full re-index walks every brush and thing in the map: one per
+    # spawn and one per despawn, never the same rebuild twice in a row.
+    from .. import fio
+    session, world, mill, shop, _ = roads
+    _stock(mill, 3)
+    _step(session, world, 5.0)
+    j = _delivery(world)
+    rebuilt = []
+    real = fio.rebuild_entity_caches
+    monkeypatch.setattr(fio, 'rebuild_entity_caches',
+                        lambda logic: (rebuilt.append(logic), real(logic)))
+    world._spawn(j, session.flour_supply.now)
+    assert len(rebuilt) == 1
+    world._despawn(j.id, j)
+    assert len(rebuilt) == 2
+
+
 def test_offscreen_robbery_moves_the_flour_to_the_robbers_and_the_town_goes_hungry(roads):
     session, world, mill, shop, buyer = roads
     _stock(mill, 3)

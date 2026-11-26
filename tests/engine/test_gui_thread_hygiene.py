@@ -22,7 +22,8 @@ pytestmark = pytest.mark.qt
 
 
 class _GL:
-    """The GL calls the grid overlay makes, recording the vertex upload."""
+    """The GL calls the grid overlay makes (straight and through gl_state),
+    recording the vertex upload."""
 
     GL_FALSE = 0
     GL_ARRAY_BUFFER = 1
@@ -68,6 +69,8 @@ def _debug_draw(main_window, monkeypatch, cells):
 def test_the_grid_overlay_survives_a_repopulate_mid_paint(main_window, monkeypatch):
     gl = _GL()
     monkeypatch.setattr(view_debug_draw, "gl", gl)
+    # The overlay sets program and vertex-array state through gl_state.
+    monkeypatch.setattr(view_debug_draw, "gl_state", gl)
     cells = _RepopulatingCells({(0, 0): [], (1, 0): [], (2, 0): []})
     # Must not raise "dictionary changed size during iteration".
     _debug_draw(main_window, monkeypatch, cells)._render_spatial_grid(
@@ -77,6 +80,8 @@ def test_the_grid_overlay_survives_a_repopulate_mid_paint(main_window, monkeypat
 def test_the_grid_overlay_draws_every_cell_of_a_still_grid(main_window, monkeypatch):
     gl = _GL()
     monkeypatch.setattr(view_debug_draw, "gl", gl)
+    # The overlay sets program and vertex-array state through gl_state.
+    monkeypatch.setattr(view_debug_draw, "gl_state", gl)
     cells = {(0, 0): [], (1, 0): [], (0, 1): []}
     _debug_draw(main_window, monkeypatch, cells)._render_spatial_grid(
         glm.mat4(1.0), glm.mat4(1.0))

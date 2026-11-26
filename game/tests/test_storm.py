@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import random
+from types import SimpleNamespace
 
 import pytest
 
@@ -338,3 +339,32 @@ def test_the_wind_loop_howls_through_a_storm_and_follows_its_gusts():
 def test_the_howl_ships_with_the_game():
     from ..runtime import sound_available
     assert sound_available(wind_mod.HOWL_SOUND)
+
+
+@pytest.mark.qt
+def test_a_storm_quickens_the_flowing_water():
+    """The sea drifting to the world's edge runs faster as a storm builds
+    (renderer ``water_flow_boost``), and at its own pace otherwise."""
+    from ..host import STORM_FLOW_BOOST
+    from ..weather import Weather
+    from ..wind import Wind
+    weather = Weather(random.Random(12))
+    weather.storm = 1.0
+    on = {"weather": True}
+    session = SimpleNamespace(wind=Wind(random.Random(13)), weather=weather,
+                              weather_enabled=lambda: on["weather"],
+                              clock=SimpleNamespace(hour=12.0), sky_drift=(0.0, 0.0))
+    game = _host_with(session)
+    renderer = _Renderer()
+    game._on_pre_scene({"play_mode": True, "renderer": renderer})
+    assert renderer.water_flow_boost == pytest.approx(1.0 + STORM_FLOW_BOOST)
+    weather.storm = 0.0
+    game._on_pre_scene({"play_mode": True, "renderer": renderer})
+    assert renderer.water_flow_boost == pytest.approx(1.0)
+    weather.storm = 1.0
+    on["weather"] = False
+    game._on_pre_scene({"play_mode": True, "renderer": renderer})
+    assert renderer.water_flow_boost == pytest.approx(1.0)
+    on["weather"] = True
+    game._on_pre_scene({"play_mode": False, "renderer": renderer})
+    assert renderer.water_flow_boost == pytest.approx(1.0)

@@ -12,7 +12,7 @@ session is running, and the editor window) plus the raw argument string.
     diceroll | dice   roll a dice expression, optionally animated
     quest | quests    list / start / advance / complete / reset quests
     sim               inspect and drive the reactive simulation
-    storyteller       live pacing levers and the last 10 observations
+    storyteller       what the storyteller is doing (window, report, watch, studio)
     inspect | mind    pause and click an actor for its live mental state
     torch_shadows [on|off]   torches near you cast shadows (toggles)
 """
@@ -369,9 +369,10 @@ def cmd_pause(ctx, args):
 
 
 def cmd_weather(ctx, args):
-    """weather [sunny|overcast|rain|storm] [hours] -- what the sky is doing
-    (game/weather.py); with a kind, the sky turns to it -- fading in as
-    weather does -- for a spell or *hours*. ``sunny`` is clear sky."""
+    """weather [sunny|overcast|rain|storm|snow] [hours] -- what the sky is
+    doing (game/weather.py); with a kind, the sky turns to it -- fading in as
+    weather does -- for a spell or *hours*. ``sunny`` is clear sky; ``snow``
+    snows in any season (a storm in winter is a blizzard by itself)."""
     session = getattr(ctx.logic_thread, "_miniwind", None)
     weather = getattr(session, "weather", None)
     if weather is None:
@@ -380,8 +381,10 @@ def cmd_weather(ctx, args):
     parts = str(args or "").split()
     if not parts:
         snap = weather.snapshot()
-        debug_log("Info", f"weather: {snap['kind']} for {snap['left']:.1f} h more; rain "
-                          f"{snap['rain']:.2f}, ground wet {snap['wet']:.2f}.")
+        kind = "blizzard" if weather.blizzard() else snap["kind"]
+        debug_log("Info", f"weather: {kind} for {snap['left']:.1f} h more; rain "
+                          f"{snap['rain']:.2f}, snowfall {snap['snowfall']:.2f}, snow lying "
+                          f"{snap['snow']:.2f}, ground wet {snap['wet']:.2f}, cold {snap['cold']:.2f}.")
         return None
     hours = None
     if len(parts) > 1:
@@ -390,13 +393,53 @@ def cmd_weather(ctx, args):
         except ValueError:
             hours = None
     if not weather.set(parts[0].lower(), hours):
-        debug_log("Error", "weather: sunny, overcast, rain or storm.")
+        debug_log("Error", "weather: sunny, overcast, rain, storm or snow.")
         return None
     msg = f"Weather: {parts[0].lower()}."
     debug_log("Info", msg)
     toast = getattr(ctx.main_window, "show_toast", None)
     if toast is not None:
         toast(msg)
+    return None
+
+
+def cmd_districts(ctx, args):
+    """districts [on|off | glow on|off] -- which district you stand in, and
+    every district (game/districts.py); ``on``/``off`` shows or hides the
+    borders inked on the ground for this session (Settings › Game › District
+    borders keeps the choice), ``glow on``/``glow off`` the glow that fades in
+    near one (Settings › Game › Border glow)."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None or not hasattr(session, "district_borders_enabled"):
+        debug_log("Error", "districts: Play Mode only.")
+        return None
+    want = str(args or "").strip().lower()
+    if want in ("glow on", "glow off"):
+        session._border_glow = want.endswith("on")
+        msg = f"Border glow {'on' if session._border_glow else 'off'}."
+        debug_log("Info", msg)
+        toast = getattr(ctx.main_window, "show_toast", None)
+        if toast is not None:
+            toast(msg)
+        return None
+    if want in ("on", "off"):
+        session.set_district_borders(want == "on")
+        msg = f"District borders {'shown' if want == 'on' else 'hidden'}."
+        debug_log("Info", msg)
+        toast = getattr(ctx.main_window, "show_toast", None)
+        if toast is not None:
+            toast(msg)
+        return None
+    found = getattr(session, "districts", None)
+    if found is None:
+        debug_log("Info", "districts: this map has none (they divide the overworld).")
+        return None
+    here = session.district_at(session._player_pos()) if hasattr(session, "_player_pos") else None
+    debug_log("Info", f"districts: you are in {here.name if here else 'no district'}; borders "
+                      f"{'shown' if session.district_borders_enabled() else 'hidden'}.")
+    for d in found.districts:
+        seats = "; ".join(f"{x:+.0f}, {z:+.0f}" for x, z in d.seats)
+        debug_log("Info", f"  {d.name} ({d.biome}, seat {seats}): {d.note}")
     return None
 
 
@@ -476,19 +519,81 @@ def cmd_showsound(ctx, args):
     return _toggle_overlay(ctx, "show_sound", "sound")
 
 
+def _log_story(label, text):
+    debug_log("Storyteller", f"{label:<9} {text}")
+
+
 def cmd_storyteller(ctx, args):
-    """storyteller -- open the resizable Studio: live sensors, lever editing and outcomes."""
+    """storyteller [report [section] | watch on|off | studio]
+
+    What MiniWind's pacing storyteller is doing (game/sim/storyteller.py).
+    Everything it prints is under the **Storyteller** console category.
+
+      storyteller               open the "Storyteller — what it's doing" window
+      storyteller report        print the same report here, in the console
+      storyteller report <section>
+                                one section: time, state, why, sensors, roads,
+                                weather, recent or activity
+      storyteller watch on|off  log each thing it does here as it happens
+      storyteller studio        open Storyteller Studio (levers, world, edits)
+
+    Reading never samples the storyteller or draws a random number."""
     if not ctx.play_mode:
         debug_log("Error", "storyteller: Play Mode only.")
         return None
     session = getattr(ctx.logic_thread, "_miniwind", None)
-    if getattr(session, "storyteller", None) is None:
+    story = getattr(session, "storyteller", None)
+    if story is None:
         debug_log("Error", "storyteller: no active MiniWind storyteller.")
         return None
-    import game.ui.storyteller_window as storyteller_window
+    from . import storyteller_report as report
+    parts = str(args or "").lower().split()
+    sub = parts[0] if parts else ""
     view = getattr(ctx.main_window, "view_3d", None)
-    if storyteller_window.open_storyteller(view) is None:
-        debug_log("Error", "storyteller: no game view to open it on.")
+    if sub in ("", "now", "window"):
+        import game.ui.storyteller_now as storyteller_now
+        if storyteller_now.open_now(view) is None:
+            debug_log("Error", "storyteller: no game view to open it on.")
+        return None
+    if sub == "studio":
+        import game.ui.storyteller_window as storyteller_window
+        if storyteller_window.open_storyteller(view) is None:
+            debug_log("Error", "storyteller: no game view to open it on.")
+        return None
+    if sub == "report":
+        section = parts[1] if len(parts) > 1 else None
+        if section in ("sensing",):
+            section = "sensors"
+        if section is not None and section not in report.SECTIONS:
+            debug_log("Error", f"storyteller report: one of {', '.join(report.SECTIONS)}.")
+            return None
+        if section is None:
+            debug_log("Storyteller", report.header(story))
+        for label, text in report.rows(story, session, section,
+                                       history=10 if section == "recent" else 5,
+                                       activity=40 if section == "activity" else 12):
+            _log_story(label, text)
+        return None
+    if sub == "watch":
+        want = parts[1] if len(parts) > 1 else ""
+        listener = getattr(story, "console_watch", None)
+        if want not in ("on", "off"):
+            debug_log("Storyteller", f"watch is {'on' if listener else 'off'} (storyteller watch on|off).")
+            return None
+        if want == "on" and listener is None:
+            def listener(entry):
+                _log_story(report.stamp(entry.get("time")), entry.get("text", ""))
+            story.listeners.append(listener)
+            story.console_watch = listener
+        elif want == "off" and listener is not None:
+            if listener in story.listeners:
+                story.listeners.remove(listener)
+            story.console_watch = None
+        debug_log("Storyteller", f"watch {want}: " + (
+            "each state change, cap, edit and biased journey is logged here as it happens."
+            if want == "on" else "no longer logging."))
+        return None
+    debug_log("Error", "storyteller: [report [section] | watch on|off | studio].")
     return None
 
 
@@ -736,7 +841,8 @@ COMMANDS = (
      "[events | crimes | actors | why|knows|forget <name> | tell <name> <id> | emit …]"
      " — Reactive simulation (Play Mode)"),
     (("storyteller",), cmd_storyteller,
-     "— Live pacing levers and last 10 observations (Play Mode)"),
+     "[report [section] | watch on|off | studio] — What the storyteller is doing: a window;"
+     " 'report' prints it here (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
     (("paths", "pathfinding"), cmd_paths,
@@ -753,13 +859,16 @@ COMMANDS = (
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("weather",), cmd_weather,
-     "[sunny|overcast|rain|storm] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
+     "[sunny|overcast|rain|storm|snow] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
     (("worldmap",), cmd_worldmap,
      "— (Editor) The world map in a window, with the editor camera on it (10 Hz)"),
     (("viewcone", "viewcones"), cmd_viewcone,
      "— Show/hide every head's view cone and blind spot (debug; settings.ini: [developer] view_cones)"),
     (("showsound",), cmd_showsound,
      "— Show/hide how far your noise carries, and shouts and fights near you (debug; settings.ini: [developer] show_sound)"),
+    (("districts", "district"), cmd_districts,
+     "[on|off | glow on|off] — Which district you are in, every district; show/hide their borders"
+     " or the glow near one (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
      "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,

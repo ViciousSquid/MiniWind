@@ -54,7 +54,13 @@ volumes and distance fog; a sky panorama; stencil world portals; reflection
 probes; the terrain and its grass; the editor's overlays.
 
 **Settings** (`[Renderer]`): `shadows_enabled`, `shadow_map_size`,
-`sky_cubemap_size`, `occlusion_culling`, `lowpower_mode`, `geo_batching`.
+`sky_cubemap_size`, `occlusion_culling`, `lowpower_mode`, `geo_batching`,
+`skystyle` -- the sky behind the world (`forward/edge_sky.py`): `0` (the
+default) the sky as it always was; `1` near the world's edge, space on the
+sky's walls with the clouds kept overhead, blending down the walls; `2` the
+whole sky turning to space there; `3` space all the time. 1 and 2 fade in
+and out as the camera nears and leaves the edge; away from it the sky is the
+map's panorama, or the game's own sky (the one the water reflects).
 
 **Locked.** Classic must not change:
 

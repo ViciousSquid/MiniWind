@@ -50,6 +50,10 @@ def _names_by_code():
 _NAV_BY_CODE = _names_by_code()
 
 # action bindings (single-press unless noted)
+#: How much faster flowing water drifts in a full storm: 1 + this, times
+#: its Flow Speed (engine renderer ``water_flow_boost``).
+STORM_FLOW_BOOST = 3.0
+
 K_ATTACK = "f"
 K_BLOCK = "b"          # held
 K_INTERACT = "e"       # talk to / trade with / use the nearest NPC
@@ -831,6 +835,8 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
         host.on("render.pre_sprites", self._on_pre_sprites)
         host.on("render.pre_scene", self._on_pre_scene)
+        # The inked district borders, out of the editor's view (game/district_editor.py).
+        host.on("editor.level_loaded", self._on_level_loaded)
         # Fio's cutscenes: lines said and thought on a keyframe, and the combat
         # of a cutscene battle while the cutscene holds the game's own tick.
         host.on("cutscene.line", self._on_cutscene_line)
@@ -909,6 +915,8 @@ class MiniwindGame:
             # in the last storm played.
             if getattr(renderer, "grass_wind", None) is not None:
                 renderer.grass_wind = None
+            renderer.snow_cover = 0.0
+            renderer.water_flow_boost = 1.0
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
@@ -918,6 +926,15 @@ class MiniwindGame:
         import game.wind as wind
         renderer.sky_state, renderer.sky_drift = sky.state(session)
         renderer.grass_wind = wind.grass_sway(getattr(session, "wind", None))
+        # Settled snow on the ground (game/weather.py); none with the weather off.
+        weather = getattr(session, "weather", None)
+        renderer.snow_cover = (float(getattr(weather, "snow", 0.0))
+                               if weather is not None and session.weather_enabled() else 0.0)
+        # Flowing water (the sea drifting to the world's edge) runs faster
+        # as a storm builds (game/weather.py).
+        storm = (float(getattr(weather, "storm", 0.0))
+                 if weather is not None and session.weather_enabled() else 0.0)
+        renderer.water_flow_boost = 1.0 + STORM_FLOW_BOOST * max(0.0, min(1.0, storm))
 
     def _on_pre_sprites(self, ev):
         """Draw what lies on the floor, before Fio's effects and actors so they
@@ -931,6 +948,13 @@ class MiniwindGame:
         if session is None:
             return
         projection, view = ev.get("projection"), ev.get("view")
+        # The border glow, under everything else on the floor, only while the
+        # player is near a district border (game/district_glow.py).
+        glow_of = getattr(session, "district_glow", None)
+        glow = glow_of() if callable(glow_of) else None
+        if glow is not None:
+            import game.ui.district_glow_gl as district_glow_gl
+            district_glow_gl.draw(projection, view, glow)
         gore = getattr(session, "gore", None)
         if (gore is not None and not getattr(session, "needs_char_creation", False)
                 and getattr(session, "open_screen", None) != "charcreate"):
@@ -993,8 +1017,15 @@ class MiniwindGame:
                 import game.ui.magic_gl as magic_gl
             magic_gl.draw_wet_lens(water.frame())
 
+    def _on_level_loaded(self, ev):
+        from .district_editor import EDITOR
+        EDITOR.level_loaded(ev.get("state"), ev.get("terrain"), bool(ev.get("play_mode")))
+
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
+        # The district borders back in the paint, as the map file has them.
+        from .district_editor import EDITOR
+        EDITOR.play_start()
         # The water's sky clouds bake on their own thread while the game
         # loads and the character is made (engine/sky_clouds.py).
         from engine import sky_clouds
@@ -1080,6 +1111,8 @@ class MiniwindGame:
             session.uninstall()
             logic._miniwind = None
             logic.game_session = None
+        from .district_editor import EDITOR
+        EDITOR.play_stop()                 # out of the editor's view again
         host = getattr(self, "_host", None)
         if host is not None:
             try:

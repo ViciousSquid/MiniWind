@@ -47,12 +47,12 @@ def test_command_opens_one_live_window_and_raises_it_on_repeat(qt_app):
     view = View(story)
     ctx = ConsoleContext(logic_thread=view.logic_thread, play_mode=True,
                          main_window=SimpleNamespace(view_3d=view))
-    cmd_storyteller(ctx, "")
+    cmd_storyteller(ctx, "studio")
     win = view.window_manager.windows[0]
     assert isinstance(win, StorytellerWindow)
     other = object()
     view.window_manager.add(other)
-    cmd_storyteller(ctx, "")
+    cmd_storyteller(ctx, "studio")
     assert view.window_manager.windows == [other, win]
     win.active = False
     assert open_storyteller(view) is not win

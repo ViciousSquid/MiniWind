@@ -1262,6 +1262,18 @@ class AssetBrowserTab(QWidget):
                 "nudge it. Click again to go back to the folder you were in.")
             self.decal_btn.clicked.connect(self.on_decal_clicked)
             pair.addWidget(self.decal_btn)
+
+            # The Trees tool, beside DECAL: click the terrain to plant trees.
+            self.trees_btn = QPushButton(load_icon("assets/terrain - Copy (2).png"), "")
+            self.trees_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.trees_btn.setCheckable(True)
+            self.trees_btn.setToolTip(
+                "Trees Tool\n"
+                "Click the terrain in the 3D view to plant a random tree: a tree\n"
+                "brush 128 to 512 units square, floating 100 to 110 above the\n"
+                "ground. Each tree is one undo step. Esc or click again to stop.")
+            self.trees_btn.clicked.connect(self.on_trees_clicked)
+            pair.addWidget(self.trees_btn)
             self.apply_side_button_size(self.side_button_size())
 
             # Right-click the empty space beside them: Size > Small / Large.
@@ -1750,8 +1762,12 @@ class AssetBrowserTab(QWidget):
         button, tint_icon, decal_icon = side_button_metrics(size_name)
         self.tint_btn.setIconSize(tint_icon)
         self.decal_btn.setIconSize(decal_icon)
-        for widget in (self.tint_btn, self.decal_btn):
-            widget.setFixedSize(button)
+        trees = getattr(self, 'trees_btn', None)
+        if trees is not None:
+            trees.setIconSize(decal_icon)
+        for widget in (self.tint_btn, self.decal_btn, trees):
+            if widget is not None:
+                widget.setFixedSize(button)
         # The bar grows to hold large buttons (and keeps its usual height).
         margins = self.action_bar.layout().contentsMargins()
         self.action_bar.setFixedHeight(max(
@@ -1790,6 +1806,11 @@ class AssetBrowserTab(QWidget):
             group.addAction(action)
             action.triggered.connect(lambda _c=False, n=name: self.set_side_button_size(n))
         return menu
+
+    def on_trees_clicked(self, checked):
+        """The Trees button: the Trees tool on or off."""
+        if self.editor is not None and hasattr(self.editor, 'toggle_tree_tool'):
+            self.editor.toggle_tree_tool(bool(checked))
 
     def on_decal_clicked(self, checked):
         """The DECAL button: the Decal tool on (and textures/decals shown) or off."""

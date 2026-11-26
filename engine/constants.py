@@ -131,12 +131,18 @@ def water_high_quality(brush):
 
 
 #: Water "Direction": the way its surface flows, as a world-space (x, z)
-#: vector -- north is +z and east is +x, as a box brush's faces are named.
+#: unit vector -- north is +z and east is +x, as a box brush's faces are
+#: named -- the four compass points and the four diagonals between them.
+_DIAGONAL = 0.7071067811865476
 WATER_FLOW_DIRECTIONS = {
     'N': (0.0, 1.0),
     'S': (0.0, -1.0),
     'E': (1.0, 0.0),
     'W': (-1.0, 0.0),
+    'NE': (_DIAGONAL, _DIAGONAL),
+    'NW': (-_DIAGONAL, _DIAGONAL),
+    'SE': (_DIAGONAL, -_DIAGONAL),
+    'SW': (-_DIAGONAL, -_DIAGONAL),
 }
 #: How fast flowing water's surface moves by default (``water_flow_speed``),
 #: in world units a second (a player is about 64 tall): its waves, ripples,
@@ -148,7 +154,7 @@ WATER_FLOW_SPEED_MAX = 256.0
 
 def water_flow_vector(brush):
     """``(x, z)``: the way a water brush's surface flows (``water_flow``:
-    ``'N'``, ``'S'``, ``'E'`` or ``'W'``), or ``(0.0, 0.0)`` -- still water,
+    ``'N'``, ``'S'``, ``'E'``, ``'W'`` or a diagonal, ``'NE'`` ...), or ``(0.0, 0.0)`` -- still water,
     exactly as it is without the property -- when it has none."""
     direction = brush.get('water_flow')
     if not isinstance(direction, str):

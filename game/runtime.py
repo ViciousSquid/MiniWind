@@ -440,9 +440,6 @@ VOLUNTEER_COOLDOWN = 90.0
 PLAYER_GRASS_RADIUS = 46.0
 GRASS_PUSH_REACH = 1400.0
 GRASS_PUSHERS = 20
-#: Where in the farming year (0 = first day of spring) day 0 falls: a new
-#: game opens in late summer, the wheat standing tall and turning gold.
-YEAR_START = 0.42
 #: The routines in which somebody has time to chat.
 CHAT_STATES = frozenset(("", "IDLE", "WANDER", "WORKING", "GOING_TO_WORK",
                          "GOING_HOME", "PATROL"))
@@ -1266,15 +1263,17 @@ class MiniwindSession(SettlementLaw):
         """Advance the wind and any grass fire; set alight whoever stands in
         it; blacken the ground behind it."""
         hours = float(delta) * float(getattr(self.clock, "hours_per_second", 1 / 60.0))
-        self.weather.update(hours)
-        # A storm blows a gale in gusts and throws lightning; with the
-        # weather off there is none.
+        from . import calendar
+        # Snow for rain, blizzards for storms, when it is cold (game/weather.py).
+        self.weather.update(hours, cold=calendar.coldness(self.clock))
+        # A storm blows a gale in gusts and throws lightning (rarely in a
+        # blizzard); with the weather off there is none.
         weather_on = self.weather_enabled()
         storm = self.weather.storm if weather_on else 0.0
         self.wind.update(hours, delta, storm)
         self.lens_water.update(delta, self.weather.rain if weather_on else 0.0,
                                self._lens_motion(delta))
-        self._update_lightning(delta, storm)
+        self._update_lightning(delta, self.weather.lightning() if weather_on else 0.0)
         self._update_storm_howl(delta, storm)
         self._check_tutorial_tips(delta)
         self._update_player_noise(delta)
@@ -2115,6 +2114,7 @@ class MiniwindSession(SettlementLaw):
         self._show_prison_signs()      # the gaol is marked in the world
         self._refresh_roads(force=True)  # the road graph, built before anyone walks
         self._update_season()          # the wheat at its stage before grass is grown
+        self._install_districts()      # the overworld's districts and their borders
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -2135,6 +2135,7 @@ class MiniwindSession(SettlementLaw):
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        self._restore_district_borders()    # the map's paint as its file has it
         self.end_slow_time()        # the next map runs at the world's own speed
         fio.clear_actor_time_rate(self.logic)   # and nobody's clock is left altered
         self.nav.invalidate()
@@ -5678,6 +5679,17 @@ class MiniwindSession(SettlementLaw):
             self.game.message(line)
         if events:
             self.notify(events[-1], 5.0)
+        self._announce_calendar()
+
+    def _announce_calendar(self) -> None:
+        """Tell the player what today is: a new year, a new season, Leap Day
+        and its eve (game/calendar.py) -- in the message log, and the big
+        ones as a toast. Leap Day's toast stays up longest."""
+        from . import calendar
+        for text, toast in calendar.announcements(self.clock):
+            self.game.message(text)
+            if toast:
+                self.notify(text, 10.0 if calendar.festival(self.clock) else 6.0)
 
     def _is_arrest_guard(self, thing) -> bool:
         """Return whether *thing* is a living, non-hostile guard available for arrest duty."""
@@ -7154,7 +7166,9 @@ class MiniwindSession(SettlementLaw):
                     continue
                 names = [str(t.properties.get("display_name")
                              or t.properties.get("name") or "friend") for t in (a, b)]
-                opener, reply = chatter.small_talk(names[0], names[1], self.clock.hour)
+                from . import calendar
+                opener, reply = chatter.small_talk(names[0], names[1], self.clock.hour,
+                                                   festival=calendar.festival(self.clock))
                 self.bark(a, opener)
                 if id(a) not in self.__dict__.get("barks", {}):
                     return                  # too far from the player to be heard
@@ -7339,6 +7353,109 @@ class MiniwindSession(SettlementLaw):
         ter.set_grass_pushers(pushers)
         self._update_season(ter)
 
+    # -------------------------------------------------------------- districts
+    def _install_districts(self) -> None:
+        """The overworld's districts (game/districts.py), when this map is
+        the one they divide. Their borders are already in the map's paint
+        (``python -m game.tools.bake_districts``): with them shown there is
+        nothing to do. Switched off, the recorded texels are put back."""
+        self.districts = None
+        self._district_drawing = None
+        self._district_lifted = False
+        try:
+            from . import districts
+            state = getattr(self.logic, "editor_state", None)
+            ter = fio.terrain(self.logic) if self.logic is not None else None
+            found = districts.load(
+                biome_weights=getattr(ter, "biome_weights_batch", None) if ter is not None else None,
+                water=districts.water_boxes(getattr(state, "brushes", None) or []))
+            if found.fits(getattr(state, "terrain_data", None)):
+                self.districts = found
+                if not self.district_borders_enabled():
+                    self.set_district_borders(False)
+                elif self.border_glow_enabled():
+                    found.border_lines()      # traced now, under the loading bar
+        except Exception as exc:              # never take the session down
+            print(f"[MiniWind] districts unavailable: {exc}")
+
+    def district_borders_enabled(self) -> bool:
+        """District borders shown on the ground (GAME → "District borders",
+        or the console's ``districts on|off`` this session). On by default."""
+        over = self.__dict__.get("_district_borders")
+        return bool(over) if over is not None else self._game_flag("district_borders")
+
+    def _district_record(self, ter):
+        """The drawing baked into this map's paint (its record), or None."""
+        drawing = self.__dict__.get("_district_drawing")
+        if drawing is None:
+            from . import districts
+            found = self.__dict__.get("districts")
+            if found is not None and found.map:
+                drawing = districts.Drawing.load(districts.record_path(found.map),
+                                                 int(ter.TERRAIN_PAINT_RESOLUTION))
+            self._district_drawing = drawing
+        return drawing
+
+    def set_district_borders(self, on: bool) -> None:
+        """Show or hide the borders for this session: lift the baked ink out
+        of the paint (put back exactly as it was), or lay it in again. The
+        only time the borders cost anything."""
+        self._district_borders = bool(on)
+        ter = fio.terrain(self.logic) if self.logic is not None else None
+        if ter is None or self.__dict__.get("districts") is None:
+            return
+        drawing = self._district_record(ter)
+        if drawing is None:
+            return
+        lifted = bool(self.__dict__.get("_district_lifted"))
+        if not on and not lifted:
+            drawing.lift(ter)
+            self._district_lifted = True
+        elif on and lifted:
+            drawing.lay(ter)
+            self._district_lifted = False
+
+    def border_glow_enabled(self) -> bool:
+        """The glow along a border as the player nears it (GAME → "Border
+        glow", ``[GAME] border_glow``; the console's ``districts glow on|off``
+        this session). On by default; never without the borders."""
+        over = self.__dict__.get("_border_glow")
+        on = bool(over) if over is not None else self._game_flag("border_glow")
+        return on and self.district_borders_enabled()
+
+    def district_glow(self):
+        """The border glow, updated for where the player is now, or None
+        when there is nothing to draw (game/district_glow.py). Away from a
+        border this is only a distance check, a few times a second."""
+        found = self.__dict__.get("districts")
+        if found is None or not self.border_glow_enabled():
+            return None
+        glow = self.__dict__.get("_district_glow")
+        if glow is None:
+            ter = fio.terrain(self.logic) if self.logic is not None else None
+            if ter is None or not hasattr(ter, "_get_heights_batch"):
+                return None
+            from .district_glow import Glow
+            glow = self._district_glow = Glow(found, lambda xs, zs: ter._get_heights_batch(
+                np.asarray(xs, np.float32), np.asarray(zs, np.float32)))
+        pos = self._player_pos()
+        if pos is None:
+            return None
+        import time as _time
+        return glow if glow.update(float(pos[0]), float(pos[2]), _time.monotonic()) > 0.0 else None
+
+    def _restore_district_borders(self) -> None:
+        """As the session ends: the map's paint as its file has it."""
+        if self.__dict__.get("_district_lifted"):
+            self.set_district_borders(True)
+
+    def district_at(self, pos):
+        """The district at *pos* (x, y, z), or None off the overworld."""
+        found = self.__dict__.get("districts")
+        if found is None or pos is None:
+            return None
+        return found.at(float(pos[0]), float(pos[2]))
+
     def _update_season(self, ter=None) -> None:
         """Grow the terrain's wheat to the clock's point in the farming year.
 
@@ -7349,9 +7466,8 @@ class MiniwindSession(SettlementLaw):
         ter = ter if ter is not None else fio.terrain(self.logic)
         if ter is None or not hasattr(ter, "set_season"):
             return
-        from engine import terrain_biomes
-        days = float(self.clock.day) + float(self.clock.hour) / 24.0
-        ter.set_season(YEAR_START + days / terrain_biomes.YEAR_DAYS)
+        from . import calendar
+        ter.set_season(calendar.year_fraction(self.clock))
 
     # -------------------------------------------------------------- thoughts
     def _npc_thoughts_enabled(self) -> bool:

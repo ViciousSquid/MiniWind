@@ -30,7 +30,8 @@ from engine.renderer.core import grass_wind
 from engine.terrain_frame import (grass_vertex_count, heightfield_indices, paint_chain,
                                   paint_mip_levels)
 from engine.terrain_table import GRID_BORDER, STORED_GRID
-from .raw_calls import draw_elements, uniform_matrix4, vertex_attrib_pointer
+from .raw_calls import (draw_elements, has_base_instance, uniform_matrix4,
+                        vertex_attrib_pointer)
 
 
 def _no_current_gl_context():
@@ -157,7 +158,7 @@ class TerrainGL:
         'terrainPaintMap', 'uPaintLayer', 'uPaintEnabled',
         'uHeights', 'uChunkI', 'uChunkX', 'uChunkY', 'uTiling', 'uFlatMode',
         'uGradCount', 'uGradH', 'uGradC', 'uGradW', 'uGradD',
-        'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds',
+        'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds', 'uSnowCover',
     )
     #: Texture unit of the regional biome map (``uBiomeMap``). Above the
     #: shadow cube-maps (4..11), the height and paint pages (12, 13) and the
@@ -182,6 +183,22 @@ class TerrainGL:
         self._skirt_vao = 0
         #: Chunk sides drawn as strata walls the last frame (tests, SysMon).
         self.skirt_sides = 0
+        #: Waterfalls off the world's edge (draw_falls): their program and
+        #: uniforms, the last frame drawn with its built slots (the falls
+        #: are drawn later in the frame, after the water), and the chunk
+        #: sides they were drawn on the last frame (tests, SysMon).
+        self.falls_program = 0
+        self.falls_uniforms = {}
+        self._falls_source = None
+        self.falls_sides = 0
+        #: The world's underside (_draw_underside): its program and uniforms,
+        #: the falls it keeps clear of this frame (render's *edge_falls*),
+        #: and the chunks it was drawn under the last frame.
+        self.under_program = 0
+        self.under_uniforms = {}
+        self.edge_falls_now = ()
+        self.shore_points_now = ()
+        self.under_chunks = 0
         #: Programs compiled here (a renderer may hand in its own instead).
         self._own_programs = set()
         self._failed_programs = set()
@@ -224,6 +241,9 @@ class TerrainGL:
         #: Grass instances and draws the last frame sent (tests, SysMon).
         self.grass_instances_drawn = 0
         self.grass_draws = 0
+        #: Whether the context draws from a base instance (asked once, at the
+        #: first grass drawn on it; see _draw_grass_run).
+        self._base_instance = None
 
     def _sync_gl_columns_reset(self):
         for name in ('_grass_vao', '_grass_vbo', '_grass_count', '_gpu_version',
@@ -635,7 +655,19 @@ class TerrainGL:
     SKIRT_UNIFORMS = (
         'projection', 'view', 'uHeights', 'uChunkI', 'uChunkX', 'uSide',
         'uFloor', 'uEdge', 'uLean', 'uBasement', 'uMeta', 'uBand', 'uSoil',
+        'uReach', 'uShore', 'uShoreRun', 'uFallCount', 'uFall', 'uShoreCount', 'uShorePt',
     )
+    #: The world's underside (terrain_under.vert): beside the falls, where
+    #: the land meets the water at the world's edge, the edge land hangs
+    #: mirrored below the strata wall's foot in an outcrop. How far in from
+    #: the edge the reflection rises back to the foot, over how much height
+    #: above the water it grows back (none hangs behind the falls), and how
+    #: far along the edge from the shore it reaches before fading out.
+    UNDERSIDE = True
+    UNDER_REACH = 1600.0
+    UNDER_SHORE = 160.0
+    UNDER_SHORE_RUN = 3500.0
+    UNDER_UNIFORMS = ('uPart', 'uSide')
 
     def _ensure_skirt_program(self) -> int:
         """The strata-wall program, compiled on first use (0 without a
@@ -734,37 +766,16 @@ class TerrainGL:
             inside &= a * px + b * py + c * pz + d >= 0
         return inside
 
-    def _draw_skirts(self, slots, projection, view, env_uniforms, unit,
-                     frustum_planes=None, paint_unit=None, use_textures=0) -> int:
-        """Draw the cliff walls on the terrain's edge for every built chunk
-        that lies on it, each side a triangle strip from the chunk's own
-        height grid down to the wall's foot. Returns the sides drawn.
-
-        Culled by the wall's own box (skirt_visible), never the chunk's: a
-        wall reaches far below and beyond its chunk. Each strip is drawn with
-        the terrain's own material uniforms, which terrain_skirt.frag runs at
-        the rim for the top layer.
-        """
+    def _skirt_program_setup(self, prog, u, edge_slots, projection, view, env_uniforms,
+                             unit, paint_unit=None, use_textures=0):
+        """Make *prog* (the strata wall's, or the underside's, which share
+        terrain_skirt.frag) current with every uniform it is drawn with: the
+        terrain's material, the wall's own and the environment's. Height
+        grids and paint of *edge_slots* are brought up to date first.
+        Returns ``{slot: paint layer}`` for those with paint."""
         frame = self.frame
         table = frame.table
-        if not len(slots):
-            return 0
         floor, low, high = frame.skirt[4], frame.skirt[5], frame.skirt[6]
-        pairs = self.edge_sides(table.world[slots], table.size[slots], frame.skirt)
-        if not pairs:
-            return 0
-        edge_idx = np.unique(np.asarray([i for i, _ in pairs], dtype=np.intp))
-        edge = slots[edge_idx]
-        seen = self.skirt_visible(table.world[edge], table.size[edge], table.min_y[edge],
-                                  table.max_y[edge], floor, self.SKIRT_LEAN, frustum_planes)
-        keep = set(edge_idx[seen].tolist())
-        pairs = [(i, side) for i, side in pairs if i in keep]
-        if not pairs:
-            return 0
-        prog = self._ensure_skirt_program()
-        if not prog:
-            return 0
-        u = self.skirt_uniforms
         # The wall's program is built on the terrain's (terrain_skirt.frag
         # runs terrain.frag's material on the rim), so it takes every one of
         # the terrain's uniforms as well as its own.
@@ -773,7 +784,6 @@ class TerrainGL:
         for name in names:
             if name not in u:
                 u[name] = gl.glGetUniformLocation(prog, name)
-        edge_slots = np.unique(np.asarray([slots[i] for i, _ in pairs], dtype=np.intp))
         stale = edge_slots[self._gpu_version[edge_slots] != table.version[edge_slots]]
         for slot in stale:
             self._upload_heightfield(int(slot))
@@ -813,7 +823,6 @@ class TerrainGL:
             self._bind_empty_paint(paint_unit)
             if u.get('terrainPaintMap', -1) != -1:
                 gl_state.glUniform1i(u['terrainPaintMap'], paint_unit)
-        paint_enabled = None
         for name, value in (('uFloor', floor), ('uBasement', basement), ('uMeta', meta),
                             ('uBand', band),
                             ('uSoil', self.soil_scale(floor, high)),
@@ -822,6 +831,7 @@ class TerrainGL:
                 gl_state.glUniform1f(u[name], float(value))
         if u.get('uEdge', -1) != -1:
             gl_state.glUniform4f(u['uEdge'], *(float(v) for v in frame.skirt[:4]))
+        self._upload_underside_uniforms(u)
         if env_uniforms:
             for name, value in env_uniforms.items():
                 loc = u.get(name, -1)
@@ -834,6 +844,43 @@ class TerrainGL:
                 else:
                     gl_state.glUniform3f(loc, *value)
 
+        return paint
+
+    def _draw_skirts(self, slots, projection, view, env_uniforms, unit,
+                     frustum_planes=None, paint_unit=None, use_textures=0) -> int:
+        """Draw the cliff walls on the terrain's edge for every built chunk
+        that lies on it, each side a triangle strip from the chunk's own
+        height grid down to the wall's foot. Returns the sides drawn.
+
+        Culled by the wall's own box (skirt_visible), never the chunk's: a
+        wall reaches far below and beyond its chunk. Each strip is drawn with
+        the terrain's own material uniforms, which terrain_skirt.frag runs at
+        the rim for the top layer.
+        """
+        frame = self.frame
+        table = frame.table
+        if not len(slots):
+            return 0
+        floor, low, high = frame.skirt[4], frame.skirt[5], frame.skirt[6]
+        pairs = self.edge_sides(table.world[slots], table.size[slots], frame.skirt)
+        if not pairs:
+            return 0
+        edge_idx = np.unique(np.asarray([i for i, _ in pairs], dtype=np.intp))
+        edge = slots[edge_idx]
+        seen = self.skirt_visible(table.world[edge], table.size[edge], table.min_y[edge],
+                                  table.max_y[edge], floor, self.SKIRT_LEAN, frustum_planes)
+        keep = set(edge_idx[seen].tolist())
+        pairs = [(i, side) for i, side in pairs if i in keep]
+        if not pairs:
+            return 0
+        prog = self._ensure_skirt_program()
+        if not prog:
+            return 0
+        u = self.skirt_uniforms
+        edge_slots = np.unique(np.asarray([slots[i] for i, _ in pairs], dtype=np.intp))
+        paint = self._skirt_program_setup(prog, u, edge_slots, projection, view,
+                                          env_uniforms, unit, paint_unit, use_textures)
+        paint_enabled = None
         if not self._skirt_vao:
             self._skirt_vao = int(gl.glGenVertexArrays(1))
         gl_state.glBindVertexArray(self._skirt_vao)
@@ -888,6 +935,542 @@ class TerrainGL:
         gl_state.glBindVertexArray(0)
         gl_state.glActiveTexture(gl.GL_TEXTURE0)
         self.total_triangles += sum(2 * int(uniforms[int(slots[i])][0][0]) for i, _ in pairs)
+        return drawn
+
+    # -- the world's underside --------------------------------------------
+
+    def shore_points(self, slots, falls):
+        """``[(side, along)]``: where, along a fall's stretch of the world's
+        edge, the ground at the edge comes up out of its water -- the shores
+        the underside hangs beside -- read from the height grids of the
+        built chunks *slots* on the edge (at most 8, those of the falls in
+        order)."""
+        table = self.frame.table
+        bounds = self.frame.skirt
+        pairs = self.edge_sides(table.world[slots], table.size[slots], bounds)
+        by_side = {}
+        for i, side in pairs:
+            by_side.setdefault(side, []).append(int(slots[i]))
+        out = []
+        b = GRID_BORDER
+        for fall in falls:
+            side, lo, hi, top = int(fall[0]), float(fall[1]), float(fall[2]), float(fall[3])
+            along, heights = [], []
+            for slot in by_side.get(side, ()):
+                res = int(table.grid_res[slot])
+                x0, z0 = (float(v) for v in table.world[slot])
+                a0 = z0 if side < 2 else x0
+                size = float(table.size[slot])
+                if a0 > hi or a0 + size < lo:
+                    continue
+                grid = table.heights[slot]
+                j = np.arange(res + 1)
+                if side == 0:
+                    h = grid[b, b + j]
+                elif side == 1:
+                    h = grid[b + res, b + j]
+                elif side == 2:
+                    h = grid[b + j, b]
+                else:
+                    h = grid[b + j, b + res]
+                along.append(a0 + j * (size / res))
+                heights.append(np.asarray(h, dtype=np.float64))
+            if not along:
+                continue
+            along = np.concatenate(along)
+            heights = np.concatenate(heights)
+            order = np.argsort(along, kind='stable')
+            along, wet = along[order], heights[order] - top
+            inside = (along >= lo) & (along <= hi)
+            cross = np.flatnonzero((np.sign(wet[:-1]) != np.sign(wet[1:]))
+                                   & inside[:-1] & inside[1:])
+            for k in cross.tolist():
+                t = wet[k] / (wet[k] - wet[k + 1])
+                out.append((side, float(along[k] + t * (along[k + 1] - along[k]))))
+                if len(out) >= 8:
+                    return out
+        return out
+
+    def _upload_underside_uniforms(self, u):
+        """Where the underside hangs (terrain_under.vert, and the wall's
+        foot in terrain_skirt.vert): the falls it keeps clear of and the
+        shores it hangs beside, this frame."""
+        def put(name, fn, *args):
+            loc = u.get(name, -1)
+            if loc is not None and loc != -1:
+                fn(loc, *args)
+        put('uReach', gl_state.glUniform1f, float(self.UNDER_REACH))
+        put('uShore', gl_state.glUniform1f, float(self.UNDER_SHORE))
+        put('uShoreRun', gl_state.glUniform1f, float(self.UNDER_SHORE_RUN))
+        falls = [(float(f[0]), float(f[1]), float(f[2]), float(f[3]))
+                 for f in self.edge_falls_now][:8]
+        shores = [(float(side), float(a), 0.0, 0.0) for side, a in self.shore_points_now][:8]
+        if not self.UNDERSIDE:
+            shores = []
+        put('uFallCount', gl_state.glUniform1i, len(falls))
+        if falls:
+            put('uFall', gl_state.glUniform4fv, len(falls),
+                np.ascontiguousarray(falls, dtype=np.float32))
+        put('uShoreCount', gl_state.glUniform1i, len(shores))
+        if shores:
+            put('uShorePt', gl_state.glUniform4fv, len(shores),
+                np.ascontiguousarray(shores, dtype=np.float32))
+
+    def _ensure_under_program(self) -> int:
+        """The underside's program (terrain_under.vert with the wall's own
+        terrain_skirt.frag), compiled on first use (0 without a context or
+        after a failed compile, which is reported once)."""
+        if self.under_program or 'under' in self._failed_programs:
+            return self.under_program
+        if gl is None or _no_current_gl_context():
+            return 0
+        try:
+            vertex_shader = compileShader(
+                shaders.DEFAULT_SHADERS['terrain_under.vert'], gl.GL_VERTEX_SHADER)
+            fragment_shader = compileShader(
+                shaders.DEFAULT_SHADERS['terrain_skirt.frag'], gl.GL_FRAGMENT_SHADER)
+            program = compileProgram(vertex_shader, fragment_shader, validate=False)
+        except Exception as e:
+            msg = str(e)
+            if ("glCreateShader" in msg or "undefined alternate function" in msg
+                    or "context" in msg.lower()):
+                return 0
+            print(f"ERROR: Exception during terrain underside shader compilation: {e}")
+            self._failed_programs.add('under')
+            return 0
+        self.under_program = int(program)
+        self._own_programs.add(self.under_program)
+        self.under_uniforms = {}
+        return self.under_program
+
+    @classmethod
+    def under_slots(cls, world, size, bounds, shores):
+        """Which chunks (indices into *world* / *size*) the underside may
+        hang under: near enough a shore (*shores*, :meth:`shore_points`)
+        along the edge, and near enough that edge."""
+        world = np.asarray(world, dtype=np.float64).reshape(-1, 2)
+        size = np.asarray(size, dtype=np.float64).reshape(-1)
+        if not len(size) or not shores:
+            return np.empty(0, dtype=np.intp)
+        min_x, max_x, min_z, max_z = (float(v) for v in bounds[:4])
+        x0, z0 = world[:, 0], world[:, 1]
+        x1, z1 = x0 + size, z0 + size
+        inward = (x0 - min_x, max_x - x1, z0 - min_z, max_z - z1)
+        keep = np.zeros(len(size), dtype=bool)
+        for side, a in shores:
+            lo, hi = (z0, z1) if side < 2 else (x0, x1)
+            gap = np.maximum(np.maximum(lo - a, a - hi), 0.0)
+            keep |= (inward[int(side)] < cls.UNDER_REACH) & (gap < cls.UNDER_SHORE_RUN)
+        return np.flatnonzero(keep)
+
+    def _draw_underside(self, slots, projection, view, env_uniforms, unit,
+                        frustum_planes=None, paint_unit=None, use_textures=0) -> int:
+        """Hang the edge land, mirrored, under the strata walls: each edge
+        side's wall reflected in its foot, and every chunk near the edge
+        reflected under that (terrain_under.vert). Returns the chunks drawn."""
+        frame = self.frame
+        table = frame.table
+        if not len(slots):
+            return 0
+        floor = float(frame.skirt[4])
+        near = slots[self.under_slots(table.world[slots], table.size[slots], frame.skirt,
+                                      self.shore_points_now)]
+        if not len(near):
+            return 0
+        top = table.max_y[near].astype(np.float64)
+        seen = self.skirt_visible(table.world[near], table.size[near],
+                                  floor - np.maximum(top - floor, 0.0), top, floor,
+                                  self.SKIRT_LEAN, frustum_planes)
+        near = near[seen]
+        if not len(near):
+            return 0
+        prog = self._ensure_under_program()
+        if not prog:
+            return 0
+        u = self.under_uniforms
+        for name in self.UNDER_UNIFORMS:
+            if name not in u:
+                u[name] = gl.glGetUniformLocation(prog, name)
+        self._skirt_program_setup(prog, u, near, projection, view, env_uniforms,
+                                  unit, paint_unit, use_textures)
+        if u.get('uPaintEnabled', -1) != -1:
+            gl_state.glUniform1i(u['uPaintEnabled'], 0)
+        if not self._skirt_vao:
+            self._skirt_vao = int(gl.glGenVertexArrays(1))
+        gl_state.glBindVertexArray(self._skirt_vao)
+        gl_state.glActiveTexture(gl.GL_TEXTURE0 + unit)
+        cull = gl.glIsEnabled(gl.GL_CULL_FACE)
+        gl_state.glDisable(gl.GL_CULL_FACE)
+        uniforms = {slot: entry for slot, entry in
+                    zip(near.tolist(), self.chunk_uniforms(near))}
+        page_layers = self._page_layers
+        bound_page = -1
+        part_loc, side_loc = u.get('uPart', -1), u.get('uSide', -1)
+        sides = self.edge_sides(table.world[near], table.size[near], frame.skirt)
+        walls = {}
+        for i, side in sides:
+            walls.setdefault(int(near[i]), []).append(side)
+        for slot in near.tolist():
+            (res, layer), cx, _cy = uniforms[slot]
+            page = slot // page_layers
+            if page != bound_page:
+                gl_state.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._height_pages[page])
+                bound_page = page
+            gl_state.glUniform2i(u['uChunkI'], res, layer)
+            gl_state.glUniform3f(u['uChunkX'], *cx)
+            gl_state.glUniform1i(part_loc, 1)
+            gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6 * res * res)
+            for side in walls.get(slot, ()):
+                gl_state.glUniform1i(part_loc, 0)
+                gl_state.glUniform1i(side_loc, side)
+                gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 2 * (res + 1))
+            self.total_triangles += 2 * res * res + 2 * res * len(walls.get(slot, ()))
+        if cull:
+            gl_state.glEnable(gl.GL_CULL_FACE)
+        gl_state.glBindVertexArray(0)
+        gl_state.glActiveTexture(gl.GL_TEXTURE0)
+        return int(len(near))
+
+    # -- the world's edge: waterfalls -------------------------------------
+
+    #: Quads on the surface before the brink (the tongue the sea flows into
+    #: the fall over), and from the brink down; how far in from the edge the
+    #: tongue begins; and how far below the strata wall's foot the fall
+    #: reaches, fading as it goes, so no bottom is ever seen.
+    FALLS_TONGUE_ROWS = 16
+    FALLS_ROWS = 56
+    FALLS_TONGUE = 260.0
+    FALLS_DEPTH = 48000.0
+    #: How near the edge a water brush's side must come to pour over it.
+    FALLS_TOUCH = 2.0
+    #: How far a fall's stretch is carried past a world corner it reaches
+    #: (so its end is never faded out at the corner).
+    FALLS_CORNER_RUN = 1000.0
+    #: Cells a side of the water surface's grid
+    #: (``_create_water_surface_vao``): its waves are pinned flat at the
+    #: brush's edge and grow over one cell, which the tongue lies above.
+    WATER_SURFACE_CELLS = 64
+    FALLS_UNIFORMS = (
+        'projection', 'view', 'uHeights', 'uChunkI', 'uChunkX', 'uSide',
+        'uEdge', 'uLean', 'uFloor', 'uTop', 'uBottom', 'uRows', 'uTongueRows',
+        'uTongue', 'uPerimeter', 'uSpan', 'uTint', 'uOpacity',
+        'uReflectivity', 'uTime', 'uCamPos', 'uSkyState', 'uLightSteps', 'uDither',
+        'uWaterCells', 'uBrush', 'uWaveAmp', 'uWaveSpread', 'uFlowOffset', 'uWaterTime',
+    )
+
+    @staticmethod
+    def wave_amplitude(params, height):
+        """A water brush's wave amplitude in world units, as the water pass
+        works it out from its ``water_params`` row and its height."""
+        h = float(params[2])
+        if h > 2.0:
+            h /= 100.0
+        amp = h * 30.0 if float(params[3]) != 0.0 else 1.2
+        return min(amp, float(height) * 0.45, 30.0)
+
+    @classmethod
+    def edge_falls(cls, bounds, centres, halves, tints=None, params=None,
+                   spreads=None, flows=None):
+        """The stretches of the terrain's edge that water pours over.
+
+        *bounds* is ``(min x, max x, min z, max z)``; *centres* and
+        *halves* the water brushes' boxes (``(n, 3)`` each), *tints*,
+        *params*, *spreads* and *flows* their ``water_tint``,
+        ``water_params``, ``water_wave_spread`` and ``water_flow`` rows. A brush
+        pours over every side of the terrain its box reaches (within
+        ``FALLS_TOUCH``), along the part of that side it covers. Returns
+        ``[(side, lo, hi, top, tint, opacity, reflectivity, waves)]``: side
+        as :meth:`edge_sides`, *lo..hi* along that side (z for the x sides,
+        x for the z sides), *top* the water's surface, *waves* ``(amplitude,
+        spread, flow x, flow z, min x, min z, max x, max z)``: its waves and
+        its rectangle, so the fall's tongue lies on its surface exactly as
+        the water draws it (terrain_falls.vert). Whether anything falls at a
+        point is left to the ground there: only where it lies below *top*
+        (terrain_falls.frag).
+        """
+        centres = np.asarray(centres, dtype=np.float64).reshape(-1, 3)
+        halves = np.abs(np.asarray(halves, dtype=np.float64).reshape(-1, 3))
+        n = len(centres)
+        if not n:
+            return []
+        tints = (np.full((n, 3), (0.0, 0.32, 0.5)) if tints is None
+                 else np.asarray(tints, dtype=np.float64).reshape(-1, 3))
+        if params is None:
+            params = np.tile([0.75, 0.5, 0.5, 1.0, 0.0, 1.33, 0.0], (n, 1))
+        params = np.asarray(params, dtype=np.float64).reshape(n, -1)
+        spreads = (np.zeros(n) if spreads is None
+                   else np.asarray(spreads, dtype=np.float64).reshape(-1))
+        flows = (np.zeros((n, 2)) if flows is None
+                 else np.asarray(flows, dtype=np.float64).reshape(-1, 2))
+        min_x, max_x, min_z, max_z = (float(v) for v in bounds[:4])
+        touch = max(cls.FALLS_TOUCH, 1e-5 * max(max_x - min_x, max_z - min_z))
+        lo = centres - halves
+        hi = centres + halves
+        falls = []
+        for i in range(n):
+            x0, z0, x1, z1 = lo[i, 0], lo[i, 2], hi[i, 0], hi[i, 2]
+            top = float(hi[i, 1])
+            amp = cls.wave_amplitude(params[i], 2.0 * halves[i, 1])
+            reaches = (
+                (0, x0 <= min_x + touch and x1 > min_x, z0, z1, min_z, max_z, x1 - x0),
+                (1, x1 >= max_x - touch and x0 < max_x, z0, z1, min_z, max_z, x1 - x0),
+                (2, z0 <= min_z + touch and z1 > min_z, x0, x1, min_x, max_x, z1 - z0),
+                (3, z1 >= max_z - touch and z0 < max_z, x0, x1, min_x, max_x, z1 - z0),
+            )
+            waves = (amp, float(spreads[i]), float(flows[i, 0]), float(flows[i, 1]),
+                     float(x0), float(z0), float(x1), float(z1))
+            for side, touches, a0, a1, e0, e1, _depth in reaches:
+                a0, a1 = max(float(a0), e0), min(float(a1), e1)
+                if touches and a1 > a0:
+                    # Reaching a world corner, the fall runs on round it
+                    # into the next side's: no end to fade out there.
+                    if a0 <= e0 + touch:
+                        a0 = e0 - cls.FALLS_CORNER_RUN
+                    if a1 >= e1 - touch:
+                        a1 = e1 + cls.FALLS_CORNER_RUN
+                    falls.append((side, a0, a1, top,
+                                  tuple(float(v) for v in tints[i]),
+                                  float(params[i, 0]), float(params[i, 1]), waves))
+        return falls
+
+    @classmethod
+    def falls_bottom(cls, top, floor):
+        """How far down a fall from *top* over a wall whose foot is *floor*
+        is drawn: far enough below the foot that it has faded into haze."""
+        return float(floor) - max(cls.FALLS_DEPTH, 4.0 * (float(top) - float(floor)))
+
+    @staticmethod
+    def perimeter_span(bounds, side, lo, hi):
+        """*lo..hi* along *side* as the perimeter coordinate
+        terrain_falls.vert lays the pattern on (counter-clockwise from the
+        (min x, min z) corner), lowest first."""
+        min_x, max_x, min_z, max_z = (float(v) for v in bounds[:4])
+        w, d = max_x - min_x, max_z - min_z
+        if side == 2:
+            a, b = lo - min_x, hi - min_x
+        elif side == 1:
+            a, b = w + lo - min_z, w + hi - min_z
+        elif side == 3:
+            a, b = w + d + max_x - hi, w + d + max_x - lo
+        else:
+            a, b = 2 * w + d + max_z - hi, 2 * w + d + max_z - lo
+        return float(a), float(b)
+
+    def _ensure_falls_program(self) -> int:
+        """The waterfall program, compiled on first use (0 without a
+        context or after a failed compile, which is reported once)."""
+        if self.falls_program or 'falls' in self._failed_programs:
+            return self.falls_program
+        if gl is None or _no_current_gl_context():
+            return 0
+        try:
+            vertex_shader = compileShader(
+                shaders.DEFAULT_SHADERS['terrain_falls.vert'], gl.GL_VERTEX_SHADER)
+            fragment_shader = compileShader(
+                shaders.DEFAULT_SHADERS['terrain_falls.frag'], gl.GL_FRAGMENT_SHADER)
+            program = compileProgram(vertex_shader, fragment_shader, validate=False)
+        except Exception as e:
+            msg = str(e)
+            if ("glCreateShader" in msg or "undefined alternate function" in msg
+                    or "context" in msg.lower()):
+                return 0
+            print(f"ERROR: Exception during terrain falls shader compilation: {e}")
+            self._failed_programs.add('falls')
+            return 0
+        self.falls_program = int(program)
+        self._own_programs.add(self.falls_program)
+        self.falls_uniforms = {}
+        return self.falls_program
+
+    def falls_pairs(self, falls):
+        """``(slot, side, fall)`` for each chunk side of the last frame drawn
+        that a fall in *falls* (:meth:`edge_falls`) covers, culled by the
+        frustum and by height: a chunk whose lowest ground is above the
+        water has nothing pouring off it."""
+        source = self._falls_source
+        if source is None or not falls:
+            return []
+        frame, slots, frustum_planes, _unit = source
+        table = frame.table
+        if not len(slots):
+            return []
+        floor = frame.skirt[4]
+        pairs = self.edge_sides(table.world[slots], table.size[slots], frame.skirt)
+        if not pairs:
+            return []
+        by_side = {}
+        for fall in falls:
+            by_side.setdefault(fall[0], []).append(fall)
+        out = []
+        for i, side in pairs:
+            slot = int(slots[i])
+            x0, z0 = (float(v) for v in table.world[slot])
+            size = float(table.size[slot])
+            a0 = z0 if side < 2 else x0
+            low = float(table.min_y[slot])
+            for fall in by_side.get(side, ()):
+                _side, lo, hi, top = fall[:4]
+                if hi <= a0 or lo >= a0 + size or low >= top:
+                    continue
+                out.append((slot, side, fall))
+        if not out or frustum_planes is None:
+            return out
+        tops = np.array([fall[3] for _s, _d, fall in out], dtype=np.float64)
+        sel = np.array([slot for slot, _d, _f in out], dtype=np.intp)
+        bottoms = np.array([self.falls_bottom(top, floor) for top in tops])
+        # The box a curtain can fill: down to its mist and out by as far as
+        # it can reach from the edge (never further than its drop).
+        drop = np.maximum(tops - bottoms, 0.0)
+        world = table.world[sel].astype(np.float64)
+        size = table.size[sel].astype(np.float64)
+        planes = np.asarray(frustum_planes, dtype=np.float64).reshape(-1, 4)
+        lo = np.stack([world[:, 0] - drop, bottoms, world[:, 1] - drop], axis=1)
+        hi = np.stack([world[:, 0] + size + drop, tops + 1.0, world[:, 1] + size + drop], axis=1)
+        inside = np.ones(len(out), dtype=bool)
+        for a, b, c, d in planes:
+            px = np.where(a >= 0, hi[:, 0], lo[:, 0])
+            py = np.where(b >= 0, hi[:, 1], lo[:, 1])
+            pz = np.where(c >= 0, hi[:, 2], lo[:, 2])
+            inside &= a * px + b * py + c * pz + d >= 0
+        return [entry for entry, keep in zip(out, inside.tolist()) if keep]
+
+    def draw_falls(self, falls, projection, view, camera_pos, env_uniforms=None,
+                   time=0.0, sky_state=None, flow_clock=None):
+        """Draw the waterfalls pouring off the terrain's edge: *falls* as
+        :meth:`edge_falls` gives them, over the terrain drawn last
+        (:meth:`render`). Blended, after the water, writing no depth.
+        *sky_state* is the sky the water reflects (night, cloud cover,
+        gloom, dusk), so the sheet's surface matches the water's; *time*
+        and *flow_clock* the water pass's own (its waves' time, and how
+        long its flow has run: ``water_flow_clock``), so the tongue lies on
+        the waves exactly where the water draws them.
+        Returns the chunk sides drawn."""
+        self.falls_sides = 0
+        pairs = self.falls_pairs(falls)
+        if not pairs:
+            return 0
+        frame = self._falls_source[0]
+        prog = self._ensure_falls_program()
+        if not prog:
+            return 0
+        held = self.frame
+        self.frame = frame
+        try:
+            return self._draw_falls(pairs, projection, view, camera_pos,
+                                    env_uniforms, time, sky_state,
+                                    time if flow_clock is None else flow_clock)
+        finally:
+            self.frame = held
+
+    def _draw_falls(self, pairs, projection, view, camera_pos, env_uniforms, time,
+                    sky_state=None, flow_clock=0.0):
+        frame = self.frame
+        table = frame.table
+        prog = self.falls_program
+        u = self.falls_uniforms
+        names = self.FALLS_UNIFORMS + tuple(env_uniforms or ())
+        for name in names:
+            if name not in u:
+                u[name] = gl.glGetUniformLocation(prog, name)
+        edge_slots = np.unique(np.asarray([slot for slot, _s, _f in pairs], dtype=np.intp))
+        stale = edge_slots[self._gpu_version[edge_slots] != table.version[edge_slots]]
+        for slot in stale:
+            self._upload_heightfield(int(slot))
+        unit = self._falls_source[3]
+        floor = float(frame.skirt[4])
+        gl_state.glUseProgram(prog)
+        uniform_matrix4(u['projection'], glm.value_ptr(projection))
+        uniform_matrix4(u['view'], glm.value_ptr(view))
+
+        def put(name, fn, *args):
+            loc = u.get(name, -1)
+            if loc is not None and loc != -1:
+                fn(loc, *args)
+
+        put('uHeights', gl_state.glUniform1i, unit)
+        put('uEdge', gl_state.glUniform4f, *(float(v) for v in frame.skirt[:4]))
+        put('uLean', gl_state.glUniform1f, float(self.SKIRT_LEAN))
+        put('uFloor', gl_state.glUniform1f, floor)
+        put('uRows', gl_state.glUniform1i, int(self.FALLS_ROWS))
+        put('uTongueRows', gl_state.glUniform1i, int(self.FALLS_TONGUE_ROWS))
+        put('uTongue', gl_state.glUniform1f, float(self.FALLS_TONGUE))
+        edge = [float(v) for v in frame.skirt[:4]]
+        put('uPerimeter', gl_state.glUniform1f,
+            2.0 * ((edge[1] - edge[0]) + (edge[3] - edge[2])))
+        put('uSkyState', gl_state.glUniform4f, *(float(v) for v in (sky_state or (0.0, 0.0, 0.0, 0.0))))
+        put('uTime', gl_state.glUniform1f, float(time))
+        put('uWaterTime', gl_state.glUniform1f, float(time))
+        put('uWaterCells', gl_state.glUniform1i, int(self.WATER_SURFACE_CELLS))
+        put('uCamPos', gl_state.glUniform3f, float(camera_pos[0]), float(camera_pos[1]),
+            float(camera_pos[2]))
+        appearance = frame.appearance or {}
+        put('uLightSteps', gl_state.glUniform1i, int(appearance.get('uLightSteps', 0) or 0))
+        put('uDither', gl_state.glUniform1i, int(appearance.get('uDither', 0) or 0))
+        if env_uniforms:
+            for name, value in env_uniforms.items():
+                loc = u.get(name, -1)
+                if loc is None or loc == -1:
+                    continue
+                if isinstance(value, int):
+                    gl_state.glUniform1i(loc, value)
+                elif isinstance(value, float):
+                    gl_state.glUniform1f(loc, value)
+                else:
+                    gl_state.glUniform3f(loc, *value)
+
+        if not self._skirt_vao:
+            self._skirt_vao = int(gl.glGenVertexArrays(1))
+        gl_state.glBindVertexArray(self._skirt_vao)
+        gl_state.glActiveTexture(gl.GL_TEXTURE0 + unit)
+        cull = gl.glIsEnabled(gl.GL_CULL_FACE)
+        gl_state.glDisable(gl.GL_CULL_FACE)
+        gl_state.glEnable(gl.GL_BLEND)
+        gl_state.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+        gl_state.glDepthMask(gl.GL_FALSE)
+        uniforms = {slot: entry for slot, entry in
+                    zip(edge_slots.tolist(), self.chunk_uniforms(edge_slots))}
+        page_layers = self._page_layers
+        bound_page = -1
+        drawn = 0
+        rows = int(self.FALLS_ROWS) + int(self.FALLS_TONGUE_ROWS)
+        last_fall = None
+        # Furthest first, so nearer curtains blend over further ones.
+        cam = np.array([float(camera_pos[0]), float(camera_pos[2])])
+        order = sorted(pairs, key=lambda e: -float(np.sum(
+            (table.world[e[0]] + table.size[e[0]] * 0.5 - cam) ** 2)))
+        for slot, side, fall in order:
+            (res, layer), cx, _cy = uniforms[slot]
+            page = slot // page_layers
+            if page != bound_page:
+                gl_state.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._height_pages[page])
+                bound_page = page
+            if fall is not last_fall:
+                fside, lo, hi, top, tint, opacity, reflectivity, waves = fall
+                amp, spread, flow_x, flow_z = waves[:4]
+                put('uWaveAmp', gl_state.glUniform1f, float(amp))
+                put('uWaveSpread', gl_state.glUniform1f, float(spread))
+                put('uFlowOffset', gl_state.glUniform2f, float(flow_x) * float(flow_clock),
+                    float(flow_z) * float(flow_clock))
+                put('uBrush', gl_state.glUniform4f, *(float(v) for v in waves[4:8]))
+                put('uTop', gl_state.glUniform1f, float(top))
+                put('uBottom', gl_state.glUniform1f, self.falls_bottom(top, floor))
+                put('uSpan', gl_state.glUniform2f,
+                    *self.perimeter_span(edge, fside, lo, hi))
+                put('uTint', gl_state.glUniform3f, *(float(v) for v in tint))
+                put('uOpacity', gl_state.glUniform1f, float(opacity))
+                put('uReflectivity', gl_state.glUniform1f, float(reflectivity))
+                last_fall = fall
+            gl_state.glUniform2i(u['uChunkI'], res, layer)
+            gl_state.glUniform3f(u['uChunkX'], *cx)
+            gl_state.glUniform1i(u['uSide'], side)
+            gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6 * res * rows)
+            drawn += 1
+        gl_state.glDepthMask(gl.GL_TRUE)
+        if cull:
+            gl_state.glEnable(gl.GL_CULL_FACE)
+        gl_state.glBindVertexArray(0)
+        gl_state.glActiveTexture(gl.GL_TEXTURE0)
+        self.falls_sides = drawn
         return drawn
 
     def _draw_grass(self, visible_slots, projection, view, camera_pos, env_uniforms,
@@ -969,6 +1552,8 @@ class TerrainGL:
         blade_height = float(self.frame.grass_height)
         blade_width = float(self.frame.grass_blade_width)
         lod_sq = self.frame.grass_lod_distance * self.frame.grass_lod_distance
+        if self._base_instance is None:
+            self._base_instance = bool(has_base_instance())
         last_segments = None
         near = (float(camera_pos.x), float(camera_pos.z),
                 float(self.frame.grass_lod_distance))
@@ -1282,6 +1867,12 @@ class TerrainGL:
         """Draw *count* of *slot*'s blades from instance *start* (its VAO bound)."""
         if start == 0:
             gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, vertices, count)
+        elif self._base_instance:
+            # GL 4.2 or ARB_base_instance: the run's instances are fetched
+            # from *start* on -- the very rows the attributes would be
+            # pointed at below (every grass attribute is per instance, and
+            # the grass shader does not read gl_InstanceID).
+            gl.glDrawArraysInstancedBaseInstance(gl.GL_TRIANGLES, 0, vertices, count, start)
         else:
             # OpenGL 3.3 has no glDrawArraysInstancedBaseInstance: point the
             # instance attributes at the run, draw, and point them back.
@@ -1344,7 +1935,7 @@ class TerrainGL:
     def render(self, frame, projection, view, camera_pos, frustum_planes=None,
                active_lights_count=0, shadow_cubemaps=None, shadow_unit_base=4,
                env_uniforms=None, draw_grass=True, grass_wind=None,
-               shadow_filter=None):
+               shadow_filter=None, snow_cover=0.0, edge_falls=None):
         """Draw the published *frame* with the current GL context.
 
         ``draw_grass=False`` leaves the grass pass out whatever the frame
@@ -1352,7 +1943,11 @@ class TerrainGL:
         *grass_wind* is ``(dir x, dir z, strength)`` for the grass to sway
         in (core/grass_wind.py), or None for the default breeze.
         *shadow_filter* is each shadow slot's ``(softness, bias)`` row from
-        the Light that owns it (0: the shader's default)."""
+        the Light that owns it (0: the shader's default).
+        *snow_cover* (0..1) lays settled snow over the ground: patchy at
+        first, a full white blanket from about 0.8, thin on steep slopes.
+        *edge_falls* (:meth:`edge_falls`) are where water pours over the
+        world's edge: the underside hangs only under land, clear of them."""
         self.visible_chunks = 0
         self.culled_chunks = 0
         self.total_triangles = 0
@@ -1360,6 +1955,9 @@ class TerrainGL:
             return
         self.frame = frame
         self.grass_wind = grass_wind
+        self.snow_cover = max(0.0, min(1.0, float(snow_cover or 0.0)))
+        self.edge_falls_now = tuple(edge_falls or ())
+        self.shore_points_now = ()
         try:
             self._render(projection, view, camera_pos, frustum_planes,
                          active_lights_count, shadow_cubemaps, shadow_unit_base,
@@ -1445,6 +2043,10 @@ class TerrainGL:
                    or getattr(self, 'untextured', False)
                    else (1 if frame.use_textures else 0))
         gl_state.glUniform1i(u['use_textures'], use_tex)
+        snow_loc = u.get('uSnowCover', -1)
+        if snow_loc is not None and snow_loc != -1:
+            gl_state.glUniform1f(snow_loc, 0.0 if frame.flat_mode else
+                                 float(getattr(self, 'snow_cover', 0.0)))
 
         # Distance fog + global ambient (engine.shaders.FOG_GLSL): this
         # program has its own uniform table, so the renderer hands the
@@ -1527,10 +2129,20 @@ class TerrainGL:
         #: The slots drawn this frame, in draw order (tests, Debug Tables).
         self.drawn_slots = drawn
         self.skirt_sides = 0
+        self._falls_source = None
         if not blocks and frame.skirt is not None:
+            self._falls_source = (frame, slots[table.built[slots]], frustum_planes, unit)
+            if self.UNDERSIDE and self.edge_falls_now:
+                self.shore_points_now = tuple(self.shore_points(
+                    slots[table.built[slots]], self.edge_falls_now))
             self.skirt_sides = self._draw_skirts(
                 slots[table.built[slots]], projection, view, env_uniforms, unit,
                 frustum_planes, paint_texture_unit, use_tex)
+            self.under_chunks = 0
+            if self.UNDERSIDE:
+                self.under_chunks = self._draw_underside(
+                    slots[table.built[slots]], projection, view, env_uniforms, unit,
+                    frustum_planes, paint_texture_unit, use_tex)
         if frame.wireframe: gl_state.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
 
         if grass and self.grass_shader_program:
@@ -1572,9 +2184,13 @@ class TerrainGL:
             except Exception:
                 pass
         self.shader_program = self.block_program = self.grass_shader_program = 0
-        self.skirt_program = 0
+        self.skirt_program = self.falls_program = self.under_program = 0
+        self._base_instance = None          # the next context is asked afresh
         self.uniforms, self.block_uniforms, self.grass_uniforms = {}, {}, {}
         self.skirt_uniforms = {}
+        self.falls_uniforms = {}
+        self.under_uniforms = {}
+        self._falls_source = None
         if self._skirt_vao:
             try:
                 gl_state.glDeleteVertexArrays(1, [self._skirt_vao])

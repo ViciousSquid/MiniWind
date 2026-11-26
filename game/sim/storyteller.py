@@ -31,6 +31,9 @@ DEFAULT_TUNING = {
     "reason_cap": 24,
     "observation_cap": 10,
     "receipt_cap": 40,
+    # Entries kept in the plain-English activity feed (the "storyteller"
+    # window's Activity section): state changes, caps, edits, biased journeys.
+    "activity_cap": 40,
     "healthy": 0.7,
     "danger_health": 0.35,
     "peak_tension": 0.65,
@@ -212,6 +215,9 @@ class Storyteller(SimSystem):
         self.store = store
         self.director = director
         self.hooks = hooks if hooks is not None else StorytellerHooks()
+        #: Callables handed each new activity entry as it is noted (the
+        #: console's ``storyteller watch``). Not saved; they only listen.
+        self.listeners = []
         self.restore()
 
     def reset(self):
@@ -238,6 +244,7 @@ class Storyteller(SimSystem):
         self._thread_facts = {}
         self._vendetta_view = {}
         self._receipts = ()
+        self._activity = ()
         self._footprint_pricing = dict(bandit_bias=TUNING["prosperity_bandit_bias"],
                                        hunter_scale=TUNING["notoriety_hunter_scale"])
         self._publish_levers()
@@ -248,6 +255,8 @@ class Storyteller(SimSystem):
 
     def set_enabled(self, enabled):
         self._enabled_override = bool(enabled)
+        self._note("switch", "Pacing switched on." if self.enabled else
+                   "Pacing switched off: pristine ecology, no overrides or biases.")
         self._reason("Ecology switch", "Storyteller pacing enabled." if self.enabled else
                      "Pristine ecology: storyteller sensors are idle and all overrides and biases are disabled.")
         self.persist()
@@ -295,6 +304,7 @@ class Storyteller(SimSystem):
             self._adjust_levers(self.last_sample or 0, self.sensors or {"law": {}})
         self._reason("Studio edit", f"Designer set {state} {' / '.join(map(str, path))} to {value:g}; "
                      "ordinary board and streaming samples use the edited lever.")
+        self._note("edit", f"Studio set {state} {' / '.join(map(str, path))} to {value:g}.", merge=True)
         if persist:
             self.persist()
 
@@ -303,6 +313,7 @@ class Storyteller(SimSystem):
         if state == self.state:
             self._adjust_levers(self.last_sample or 0, self.sensors or {"law": {}})
         self._reason("Studio edit", f"Designer restored the saved base lever table for {state}.")
+        self._note("edit", f"Studio restored {state}'s saved lever table.")
         self.persist()
 
     def board_levers(self):
@@ -327,6 +338,50 @@ class Storyteller(SimSystem):
             oldest = next((key for key in self._reasons if key.startswith("Destination ")),
                           next(iter(self._reasons)))
             del self._reasons[oldest]
+
+    def _note(self, kind, text, now=None, *, merge=False):
+        """Add a line to the activity feed: what the storyteller just did.
+
+        Narration only -- it decides nothing, and reading it changes nothing.
+        *merge* replaces the newest entry when it is the same kind and has the
+        same first words (a Studio drag would otherwise log every step)."""
+        when = self.last_sample if now is None else float(now)
+        entry = dict(time=when, kind=kind, text=str(text))
+        feed = self._activity
+        if merge and feed and feed[-1]["kind"] == kind and \
+                feed[-1]["text"].rsplit(" to ", 1)[0] == entry["text"].rsplit(" to ", 1)[0]:
+            feed = feed[:-1]
+        self._activity = (*feed, entry)[-TUNING["activity_cap"]:]
+        for listener in tuple(getattr(self, "listeners", ())):
+            try:
+                listener(dict(entry))
+            except Exception:
+                pass
+
+    @property
+    def activity(self):
+        """The activity feed, newest first, detached for live inspection."""
+        return copy.deepcopy(list(reversed(self._activity)))
+
+    def summary(self):
+        """Everything the "what the storyteller is doing" window shows, as
+        detached plain data. Read-only: it never samples, appraises or draws
+        a random number."""
+        row = TUNING["states"][self.state]
+        age = (self.last_sample - self.entered_at
+               if self.last_sample is not None and self.entered_at is not None else None)
+        return copy.deepcopy(dict(
+            enabled=self.enabled, state=self.state, next=row["next"],
+            entered_at=self.entered_at, last_sample=self.last_sample, age=age,
+            min_hours=row.get("min_hours"), max_hours=row.get("max_hours"),
+            purpose=row["reason"],
+            decision=self._reasons.get("State decision") if self.enabled else None,
+            arrivals=self._reasons.get("Arrival feedback") if self.enabled else None,
+            sensors=self.sensors, levers=self._levers, local_weights=self._local_weights,
+            local_hunter_bounty=self._local_hunter_bounty,
+            population_cap=self._population_cap,
+            observations=list(reversed(self._observations)),
+            activity=list(reversed(self._activity))))
 
     def _publish_levers(self):
         why = TUNING["states"][self.state]["reason"]
@@ -526,10 +581,17 @@ class Storyteller(SimSystem):
         stalled = (region is not None and self.state in ("RISING", "PEAK")
                    and self._pressure_since is not None
                    and now - self._pressure_since >= window and elapsed >= window and count == 0)
+        capped = self._population_cap
         if stalled and self._population_cap is None:
             self._population_cap = TUNING["states"]["CALM"]["levers"]["population"]
         elif count or self.state not in ("RISING", "PEAK"):
             self._population_cap = None
+        if capped is None and self._population_cap is not None:
+            self._note("cap", f"No hostile arrivals reached {region} in {elapsed:.1f} h of pressure: "
+                       f"road population capped at {self._population_cap}.", now)
+        elif capped is not None and self._population_cap is None:
+            self._note("cap", "Road population cap lifted"
+                       + (f": {count} hostile arrivals." if count else "."), now)
         sensors["arrival_stalled"] = stalled
         self._reason("Arrival feedback", (
             f"No hostile arrivals reached {region} over {elapsed:.2f} game hours of pressure; "
@@ -620,6 +682,8 @@ class Storyteller(SimSystem):
                 self._population_cap = None
         self._adjust_levers(now, s)
         explanation = row["advance_reason"] if advance else row["hold_reason"]
+        if advance:
+            self._note("state", f"{previous} → {self.state} after {age:.1f} h: {explanation}", now)
         self._reason("State decision", f"{previous} → {self.state}: {explanation} After {age:.2f} hours: "
                      f"health {s['health']:.0%}, tension {s['tension']:.2f}, "
                      f"{s['attacks']} recent attacks, {s['deaths']} deaths, {s['hostiles']} visible hostiles, "
@@ -779,6 +843,9 @@ class Storyteller(SimSystem):
             if not arrived:
                 receipt["outcome"] = "Faction order departed"
         self._receipts = (*self._receipts, receipt)[-TUNING["receipt_cap"]:]
+        if influenced:
+            self._note("journey", f"{receipt['party']} ({journey.kind}) → {journey.dest}: "
+                       f"{receipt['outcome'].lower()}. {why}", now)
         self._reason("Journey outcome", f"{journey.id} {journey.kind} → {journey.dest}: {receipt['outcome']}. {why}")
 
     def world_view(self):
@@ -809,7 +876,7 @@ class Storyteller(SimSystem):
                 "writ_since": self._writ_since,
                 "studio_overrides": self._studio_overrides, "enabled_override": self._enabled_override,
                 "thread_facts": self._thread_facts, "vendetta_view": self._vendetta_view,
-                "receipts": self._receipts,
+                "receipts": self._receipts, "activity": self._activity,
                 "footprint_pricing": self._footprint_pricing,
             }))
 
@@ -851,6 +918,7 @@ class Storyteller(SimSystem):
             self._vendetta_view = copy.deepcopy(data.get("vendetta_view") or {})
             self._receipts = tuple(copy.deepcopy(data.get("receipts") or [])[-TUNING["receipt_cap"]:])
             self._footprint_pricing = dict(data.get("footprint_pricing") or self._footprint_pricing)
+            self._activity = tuple(copy.deepcopy(data.get("activity") or [])[-TUNING["activity_cap"]:])
         except (TypeError, ValueError):
             self.reset()
             return False

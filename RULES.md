@@ -569,13 +569,32 @@ Graphics; on by default):
 * Burns are kept with the save, per map.
 
 **Weather** (Settings › Game › *Weather*, on by default; in the console,
-`weather sunny`, `weather overcast`, `weather rain` or `weather storm` turns
-the sky, fading in as weather does):
+`weather sunny`, `weather overcast`, `weather rain`, `weather storm` or
+`weather snow` turns the sky, fading in as weather does):
 
 * The sky turns by itself: spells of clear sky (6–20 hours), cloud (2–6),
   rain (1–5) and now and then a storm (½–2), each easing into the next. Rain
   soaks the ground; it dries over hours after, twice as fast under clear sky.
   The weather is kept with the save.
+* *Snow* (`game/weather.py`, the cold from `game/calendar.py`). It is cold
+  from the last day and a half of autumn, through winter, until the last day
+  and a half of the year (Leap Day falls in that thaw). In the cold the sky
+  turns snow where it would rain: cloud is followed by snow (55%), clear sky
+  (35%) or a storm (10%); a snowfall lasts 2–7 hours. A storm in the cold is
+  a **blizzard**: snow, not rain, on the same gale, with a third of a storm's
+  lightning, and no one travels in it. Out of the cold snow never falls by
+  itself (`weather snow` makes it snow in any season, and it soon thaws).
+  * *It settles.* Falling snow lies on the ground, deep after about two
+    hours of steady snow (a blizzard faster): first in patches, then a white
+    blanket, thinner on steep slopes. It lies through the cold, thawing only
+    1% an hour, and barely at all while snow falls; out of the cold it thaws
+    35% an hour, and rain washes away up to a further 60% an hour. Its meltwater
+    wets the ground. Snow lying and falling is kept with the save.
+  * *It smothers fire.* Grass under deep snow catches one twentieth as
+    readily, and falling snow fights a fire half as hard as rain.
+  * *How it looks.* Flakes drift down past the camera, big and soft near it,
+    small and bright near the ground, swaying as they fall and carried far
+    on the wind; a pale haze lies over everything while it snows.
 * *Rain fights fire.* Burning grass burns out up to six times faster in a
   storm and spreads slower in any rain — heavy rain stops it spreading at
   all. Wet ground barely catches (a soaked field one tenth as readily).
@@ -939,6 +958,123 @@ It does nothing for anything else you do, and hearing is unchanged.
     arrives;
   * news of a lawful killing or fight (bandits cut down on the road) is met
     with "Good riddance", never "the watch had better hear of this".
+
+
+## 19. Time and the calendar
+
+Everything below is `game/calendar.py`; the night, the sky, torches, the
+wheat and the clock all read it, so they always agree.
+
+* **The clock.** A game day takes 24 real minutes (one game hour a real
+  minute; a map can change it). Saved with the game; in co-op the host's
+  clock is everyone's.
+* **The year** is 28 days: four seasons of seven, spring first — about 11
+  real hours. A new game opens on the last day of summer in Year 1.
+* **Leap years.** Every fourth year (Year 4, 8, 12 …) has a 29th day,
+  **Leap Day**, after the last day of winter and before the next spring.
+  Leap Day belongs to no week (the weekdays carry on around it, and the
+  clock reads "Leap Day") and no season.
+* **The Leap Festival.** The Vale keeps Leap Day as its great festival, once
+  in four years. On the eve ("Tomorrow is Leap Day…") and on the day itself
+  ("LEAP DAY! …") the news shows in the message log and as a toast; the
+  Leap Day toast stays up 10 seconds. All day the townsfolk talk of nothing
+  else when they pass the time of day — lanterns, the Leap fire, no work.
+* **New years and seasons.** The first day of a year ("A new year begins:
+  Year 5.", saying when it is a leap year) and of each season ("Summer has
+  come to the Vale.") are announced the same way.
+* **Day length follows the year.** Solar noon is 12:24. Days are 12.2 hours
+  at the equinoxes (sunrise 06:18, sunset 18:30), up to 15.8 at midsummer
+  (about 04:30–20:18) and down to 8.6 at midwinter (about 08:06–16:42).
+* **Dawn and dusk stretch with the day.** The night's darkness, dusk's
+  colour and the reflected sky are drawn by *solar hours*: the clock's hour
+  stretched so sunrise always reads 06:18 and sunset 18:30 (day and night
+  each stretched evenly). At the equinoxes they are the clock's own hours.
+* **Torches** are lit from solar 20:00 to 06:00 — 1.5 equinox hours after
+  sunset until just before sunrise: about 21:30 in high summer, 18:45 in
+  midwinter.
+* **NPC routines keep the clock's hours** (up at 6, work 9 to 17, bed at
+  22) whatever the season.
+* **The moon** goes from new to full and back every 8 days.
+* **The wheat** grows by the year (sprouting in spring, tall and gold in
+  summer, cut in late autumn, bare in winter); on Leap Day it stays as at
+  winter's end.
+
+
+## 20. Districts
+
+The overworld is divided into eight districts (`game/data/districts.json`,
+`game/districts.py`): **Millbrook** (lowland), **Greywood**, **Ashby
+Reach** and **Cairnmoor** (desert; Cairnmoor takes in Whisperdeep),
+**Elderbrook**, **Wyndham**, **Furrow End** and **Emberpeak** (lowland).
+
+* *Where one ends.* A point belongs to the district whose seat is nearest,
+  measured after a gentle noise warp (up to 5,000 units) so borders wander,
+  plus 11,000 units times how far the ground there is from the district's
+  home biome, so each district keeps to its own ground and borders follow
+  the desert's edge. A district can have more than one seat; there is no
+  border between its own seats.
+* *How they look.* Drawn by hand in sepia ink on the ground: a pen line
+  (30 units at its fullest) that wobbles, swells and thins with the pen's
+  pressure (darker where it presses), bleeds unevenly at its edges, now and
+  then runs dry, with a lighter second stroke wandering off it and back. A
+  border stops at the water's edge (the sea, a lake) and short of the
+  world's rim -- the world is a square disc, and nobody goes near its edge:
+  each border tapers out from 9,000 to 6,000 units from it, and no road or
+  border is painted closer. People, creatures
+  and things on a border stand over it. They are only a guide: crossing one
+  changes nothing. Other maps (caves) have none.
+* *What they cost.* Nothing: they are baked once into the overworld's own
+  terrain paint (`python -m game.tools.bake_districts`, run again after
+  changing the districts), with a record of every texel they cover
+  (`maps/miniwind_world.districts.npz`). Settings › Game › *District borders*
+  (on by default) or `districts off` in the console lifts them out of the
+  paint -- every texel put back exactly -- and `districts on` lays them in
+  again; when Play stops the map's paint is as its file has it. The record
+  is also how they could be moved one day (lift the old, bake the new).
+  In the editor they are kept out of view (lifted while the map is open)
+  yet put back into every save, autosave and savegame, and into Play.
+  `districts` alone says which district you are in.
+* *Seeing them.* `python -m game.tools.district_map` draws the world map
+  with every border, seat and name (`docs/images/districts_map.png`).
+
+## 21. The edge of the world
+
+The world ends in a cliff of rock strata (`engine/shaders.py`,
+`terrain_skirt.*`). Where water reaches that edge it spills over it.
+
+* *No mountains round the edge.* The land runs out to the edge as lowland
+  all the way round (desert dunes in the west and south, rolling grass
+  elsewhere); the Emberpeaks stand inland. Each cave mouth that stood at
+  the foot of the old edge mountains keeps a rocky knoll round it
+  (`game/tools/reshape_edge.py`).
+* *Sunfall Oasis.* On the south edge of the world (the bottom of the world
+  map), towards the west in the desert: a lake ringed with grass and palms,
+  open to the edge, so its whole southern shore spills over it -- forked
+  by a rocky islet on the brink: the western fall about 1,100 units wide,
+  the eastern about 1,800. Its water is the sea's, drifting gently to the falls.
+
+* *Trees.* No tree ever stands in water or reaches over it.
+* *The sea drifts to the edge.* The sea in the world map's top-right corner
+  flows slowly towards that corner (`water_flow` SE, 4 units a second in
+  world axes; a player is about 64 tall): its waves, ripples and foam all
+  drift that way. A storm quickens it, up to 4 times as fast in a full
+  storm, easing up and down with the storm with no jump (`game/host.py`
+  `STORM_FLOW_BOOST`).
+* *The falls.* Wherever a water brush reaches the world's edge over ground
+  lower than its surface, the water pours over in one sheet with the
+  surface: it quickens over the last 260 units before the brink, rolls
+  over it glassy and turns white as it falls, hugs the cliff, and falls on
+  past the cliff's foot without end, thinning into haze so no bottom is
+  ever seen. It wraps round a corner of the world as one fall, thins to
+  ribbons and frays where the shore meets the edge, and pours nowhere the
+  ground at the edge is above the water. Purely visual
+  (`engine/renderer/core/terrain_gl.py`, `TerrainGL.draw_falls`;
+  `terrain_falls.*`).
+* *Outcrops beside the falls.* Where the land meets the falls at the edge,
+  the land hangs below the cliff's foot upside down, mirrored, as a rocky
+  outcrop: within 3,500 units along the edge of each shore, fading out
+  along the edge, never behind the falls (`TerrainGL._draw_underside`,
+  `terrain_under.vert`).
 
 ## Known gaps
 

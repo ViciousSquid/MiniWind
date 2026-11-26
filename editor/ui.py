@@ -833,6 +833,12 @@ class Ui_MainWindow(object):
             'Shift-click to select, drag or nudge them (as terrain stamps)')
         MainWindow.decal_tool_action.triggered.connect(MainWindow.toggle_decal_tool)
         MainWindow.tools_menu.addAction(MainWindow.decal_tool_action)
+        MainWindow.tree_tool_action = QAction('Trees Tool', MainWindow, checkable=True)
+        MainWindow.tree_tool_action.setToolTip(
+            'Click the terrain in the 3D view to plant a random tree brush '
+            '(128 to 512 units square, floating 100 to 110 above the ground)')
+        MainWindow.tree_tool_action.triggered.connect(MainWindow.toggle_tree_tool)
+        MainWindow.tools_menu.addAction(MainWindow.tree_tool_action)
         MainWindow.tools_menu.addSeparator()
 
         # Debug Tables is deliberately lazy: importing/constructing the

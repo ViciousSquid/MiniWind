@@ -40,6 +40,7 @@ import math
 from typing import Optional
 
 from engine.change_journal import VISIBILITY, touch
+from engine.data_copy import data_copy
 
 from .cell import cell_of_point
 from .manager import (BigWorldManager, DEFAULT_ACTIVATION_RADIUS,
@@ -979,12 +980,18 @@ class BigWorldSession:
         self.registry.pop(key, None)
         if cell is None:
             return
-        live = normalize_streaming_state(self._cell_live_level(cell))
+        # Serialized just now, so a shallow normalise does (it rewrites only
+        # top-level keys, on copies). The records still share values with
+        # the world's objects -- a thing's pos is its live list -- so what the
+        # registry keeps is copied off them: only the changed records, where
+        # copying the whole cell first copied everything a cell holds to keep
+        # the one or two that differ (usually none).
+        live = normalize_streaming_state(self._cell_live_level(cell), deep=False)
         sub = build_cell_delta_registry(
             self._base_subset(live), live, self.manager.cell_size)
         for k, entry in sub.items():
             if entry.get("things") or entry.get("brushes"):
-                self.registry[k] = entry
+                self.registry[k] = data_copy(entry)
 
     def _base_subset(self, live: dict) -> dict:
         """The base records that share an id with *live*'s.

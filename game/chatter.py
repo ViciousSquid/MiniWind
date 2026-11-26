@@ -56,6 +56,17 @@ _SMALL_TALK = {
 }
 
 
+#: Small talk on a festival day (game/calendar.py ``festival``): Leap Day,
+#: the Leap Festival, kept once in four years.
+_FESTIVAL_TALK = {
+    "leap": (("A blessed Leap Day to you, {b}!", "And to you, {a}! Once in four years!"),
+             ("Will you light a lantern tonight, {b}?", "Three, {a}. One for each year we waited."),
+             ("No work today, {b}. Leap Day!", "Wouldn't dream of it, {a}. The day isn't ours to spend on work."),
+             ("Have you jumped the Leap fire yet, {b}?", "Twice! Good luck for four years, they say."),
+             ("Leap Day! I never thought I'd see another.", "Nor I, {a}. Drink while the day lasts."),
+             ("The day that belongs to no week, {b}.", "And no one's debts fall due on it. Gods bless it.")),
+}
+
 #: What someone on a justified journey says on finding the player, by kind
 #: (:func:`game.sim.storyteller.justification`).
 _JUSTIFIED = {
@@ -131,11 +142,16 @@ def address(display_name: str) -> str:
     return name
 
 
-def small_talk(a: str, b: str, hour: float) -> Tuple[str, str]:
+def small_talk(a: str, b: str, hour: float, festival=None) -> Tuple[str, str]:
     """``(opener, reply)`` for *a* passing the time of day with *b*.
 
     *a* and *b* are display names; each is addressed as a neighbour would
-    (:func:`address`), never "Morning, Town Archer."."""
+    (:func:`address`), never "Morning, Town Archer.". On a festival day
+    (:func:`game.calendar.festival`) they talk of nothing else."""
+    if festival in _FESTIVAL_TALK:
+        opener, reply = _pick(_FESTIVAL_TALK[festival], a, b, festival, int(hour))
+        a, b = address(a), address(b)
+        return opener.format(a=a, b=b), reply.format(a=a, b=b)
     part = _part_of_day(hour)
     opener, reply = _pick(_SMALL_TALK[part], a, b, part, int(hour))
     a, b = address(a), address(b)

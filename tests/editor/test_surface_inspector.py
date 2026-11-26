@@ -466,8 +466,8 @@ def test_the_asset_browser_owns_no_texture_controls(qt_app, tmp_path):
 
 
 def test_the_asset_browser_action_bar_keeps_only_the_expected_buttons(qt_app, tmp_path):
-    """The hamburger folder toggle, INSPECTOR, and the Tint and Decal icon
-    buttons are the action bar."""
+    """The hamburger folder toggle, INSPECTOR, and the Tint, Decal and Trees
+    icon buttons are the action bar."""
     from PyQt5.QtWidgets import QPushButton
 
     from editor.asset_browser import AssetBrowserTab
@@ -476,8 +476,8 @@ def test_the_asset_browser_action_bar_keeps_only_the_expected_buttons(qt_app, tm
     buttons = tab.action_bar.findChildren(QPushButton)
     labels = [b.text() for b in buttons]
 
-    assert sorted(labels) == sorted(['\u2630', 'INSPECT', '', ''])
-    assert {b for b in buttons if not b.text()} == {tab.tint_btn, tab.decal_btn}
+    assert sorted(labels) == sorted(['\u2630', 'INSPECT', '', '', ''])
+    assert {b for b in buttons if not b.text()} == {tab.tint_btn, tab.decal_btn, tab.trees_btn}
 
 
 def test_inspect_sits_at_the_right_with_tint_and_decal(qt_app, tmp_path):
@@ -495,11 +495,12 @@ def test_inspect_sits_at_the_right_with_tint_and_decal(qt_app, tmp_path):
     def right(button):
         return button.mapTo(bar, button.rect().topRight()).x()
 
-    assert left(tab.inspector_btn) < left(tab.tint_btn) < left(tab.decal_btn)
+    assert (left(tab.inspector_btn) < left(tab.tint_btn) < left(tab.decal_btn)
+            < left(tab.trees_btn))
     # Together at the right edge: the slack is before INSPECT, not after it.
     assert left(tab.tint_btn) - right(tab.inspector_btn) < 30
     assert left(tab.inspector_btn) > bar.width() / 2
-    assert bar.width() - right(tab.decal_btn) < 30
+    assert bar.width() - right(tab.trees_btn) < 30
     tab.close()
 
 

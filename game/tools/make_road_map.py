@@ -565,7 +565,7 @@ def make_ocean(terrain, data):
     brush = copy.deepcopy(proto)
     brush.update(pos=[round((x0 + x1) / 2, 1), round(sea - 16.0, 1), round((z0 + z1) / 2, 1)],
                  size=[round(x1 - x0, 1), 32.0, round(z1 - z0, 1)],
-                 id=str(uuid.uuid5(ID_NAMESPACE, "ocean")), water_wave_enabled=True,
+                 id=str(uuid.uuid5(ID_NAMESPACE, "ocean")), water_flow="SE", water_flow_speed=4.0, water_wave_enabled=True,
                  water_tint=[0.0, 0.32, 0.5], water_opacity=0.75)
     data["brushes"].append(brush)
     # Biomes: no snow at sea or on the shore; sand along the beach.

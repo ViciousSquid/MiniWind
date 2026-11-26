@@ -3821,6 +3821,76 @@ class Terrain:
                 changed = True
         return changed
 
+    def blend_paint(self, coord, ix0, iz0, alpha, rgb):
+        """Lay solid *rgb* (0..255) over chunk *coord*'s paint, by *alpha*:
+        a 2D block of 0..1 indexed ``[ix, iz]`` with its first texel at
+        (*ix0*, *iz0*). Source over destination, as stamps blend.
+
+        For a game's overlay drawn once (district borders): returns the
+        chunk's paint as it was (None when it had none), for
+        :meth:`restore_paint`, or False when nothing was painted.
+        """
+        res = self.TERRAIN_PAINT_RESOLUTION
+        alpha = np.clip(np.asarray(alpha, dtype=np.float32), 0.0, 1.0)
+        ix0, iz0 = int(ix0), int(iz0)
+        ax0, az0 = max(0, -ix0), max(0, -iz0)
+        ix1 = min(res, ix0 + alpha.shape[0])
+        iz1 = min(res, iz0 + alpha.shape[1])
+        ix0, iz0 = max(0, ix0), max(0, iz0)
+        if ix1 <= ix0 or iz1 <= iz0:
+            return False
+        block = alpha[ax0:ax0 + (ix1 - ix0), az0:az0 + (iz1 - iz0)]
+        covered = block > 1e-3
+        if not np.any(covered):
+            return False
+        key = (int(coord[0]), int(coord[1]))
+        old = self.texture_paint_maps.get(key)
+        # Replaced, never written in place: the stored dicts may share arrays.
+        paint = np.zeros((res, res, 4), dtype=np.uint8) if old is None else old.copy()
+        region = paint[ix0:ix1, iz0:iz1]
+        a = block[covered]
+        dst = region[covered].astype(np.float32)
+        under = dst[:, 3] * np.float32(1.0 / 255.0) * (1.0 - a)
+        out_a = a + under
+        dst[:, :3] *= under[:, None]
+        dst[:, :3] += np.asarray(rgb, np.float32)[None, :3] * a[:, None]
+        dst[:, :3] /= np.maximum(out_a, np.float32(1e-6))[:, None]
+        dst[:, 3] = out_a * np.float32(255.0)
+        dst += np.float32(0.5)
+        region[covered] = np.clip(dst, 0, 255).astype(np.uint8)
+        self.texture_paint_maps[key] = paint
+        self._paint_changed_grass((key,))
+        self._touch_texture_paint(key)
+        return old
+
+    def set_paint_texels(self, coord, index, rgba):
+        """Set chunk *coord*'s paint texels *index* (flat, row-major over the
+        ``[ix, iz]`` grid) to *rgba* (n x 4 uint8): what an overlay recorded
+        before it painted, put back."""
+        res = self.TERRAIN_PAINT_RESOLUTION
+        key = (int(coord[0]), int(coord[1]))
+        old = self.texture_paint_maps.get(key)
+        paint = np.zeros((res, res, 4), dtype=np.uint8) if old is None else old.copy()
+        flat = paint.reshape(-1, 4)
+        flat[np.asarray(index, dtype=np.int64)] = np.asarray(rgba, dtype=np.uint8)
+        if not np.any(paint[..., 3]):
+            self.texture_paint_maps.pop(key, None)       # nothing left painted
+        else:
+            self.texture_paint_maps[key] = paint
+        self._paint_changed_grass((key,))
+        self._touch_texture_paint(key)
+
+    def restore_paint(self, coord, paint):
+        """Put chunk *coord*'s paint back to *paint* (None: no paint), as
+        :meth:`blend_paint` returned it."""
+        key = (int(coord[0]), int(coord[1]))
+        if paint is None:
+            self.texture_paint_maps.pop(key, None)
+        else:
+            self.texture_paint_maps[key] = paint
+        self._paint_changed_grass((key,))
+        self._touch_texture_paint(key)
+
     def paint_texture_at(self, world_x, world_z, radius, texture,
                          feather=0.25, opacity=1.0, angle=0.0):
         """Bake the selected texture into the terrain under the sculpt brush."""
