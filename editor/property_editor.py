@@ -85,6 +85,17 @@ def _plugin_widget_for_spec(editor_self, spec, value):
         current = str(value if value is not None else default)
         if current not in choices:
             choices = [current] + choices
+        # A first-party schema may attach {value: label} as ``_choice_labels``
+        # (not plugin API): the dropdown shows the label, stores the value.
+        labels = getattr(spec, "_choice_labels", None) or {}
+        if labels:
+            # Shown by label, stored by value.
+            shown = [str(labels.get(c, c)) for c in choices]
+            combo = _make_combo(shown, shown[choices.index(current)])
+            combo.currentIndexChanged.connect(
+                lambda i, key=name, values=choices:
+                editor_self.update_object_prop(key, values[i]) if 0 <= i < len(values) else None)
+            return combo
         return _make_combo(
             choices,
             current,
@@ -2692,11 +2703,21 @@ class PropertyEditor(QWidget):
             (),
         )
 
-        if primary_properties and not isinstance(thing, Prop):
+        # A type a plugin (or the built-in game) registered fields for shows
+        # them whether or not its class lists primary properties: Markers,
+        # item pickups, spawn points, triggers and containers declared none,
+        # so their registered fields never appeared and the tab was blank.
+        from plugins.manager import get_manager as _get_manager
+        _type = thing.properties.get('type')
+        _manager = _get_manager()
+        has_plugin_schema = bool(
+            _type and _manager.property_schema_for(_type)
+            and _manager.plugin_for_type(_type) is not None)
+        if (primary_properties or has_plugin_schema) and not isinstance(thing, Prop):
             self._iterate_thing_properties(
                 form,
                 thing,
-                property_keys=primary_properties,
+                property_keys=primary_properties or None,
             )
 
         if isinstance(thing, PlayerStart):

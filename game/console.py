@@ -685,6 +685,24 @@ def cmd_resurrect(ctx, args):
     return None
 
 
+def cmd_unlock(ctx, args):
+    """unlock -- the world pauses; the container under the mouse is
+    highlighted and a click unlocks it at once (if it is locked; one already
+    open is left as it is). Esc or a right-click cancels. Play Mode only.
+    The Knock spell opens a lock the same way (game/unlocking.py)."""
+    if not ctx.play_mode:
+        debug_log("Error", "unlock: Play Mode only.")
+        return None
+    import game.unlocking as unlocking
+    if not unlocking.begin_pick(ctx.main_window):
+        debug_log("Error", "unlock: the picker is not available in this view.")
+        return None
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast("Unlock (paused): click a container (Esc to cancel)")
+    return None
+
+
 def cmd_torch_shadows(ctx, args):
     """torch_shadows [on|off] -- whether carried torches near you (the NEAR
     simulation distance) cast shadows. With no argument it toggles.
@@ -909,6 +927,8 @@ COMMANDS = (
      "— Time controls (rewind, play/pause, speed) and teleport to any cave (Play Mode)"),
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
+    (("unlock",), cmd_unlock,
+     "— Pause and click a container to unlock it at once (Play Mode)"),
     (("weather",), cmd_weather,
      "[sunny|overcast|rain|storm|snow] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
     (("worldmap",), cmd_worldmap,
