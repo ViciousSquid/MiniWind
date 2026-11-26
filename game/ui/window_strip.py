@@ -4,12 +4,12 @@ A row along the top of a window (the storyteller window and Storyteller
 Studio): an arrow that collapses the window to just this strip and expands it
 again (▼ open, ▶ collapsed -- as on the in-game windows), whatever the window
 puts in the middle, and a drawing pin that keeps the window above every other
-window (pressed in: always on top).
+window: an outline leaning over when off, filled and upright when pinned.
 """
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QPointF, QRectF, QSize, Qt
+from PyQt5.QtCore import QPointF, QSize, Qt
 from PyQt5.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
@@ -17,37 +17,50 @@ _STYLE = """
 QFrame#strip { background: #232a35; border: 1px solid #2f3846; }
 QToolButton { background: transparent; border: none; color: #e4e6ec; padding: 2px; }
 QToolButton:hover { background: #34404f; }
-QToolButton:checked { background: #415f7d; }
+QToolButton:checked { background: transparent; }
 """
 
 
-def pin_icon(pressed: bool, size: int = 32) -> QIcon:
-    """A drawing pin: upright and red when pressed in, leaning and grey when not."""
+#: The pin's outline in a 1200-unit square: (start, [(control or None, point)]).
+_PIN_OUTLINE = ((770, 155), [
+    (None, (1045, 430)),            # the flat top of the head
+    ((965, 505), (880, 470)),       # flaring in to the waist
+    (None, (720, 630)),
+    ((800, 800), (655, 905)),       # flaring out to the collar
+    (None, (290, 537)),             # the flat underside of the collar
+    ((400, 450), (540, 465)),       # back in to the waist
+    (None, (715, 295)),
+    ((700, 205), (770, 155)),       # and out to the head
+])
+_PIN_NEEDLE = ((450, 750), (140, 1060))
+
+
+def pin_icon(pinned: bool, size: int = 32, colour=QColor(228, 230, 236)) -> QIcon:
+    """A drawing pin, one colour: an outline leaning over when not pinned;
+    filled and standing upright (pushed in) when pinned."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing, True)
+    scale = size / 1200.0
     p.translate(size / 2, size / 2)
-    if not pressed:
-        p.rotate(40)
-    s = size / 32.0
-    head = QColor(225, 70, 70) if pressed else QColor(160, 165, 175)
-    rim = QColor(120, 25, 25) if pressed else QColor(85, 90, 100)
-    # The needle.
-    p.setPen(QPen(QColor(205, 210, 220), 2.0 * s, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(QPointF(0, 3 * s), QPointF(0, 14 * s))
-    # The body: a collar, a waist and a domed head.
-    body = QPainterPath()
-    body.addRoundedRect(QRectF(-7 * s, 0 * s, 14 * s, 4 * s), 1.5 * s, 1.5 * s)
-    body.addRect(QRectF(-3.5 * s, -7 * s, 7 * s, 8 * s))
-    body.addEllipse(QRectF(-6 * s, -14 * s, 12 * s, 9 * s))
-    p.setPen(QPen(rim, 1.2 * s))
-    p.setBrush(head)
-    p.drawPath(body.simplified())
-    # A highlight on the head.
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor(255, 255, 255, 110))
-    p.drawEllipse(QRectF(-3.5 * s, -12.5 * s, 4 * s, 3 * s))
+    if pinned:
+        p.rotate(-45)                   # needle straight down
+    p.scale(scale, scale)
+    p.translate(-600, -600)
+    (sx, sy), segments = _PIN_OUTLINE
+    path = QPainterPath(QPointF(sx, sy))
+    for control, (x, y) in segments:
+        if control is None:
+            path.lineTo(x, y)
+        else:
+            path.quadTo(QPointF(*control), QPointF(x, y))
+    pen = QPen(colour, 75, Qt.SolidLine, Qt.FlatCap, Qt.MiterJoin)
+    p.setPen(pen)
+    p.setBrush(colour if pinned else Qt.NoBrush)
+    p.drawPath(path)
+    (ax, ay), (bx, by) = _PIN_NEEDLE
+    p.drawLine(QPointF(ax, ay), QPointF(bx, by))
     p.end()
     return QIcon(pix)
 
