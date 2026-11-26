@@ -55,6 +55,7 @@ import json
 import math
 from typing import Dict, List, Optional
 
+from ..sim import story_text
 from . import journeys as jn
 from . import roads
 
@@ -183,9 +184,10 @@ class ScenarioDirector:
         #: Called with each new decision (console ``storyteller watch on``).
         self.listeners: List = []
         self._why = ""
+        self._was_on = None           # the mode last seen (None: not yet)
         self.reset_pacing()
 
-    def _decide(self, kind, text, merge="", **data):
+    def _decide(self, kind, text, merge="", result="", why="", **data):
         """Log a decision. *merge*: an entry with the same key replaces the
         newest one if that is also it (a wait counting down is one line)."""
         try:
@@ -195,6 +197,10 @@ class ScenarioDirector:
         raw = {"phase": self.phase, "intensity": round(self.intensity, 3)}
         raw.update(data)
         entry = {"time": now, "kind": kind, "text": str(text), "data": raw, "merge": merge}
+        if result:
+            entry["result"] = str(result)       # what was done, said apart
+        if why:
+            entry["why"] = str(why)             # why now: the moment and the choices
         if merge and self.decisions and self.decisions[-1].get("merge") == merge:
             if self.decisions[-1]["text"] == entry["text"]:
                 self.decisions[-1].update(time=now, data=raw)
@@ -243,7 +249,20 @@ class ScenarioDirector:
         """Once per board update: pace, and perhaps stage a scene."""
         if self.board is None:
             return
-        if not self.enabled():
+        on = self.enabled()
+        if on != self._was_on:
+            # The mode can be switched at any moment of play: say when.
+            if on and self._was_on is False:
+                self.reset_pacing()
+                self._narrate("Game mode switched to Dynamic: the director may now stage scenes "
+                              f"on the roads, starting after a {FIRST_RELAX:g}-second rest.")
+            elif on:
+                self._narrate("Game mode is Dynamic: the director may stage scenes on the roads.")
+            elif self._was_on is not None:
+                self._narrate("Game mode switched to Normal: the director stages nothing more; "
+                              "the storyteller only paces what the world already holds.")
+            self._was_on = on
+        if not on:
             if self.scenes:
                 self._stand_down_all(t)
             self._last_health = None
@@ -415,9 +434,12 @@ class ScenarioDirector:
         if rejected:
             passed = " Passed over: " + "; ".join(
                 f"{SCENE_NAMES.get(k, k)} ({r})" for k, r in rejected.items()) + "."
-        text = (f"{scene.get('text', '')} Why {SCENE_NAMES.get(scene['kind'], scene['kind'])}: "
-                f"{moment}; it is {when}; the storyteller is {self._story_state()}.{passed}")
-        self._decide("stage", text, scene=scene["id"], scene_kind=scene["kind"],
+        why = (f"{SCENE_NAMES.get(scene['kind'], scene['kind'])[:1].upper()}"
+               f"{SCENE_NAMES.get(scene['kind'], scene['kind'])[1:]}, now: "
+               f"{moment}; it is {when}; the storyteller is {self._story_state()}.{passed}")
+        self._decide("stage", scene.get("decision") or scene.get("text", ""),
+                     result=scene.get("result", ""), why=why,
+                     scene=scene["id"], scene_kind=scene["kind"],
                      options={k: round(w, 2) for k, w in options}, rejected=rejected,
                      storyteller_state=self._story_state(), position=[round(scene["x"]), round(scene["z"])],
                      journeys=dict(scene["journeys"]))
@@ -608,10 +630,36 @@ class ScenarioDirector:
         scene = {"id": sid, "kind": kind, "journeys": journeys, "x": float(x), "z": float(z),
                  "t": float(t), "hinted": False, "resolved": False}
         scene.update(extra)
+        if scene.get("decision"):
+            scene["text"] = f"{scene['decision']} Result: {scene.get('result', '')}".strip()
         self.scenes[sid] = scene
         if scene.get("text"):
             self._narrate(scene["text"], log=False)   # _log_cast says it, with why
         return scene
+
+    def _where(self, x, z):
+        """"1,400 units up the road near Old Camp": where a scene was put."""
+        ppos = self.session._player_pos()
+        far = f"{math.hypot(x - ppos[0], z - ppos[2]):,.0f} units " if ppos else ""
+        return f"{far}ahead of {story_text.PLAYER}, near {self.board.place_name(self._place_at(x, z))}"
+
+    def _from(self, j, borrowed):
+        """How a party came to be in the scene."""
+        if j.resident:
+            home = self.board.place_name(j.home)
+            return f"taken from {home} while nobody could see"
+        if borrowed:
+            return f"already on the roads, {self.board.place_name(j.origin)} to {self.board.place_name(j.dest)}"
+        return f"sent out from {self.board.place_name(j.home)}"
+
+    @staticmethod
+    def _lead(j):
+        lead = j.leader() if j is not None else None
+        return lead["display"] if lead else (j.describe() if j is not None else "someone")
+
+    def _place_of(self, fact):
+        pos = fact.get("pos") or ()
+        return self.board.place_name(self._place_at(pos[0], pos[2])) if len(pos) >= 3 else ""
 
     @staticmethod
     def _keep_apart(*js):
@@ -639,11 +687,15 @@ class ScenarioDirector:
         ux, uz = self._side_offset(spot, 130.0)
         self._hold(gang, x + ux, z + uz, sid, "attacker", t, borrowed=borrowed, wander=60.0)
         self._keep_apart(victim, gang)
-        who = victim.describe()
-        near = self.board.place_name(self._place_at(x, z))
-        return self._record(sid, "waylaid", {"victim": victim.id, "attacker": gang.id}, x, z, t,
-                            reward=True,
-                            text=f"Staged an attack on {who} by {gang.describe()} on the road near {near}.")
+        v, g = self._lead(victim), self._lead(gang)
+        return self._record(
+            sid, "waylaid", {"victim": victim.id, "attacker": gang.id}, x, z, t, reward=True,
+            decision=(f"The storyteller decided that {g}'s brigands would set upon {v} "
+                      f"({victim.kind}, {self._from(victim, True)}) because they were the nearest "
+                      "peaceful travellers off screen and a gang was within reach."),
+            result=(f"Moved {v}'s party and {g}'s gang ({self._from(gang, borrowed)}) onto the road "
+                    f"{self._where(x, z)}, side by side, so the fight starts as they come into reach "
+                    f"-- with or without {story_text.PLAYER}."))
 
     def _side_offset(self, spot, d):
         route, cum, _sp, ss, _dirn = spot[:5]
@@ -704,8 +756,15 @@ class ScenarioDirector:
                     return j
         return None
 
+    def _culprit_gang_was(self, fact, gang):
+        from ..sim.director import actor_key
+        culprit = fact.get("actor", "")
+        return bool(culprit) and any(culprit in (actor_key(m.get("id") or ""), actor_key(m.get("name") or ""))
+                                     for m in gang.members)
+
     def _stage_avenger(self, t):
         """A townsperson out to settle a real score with an outlaw gang."""
+        from ..sim.director import actor_key
         done = {sc.get("fact_e") for sc in self.scenes.values()}
         for thing, rid, fact, tie in self._grievances():
             if fact.get("e") in done or not self._can_take(rid):
@@ -743,10 +802,18 @@ class ScenarioDirector:
             self._keep_apart(j, gang)
             chief = gang.leader()
             quest = self._avenger_quest(sid, j, member, chief, culprit, what, whom)
-            return self._record(sid, "avenger", {"avenger": j.id, "attacker": gang.id}, x, z, t,
-                                fact_e=fact.get("e"), quest=quest, reward=False,
-                                text=(f"{name} set out after {culprit}, who {what} {whom}; "
-                                      f"staged on the road ahead with the gang beyond."))
+            quest_name = f"'{name}'s Score'" if quest else "none"
+            return self._record(
+                sid, "avenger", {"avenger": j.id, "attacker": gang.id}, x, z, t,
+                fact_e=fact.get("e"), quest=quest, reward=False,
+                decision=story_text.grievance(name, fact, actor_key(thing), thing.properties,
+                                              self._place_of(fact)),
+                result=(f"Spawned {name} ({self._from(j, False)}), armed, on the road "
+                        f"{self._where(x, z)}, and put {self._lead(gang)}'s band "
+                        f"({'the very gang the culprit rides with' if self._culprit_gang_was(fact, gang) else self._from(gang, borrowed)}) "
+                        f"{QUARRY_GAP:,.0f} units beyond. {name} offers {story_text.PLAYER} a quest "
+                        f"({quest_name}); if nobody comes within {HOLD_HOURS * 0.5:g} game hours they go "
+                        "after the gang alone."))
         return self._no("no townsperson holds a fresh, certain grievance against outlaws "
                         "(and is out of sight, free to leave)")
 
@@ -805,6 +872,7 @@ class ScenarioDirector:
         return out
 
     def _meet(self, t, kinds, scene_kind, hostile):
+        from ..sim.director import actor_key
         done = {sc.get("fact_e") for sc in self.scenes.values()}
         import game.chatter as chatter
         for thing, rid, kind, fact in self._justified_holders(kinds):
@@ -825,14 +893,20 @@ class ScenarioDirector:
                                   home=self.board.nearest_place(thing.pos[0], thing.pos[2], jn.HOMES))
             self._take_resident(j, rid)
             self._walking(j, route, dest, sid, "seeker", t, greeting=line)
-            text = {"vendetta": f"{member['display']} comes for the player over a death they mourn.",
-                    "reckoning": f"{member['display']} comes for the player over an attack they suffered.",
-                    "restitution": f"{member['display']} comes to collect what the player took.",
-                    "gratitude": f"{member['display']} comes down the road, grateful to the player."}[kind]
-            return self._record(sid, scene_kind, {"seeker": j.id}, spot[7], spot[8], t,
-                                fact_e=fact.get("e"), justified=kind,
-                                gift=kind == "gratitude", reward=False,
-                                text=text + " Staged a meeting on the road ahead.")
+            name = member["display"]
+            errand = {"vendetta": "to find the player and settle it",
+                      "reckoning": "to find the player and settle it",
+                      "restitution": "to find the player and demand repayment",
+                      "gratitude": "to find the player and thank them"}[kind]
+            armed = ", armed," if member.get("armed") else ""
+            return self._record(
+                sid, scene_kind, {"seeker": j.id}, spot[7], spot[8], t,
+                fact_e=fact.get("e"), justified=kind, gift=kind == "gratitude", reward=False,
+                decision=story_text.justified(kind, name, fact, actor_key(thing), thing.properties,
+                                              self._place_of(fact)),
+                result=(f"Spawned {name}{armed} ({self._from(j, False)}) on the road "
+                        f"{self._where(spot[7], spot[8])}, and sent them {errand}, walking "
+                        f"toward {story_text.PLAYER}."))
         return self._no("nobody holds a cached, evidenced intent of this kind toward the player "
                         f"({', '.join(kinds)}) and is free to leave")
 
@@ -872,10 +946,16 @@ class ScenarioDirector:
         self._hold(cult, x + 70.0, z + 40.0, sid, "attacker", t, hours=RITE_HOURS,
                    borrowed=borrowed, wander=140.0)
         self._keep_apart(captive, cult)
-        return self._record(sid, "cult_rite", {"victim": captive.id, "attacker": cult.id}, x, z, t,
-                            reward=True,
-                            text=(f"Staged a cult rite by the road with {member['display']} "
-                                  f"of {self.board.place_name(r['home'])} held captive."))
+        name = member["display"]
+        return self._record(
+            sid, "cult_rite", {"victim": captive.id, "attacker": cult.id}, x, z, t, reward=True,
+            decision=(f"The storyteller decided that {self._lead(cult)}'s cult would hold a rite by "
+                      f"the road with {name} of {self.board.place_name(r['home'])} as their captive, "
+                      f"because it is night and {name} was the nearest townsperson nobody could see."),
+            result=(f"Spawned {self._lead(cult)}'s cult ({self._from(cult, borrowed)}) and {name} "
+                    f"({self._from(captive, False)}), held captive, {self._where(x, z)}. If nobody "
+                    f"breaks up the rite within {RITE_HOURS:g} game hours, {name} is lost and their "
+                    "family hear of it."))
 
     def _stage_procession(self, t):
         spot = self._road_ahead(hostile=True)
@@ -887,8 +967,13 @@ class ScenarioDirector:
         route, dest = self._toward_player(spot)
         sid = self._new_id()
         self._walking(cult, route, dest, sid, "attacker", t, borrowed=borrowed)
-        return self._record(sid, "procession", {"attacker": cult.id}, spot[7], spot[8], t,
-                            reward=False, text="Sent a cult procession down the road toward the player.")
+        return self._record(
+            sid, "procession", {"attacker": cult.id}, spot[7], spot[8], t, reward=False,
+            decision=(f"The storyteller decided that {self._lead(cult)}'s cult would walk the road "
+                      f"toward {story_text.PLAYER} because it is night and a cult was within reach."),
+            result=(f"Put {self._lead(cult)}'s cult ({self._from(cult, borrowed)}) on the road "
+                    f"{self._where(spot[7], spot[8])} and sent them walking toward "
+                    f"{story_text.PLAYER}."))
 
     def _stage_ambush(self, t):
         spot = self._road_ahead(hostile=True)
@@ -899,8 +984,13 @@ class ScenarioDirector:
             return self._no("no gang on the roads and no camp to send one from")
         sid = self._new_id()
         self._hold(gang, spot[7], spot[8], sid, "attacker", t, borrowed=borrowed, wander=70.0)
-        return self._record(sid, "ambush", {"attacker": gang.id}, spot[7], spot[8], t,
-                            reward=False, text=f"{gang.describe()} lie in wait on the road ahead.")
+        return self._record(
+            sid, "ambush", {"attacker": gang.id}, spot[7], spot[8], t, reward=False,
+            decision=(f"The storyteller decided that {self._lead(gang)}'s brigands would lie in "
+                      f"wait for {story_text.PLAYER} because it is dark and a gang was within reach."),
+            result=(f"Put {self._lead(gang)}'s gang ({self._from(gang, borrowed)}) in hiding by the "
+                    f"road, {self._where(spot[7], spot[8])}; they attack when {story_text.PLAYER} "
+                    "comes within sight."))
 
     def _stage_patrol(self, t):
         spot = self._road_ahead(hostile=True)
@@ -918,8 +1008,13 @@ class ScenarioDirector:
         ux, uz = self._side_offset(spot, 170.0)
         self._hold(gang, x + ux, z + uz, sid, "attacker", t, borrowed=borrowed, wander=60.0)
         self._keep_apart(patrol, gang)
-        return self._record(sid, "patrol", {"victim": patrol.id, "attacker": gang.id}, x, z, t,
-                            reward=True, text=f"The watch meets {gang.describe()} on the road ahead.")
+        return self._record(
+            sid, "patrol", {"victim": patrol.id, "attacker": gang.id}, x, z, t, reward=True,
+            decision=(f"The storyteller decided that {self._lead(patrol)}'s patrol would run into "
+                      f"{self._lead(gang)}'s brigands because both were on the roads nearby."),
+            result=(f"Moved the patrol ({self._from(patrol, True)}) and the gang "
+                    f"({self._from(gang, borrowed)}) onto the road {self._where(x, z)}, side by "
+                    "side, so they fight as they come into reach."))
 
     # -- hooks from the living world -------------------------------------------
     def spawned(self, j, things) -> None:
@@ -957,8 +1052,10 @@ class ScenarioDirector:
         if role == "avenger" and stage.get("onward"):
             # Nobody came: they go after their quarry alone.
             lead = j.leader()
-            self._narrate(f"{lead['display'] if lead else 'The avenger'} waited, but nobody came: "
-                          "they have gone after their quarry alone.", journey=j.id)
+            self._narrate(f"Outcome: {lead['display'] if lead else 'The avenger'} waited "
+                          f"{HOLD_HOURS * 0.5:g} game hours, but {story_text.PLAYER} never came; they "
+                          "have gone after the gang alone, and the board's dice will settle it.",
+                          journey=j.id)
             route = [tuple(p) for p in stage["onward"]]
             self._walking(j, route, stage.get("onward_dest") or j.dest, scene["id"] if scene else "",
                           "avenger", t)
@@ -1015,7 +1112,10 @@ class ScenarioDirector:
                         f"by the road near {board.place_name(place)}.", t, place, "death")
         captive.news.append(nid)
         scene["resolved"] = True
-        self._narrate(f"Nobody came for {name}: the rite was finished.")
+        self._narrate(f"Outcome: nobody came for {name} within {RITE_HOURS:g} game hours, so the rite "
+                      f"was finished and {name} is lost. News spread from "
+                      f"{board.place_name(place)}, and {name}'s family were told -- a real grievance "
+                      "that may send one of them out for revenge.", scene=scene["id"])
         self._tell_kin(captive, scene)
 
     def _tell_kin(self, captive, scene):
@@ -1093,7 +1193,8 @@ class ScenarioDirector:
             things = self._live_things(friend)
             if not self._party_up(friend):
                 scene["resolved"] = True
-                self._narrate(f"The {scene['kind']} scene ended badly: nobody was left to save.")
+                self._narrate(f"Outcome: {SCENE_NAMES.get(scene['kind'], scene['kind'])} ended badly -- "
+                              "the attackers won and nobody was left to save.", scene=scene["id"])
                 continue
             if not things:
                 continue
@@ -1120,6 +1221,7 @@ class ScenarioDirector:
                 "avenger": "It's done. I couldn't have -- thank you."}.get(
             kind, "Gods bless you, stranger -- they'd have had everything.")
         s.bark(lead, line)
+        amount = 0
         if scene.get("reward") and j is not None:
             purse = sum(int(m.get("gold", 0) or 0) for m in j.alive())
             amount = max(10, min(120, purse // 2 + s.rng.randint(5, 25)))
@@ -1136,7 +1238,10 @@ class ScenarioDirector:
             j.news.append(nid)
             if j.resident or (j.stage or {}).get("borrowed"):
                 self._release(j, t)
-        self._narrate(f"{name} was saved; the player stepped in.")
+        paid = f" They paid {amount} gold from their own purse." if amount else ""
+        self._narrate(f"Outcome: {story_text.PLAYER} stepped in -- the attackers are dead and {name} "
+                      f"was saved.{paid} News of it spread from {self.board.place_name(place)}.",
+                      scene=scene["id"], gold=amount)
 
     def _maybe_gift(self, scene, px, pz, t):
         jid = scene["journeys"].get("seeker")

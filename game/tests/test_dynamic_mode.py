@@ -399,7 +399,8 @@ def test_each_decision_is_plain_words_with_its_raw_data():
     staged = [d for d in w.director.decisions if d["kind"] == "stage"]
     assert staged, w.director.decisions
     entry = staged[-1]
-    assert "Why " in entry["text"] and "night" in entry["text"]
+    assert entry["text"].startswith("The storyteller decided that")
+    assert entry["result"] and "night" in entry["why"]
     data = entry["data"]
     assert data["scene_kind"] and data["options"] and "intensity" in data and "phase" in data
 
@@ -439,3 +440,37 @@ def test_the_report_shows_the_director_only_in_dynamic_mode():
     raw = report.raw_rows(None, session)
     assert any(h and "director" in h.lower() for h, _k, _v in raw)
     assert any(k and k.startswith("scenes.") for _h, k, _v in raw)
+
+
+def test_a_staged_avenger_names_the_grievance_and_says_what_was_done():
+    from ..sim import knowledge
+    from ..sim.director import actor_key
+    w = _world()
+    w.session.clock.day = 2
+    edda = _Thing(-4000, 0, name="edda", display_name="Edda", npc_role="farmer",
+                  faction="villagers", type="npc", relationships={"Aldo": "brother"})
+    w.world._residents["edda"] = edda
+    knowledge.learn(w.store, actor_key(edda), {
+        "e": 41, "kind": "death", "actor": "black_rook", "actor_name": "Black Rook",
+        "actor_faction": "bandits", "target": "aldo", "target_name": "Aldo", "pos": [-3900, 0, 0],
+        "day": 2, "hour": 3.0, "certainty": 0.9, "identified": True, "source": "witnessed"})
+    scene = w.director._stage_avenger(12.0)
+    assert scene["decision"] == ("The storyteller decided that Edda wants revenge on Black Rook "
+                                 "because Black Rook killed their brother Aldo near Low Farm on day 2, "
+                                 "which they saw for themselves.")
+    assert scene["result"].startswith("Spawned Edda (taken from Low Farm while nobody could see), armed")
+    assert "offers the player a quest" in scene["result"]
+
+
+def test_switching_modes_during_play_is_on_the_record():
+    w = _world(mode="normal")
+    w.director.tick(12.0, 1.0)
+    w.config["mode"] = "dynamic"
+    w.director.tick(12.0, 1.0)
+    assert w.director.phase == "relax"                 # a fresh rest first
+    w.config["mode"] = "normal"
+    w.director.tick(12.0, 1.0)
+    texts = [d["text"] for d in w.director.decisions]
+    assert any(t.startswith("Game mode switched to Dynamic") for t in texts)
+    assert any(t.startswith("Game mode switched to Normal") for t in texts)
+    assert any("switched to Dynamic" in t for t in w.said)   # the storyteller's feed too

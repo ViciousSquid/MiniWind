@@ -1145,3 +1145,31 @@ def test_no_two_travellers_share_a_name():
         _key, display = b._new_name("bandit")
         assert display not in taken
         taken.add(display)
+
+
+def test_a_weighted_vendetta_trip_is_explained_in_plain_words_and_creates_nothing():
+    """Either game mode: the storyteller says who, why and the deed, and its
+    result only ever weights a trip that was already setting out."""
+    from ..living.world import LivingWorld, SessionHooks
+
+    story, director, hooks, store = setup()
+    kin, _intent = vendetta(story, director, hooks, store)
+    hooks.town = "c"
+    rising(story)
+    b = board(story)
+    living = LivingWorld(SimpleNamespace(storyteller=story))
+    living.board, living.places = b, b.places
+    b.hooks = SessionHooks(living)
+    b.hooks.resident_can_leave = lambda _rid: True
+    b.hooks.resident_left = lambda *_args: None
+    b.resident_pool = [dict(id=kin.properties["id"], name="Kin", display="Kin", home="a")]
+    story._levers["market_chance"] = 1
+    journeys_before = set(b.journeys)
+    b._resident_trips(8)
+    assert len(set(b.journeys) - journeys_before) == 1          # the ordinary market trip
+    line = next(e["text"] for e in story.activity if e["kind"] == "journey")
+    assert line.startswith("The storyteller decided that Kin has a vendetta against the player "
+                           "because the player killed their sister Victim")
+    assert "Result: weighted Kin's ordinary market trip toward" in line
+    assert "Nothing was created" in line
+    assert "Spawned" not in line and "sent them" not in line

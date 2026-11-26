@@ -30,6 +30,18 @@ events, knowledge, witnesses or intentions, and cannot move or spawn
 anyone.** Everything that happens to you happens because someone in the world
 decided to do it, for reasons of their own.
 
+It still explains itself in full. When it weights a trip toward you because
+the traveller holds a real grudge, its activity feed says so in plain words,
+naming the person, the deed and the result -- and the result is only ever
+what it may do:
+
+> The storyteller decided that Francis has a vendetta against the player
+> because the player killed their brother Aldo near Ashby on day 3, which
+> they saw for themselves. Result: weighted Francis's ordinary market trip
+> toward Kettlewick, where the player is staying. Nothing was created:
+> Francis was already setting out for market, and what they do there is up
+> to them.
+
 Nothing described below runs in Normal mode. The code for Dynamic mode only
 touches journeys that Dynamic mode itself staged, so a Normal game and its
 save files are exactly what they were before Dynamic mode existed.
@@ -67,7 +79,17 @@ decides **who** or **why** out of thin air:
   feeds back into the world like anything else.
 
 Every scene the director stages is written to the storyteller's activity feed,
-so what was authored is always on the record.
+so what was authored is always on the record. Each one says what was decided
+and why, the memory behind it, and what the director did as a result:
+
+> The storyteller decided that Edda wants revenge on Black Rook because Black
+> Rook killed their brother Aldo near Low Farm on day 2, which they saw for
+> themselves.
+> **Result:** Spawned Edda (taken from Low Farm while nobody could see), armed,
+> on the road 1,400 units ahead of the player, near Old Camp, and put Black
+> Rook's band (the very gang the culprit rides with) 750 units beyond. Edda
+> offers the player a quest ('Edda's Score'); if nobody comes within 1.5 game
+> hours they go after the gang alone.
 
 ### The scenes
 
@@ -145,11 +167,22 @@ sight of every actor, so nothing appears in view -- and, for hostile scenes,
 at least 900 units from any town. If there is no such spot (you are off the
 roads, or the roads near you run into towns) nothing is staged until there is.
 
-### Switching back to Normal
+### Switching modes during play
 
-Staged parties that are out of sight go straight back to ordinary life; any
-you can see finish what they were doing. The director then stops. Switching
-to Dynamic again starts it with a fresh rest.
+The mode can be switched at any moment; the director reads it live.
+
+* **Normal → Dynamic.** Nothing happens at once. The director starts with a
+  40-second rest (at most one peaceful meeting), then begins building. Only
+  then do scenes start to appear on the road ahead of you -- cast, as always,
+  from whoever is on the roads and whatever grudges people already hold,
+  including any formed while you played in Normal.
+* **Dynamic → Normal.** The director stages nothing more. Staged parties that
+  are out of sight go straight back to ordinary life (on to where they were
+  going, or home); any you can see finish what they were doing. A quest an
+  avenger gave you stays in your journal.
+
+Each switch is written to the director's decisions and the storyteller's
+activity feed.
 
 ---
 
@@ -163,10 +196,13 @@ Type `storyteller` in the debug console (Play Mode). It opens
 * The **Story** tab is the storyteller's report in plain words. In Dynamic
   mode it has a **Dynamic director** section: what the director is doing now
   (phase, tension, time to the next scene, scenes in play) and every decision
-  it took, newest first -- each scene it staged and *why* (the phase, the
-  hour, the storyteller's state, and every other scene it passed over with
-  the reason), each time it held back and why, each phase change, and what
-  became of each scene. In Normal mode the section is not shown.
+  it took, newest first. A staged scene is three rows: the decision (who,
+  what, and the memory behind it), **Result** (what it did, and where), and
+  **Why now** (the phase, the hour, the storyteller's state, and every other
+  scene it passed over with the reason). It also logs each time it held back
+  and why, each phase change, each mode switch, and the **Outcome** of each
+  scene. In Normal mode the section is not shown; the storyteller's own
+  explanations are in the Activity feed in both modes.
 * The **Raw** tab shows the data behind the report: the storyteller's
   `summary()` and the director's `raw()` -- tension, phase timers, every
   scene with its journey ids and position, and every decision with its

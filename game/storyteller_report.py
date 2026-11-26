@@ -185,6 +185,10 @@ def dynamic_rows(session, limit=15):
         out.append(("Decided", "Nothing yet: every choice, and why, appears here."))
     for entry in decisions:
         out.append((stamp(entry.get("time")), entry["text"]))
+        if entry.get("result"):
+            out.append(("Result", entry["result"]))
+        if entry.get("why"):
+            out.append(("Why now", entry["why"]))
     return out
 
 

@@ -51,6 +51,18 @@ class SessionStorytellerHooks(StorytellerHooks):
         region = board.nearest_place(pos[0], pos[2], TUNING["town_kinds"])
         return region, board.hostile_materialisations.get(region, 0)
 
+    def place_name(self, key=None, pos=None):
+        living = self.session.living
+        board = getattr(living, "board", None)
+        if board is None:
+            return str(key or "")
+        if key:
+            return board.place_name(key)
+        if pos is None or len(pos) < 3:
+            return ""
+        near = board.nearest_place(float(pos[0]), float(pos[2]))
+        return board.place_name(near) if near else ""
+
     def player_health_fraction(self):
         c = self.session.game.character
         return float(c.health) / max(1.0, float(c.max_health))
