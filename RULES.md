@@ -435,6 +435,9 @@ When the fate die fails, the save stands, and the box still shows the die
   a map can give one actor its own (`body_size`). Pieces that fly off: a
   hen 2, a small body 3, a person 4, a bear 6, anything huge 8. Every wound
   and pool of blood is smaller from a smaller body too.
+* A body blown apart is heard exploding (`assets/sounds/gib.mp3`), once, from
+  where it stood -- yours too. A magical killing blow disintegrates rather
+  than explodes, and is not.
 * A body blown apart can never be resurrected, and Death (the reaper, who
   otherwise attends one death in eight) never comes for it.
 * **Crabs feed on the dead.** A body blown apart within 650 units of water

@@ -272,6 +272,8 @@ BOW_FULL_DRAW_SECONDS = npc_archery.BOW_FULL_DRAW_SECONDS
 #: drawn and loosed, by tools/split_bow_sounds.py): the draw while the bow is
 #: drawn and the charge pie is up, the release the moment the arrow is loosed.
 #: Both are heard from the archer -- centred on whoever holds the bow.
+#: A body blown apart by an overkill (assets/sounds), heard from where it stood.
+GIB_SOUND = "gib.mp3"
 BOW_DRAW_SOUND = "bow_draw.mp3"
 BOW_RELEASE_SOUND = "bow_release.mp3"
 #: The draw plays on this channel, so loosing or lowering the bow cuts it off.
@@ -2459,6 +2461,7 @@ class MiniwindSession(SettlementLaw):
             return False
         self._player_gibbed = True
         ppos = self._player_pos()
+        self.play_sound_at(GIB_SOUND, ppos)        # the body explodes
         if ppos is not None and self.gore_enabled():
             feet = [ppos[0], ppos[1] - 56.0, ppos[2]]
             src = getattr(attacker, "pos", None)
@@ -2563,6 +2566,11 @@ class MiniwindSession(SettlementLaw):
         if source is not None:
             away = (target.pos[0] - source[0], target.pos[2] - source[2])
         gibbed = bool(p.get("gibbed"))
+        if gibbed and not magical and not p.get("_gib_heard"):
+            # The body explodes: heard once, from where it stood (a magical
+            # overkill disintegrates instead -- no explosion).
+            p["_gib_heard"] = True
+            self.play_sound_at(GIB_SOUND, target.pos)
         role = str(p.get("npc_role") or p.get("creature_role") or "").lower()
         if self.gore_enabled() and role not in self.BLOODLESS_ROLES:
             import game.rpg.gore as _gore

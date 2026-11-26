@@ -145,6 +145,7 @@ def resurrect(session, thing) -> bool:
     was_dead = bool(p.get("dead"))
     p.pop("gibbed", None)
     p.pop("gib_sprite", None)
+    p.pop("_gib_heard", None)
     p.pop("_death_noted", None)
     p.pop("_aggro_target", None)
     if not session._revive_actor(thing):
