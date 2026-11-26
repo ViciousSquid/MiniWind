@@ -166,3 +166,11 @@ def test_gib_mp3_ships_and_is_found():
     data = (Path(rt.SOUND_DIR) / rt.GIB_SOUND).read_bytes()
     assert data[:3] == b"ID3" or data[0] == 0xFF
     assert rt.sound_available(rt.GIB_SOUND)
+
+
+def test_the_explosion_is_heard_from_the_victim_never_the_attacker():
+    from .. import runtime as rt
+    s, heard = _gib_session()
+    body = _body(gibbed=True)
+    s._gore_hit(body, 200.0, killed=True, by_player=False, source=[-900.0, 64.0, 500.0])
+    assert heard == [(rt.GIB_SOUND, (300.0, 56.0, -40.0))]          # the body, not the attacker
