@@ -1129,7 +1129,7 @@ class LivingWorld:
         j = self.board.journeys.get(p.get("_journey")) if self.board is not None else None
         if j is not None and isinstance(p.get("_member"), int) and p["_member"] < len(j.members):
             j.members[p["_member"]]["grudge_opened"] = True   # once, even if seen again
-        from .scenarios import opening_line
+        from .scenario_modules.reckoning import opening_line
         _style, line = opening_line(self.session.rng, opening.get("kind", "vendetta"),
                                     opening.get("victim", ""))
         self.session.bark(x, line)

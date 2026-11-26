@@ -182,41 +182,6 @@ def retune(values) -> None:
 #: How someone come to settle a score opens the fight: a brief
 #: introduction (what the player did), an insult, or a scream as they charge.
 #: Each is followed at once by the fight. {victim}: whom it was done to.
-OPENINGS = {
-    "introduction": {
-        "vendetta": ("You killed {victim}. I've come for you.",
-                     "{Victim} was my blood. You'll answer for it.",
-                     "Remember {victim}? I do."),
-        "reckoning": ("You struck me and walked away. Not this time.",
-                      "Remember me? I remember you."),
-    },
-    "insult": {
-        "vendetta": ("Murdering filth!", "You gutless butcher!",
-                     "Coward! {Victim} never stood a chance!"),
-        "reckoning": ("You cowardly dog!", "Thug! Gutter-born thug!",
-                      "You'll not lay a hand on me again, scum!"),
-    },
-    "scream": {
-        "vendetta": ("MURDERER!", "For {victim}!", "AAARGH!"),
-        "reckoning": ("YOU!", "AAARGH!", "Now you'll pay!"),
-    },
-}
-#: How often each opening is chosen.
-OPENING_WEIGHTS = {"introduction": 0.4, "insult": 0.3, "scream": 0.3}
-
-
-def opening_line(rng, kind: str, victim: str = "") -> tuple:
-    """``(style, line)``: how someone with a *kind* grudge ("vendetta",
-    "reckoning") opens the fight -- an introduction, an insult or a scream."""
-    styles = list(OPENING_WEIGHTS)
-    style = rng.choices(styles, weights=[OPENING_WEIGHTS[s] for s in styles])[0]
-    options = OPENINGS[style].get(kind) or OPENINGS[style]["reckoning"]
-    if not victim:                       # nobody to name: lines that need no one
-        options = tuple(o for o in options if "{" not in o) or OPENINGS[style]["reckoning"]
-    victim = victim or "them"
-    return style, rng.choice(options).format(victim=victim, Victim=victim[:1].upper() + victim[1:])
-
-
 def _hour(t):
     return float(t) % 24.0
 

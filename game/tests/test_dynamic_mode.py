@@ -618,18 +618,19 @@ def test_unlearn_forgets_and_says_so():
 
 # -- what they say ----------------------------------------------------------------
 def test_a_score_settler_opens_with_an_introduction_an_insult_or_a_scream():
+    from ..living.scenario_modules.reckoning import OPENINGS, opening_line
+
     rng = random.Random(3)
     styles = set()
     for _ in range(200):
-        style, line = sc.opening_line(rng, "vendetta", "aldo")
+        style, line = opening_line(rng, "vendetta", "aldo")
         styles.add(style)
         assert line and "{" not in line
         assert line in [o.format(victim="aldo", Victim="Aldo")
-                        for o in sc.OPENINGS[style]["vendetta"]]
+                        for o in OPENINGS[style]["vendetta"]]
     assert styles == {"introduction", "insult", "scream"}
     for _ in range(50):                              # nobody to name: no {victim} lines
-        assert "{" not in sc.opening_line(rng, "reckoning")[1]
-
+        assert "{" not in opening_line(rng, "reckoning")[1]
 
 def _world_with_bark():
     from ..living.world import LivingWorld
