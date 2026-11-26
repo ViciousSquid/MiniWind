@@ -209,3 +209,54 @@ def test_the_player_pays_from_their_purse_and_only_with_enough(monkeypatch):
     assert s._dialogue_has("gold", 12, {})
     s._dialogue_action(npc, {"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": 12})
     assert s.game.character.gold == 8 and paid == [("dyn3", 17, 12)]
+
+
+def test_how_angry_they_are_decides_whether_a_roll_is_needed():
+    assert st.temper(60) == "" and st.accept_chance("") == 1.0
+    assert st.temper(20) == "resentful" and st.temper(5) == "infuriated"
+    assert st.temper(70, furious=True) == "infuriated"
+    assert st.accept_chance("infuriated") < st.accept_chance("resentful") < 1.0
+    assert st.accept_chance("infuriated", 100) == st.ACCEPT_CHANCE["infuriated"] + 0.2
+
+
+def _repay_session(disposition):
+    from types import SimpleNamespace
+    from .. import runtime
+    from .test_cast_controls import _Logic
+    s = runtime.MiniwindSession(_Logic(), cfg={})
+    paid, engaged, barks = [], [], []
+    s.living = SimpleNamespace(scenarios=SimpleNamespace(
+        repaid=lambda npc, sid, e, gold: paid.append(gold)))
+    s.bark = lambda thing, text, *a: barks.append(text)
+    s._sim_engage = lambda npc, offender: engaged.append(npc) or True
+    s.game.dice = None
+    s.game.character.gold = 50
+    return s, paid, engaged, barks
+
+
+def test_an_infuriated_seeker_rolls_and_a_bad_roll_refuses_the_gold_and_starts_a_fight(monkeypatch):
+    from .. import runtime
+    s, paid, engaged, barks = _repay_session(3)
+    monkeypatch.setattr(runtime.disp, "of", lambda c, p, store: 3)
+    s.rng.random = lambda: 0.99                                  # a bad roll
+    npc = _Thing(0, 0, display_name="Hal")
+    s._scene_repay(npc, {"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": 12})
+    assert s.game.character.gold == 50 and not paid             # kept the gold
+    assert engaged == [npc] and npc.properties["combatant"]     # and they attack
+    assert barks[-1] in st.REFUSED
+
+
+def test_a_good_roll_takes_the_gold_grudgingly_and_a_calm_one_needs_no_roll(monkeypatch):
+    from .. import runtime
+    s, paid, engaged, barks = _repay_session(3)
+    monkeypatch.setattr(runtime.disp, "of", lambda c, p, store: 3)
+    s.rng.random = lambda: 0.01
+    s._scene_repay(_Thing(0, 0, display_name="Hal"),
+                   {"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": 12})
+    assert paid == [12] and s.game.character.gold == 38 and not engaged
+    assert barks[-1] in st.ACCEPTED_GRUDGINGLY
+    monkeypatch.setattr(runtime.disp, "of", lambda c, p, store: 60)
+    s.rng.random = lambda: 0.99                                  # would fail, but no roll
+    s._scene_repay(_Thing(0, 0, display_name="Ann"),
+                   {"op": "scene_repay", "scene": "dyn4", "event": 18, "gold": 5})
+    assert paid == [12, 5] and barks[-1] in st.ACCEPTED

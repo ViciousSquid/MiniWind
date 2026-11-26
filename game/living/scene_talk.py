@@ -241,7 +241,9 @@ def topic(kind: str, role: str, talk: Dict, want: str = "") -> Optional[Dict]:
                 nodes["scene_refuse"] = {"text": "Then we'll settle it some other way.",
                                          "responses": [{"text": "...", "goto": "END"}]}
                 nodes["scene"] = {"text": f"{text} {owed} gold squares it.", "responses": [
-                    {"text": f"Here: {owed} gold.", "goto": "scene_paid",
+                    # Whether they take it is said once any roll has landed
+                    # (runtime: scene_repay), so the conversation closes here.
+                    {"text": f"Here: {owed} gold.", "goto": "END",
                      "condition": {"has_item": "gold", "qty": owed},
                      "actions": [{"op": "scene_repay", "scene": t.get("scene", ""),
                                   "event": t.get("event", 0), "gold": owed}]},
@@ -281,6 +283,39 @@ def add_topic(tree, found: Optional[Dict]):
     if not any(r.get("goto") == found["first"] for r in responses):
         responses.insert(0, {"text": found["prompt"], "goto": found["first"]})
     return tree
+
+
+# --------------------------------------------------------- will they take it?
+#: How likely someone this angry is to take the gold (before Speechcraft).
+ACCEPT_CHANCE = {"infuriated": 0.35, "resentful": 0.6}
+#: Speechcraft adds this much per point (0.2 at 100).
+SPEECH_BONUS = 0.002
+#: What they say on taking the gold, calm or angry, and on refusing it.
+ACCEPTED = ("That squares it. We're done, you and I.",)
+ACCEPTED_GRUDGINGLY = ("...Fine. That squares it. Don't cross me again.",
+                       "Hmph. It'll do. Now get out of my sight.")
+REFUSED = ("Gold? You think gold mends this?", "Keep your coin. This isn't about money.",
+           "I don't want your money. I want you to answer for it.")
+REFUSED_AGAIN = ("I told you. Keep your coin.",)
+
+
+def temper(disposition: int, furious: bool = False) -> str:
+    """How angry someone come for repayment is with the player:
+    "infuriated" (hostile toward them, or furious over a burnt field),
+    "resentful" (unfriendly), or "" (calm enough to take the gold)."""
+    if furious or disposition < 10:
+        return "infuriated"
+    if disposition < 30:
+        return "resentful"
+    return ""
+
+
+def accept_chance(mood: str, speechcraft: float = 0.0) -> float:
+    """The chance someone in *mood* takes the gold: 1 when calm."""
+    base = ACCEPT_CHANCE.get(mood)
+    if base is None:
+        return 1.0
+    return max(0.05, min(0.95, base + float(speechcraft) * SPEECH_BONUS))
 
 
 # ------------------------------------------------------------ deeds, in brief
