@@ -259,8 +259,9 @@ class AvengerScenario(BaseScenario):
     def watch(self, ctx, scene, px, pz, t):
         journeys = scene.get("journeys") or {}
         if "avenger" in journeys and "attacker" not in journeys:
-            # The culprit may be elsewhere in the world rather than on the board.
-            return self.culprit_actor(ctx, scene.get("culprit") or {}) is not None
+            # The avenger is following a culprit elsewhere in the world, not
+            # protecting a staged victim. Keep it out of the generic rescue path.
+            return True
         return False
 
     def thank_line(self, scene):

@@ -122,7 +122,7 @@ class CultRiteScenario(BaseScenario):
         cult = ctx.board.journeys.get(scene["journeys"].get("attacker", ""))
         captive = ctx.board.journeys.get(scene["journeys"].get("victim", ""))
         if cult is None or not cult.alive() or captive is None or not captive.alive() or captive.live:
-            return None
+            return False if role == "victim" else None
         self.sacrifice(ctx, scene, captive, t)
         captive.state = "done"
         return False if role == "victim" else None
