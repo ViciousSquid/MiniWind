@@ -527,7 +527,7 @@ REPORT_CRY_ODDS = 3
 #: Situations urgent enough to think aloud the moment an actor is first seen,
 #: rather than waiting for its state to change.
 URGENT_THOUGHTS = frozenset(("flee", "rally", "alert", "subdue", "combat", "hunt",
-                             "pursue", "search", "arrest", "intent"))
+                             "pursue", "search", "arrest", "intent", "scene"))
 
 
 def _pick(options, *salt) -> str:
@@ -562,6 +562,29 @@ def _plain_reason(reason: str) -> str:
 
 
 def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
+    """``(situation, text)``: what an actor is thinking right now. Someone in
+    a Dynamic mode scene thinks the scene's thought for the moment instead
+    (``_scene_thoughts``: calm, fleeing or fighting; game/living/scene_talk.py),
+    when it has one; any other urgent reason keeps its own thought."""
+    key, text = _thought(props, target_name)
+    scene = props.get("_scene_thoughts") if isinstance(props, dict) else None
+    if not scene or props.get("dead"):
+        return key, text
+    head = key.split(":", 1)[0]
+    if head in ("flee", "combat"):
+        situation = head
+    elif head in URGENT_THOUGHTS or head == "report":
+        return key, text
+    else:
+        situation = "calm"
+    options = scene.get(situation)
+    if not options:
+        return key, text
+    name = str(_get(props, "display_name", "name", default=""))
+    return "scene:" + situation, _pick(options, name, "scene", situation)
+
+
+def _thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
     """``(situation, text)``: what an actor is thinking right now.
 
     *situation* is a stable key that changes only when the actor's reason for

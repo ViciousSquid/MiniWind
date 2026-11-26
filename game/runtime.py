@@ -12041,6 +12041,116 @@ class MiniwindSession(SettlementLaw):
                 "goto": "_fortune", "actions": [{"op": "fortune", "option": option}]})
         return tree
 
+    def _scene_repay(self, npc, action) -> None:
+        """Dynamic mode: the player offers the gold someone came for
+        (game/living/scene_talk.py). Calm, they take it. Infuriated or
+        resentful, a d20 says whether gold is enough -- told once the die has
+        landed. A bad roll: they refuse it, the player keeps the gold, and
+        they attack."""
+        import game.living.scene_talk as scene_talk
+        import game.rpg.skills as sk
+        gold = int(action.get("gold", 0) or 0)
+        if gold <= 0 or int(self.game.character.gold) < gold:
+            self.notify(f"You haven't got {gold} gold.", 3.0)
+            return
+        refused_key = f"scene.{action.get('scene', '')}.repay_refused"
+        if str(self.store.get(refused_key, "0")) == "1":
+            self.bark(npc, scene_talk.REFUSED_AGAIN[0])
+            return
+        p = npc.properties
+        c = self.game.character
+        disposition = disp.of(c, p, self.store)
+        mood = scene_talk.temper(disposition, p.get("fire_mood") == "furious")
+        name = str(p.get("display_name") or p.get("name") or "They")
+
+        def settle(grudging):
+            if int(c.gold) < gold:
+                self.notify(f"You haven't got {gold} gold.", 3.0)
+                return
+            self.game.add_gold(-gold)
+            director = getattr(getattr(self, "living", None), "scenarios", None)
+            if director is not None:
+                director.repaid(npc, action.get("scene", ""), action.get("event", 0), gold)
+            self.bark(npc, self.rng.choice(scene_talk.ACCEPTED_GRUDGINGLY if grudging
+                                           else scene_talk.ACCEPTED))
+            self.notify("Debt repaid.", 3.0)
+
+        if not mood:
+            settle(False)
+            return
+        speech = float(c.skill(sk.SPEECHCRAFT))
+        chance = scene_talk.accept_chance(mood, speech)
+        why = (f"{mood.capitalize()} (disposition {disposition}) "
+               f"{scene_talk.ACCEPT_CHANCE[mood] * 100:.0f}% + Speechcraft {int(speech)} "
+               f"× {scene_talk.SPEECH_BONUS * 100:.1f}% — {chance * 100:.0f}%")
+        dice = getattr(self.game, "dice", None)
+        if dice is not None:
+            from .diceroll import roll_check
+            roll = roll_check(dice, chance, f"{name} takes the gold", source="dialogue.repay",
+                              why=why, context={"against_name": name,
+                                                "against_side": self.side_of(npc)})
+            took = bool(roll["success"])
+        else:
+            took = self.rng.random() <= chance
+
+        def tell():
+            if took:
+                settle(True)
+                return
+            self.store.set(refused_key, "1")
+            self.bark(npc, self.rng.choice(scene_talk.REFUSED))
+            self.notify(f"{name} won't take your gold -- and draws on you!", 3.5)
+            # A bad roll: gold is not enough, and they settle it another way.
+            npc.properties["combatant"] = True
+            if not npc.properties.get("dead"):
+                self.end_dialogue()
+                self._sim_engage(npc, self.player_actor)
+            # Then a d6 + Luck: does the player keep their gold?
+            self._keep_gold_roll(npc, gold, name)
+
+        # Told once the die has landed, never before (RULES.md §1).
+        self._after_dice(self._reveal_delay(self.player_actor), tell)
+
+    def _keep_gold_roll(self, npc, gold, name) -> None:
+        """An angry seeker has refused the gold: a d6 plus the player's Luck
+        bonus (armour_class.luck_bonus) of at least
+        scene_talk.KEEP_GOLD_TARGET keeps it; less and they take it anyway."""
+        import game.living.scene_talk as scene_talk
+        from .rpg.armour_class import luck_bonus
+        c = self.game.character
+        luck = int(c.attrs.get(attr.LUCK, 40))
+        bonus = luck_bonus(luck)
+        target = scene_talk.KEEP_GOLD_TARGET
+        dice = getattr(self.game, "dice", None)
+        notation = f"1d6{bonus:+d}" if bonus else "1d6"
+        if dice is not None:
+            roll = dice.request_roll(notation, target=target, source="dialogue.keep_gold",
+                                     context={"label": "Keep your gold",
+                                              "why": f"d6 + Luck {luck} ({bonus:+d}), need {target}+",
+                                              "against_name": name,
+                                              "against_side": self.side_of(npc)})
+            kept = bool(roll.get("success"))
+        else:
+            kept = self.rng.randint(1, 6) + bonus >= target
+
+        def tell():
+            if kept:
+                self.notify("You keep your gold.", 3.0)
+                return
+            taken = min(int(gold), int(c.gold))
+            if taken <= 0:
+                return
+            self.game.add_gold(-taken)
+            try:
+                coins = rpg_items.make("gold", taken) or inv.make_item("gold", "Gold", qty=taken)
+                inv.add_item(inv.get_inventory(npc), coins)
+            except Exception:
+                pass
+            self.bark(npc, self.rng.choice(scene_talk.SNATCHED))
+            self.notify(f"{name} takes {taken} gold anyway.", 3.5)
+
+        self._after_dice(self._reveal_delay(self.player_actor), tell)
+
     def _fortune_action(self, npc, option) -> None:
         """Roll a Charm & Luck response, apply what it wins, and put the
         NPC's answer on the page the conversation turns to next."""
@@ -12268,6 +12378,8 @@ class MiniwindSession(SettlementLaw):
                 self.notify(f"You have joined the {guilds.get(action.get('guild','')).name}.")
         elif op in ("open_training", "open_tutor"):
             self.open_teaching(npc, "training" if op == "open_training" else "tutor")
+        elif op == "scene_repay":
+            self._scene_repay(npc, action)
 
     def _dialogue_quest_item(self, iid, tree):
         if getattr(self, "coop", None) is None:
@@ -12282,6 +12394,9 @@ class MiniwindSession(SettlementLaw):
     def _dialogue_has(self, iid, count, tree):
         if self._dialogue_quest_item(iid, tree):
             return self.coop.party_quests.quantity(iid) >= count
+        if iid == "gold":
+            # The player's gold is a purse, not a stack in the pack.
+            return int(self.game.character.gold) >= int(count)
         return inv.has_item(self.game.character.inventory, iid, count)
 
     def _dialogue_take(self, iid, count, tree):
