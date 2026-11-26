@@ -423,3 +423,15 @@ def test_ping_mp3_is_played_from_assets_sounds_or_a_fiopak_and_skipped_until_it_
     monkeypatch.setattr(runtime, "_ARCHIVED_SOUNDS", {"ping.mp3"})   # in sounds.fiopak
     assert s.play_ui_sound(kh.PING_SOUND) is True
     assert queued == [{"file": "ping.mp3", "volume": 1.0, "global": True}]
+
+
+def test_the_shipped_ping_and_thunk_are_real_mp3s_the_game_finds():
+    """assets/sounds/ping.mp3 (key hints) and thunk.mp3 (an arrow in a barrel)."""
+    from pathlib import Path
+    from .. import runtime
+    from ..stuck_arrows import ARROW_THUNK_SOUND
+    sounds = Path(runtime.SOUND_DIR)
+    for name in (kh.PING_SOUND, ARROW_THUNK_SOUND):
+        data = (sounds / name).read_bytes()
+        assert data[:3] == b"ID3" or data[0] == 0xFF          # an MP3 stream
+        assert runtime.sound_available(name)

@@ -462,7 +462,7 @@ shakes, never the HUD (`game/runtime.py`, `game/host.py`).
 
 An arrow or crossbow bolt -- yours or an archer's -- that hits a barrel sticks
 in it where it struck, at the angle it flew, with a thunk
-(`assets/sounds/thunk.wav`). It stays there, moving and turning with the
+(`assets/sounds/thunk.mp3`). It stays there, moving and turning with the
 barrel when it is pushed, topples, rolls or is carried; a barrel holds at most
 12 (another pushes the oldest out). Standing within 140 of a barrel with
 arrows in it, when it is the nearest thing to use, **E** pulls them all out

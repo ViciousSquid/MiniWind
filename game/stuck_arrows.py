@@ -49,7 +49,7 @@ AMMO_KEY = "ammo"
 DEFAULT_AMMO = "iron_arrow"
 #: Heard where an arrow sticks in a barrel (assets/sounds, loose or in a
 #: sounds .fiopak; silent until the file is there).
-ARROW_THUNK_SOUND = "thunk.wav"
+ARROW_THUNK_SOUND = "thunk.mp3"
 #: How near (world units, on the ground) the player must stand to pull them.
 PULL_REACH = 140.0
 #: The most arrows one barrel holds; another pushes the oldest out.
