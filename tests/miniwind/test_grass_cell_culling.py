@@ -147,3 +147,41 @@ def test_small_runs_fold_into_their_neighbours_the_costlier_way():
     assert tg._merge_small_runs(runs) == [(0, 1100, True, False),
                                           (1100, 2000, False, True),
                                           (5000, 50, False, False)]
+
+
+def test_a_run_draws_from_its_base_instance_where_the_context_can(monkeypatch):
+    """A run that starts part way through a chunk's blades: with GL 4.2 (or
+    ARB_base_instance) one draw from instance *start*; without it the five
+    instance attributes are pointed *start* rows on, drawn, and pointed back
+    -- the same rows either way."""
+    from types import SimpleNamespace
+    calls = []
+    fake = SimpleNamespace(
+        GL_TRIANGLES=4, GL_ARRAY_BUFFER=34962, GL_FLOAT=5126, GL_FALSE=0,
+        glDrawArraysInstanced=lambda *a: calls.append(("draw",) + a),
+        glDrawArraysInstancedBaseInstance=lambda *a: calls.append(("base",) + a),
+        glBindBuffer=lambda *a: calls.append(("bind",) + a))
+    monkeypatch.setattr(tg, "gl", fake)
+    monkeypatch.setattr(tg, "vertex_attrib_pointer",
+                        lambda loc, size, kind, norm, stride, offset:
+                        calls.append(("point", loc, offset)))
+    terrain = tg.TerrainGL()
+    terrain._grass_vbo = [0, 7]
+
+    terrain._base_instance = True
+    terrain._draw_grass_run(1, 30, 100, 20)
+    assert calls == [("base", 4, 0, 30, 20, 100)]
+
+    calls.clear()
+    terrain._base_instance = False
+    terrain._draw_grass_run(1, 30, 100, 20)
+    row = 100 * 9 * 4
+    assert calls[0] == ("bind", 34962, 7)
+    assert [c for c in calls[1:6]] == [("point", loc, row + off) for loc, off in
+                                       ((6, 24), (2, 0), (3, 12), (4, 16), (5, 20))]
+    assert calls[6] == ("draw", 4, 0, 30, 20)
+    assert [c[2] for c in calls[7:]] == [24, 0, 12, 16, 20]
+
+    calls.clear()
+    terrain._draw_grass_run(1, 30, 0, 20)                # a run from the start
+    assert calls == [("draw", 4, 0, 30, 20)]

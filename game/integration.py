@@ -621,8 +621,12 @@ GAME_SETTINGS = (
      "rain puts fires out, and wet or snowy grass barely burns. Off: the sky "
      "stays clear.", True),
     ("district_borders", "District borders",
-     "The borders between the Vale's districts are drawn on the ground as "
-     "thin dark lines. They are only a guide: crossing one changes nothing.",
+     "The borders between the Vale's districts are inked on the ground by "
+     "hand. They are only a guide: crossing one changes nothing.",
+     True),
+    ("border_glow", "Border glow",
+     "As you near a district border a faint glow fades in along it: green "
+     "on your side, orange on the side ahead. Off: only the inked line.",
      True),
     ("torch_shadows", "Torch shadows",
      "Carried torches near you (the NEAR simulation distance) are dynamic "

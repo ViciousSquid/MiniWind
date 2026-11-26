@@ -2135,6 +2135,7 @@ class MiniwindSession(SettlementLaw):
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        self._restore_district_borders()    # the map's paint as its file has it
         self.end_slow_time()        # the next map runs at the world's own speed
         fio.clear_actor_time_rate(self.logic)   # and nobody's clock is left altered
         self.nav.invalidate()
@@ -7355,9 +7356,12 @@ class MiniwindSession(SettlementLaw):
     # -------------------------------------------------------------- districts
     def _install_districts(self) -> None:
         """The overworld's districts (game/districts.py), when this map is
-        the one they divide; their borders are drawn by the terrain shader
-        (:meth:`district_overlay`)."""
+        the one they divide. Their borders are already in the map's paint
+        (``python -m game.tools.bake_districts``): with them shown there is
+        nothing to do. Switched off, the recorded texels are put back."""
         self.districts = None
+        self._district_drawing = None
+        self._district_lifted = False
         try:
             from . import districts
             state = getattr(self.logic, "editor_state", None)
@@ -7367,21 +7371,83 @@ class MiniwindSession(SettlementLaw):
                 water=districts.water_boxes(getattr(state, "brushes", None) or []))
             if found.fits(getattr(state, "terrain_data", None)):
                 self.districts = found
+                if not self.district_borders_enabled():
+                    self.set_district_borders(False)
+                elif self.border_glow_enabled():
+                    found.border_lines()      # traced now, under the loading bar
         except Exception as exc:              # never take the session down
             print(f"[MiniWind] districts unavailable: {exc}")
 
     def district_borders_enabled(self) -> bool:
-        """District borders drawn on the ground (GAME → "District borders",
+        """District borders shown on the ground (GAME → "District borders",
         or the console's ``districts on|off`` this session). On by default."""
         over = self.__dict__.get("_district_borders")
         return bool(over) if over is not None else self._game_flag("district_borders")
 
-    def district_overlay(self):
-        """What the terrain shader draws the borders from, or None."""
+    def _district_record(self, ter):
+        """The drawing baked into this map's paint (its record), or None."""
+        drawing = self.__dict__.get("_district_drawing")
+        if drawing is None:
+            from . import districts
+            found = self.__dict__.get("districts")
+            if found is not None and found.map:
+                drawing = districts.Drawing.load(districts.record_path(found.map),
+                                                 int(ter.TERRAIN_PAINT_RESOLUTION))
+            self._district_drawing = drawing
+        return drawing
+
+    def set_district_borders(self, on: bool) -> None:
+        """Show or hide the borders for this session: lift the baked ink out
+        of the paint (put back exactly as it was), or lay it in again. The
+        only time the borders cost anything."""
+        self._district_borders = bool(on)
+        ter = fio.terrain(self.logic) if self.logic is not None else None
+        if ter is None or self.__dict__.get("districts") is None:
+            return
+        drawing = self._district_record(ter)
+        if drawing is None:
+            return
+        lifted = bool(self.__dict__.get("_district_lifted"))
+        if not on and not lifted:
+            drawing.lift(ter)
+            self._district_lifted = True
+        elif on and lifted:
+            drawing.lay(ter)
+            self._district_lifted = False
+
+    def border_glow_enabled(self) -> bool:
+        """The glow along a border as the player nears it (GAME → "Border
+        glow", ``[GAME] border_glow``; the console's ``districts glow on|off``
+        this session). On by default; never without the borders."""
+        over = self.__dict__.get("_border_glow")
+        on = bool(over) if over is not None else self._game_flag("border_glow")
+        return on and self.district_borders_enabled()
+
+    def district_glow(self):
+        """The border glow, updated for where the player is now, or None
+        when there is nothing to draw (game/district_glow.py). Away from a
+        border this is only a distance check, a few times a second."""
         found = self.__dict__.get("districts")
-        if found is None or not self.district_borders_enabled():
+        if found is None or not self.border_glow_enabled():
             return None
-        return found.overlay()
+        glow = self.__dict__.get("_district_glow")
+        if glow is None:
+            ter = fio.terrain(self.logic) if self.logic is not None else None
+            if ter is None or not hasattr(ter, "_get_heights_batch"):
+                return None
+            from .district_glow import Glow
+            glow = self._district_glow = Glow(found, lambda xs, zs: ter._get_heights_batch(
+                np.asarray(xs, np.float32), np.asarray(zs, np.float32)))
+        pos = self._player_pos()
+        if pos is None:
+            return None
+        import time as _time
+        return glow if glow.update(float(pos[0]), float(pos[2]), _time.monotonic()) > 0.0 else None
+
+    def _restore_district_borders(self) -> None:
+        """As the session ends: the map's paint as its file has it."""
+        if self.__dict__.get("_district_lifted"):
+            self.set_district_borders(True)
 
     def district_at(self, pos):
         """The district at *pos* (x, y, z), or None off the overworld."""

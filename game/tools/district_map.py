@@ -30,9 +30,13 @@ BIOMES = ("desert", "snow", "swamp", "wheat", "tundra")
 
 
 def load_terrain(map_path):
+    """``(terrain, level)``: the map's terrain, its paint file laid in (the
+    roads, and the districts' borders once baked), as the editor loads it."""
+    from engine import terrain_stamp
     from engine.terrain import Terrain
     with open(map_path, "r", encoding="utf-8") as fh:
         level = json.load(fh)
+    level = terrain_stamp.join_level(level, map_path)
     terrain = Terrain()
     terrain.from_dict(level["terrain_data"])
     return terrain, level

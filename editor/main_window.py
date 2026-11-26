@@ -208,6 +208,46 @@ def _file_identity(path):
         return None
 
 
+def _level_files_identity(path):
+    """The identity of the files a map read from *path* is made of: the map
+    file's version and its paint file's (``None`` when the map is not a file
+    on disk -- one served from a ``.fiopak`` -- so nothing is remembered)."""
+    version = _file_identity(path)
+    if version is None:
+        return None
+    from engine import terrain_stamp
+    paint = terrain_stamp.paint_path(path)
+    return version, (paint, _file_identity(paint)) if paint else None
+
+
+#: The identities of map files a load has validated (_level_files_identity).
+#: Validation only reads a map, and a map read from the same, unchanged
+#: files is the same map: a world reloaded unchanged (a Continue, a death
+#: restore, the way back out of a cave) is not walked record by record again.
+_VALIDATED_LEVEL_FILES = set()
+
+
+def _validated_before(identity):
+    return identity is not None and identity in _VALIDATED_LEVEL_FILES
+
+
+def _remember_validated(identity):
+    if identity is not None:
+        if len(_VALIDATED_LEVEL_FILES) > 256:
+            _VALIDATED_LEVEL_FILES.clear()
+        _VALIDATED_LEVEL_FILES.add(identity)
+
+
+def _same_file(a, b):
+    """Whether paths *a* and *b* name the same existing file."""
+    if not a or not b:
+        return False
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 class _SavedLevelFile:
     """A pre-Play world held as the saved file it is identical to."""
 
@@ -3725,16 +3765,26 @@ class MainWindow(QMainWindow):
         with self.loading_overlay.busy(title, "Updating the editor", 30):
             if self.state.set_editor_whole_world(shown, self.view_3d.camera.pos):
                 self.update_all_ui()
+    @_gc_paused_load
     def _reload_saved_level(self, saved):
-        """Put the scene back to *saved*'s file, keeping the editor camera."""
+        """Put the scene back to *saved*'s file, keeping the editor camera.
+
+        A load like any other, so with the collector paused like one.
+        """
         position = self.view_3d.camera.pos
         try:
             if _file_identity(saved.path) != saved.version:
                 raise RuntimeError("The map file changed during Play; keeping the current scene")
+            files = _level_files_identity(saved.path)
             data = _read_level_json(saved.path)
             if _file_identity(saved.path) != saved.version:
                 raise RuntimeError("The map file changed while being read; keeping the current scene")
-            self._apply_level_data(data, owned=True)
+            if files != _level_files_identity(saved.path):
+                files = None
+            known = _validated_before(files)
+            self._apply_level_data(data, owned=True, validated=known)
+            if not known:
+                _remember_validated(files)
         except Exception as exc:
             from engine.error_report import report_error
             report_error("Could not restore the world from %s" % saved.path, exc)
@@ -3762,6 +3812,41 @@ class MainWindow(QMainWindow):
             return bool(asks())
         except Exception:
             return False
+
+    def _exit_play_mode_for_reload(self, path):
+        """Exit play mode for a load of *path* that follows at once (a save
+        loaded, a new game started from the pause menu).
+
+        When Stop would put the world back from that same file, unchanged
+        since Play started and with no unsaved edits riding on it, the world
+        is not put back first: putting it back re-read, re-validated and
+        re-built the whole map -- seconds on the shipped overworld -- only for
+        the load to replace it with the same file a moment later. What else
+        Stop puts back (the history, the unsaved flag, the file path) is put
+        back as before; the scene and the stores are the load's to reset.
+        Anything else -- a snapshot, unsaved edits, another or a changed file,
+        a *path* that is not there -- stops exactly as :meth:`_exit_play_mode`.
+        """
+        captured = getattr(self, '_pre_play_world', None)
+        world = captured[0] if captured is not None else None
+        if (not isinstance(world, _SavedLevelFile) or captured[3]
+                or not _same_file(world.path, path)
+                or _file_identity(world.path) != world.version):
+            self._exit_play_mode()
+            return
+        _world, undo, redo, unsaved = captured
+        self._pre_play_world = None
+        self._replacing_level = True
+        try:
+            self._exit_play_mode()
+        finally:
+            self._replacing_level = False
+        self.state.undo_stack.clear()
+        self.state.undo_stack.extend(undo)
+        self.state.redo_stack = redo
+        self.file_path = world.path
+        self.unsaved_changes = unsaved
+        self.update_title()
 
     def _exit_play_mode(self):
         """Exit play mode and return to editor.
@@ -4002,19 +4087,23 @@ class MainWindow(QMainWindow):
         if self._end_gesture():
             return                  # Ctrl+Z mid-drag takes the drag back
         self.stop_mover_preview()   # its brush may not be in the scene after
-        if self.state.undo():
-            self._resync_components_after_history()
-            self.mark_as_modified() # Undo changes state
-            self.update_all_ui()
+        # Undo rebuilds the world from its checkpoint: no full collection
+        # walking the rest of it part way through (engine/gc_policy.py).
+        with gc_policy.paused():
+            if self.state.undo():
+                self._resync_components_after_history()
+                self.mark_as_modified() # Undo changes state
+                self.update_all_ui()
 
     def redo(self):
         if self._end_gesture():
             return
         self.stop_mover_preview()
-        if self.state.redo():
-            self._resync_components_after_history()
-            self.mark_as_modified() # Redo changes state
-            self.update_all_ui()
+        with gc_policy.paused():
+            if self.state.redo():
+                self._resync_components_after_history()
+                self.mark_as_modified() # Redo changes state
+                self.update_all_ui()
 
     def _resync_components_after_history(self):
         """Re-point everything holding an object reference after an undo/redo.
@@ -6019,6 +6108,22 @@ class MainWindow(QMainWindow):
 
             if self.view_3d is not None and self.view_3d.logic_thread:
                 self.view_3d.logic_thread.world_runtime.terrain = self.terrain
+        self._emit_level_loaded()
+
+    def _emit_level_loaded(self):
+        """Tell plugins a map is now the scene (``editor.level_loaded``):
+        ``state``, ``terrain`` (or None) and ``play_mode`` (a level change
+        inside Play, rather than the editor opening a map)."""
+        view = getattr(self, 'view_3d', None)
+        manager = getattr(getattr(view, 'logic_thread', None), 'plugins', None)
+        if manager is None or not manager.has_listeners("editor.level_loaded"):
+            return
+        try:
+            manager.emit("editor.level_loaded", state=self.state,
+                         terrain=getattr(self, 'terrain', None),
+                         play_mode=bool(getattr(view, 'play_mode', False)))
+        except Exception as exc:                   # a plugin never breaks a load
+            print(f"[Editor] editor.level_loaded listener failed: {exc}")
 
     def _on_level_change_requested(self, filePath, destination_spawn=''):
         """A LevelChanger asked for *filePath*: the game, not the user."""
@@ -6095,6 +6200,7 @@ class MainWindow(QMainWindow):
         name = os.path.splitext(os.path.basename(str(filePath)))[0]
         with _loading_overlay(self).busy(f"Loading {name}", "Reading the map", 5):
             try:
+                identity = _level_files_identity(filePath)
                 text = _read_level_text(filePath)
                 level_data = json.loads(text)
                 # A map saved minified is saved minified again.
@@ -6103,12 +6209,14 @@ class MainWindow(QMainWindow):
                 from engine import terrain_stamp
                 missing_paint = terrain_stamp.missing_paint_file(level_data, filePath)
                 level_data = terrain_stamp.join_level(level_data, filePath)
+                if identity != _level_files_identity(filePath):
+                    identity = None             # changed while being read
             except Exception as e:
                 print(f"ERROR loading level {filePath}: {e}")
                 self.show_toast(f"Failed to load level: {e}", is_error=True)
                 return False
             loaded = self._load_level(level_data, filePath, destination_spawn, from_game,
-                                      owned=True)
+                                      owned=True, files=identity)
             if loaded:
                 self.map_minified = minified
                 if missing_paint:
@@ -6137,7 +6245,7 @@ class MainWindow(QMainWindow):
 
     @_gc_paused_load
     def _load_level(self, level_data, file_path=None, destination_spawn=None,
-                    from_game=False, *, owned=False):
+                    from_game=False, *, owned=False, files=None):
         """Make *level_data* the open level.
 
         *file_path* is the file it was read from, or ``None`` for a level that
@@ -6156,7 +6264,11 @@ class MainWindow(QMainWindow):
         """
         destination_spawn = destination_spawn or None
         try:
-            self.state.validate_level_data(level_data)
+            # *files*: the identity of the files *level_data* was just read
+            # from, unchanged while it was (_level_files_identity).
+            if not _validated_before(files):
+                self.state.validate_level_data(level_data)
+                _remember_validated(files)
         except ValueError as e:
             # Not a map at all: refused before anything changed, so the open
             # level and its file stay exactly as they were.

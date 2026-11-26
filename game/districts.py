@@ -18,15 +18,19 @@ seats of one district never have a border between them. Biomes are the
 terrain's painted regions as the GPU sees them: ``desert``, ``snow`` or
 ``lowland`` (everything else -- grass, wheat, swamp, tundra).
 
-The borders are **purely visual**: the terrain shader draws them from the
-same seats, warp and biome map every frame (:meth:`Districts.overlay`, the
-renderer's ``district_overlay``). Nothing is baked into the world or saved;
-they cost a few dozen shader operations per ground pixel, and none at all
-when off. They stop at water: no border where the ground lies under a water
-brush's surface (the sea, a lake). The warp's noise hashes in 32-bit
-unsigned integers, so this module and the shader agree exactly.
-:meth:`Districts.border_lines` traces the same borders as lines, for maps
-and tools (game/tools/district_map.py).
+The borders are **purely visual** and cost **nothing** in play: they are
+baked once into the map's own terrain paint (``python -m
+game.tools.bake_districts``) as hand-drawn ink -- a pen line that wobbles,
+swells and thins, bleeds at its edges, now and then runs dry, with a lighter
+second stroke wandering off it and back (:func:`ink`). The bake records
+what each inked texel was (:class:`Drawing`, beside the map), so they can be
+taken out exactly (borders switched off) or moved (a script redrawing the
+map: lift the old drawing, bake a new one) -- the only times they cost
+anything. They stop at water: no border where the ground lies
+under a water brush's surface (the sea, a lake). The warp's noise hashes in
+32-bit unsigned integers (so it can be reproduced exactly elsewhere).
+:meth:`Districts.border_lines` traces the borders as lines, for the bake,
+maps and tools (game/tools/district_map.py).
 
 Pure Python + NumPy: no Qt, no GL, tested headless.
 """
@@ -40,24 +44,29 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 DEFAULTS = {
+    "map": None,
     "terrain_seed": None,
     "bounds": [-40960.0, -40960.0, 40960.0, 40960.0],
     "warp": 5000.0,
     "warp_scale": 15000.0,
     "seed": 1187,
     "biome_bias": 6000.0,
-    "border": {"width": 30.0, "colour": [24, 22, 28], "alpha": 0.7,
+    # The world is a square disc and nobody goes near its rim: borders end
+    # this far from the edge of the land, tapering out over the last 'taper'.
+    "edge_margin": 6000.0,
+    "edge_taper": 3000.0,
+    "border": {"width": 30.0, "colour": [46, 30, 20], "alpha": 0.85,
                "cell": 160.0, "smoothing": 3},
     "districts": [],
 }
 
 #: Home biomes, as the shader numbers them.
 BIOMES = ("lowland", "desert", "snow")
-#: How many seats, districts and water boxes the shader holds.
+#: How many seats and districts a map may have, and water boxes it heeds.
 MAX_SEATS = 24
 MAX_DISTRICTS = 16
-MAX_WATER = 16
-#: The hash's multipliers (shared with terrain.frag).
+MAX_WATER = 64
+#: The warp hash's multipliers.
 HASH_X, HASH_Z, HASH_SEED, HASH_MIX = 374761393, 668265263, 2654435761, 1274126177
 _U32 = 0xFFFFFFFF
 
@@ -165,12 +174,16 @@ class Districts:
         cfg["border"] = border
         self.config = cfg
         self.bounds = tuple(float(v) for v in cfg["bounds"])
-        #: The seed of the terrain these districts divide (None: any).
+        #: The map these districts divide (repository-relative), and its
+        #: terrain's seed (None: any).
+        self.map = cfg.get("map")
         self.terrain_seed = cfg.get("terrain_seed")
         self.warp = float(cfg["warp"])
         self.warp_scale = max(1.0, float(cfg["warp_scale"]))
         self.seed = int(cfg["seed"])
         self.biome_bias = max(0.0, float(cfg["biome_bias"]))
+        self.edge_margin = max(0.0, float(cfg["edge_margin"]))
+        self.edge_taper = max(1.0, float(cfg["edge_taper"]))
         self.border = border
         self.biome_weights = biome_weights
         self.water = list(water or ())[:MAX_WATER]
@@ -256,6 +269,19 @@ class Districts:
         except (TypeError, ValueError):
             return False
 
+    def edge_distance(self, x, z):
+        """How far (x, z) lies inside the edge of the land (vectorised)."""
+        x0, z0, x1, z1 = self.bounds
+        x, z = np.asarray(x, np.float64), np.asarray(z, np.float64)
+        return np.minimum(np.minimum(x - x0, x1 - x), np.minimum(z - z0, z1 - z))
+
+    def edge_fade(self, x, z):
+        """0 within :attr:`edge_margin` of the land's edge, rising to 1 over
+        :attr:`edge_taper`: how much of a border is drawn there."""
+        t = (self.edge_distance(x, z) - self.edge_margin) / self.edge_taper
+        t = np.clip(t, 0.0, 1.0)
+        return t * t * (3.0 - 2.0 * t)
+
     def under_water(self, x, z, y):
         """Whether ground at height *y* at (x, z) lies under a water brush's
         surface (vectorised)."""
@@ -264,29 +290,6 @@ class Districts:
         for x0, z0, x1, z1, top in self.water:
             wet |= (x >= x0) & (x <= x1) & (z >= z0) & (z <= z1) & (y < top)
         return wet
-
-    # -- the shader's copy -------------------------------------------------------
-    def overlay(self) -> Dict:
-        """What the terrain shader needs to draw the borders (cached; the
-        renderer's ``district_overlay``)."""
-        if self._overlay is None:
-            b = self.border
-            r, g, bl = (float(c) / 255.0 for c in b["colour"])
-            water = np.zeros((MAX_WATER, 4), np.float32)
-            tops = np.full(MAX_WATER, -1e9, np.float32)
-            for i, (x0, z0, x1, z1, top) in enumerate(self.water):
-                water[i] = (x0, z0, x1, z1)
-                tops[i] = top
-            self._overlay = {
-                "seats": np.ascontiguousarray(self._seats, np.float32),
-                "seat_of": np.ascontiguousarray(self._seat_of, np.int32),
-                "biome": np.ascontiguousarray(self._biome_of, np.int32),
-                "warp": (self.warp, 1.0 / self.warp_scale, self.biome_bias, float(b["width"])),
-                "seed": seed_term(self.seed),
-                "line": (r, g, bl, float(b["alpha"])),
-                "water": water, "water_top": tops, "water_count": len(self.water),
-            }
-        return self._overlay
 
     # -- borders as lines (maps and tools) -------------------------------------
     def grid(self, cell: Optional[float] = None):
@@ -305,8 +308,122 @@ class Districts:
         """Every border as a smoothed line of (x, z) points, broken where it
         would cross water (cached)."""
         if self._lines is None:
-            self._lines = self._dry(self._trace())
+            self._lines = self._inland(self._dry(self._trace()))
         return self._lines
+
+    def _inland(self, lines):
+        """The lines with every point the edge fade blanks taken out (nobody
+        goes near the rim of the world)."""
+        out = []
+        for line in lines:
+            pts = np.asarray(line, np.float64)
+            keep = self.edge_fade(pts[:, 0], pts[:, 1]) > 0.0
+            run = []
+            for p, k in zip(line, keep):
+                if k:
+                    run.append(p)
+                elif run:
+                    if len(run) > 1:
+                        out.append(run)
+                    run = []
+            if len(run) > 1:
+                out.append(run)
+        return out
+
+    def cache_key(self, terrain) -> str:
+        """What the drawn borders depend on: districts, warp, biomes, water,
+        the terrain's paint grid and the ink's own version."""
+        import hashlib
+        import json as _json
+        h = hashlib.sha1()
+        h.update(_json.dumps(self.config, sort_keys=True, default=str).encode())
+        h.update(repr((INK_VERSION, self.water, terrain.TERRAIN_PAINT_RESOLUTION,
+                       terrain.chunk_size, terrain.offset_x, terrain.offset_z)).encode())
+        biome = getattr(terrain, "biome_map", None)
+        if biome is not None:
+            h.update(np.ascontiguousarray(biome).data)
+        return h.hexdigest()[:20]
+
+    def alphas(self, terrain):
+        """``{chunk: (res, res) uint8}``: how much ink the hand-drawn
+        borders put on each texel of each chunk they cross (:func:`ink`).
+        Touches no paint."""
+        return self._draw(terrain)
+
+    def bake(self, terrain, alphas=None):
+        """Draw the borders into *terrain*'s paint, by hand (:func:`ink`).
+        Returns the :class:`Drawing` that can take them out again."""
+        drawing = Drawing(self.alphas(terrain) if alphas is None else alphas,
+                          self.border["colour"], self.cache_key(terrain))
+        drawing.lay(terrain)
+        return drawing
+
+    def _draw(self, terrain):
+        res = int(terrain.TERRAIN_PAINT_RESOLUTION)
+        size = float(terrain.chunk_size)
+        cell = size / res
+        ox, oz = float(terrain.offset_x), float(terrain.offset_z)
+        width = float(self.border["width"])
+        reach = REACH * width / 30.0
+        opacity = float(self.border["alpha"])
+        # The nearest border at each texel near one: signed distance, by chunk.
+        near: Dict[Tuple[int, int], np.ndarray] = {}
+        for line in self.border_lines():
+            pts = np.asarray(line, np.float64)
+            for (ax, az), (bx, bz) in zip(pts[:-1], pts[1:]):
+                ex, ez = bx - ax, bz - az
+                length2 = ex * ex + ez * ez
+                if length2 < 1e-9:
+                    continue
+                lo_x, hi_x = min(ax, bx) - reach, max(ax, bx) + reach
+                lo_z, hi_z = min(az, bz) - reach, max(az, bz) + reach
+                for cx in range(int(math.floor((lo_x - ox) / size)), int(math.floor((hi_x - ox) / size)) + 1):
+                    for cz in range(int(math.floor((lo_z - oz) / size)), int(math.floor((hi_z - oz) / size)) + 1):
+                        x0c, z0c = ox + cx * size, oz + cz * size
+                        i0 = max(0, int((lo_x - x0c) / cell))
+                        i1 = min(res, int(math.ceil((hi_x - x0c) / cell)))
+                        j0 = max(0, int((lo_z - z0c) / cell))
+                        j1 = min(res, int(math.ceil((hi_z - z0c) / cell)))
+                        if i1 <= i0 or j1 <= j0:
+                            continue
+                        px = (x0c + (np.arange(i0, i1) + 0.5) * cell)[:, None]
+                        pz = (z0c + (np.arange(j0, j1) + 0.5) * cell)[None, :]
+                        t = np.clip(((px - ax) * ex + (pz - az) * ez) / length2, 0.0, 1.0)
+                        dx, dz = px - (ax + t * ex), pz - (az + t * ez)
+                        dist = np.sqrt(dx * dx + dz * dz)
+                        side = np.where(ex * (pz - az) - ez * (px - ax) >= 0.0, 1.0, -1.0)
+                        block = near.get((cx, cz))
+                        if block is None:
+                            block = near[(cx, cz)] = np.full((res, res), np.inf, np.float32)
+                        view = block[i0:i1, j0:j1]
+                        closer = dist < np.abs(view)
+                        view[closer] = (dist * side)[closer]
+        out = {}
+        for (cx, cz), signed in near.items():
+            hit = np.isfinite(signed) & (np.abs(signed) < reach)
+            if not hit.any():
+                continue
+            ii, jj = np.nonzero(hit)
+            xs = ox + cx * size + (ii + 0.5) * cell
+            zs = oz + cz * size + (jj + 0.5) * cell
+            amount = ink(xs, zs, signed[hit], width) * opacity * self.edge_fade(xs, zs)
+            if self.water and self.height is not None:
+                # Heights only where a water box lies: most texels need none.
+                boxed = np.zeros(len(xs), bool)
+                for x0, z0, x1, z1, _top in self.water:
+                    boxed |= (xs >= x0) & (xs <= x1) & (zs >= z0) & (zs <= z1)
+                if boxed.any():
+                    heights = np.asarray(self.height(xs[boxed], zs[boxed]), np.float64)
+                    wet = self.under_water(xs[boxed], zs[boxed], heights)
+                    sub = amount[boxed]
+                    sub[wet] = 0.0
+                    amount[boxed] = sub
+            if not (amount > 0.004).any():
+                continue
+            alpha = np.zeros((res, res), np.uint8)
+            alpha[ii, jj] = np.clip(amount * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            out[(cx, cz)] = alpha
+        return out
 
     def _dry(self, lines):
         if not self.water or self.height is None:
@@ -374,6 +491,200 @@ class Districts:
                 pts = pts[:1] + pts[1:-1:2] + pts[-1:]
             out.append(chaikin(pts, rounds))
         return out
+
+
+# -- drawn by hand ---------------------------------------------------------------
+#: How far either side of a border line the pen's strokes can wander (world
+#: units, at the default width): the band :meth:`Districts.bake` paints in.
+REACH = 210.0
+_INK_SALT = 0x5EED1E55
+#: Bump when :func:`ink` changes, so cached drawings are redrawn.
+INK_VERSION = 1
+
+
+def _n(x, z, scale, k):
+    """Smooth 0..1 noise at (x, z) over *scale* world units (stream *k*)."""
+    return _value_noise(np.asarray(x) / scale + k * 17.31, np.asarray(z) / scale - k * 9.73,
+                        (_INK_SALT + k * HASH_SEED) & _U32)
+
+
+def stroke_path(x, z, width=30.0):
+    """``(tremor, half, pressure)`` of the pen's main stroke at (x, z): the
+    stroke runs where ``d + tremor == 0`` (*d* signed across the true border,
+    as :func:`ink` takes it) and is ``half`` either side of that at its
+    fullest. What the border glow follows, so it hugs the drawn line."""
+    x, z = np.asarray(x, np.float64), np.asarray(z, np.float64)
+    w = float(width)
+    tremor = (_n(x, z, 450.0, 1) - 0.5) * 8.0 * w + (_n(x, z, 110.0, 2) - 0.5) * 1.5 * w
+    pressure = _n(x, z, 620.0, 3)
+    half = 0.5 * w * (0.3 + 1.25 * pressure)
+    return tremor, half, pressure
+
+
+def ink(x, z, d, width=30.0):
+    """How much ink (0..1) a pen line drawn by hand puts at (x, z), *d*
+    world units (signed, across the line) from the true border.
+
+    The line wobbles with the hand (a slow tremor and a quicker one), swells
+    and thins with the pen's pressure -- darker where it presses -- bleeds
+    unevenly at its edges, and here and there runs dry; a lighter second
+    stroke wanders off it and back. Vectorised; texels of 8 units resolve it.
+    """
+    x, z, d = (np.asarray(v, np.float64) for v in (x, z, d))
+    w = float(width)
+    tremor, half, pressure = stroke_path(x, z, w)
+    bleed = (_n(x, z, 28.0, 4) - 0.5) * 0.45 * w
+    soft = 5.0                                   # a texel-wide soft edge
+
+    def stroke(offset, scale):
+        edge = half * scale + bleed
+        return np.clip((edge - np.abs(d + offset)) / soft + 0.5, 0.0, 1.0)
+
+    first = stroke(tremor, 1.0)
+    drift = (_n(x, z, 900.0, 5) - 0.5) * 7.0 * w
+    second = stroke(tremor * 1.4 + drift, 0.4)
+    dry = np.clip((_n(x, z, 950.0, 6) - 0.16) / 0.14, 0.0, 1.0)
+    return np.maximum(first, 0.55 * second) * (0.72 + 0.28 * pressure) * (0.2 + 0.8 * dry)
+
+
+class Drawing:
+    """Borders drawn into a terrain's paint, and what they covered.
+
+    *alphas* is ``{chunk: (res, res) uint8}`` (:meth:`Districts.alphas`).
+    :meth:`lay` paints them and records each covered texel's colour as it
+    was; :meth:`lift` puts those texels back exactly, :meth:`lay` again
+    redraws them exactly. The record is saved beside the map
+    (:func:`record_path`), so a map baked once keeps its borders in its own
+    paint -- nothing to do in play -- and can still lose them (borders
+    switched off) or have them moved (a script redrawing the map)."""
+
+    def __init__(self, alphas, colour, key=""):
+        self.alphas = {tuple(int(v) for v in k): np.asarray(a, np.uint8) for k, a in alphas.items()}
+        self.colour = tuple(float(c) for c in colour)
+        self.key = str(key)
+        #: chunk -> (flat texel index, rgba before the ink): set by lay().
+        self.under = {}
+        #: chunk -> (its array without the ink, its array with it), while
+        #: neither has been replaced: lay and lift then just swap them.
+        self._arrays = {}
+        #: Whether the ink is in the paint now.
+        self.laid = False
+
+    #: How many inked texels :meth:`is_laid` looks at, from how many chunks.
+    PROBES = 24
+    PROBE_CHUNKS = 3
+
+    def is_laid(self, terrain) -> bool:
+        """Whether the ink is in *terrain*'s paint now: a few strongly inked
+        texels are compared with what they were before the ink. So laying
+        or lifting twice -- or after an undo brought the ink back -- never
+        inks a texel twice or loses one."""
+        if not self.under:
+            return False
+        differ = same = 0
+        for coord in sorted(self.under)[:: max(1, len(self.under) // self.PROBE_CHUNKS)][:self.PROBE_CHUNKS]:
+            index, before = self.under[coord]
+            strength = self.alphas[coord].reshape(-1)[index]
+            pick = np.argsort(strength)[::-1][: max(1, self.PROBES // self.PROBE_CHUNKS)]
+            paint = terrain.texture_paint_maps.get(coord)
+            now = (np.zeros((len(pick), 4), np.uint8) if paint is None
+                   else paint.reshape(-1, 4)[index[pick]])
+            hit = np.any(now != before[pick], axis=1)
+            differ += int(hit.sum())
+            same += int((~hit).sum())
+        return differ > same
+
+    def lay(self, terrain):
+        """Paint the ink (if it is not in already), recording what each inked
+        texel was. A chunk laid and lifted before, and untouched since, gets
+        back the very array it had -- so the paint serialiser's cache holds."""
+        res = int(terrain.TERRAIN_PAINT_RESOLUTION)
+        if self.is_laid(terrain):
+            self.laid = True
+            return
+        maps = terrain.texture_paint_maps
+        for coord, alpha in self.alphas.items():
+            if alpha.shape != (res, res):
+                raise ValueError(f"drawn for {alpha.shape[0]}-texel paint, terrain has {res}")
+            current = maps.get(coord)
+            cached = self._arrays.get(coord)
+            if cached is not None and cached[0] is current and current is not None:
+                terrain.restore_paint(coord, cached[1])
+                continue
+            index = np.flatnonzero(alpha.reshape(-1))
+            if not len(index):
+                continue
+            before = (np.zeros((len(index), 4), np.uint8) if current is None
+                      else current.reshape(-1, 4)[index].copy())
+            self.under[coord] = (index, before)
+            terrain.blend_paint(coord, 0, 0, alpha.astype(np.float32) / 255.0, self.colour)
+            if current is not None:
+                self._arrays[coord] = (current, maps.get(coord))
+        self.laid = True
+
+    def lift(self, terrain):
+        """Put back every texel the ink covered, exactly as it was (if the
+        ink is in at all)."""
+        if not self.is_laid(terrain):
+            self.laid = False
+            return
+        maps = terrain.texture_paint_maps
+        for coord, (index, before) in self.under.items():
+            current = maps.get(coord)
+            cached = self._arrays.get(coord)
+            if cached is not None and cached[1] is current and current is not None:
+                terrain.restore_paint(coord, cached[0])
+                continue
+            terrain.set_paint_texels(coord, index, before)
+            lifted = maps.get(coord)
+            if current is not None and lifted is not None:
+                self._arrays[coord] = (lifted, current)
+        self.laid = False
+
+    # -- kept beside the map -----------------------------------------------------
+    def save(self, path):
+        coords = sorted(self.under)
+        arrays = {"key": np.array(self.key), "colour": np.array(self.colour, np.float32),
+                  "coords": np.array(coords, np.int32).reshape(-1, 2)}
+        for i, coord in enumerate(coords):
+            index, before = self.under[coord]
+            arrays[f"i{i}"] = index.astype(np.int32)
+            arrays[f"u{i}"] = before
+            arrays[f"a{i}"] = self.alphas[coord].reshape(-1)[index]
+        import os
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "wb") as fh:
+            np.savez_compressed(fh, **arrays)
+
+    @classmethod
+    def load(cls, path, res):
+        """The drawing saved at *path* (laid: the map's paint has its ink),
+        for paint of *res* texels a side; None if there is none."""
+        try:
+            with np.load(path) as data:
+                coords = [tuple(int(v) for v in c) for c in data["coords"]]
+                drawing = cls({}, tuple(float(c) for c in data["colour"]), str(data["key"]))
+                for i, coord in enumerate(coords):
+                    index = data[f"i{i}"].astype(np.int64)
+                    alpha = np.zeros(res * res, np.uint8)
+                    alpha[index] = data[f"a{i}"]
+                    drawing.alphas[coord] = alpha.reshape(res, res)
+                    drawing.under[coord] = (index, data[f"u{i}"])
+        except (OSError, KeyError, ValueError):
+            return None
+        drawing.laid = True
+        return drawing
+
+
+def record_path(map_path: str) -> str:
+    """Where a map's drawn borders are recorded: ``<map>.districts.npz``
+    (a relative *map_path* is the repository's)."""
+    import os
+    if not os.path.isabs(map_path):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        map_path = os.path.join(root, map_path)
+    base, _ext = os.path.splitext(os.path.abspath(map_path))
+    return base + ".districts.npz"
 
 
 def load(name: str = "districts", biome_weights: Optional[Callable] = None,

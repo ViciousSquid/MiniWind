@@ -23,6 +23,10 @@ because there are two kinds of pause:
   a load -- as play starts, as play stops. Inside :func:`level_load` it does
   nothing: the load's own policy above decides.
 
+:func:`paused` is neither: it only holds the collector off for an editor
+history step (an undo, a redo, a checkpoint), which builds a world's worth
+of records in one go, and decides nothing about collecting or freezing.
+
 With *freeze* on (a game launch turns it on, see :func:`set_freeze`),
 everything alive after a load or a settle is moved to the collector's
 permanent generation (``gc.freeze``), so collections during play never
@@ -83,6 +87,28 @@ def release() -> None:
     """Unfreeze everything (the editor window is closing): what it held,
     cycles included, is collectable again."""
     gc.unfreeze()
+
+
+@contextlib.contextmanager
+def paused():
+    """Pause the cyclic collector for one editor history step (nests safely).
+
+    An undo, a redo or an undo checkpoint builds a whole world's worth of
+    records at once -- JSON text, brush dicts, Things -- and the allocation
+    counts it runs up start full collections part way through, each one
+    walking every long-lived object of a world that has not changed: most of
+    an undo's time on MiniWind's overworld. Nothing is collected, frozen or
+    unfrozen afterwards: what the step left behind waits for the next
+    collection the counts start, as any garbage does. Inside a load it
+    changes nothing (the collector is already off).
+    """
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 class LoadPolicy:

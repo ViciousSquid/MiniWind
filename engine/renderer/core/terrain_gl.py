@@ -30,7 +30,8 @@ from engine.renderer.core import grass_wind
 from engine.terrain_frame import (grass_vertex_count, heightfield_indices, paint_chain,
                                   paint_mip_levels)
 from engine.terrain_table import GRID_BORDER, STORED_GRID
-from .raw_calls import draw_elements, uniform_matrix4, vertex_attrib_pointer
+from .raw_calls import (draw_elements, has_base_instance, uniform_matrix4,
+                        vertex_attrib_pointer)
 
 
 def _no_current_gl_context():
@@ -158,9 +159,6 @@ class TerrainGL:
         'uHeights', 'uChunkI', 'uChunkX', 'uChunkY', 'uTiling', 'uFlatMode',
         'uGradCount', 'uGradH', 'uGradC', 'uGradW', 'uGradD',
         'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds', 'uSnowCover',
-        'uDistrictSeats', 'uDistrictSeat', 'uDistrictOf', 'uDistrictBiome',
-        'uDistrictWarp', 'uDistrictSeed', 'uDistrictLine', 'uDistrictWaterCount',
-        'uDistrictWater', 'uDistrictWaterTop',
     )
     #: Texture unit of the regional biome map (``uBiomeMap``). Above the
     #: shadow cube-maps (4..11), the height and paint pages (12, 13) and the
@@ -243,6 +241,9 @@ class TerrainGL:
         #: Grass instances and draws the last frame sent (tests, SysMon).
         self.grass_instances_drawn = 0
         self.grass_draws = 0
+        #: Whether the context draws from a base instance (asked once, at the
+        #: first grass drawn on it; see _draw_grass_run).
+        self._base_instance = None
 
     def _sync_gl_columns_reset(self):
         for name in ('_grass_vao', '_grass_vbo', '_grass_count', '_gpu_version',
@@ -343,44 +344,6 @@ class TerrainGL:
                      'uPushers', 'uPusherCount'):
             self.grass_uniforms[name] = gl.glGetUniformLocation(
                 self.grass_shader_program, name)
-
-    def _upload_district_overlay(self, u, overlay):
-        """Set the district-border uniforms, only when the overlay (or the
-        program) changed: uniforms keep their values between frames."""
-        count_loc = u.get('uDistrictSeats', -1)
-        if count_loc is None or count_loc == -1:
-            return
-        key = (self.shader_program, id(overlay) if overlay is not None else None)
-        if getattr(self, '_district_key', None) == key:
-            return
-        self._district_key = key
-        if overlay is None:
-            gl_state.glUniform1i(count_loc, 0)
-            return
-        seats = np.ascontiguousarray(overlay['seats'], np.float32)
-        n = len(seats)
-
-        def put(name, fn, *args):
-            loc = u.get(name, -1)
-            if loc is not None and loc != -1:
-                fn(loc, *args)
-
-        put('uDistrictSeat', gl_state.glUniform2fv, n, seats)
-        put('uDistrictOf', gl_state.glUniform1iv, n,
-            np.ascontiguousarray(overlay['seat_of'], np.int32))
-        biome = np.ascontiguousarray(overlay['biome'], np.int32)
-        put('uDistrictBiome', gl_state.glUniform1iv, len(biome), biome)
-        put('uDistrictWarp', gl_state.glUniform4f, *(float(v) for v in overlay['warp']))
-        put('uDistrictSeed', gl_state.glUniform1ui, int(overlay['seed']))
-        put('uDistrictLine', gl_state.glUniform4f, *(float(v) for v in overlay['line']))
-        water_n = int(overlay.get('water_count', 0))
-        put('uDistrictWaterCount', gl_state.glUniform1i, water_n)
-        if water_n:
-            put('uDistrictWater', gl_state.glUniform4fv, water_n,
-                np.ascontiguousarray(overlay['water'][:water_n], np.float32))
-            put('uDistrictWaterTop', gl_state.glUniform1fv, water_n,
-                np.ascontiguousarray(overlay['water_top'][:water_n], np.float32))
-        gl_state.glUniform1i(count_loc, n)
 
     def _upload_appearance_uniforms(self, u):
         for name, value in self.frame.appearance.items():
@@ -1570,6 +1533,8 @@ class TerrainGL:
         blade_height = float(self.frame.grass_height)
         blade_width = float(self.frame.grass_blade_width)
         lod_sq = self.frame.grass_lod_distance * self.frame.grass_lod_distance
+        if self._base_instance is None:
+            self._base_instance = bool(has_base_instance())
         last_segments = None
         near = (float(camera_pos.x), float(camera_pos.z),
                 float(self.frame.grass_lod_distance))
@@ -1883,6 +1848,12 @@ class TerrainGL:
         """Draw *count* of *slot*'s blades from instance *start* (its VAO bound)."""
         if start == 0:
             gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, vertices, count)
+        elif self._base_instance:
+            # GL 4.2 or ARB_base_instance: the run's instances are fetched
+            # from *start* on -- the very rows the attributes would be
+            # pointed at below (every grass attribute is per instance, and
+            # the grass shader does not read gl_InstanceID).
+            gl.glDrawArraysInstancedBaseInstance(gl.GL_TRIANGLES, 0, vertices, count, start)
         else:
             # OpenGL 3.3 has no glDrawArraysInstancedBaseInstance: point the
             # instance attributes at the run, draw, and point them back.
@@ -1945,8 +1916,7 @@ class TerrainGL:
     def render(self, frame, projection, view, camera_pos, frustum_planes=None,
                active_lights_count=0, shadow_cubemaps=None, shadow_unit_base=4,
                env_uniforms=None, draw_grass=True, grass_wind=None,
-               shadow_filter=None, snow_cover=0.0, district_overlay=None,
-               edge_falls=None):
+               shadow_filter=None, snow_cover=0.0, edge_falls=None):
         """Draw the published *frame* with the current GL context.
 
         ``draw_grass=False`` leaves the grass pass out whatever the frame
@@ -1957,8 +1927,6 @@ class TerrainGL:
         the Light that owns it (0: the shader's default).
         *snow_cover* (0..1) lays settled snow over the ground: patchy at
         first, a full white blanket from about 0.8, thin on steep slopes.
-        *district_overlay* (``game.districts.Districts.overlay``) draws a
-        game's district borders on the ground; None draws none.
         *edge_falls* (:meth:`edge_falls`) are where water pours over the
         world's edge: the underside hangs only under land, clear of them."""
         self.visible_chunks = 0
@@ -1969,7 +1937,6 @@ class TerrainGL:
         self.frame = frame
         self.grass_wind = grass_wind
         self.snow_cover = max(0.0, min(1.0, float(snow_cover or 0.0)))
-        self.district_overlay = district_overlay
         self.edge_falls_now = tuple(edge_falls or ())
         self.shore_points_now = ()
         try:
@@ -2061,7 +2028,6 @@ class TerrainGL:
         if snow_loc is not None and snow_loc != -1:
             gl_state.glUniform1f(snow_loc, 0.0 if frame.flat_mode else
                                  float(getattr(self, 'snow_cover', 0.0)))
-        self._upload_district_overlay(u, getattr(self, 'district_overlay', None))
 
         # Distance fog + global ambient (engine.shaders.FOG_GLSL): this
         # program has its own uniform table, so the renderer hands the
@@ -2200,6 +2166,7 @@ class TerrainGL:
                 pass
         self.shader_program = self.block_program = self.grass_shader_program = 0
         self.skirt_program = self.falls_program = self.under_program = 0
+        self._base_instance = None          # the next context is asked afresh
         self.uniforms, self.block_uniforms, self.grass_uniforms = {}, {}, {}
         self.skirt_uniforms = {}
         self.falls_uniforms = {}

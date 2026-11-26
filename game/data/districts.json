@@ -1,12 +1,15 @@
 {
-  "_comment": "The Vale's districts (game/districts.py). A point belongs to the district whose nearest seat scores lowest: distance from the point (moved by a gentle noise 'warp', so borders wander) to the seat, plus 'biome_bias' times how far the point is from the district's home biome (lowland, desert or snow), so districts keep to their own ground. A district may have several seats; seats of one district have no border between them. x and z are world units; 'bounds' is the land divided: min x, min z, max x, max z; 'terrain_seed' is the seed of the map's terrain they belong to (other maps have no districts). The borders are drawn by the terrain shader and stop at water. Run 'python -m game.tools.district_map' to see them on the world map. A mod's districts.json replaces any value it names (its 'districts' list replaces the whole list).",
+  "_comment": "The Vale's districts (game/districts.py). A point belongs to the district whose nearest seat scores lowest: distance from the point (moved by a gentle noise 'warp', so borders wander) to the seat, plus 'biome_bias' times how far the point is from the district's home biome (lowland, desert or snow), so districts keep to their own ground. A district may have several seats; seats of one district have no border between them. x and z are world units; 'bounds' is the land divided: min x, min z, max x, max z; 'map' is the map they divide and 'terrain_seed' its terrain's seed (other maps have no districts). The borders are baked into that map's paint by hand ('python -m game.tools.bake_districts'; run it again after any change here) and stop at water, and short of the world's edge: they taper out from 'edge_margin' + 'edge_taper' to 'edge_margin' units from it (the world is a square disc in lore; nobody goes near its rim). Run 'python -m game.tools.district_map' to see them on the world map. A mod's districts.json replaces any value it names (its 'districts' list replaces the whole list).",
+  "map": "maps/miniwind_world.json",
   "terrain_seed": 53092,
   "bounds": [-40960.0, -40960.0, 40960.0, 40960.0],
   "warp": 5000.0,
   "warp_scale": 15000.0,
   "seed": 1187,
   "biome_bias": 11000.0,
-  "border": {"width": 30.0, "colour": [24, 22, 28], "alpha": 0.7, "cell": 160.0, "smoothing": 3},
+  "edge_margin": 6000.0,
+  "edge_taper": 3000.0,
+  "border": {"width": 26.0, "colour": [46, 30, 20], "alpha": 0.85, "cell": 160.0, "smoothing": 3},
   "districts": [
     {"id": "millbrook", "name": "Millbrook", "biome": "lowland", "seats": [[1000.0, 1500.0]],
      "note": "The heart of the Vale: Millbrook and its windmill, the lakes of Mirrormere and Reedhollow, Hollin's Cross and the Old Mill."},

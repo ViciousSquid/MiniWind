@@ -404,17 +404,26 @@ def cmd_weather(ctx, args):
 
 
 def cmd_districts(ctx, args):
-    """districts [on|off] -- which district you stand in, and every district
-    (game/districts.py); ``on``/``off`` shows or hides the borders drawn on
-    the ground for this session (Settings › Game › District borders keeps
-    the choice)."""
+    """districts [on|off | glow on|off] -- which district you stand in, and
+    every district (game/districts.py); ``on``/``off`` shows or hides the
+    borders inked on the ground for this session (Settings › Game › District
+    borders keeps the choice), ``glow on``/``glow off`` the glow that fades in
+    near one (Settings › Game › Border glow)."""
     session = getattr(ctx.logic_thread, "_miniwind", None)
     if session is None or not hasattr(session, "district_borders_enabled"):
         debug_log("Error", "districts: Play Mode only.")
         return None
     want = str(args or "").strip().lower()
+    if want in ("glow on", "glow off"):
+        session._border_glow = want.endswith("on")
+        msg = f"Border glow {'on' if session._border_glow else 'off'}."
+        debug_log("Info", msg)
+        toast = getattr(ctx.main_window, "show_toast", None)
+        if toast is not None:
+            toast(msg)
+        return None
     if want in ("on", "off"):
-        session._district_borders = want == "on"
+        session.set_district_borders(want == "on")
         msg = f"District borders {'shown' if want == 'on' else 'hidden'}."
         debug_log("Info", msg)
         toast = getattr(ctx.main_window, "show_toast", None)
@@ -858,7 +867,8 @@ COMMANDS = (
     (("showsound",), cmd_showsound,
      "— Show/hide how far your noise carries, and shouts and fights near you (debug; settings.ini: [developer] show_sound)"),
     (("districts", "district"), cmd_districts,
-     "[on|off] — Which district you are in, every district; show/hide their borders (Play Mode)"),
+     "[on|off | glow on|off] — Which district you are in, every district; show/hide their borders"
+     " or the glow near one (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
      "1..4 — The look of every fire, for this session (settings.ini: [GAME] fire_style)"),
     (("torch_shadows",), cmd_torch_shadows,
