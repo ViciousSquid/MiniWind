@@ -1042,6 +1042,18 @@ Reach** and **Cairnmoor** (desert; Cairnmoor takes in Whisperdeep),
 The world ends in a cliff of rock strata (`engine/shaders.py`,
 `terrain_skirt.*`). Where water reaches that edge it spills over it.
 
+* *No mountains round the edge.* The land runs out to the edge as lowland
+  all the way round (desert dunes in the west and south, rolling grass
+  elsewhere); the Emberpeaks stand inland. Each cave mouth that stood at
+  the foot of the old edge mountains keeps a rocky knoll round it
+  (`game/tools/reshape_edge.py`).
+* *Sunfall Oasis.* On the south edge of the world (the bottom of the world
+  map), towards the west in the desert: a lake ringed with grass and palms,
+  open to the edge, so its whole southern shore spills over it -- forked
+  by a rocky islet on the brink: the western fall about 1,100 units wide,
+  the eastern about 1,800. Its water is the sea's, drifting gently to the falls.
+
+* *Trees.* No tree ever stands in water or reaches over it.
 * *The sea drifts to the edge.* The sea in the world map's top-right corner
   flows slowly towards that corner (`water_flow` SE, 4 units a second in
   world axes; a player is about 64 tall): its waves, ripples and foam all

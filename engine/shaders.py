@@ -613,6 +613,36 @@ vec4 traceReflection(highp vec3 originView, highp vec3 dirView) {
 }
 """
 
+# The four Gerstner waves water.vert lifts the surface by would line up in a
+# regular lattice (every crest repeating on a grid, with its foam), plain to
+# see wherever the surface's grid is fine enough to draw them. Each wave's
+# phase drifts and its height swells and falls across the water instead,
+# smoothly, over hundreds of units -- the same everywhere it is used
+# (water.vert, and the waterfall's tongue, which lies on that surface).
+WAVE_VARIATION_GLSL = """
+highp float waveHash(highp vec2 p) {
+    highp vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+highp float waveNoise(highp vec2 p) {
+    highp vec2 i = floor(p);
+    highp vec2 f = fract(p);
+    highp vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(waveHash(i), waveHash(i + vec2(1.0, 0.0)), u.x),
+               mix(waveHash(i + vec2(0.0, 1.0)), waveHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+// Wave number w at p (in the flowing surface's frame): (phase offset,
+// height scale).
+vec2 waveVariation(highp vec2 p, float w) {
+    highp vec2 q = p * 0.0019 + vec2(w * 7.31, w * 3.17);
+    float phase = (waveNoise(q) - 0.5) * 7.0 + (waveNoise(q * 2.3 + 11.0) - 0.5) * 3.0;
+    float scale = 0.45 + 1.1 * waveNoise(p * 0.0013 + vec2(w * 5.7 + 2.0, 9.1 - w));
+    return vec2(phase, scale);
+}
+"""
+
+
 #: The sky panorama's equirectangular lookup, shared by the sky pass
 #: (``void_background.frag``) and the water that reflects it, so a reflection
 #: samples the very texel the sky shows in that direction.
@@ -923,13 +953,15 @@ uniform float waveSpread; // "Wave Spacing": 0 tight and choppy, 1 broad
 // position exactly as it is (also water.frag).
 uniform highp vec2 flowOffset;
 
-""" + PANORAMA_GLSL + """
+""" + PANORAMA_GLSL + WAVE_VARIATION_GLSL + """
 // One Gerstner wave: displaces the vertex and accumulates normal derivatives.
-void addWave(vec2 dir, float wavelength, float amp, float speed, vec2 p,
+// *v* is its (phase offset, height scale) here (waveVariation).
+void addWave(vec2 dir, float wavelength, float amp, float speed, vec2 p, vec2 v,
              inout float dy, inout vec2 dxz, inout vec3 n)
 {
+    amp *= v.y;
     float k = 6.2831853 / wavelength;
-    float f = k * dot(dir, p) + speed * time;
+    float f = k * dot(dir, p) + speed * time + v.x;
     float s = sin(f);
     float c = cos(f);
     float steep = min(0.8 / (k * max(amp, 0.0001) * 4.0), 1.2);
@@ -968,10 +1000,14 @@ void main()
         float longer = mix(1.0, 2.2, clamp(waveSpread, 0.0, 1.0));
         float slower = inversesqrt(longer);
         highp vec2 wavePos = worldPos.xz - flowOffset;
-        addWave(vec2( 0.788,  0.616), 190.0 * longer, amp * 0.42, 1.05 * slower, wavePos, dy, dxz, n);
-        addWave(vec2(-0.552,  0.834), 118.0 * longer, amp * 0.28, 1.45 * slower, wavePos, dy, dxz, n);
-        addWave(vec2( 0.943, -0.333),  74.0 * longer, amp * 0.19, 1.95 * slower, wavePos, dy, dxz, n);
-        addWave(vec2(-0.673, -0.740),  38.0 * longer, amp * 0.11, 2.70 * slower, wavePos, dy, dxz, n);
+        addWave(vec2( 0.788,  0.616), 190.0 * longer, amp * 0.42, 1.05 * slower, wavePos,
+                waveVariation(wavePos, 0.0), dy, dxz, n);
+        addWave(vec2(-0.552,  0.834), 118.0 * longer, amp * 0.28, 1.45 * slower, wavePos,
+                waveVariation(wavePos, 1.0), dy, dxz, n);
+        addWave(vec2( 0.943, -0.333),  74.0 * longer, amp * 0.19, 1.95 * slower, wavePos,
+                waveVariation(wavePos, 2.0), dy, dxz, n);
+        addWave(vec2(-0.673, -0.740),  38.0 * longer, amp * 0.11, 2.70 * slower, wavePos,
+                waveVariation(wavePos, 3.0), dy, dxz, n);
         worldPos.y  += dy;
         worldPos.xz += dxz * 0.75 * edgeFade;
     }
@@ -1648,9 +1684,14 @@ void main()
                    vec2(time * 0.05, -time * 0.04)) * 0.6 +
             vnoise(wuv * 0.45 -
                    vec2(time * 0.07, time * 0.06)) * 0.4;
+        // Only some crests break, in broad patches drifting over the water,
+        // so the foam never falls into a pattern of its own.
+        float foamPatches = vnoise(wuv * 0.0035 + vec2(time * 0.012, -time * 0.009)) * 0.65 +
+                            vnoise(wuv * 0.0091 - vec2(time * 0.017, time * 0.011)) * 0.35;
         float crestFoam =
             smoothstep(0.68, 0.92, WaveCrest) *
-            smoothstep(0.35, 0.75, foamNoise);
+            smoothstep(0.35, 0.75, foamNoise) *
+            smoothstep(0.42, 0.72, foamPatches);
         float shoreWave =
             0.5 + 0.5 * sin(ShoreDist * 0.30 - time * 1.8);
         float shoreFoam =
@@ -3931,7 +3972,16 @@ uniform highp float uBottom;    // far below, where the fall has faded out
 uniform int uTongueRows;        // quads on the surface before the brink
 uniform int uRows;              // quads from the brink down
 uniform highp float uTongue;    // how far in from the edge the tongue starts
-uniform float uSurfSlope;       // how far the surface may rise per unit in
+// The water surface the tongue lies on, exactly as water.vert raises it:
+// a grid of uWaterCells cells a side over the brush's rectangle uBrush
+// (min x, min z, max x, max z), each corner lifted by the waves (pinned
+// flat at the brush's edge), straight across the two triangles of a cell.
+uniform int uWaterCells;
+uniform highp vec4 uBrush;
+uniform float uWaveAmp;
+uniform float uWaveSpread;
+uniform highp vec2 uFlowOffset;
+uniform highp float uWaterTime;
 out highp vec3 FallPos;         // world position
 out highp vec2 FallUV;          // (perimeter coordinate, path: <0 on the tongue)
 out highp float LipDepth;       // water over the brink: uTop - ground
@@ -3942,6 +3992,66 @@ flat out vec3 FallSide;         // the outward direction of the nearer corner's 
 
 float heightAt(int i, int k) {
     return texelFetch(uHeights, ivec3(k + 1, i + 1, uChunkI.y), 0).r;
+}
+
+// Rounded max / min over k (plain max / min at k = 0): the curtain's path
+// bends smoothly where it starts hugging the wall and where it leaves the
+// wall's foot, with no kink to show as a line across it.
+highp float smax(highp float a, highp float b, highp float k) {
+    if (k <= 0.0) return max(a, b);
+    highp float h = max(k - abs(a - b), 0.0) / k;
+    return max(a, b) + h * h * k * 0.25;
+}
+highp float smin(highp float a, highp float b, highp float k) {
+    if (k <= 0.0) return min(a, b);
+    highp float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * k * 0.25;
+}
+
+""" + WAVE_VARIATION_GLSL + """
+// One of water.vert's Gerstner waves: its height only.
+float waveHeight(vec2 dir, float wavelength, float amp, float speed, highp vec2 p, float w) {
+    vec2 v = waveVariation(p, w);
+    float k = 6.2831853 / wavelength;
+    return amp * v.y * sin(k * dot(dir, p) + speed * uWaterTime + v.x);
+}
+
+// The water surface's rise at a corner of its grid, as water.vert has it.
+highp float cornerRise(highp vec2 xz) {
+    highp vec2 size = uBrush.zw - uBrush.xy;
+    highp float edgeWorld = min(min(xz.x - uBrush.x, uBrush.z - xz.x),
+                                min(xz.y - uBrush.y, uBrush.w - xz.y));
+    float fadeW = clamp(min(size.x, size.y) * 0.25, 4.0, 48.0);
+    float amp = uWaveAmp * smoothstep(0.0, fadeW, edgeWorld);
+    if (amp <= 0.001) return 0.0;
+    float longer = mix(1.0, 2.2, clamp(uWaveSpread, 0.0, 1.0));
+    float slower = inversesqrt(longer);
+    highp vec2 p = xz - uFlowOffset;
+    return waveHeight(vec2( 0.788,  0.616), 190.0 * longer, amp * 0.42, 1.05 * slower, p, 0.0)
+         + waveHeight(vec2(-0.552,  0.834), 118.0 * longer, amp * 0.28, 1.45 * slower, p, 1.0)
+         + waveHeight(vec2( 0.943, -0.333),  74.0 * longer, amp * 0.19, 1.95 * slower, p, 2.0)
+         + waveHeight(vec2(-0.673, -0.740),  38.0 * longer, amp * 0.11, 2.70 * slower, p, 3.0);
+}
+
+// The water surface's rise above its still level at a point, as drawn:
+// the grid's corners, straight across the cell's triangle the point is in
+// (the cell is split from its (+x, -z) corner to its (-x, +z) one).
+highp float surfaceRise(highp vec2 xz) {
+    if (uWaveAmp <= 0.001) return 0.0;
+    highp vec2 size = max(uBrush.zw - uBrush.xy, vec2(1.0));
+    float n = float(max(uWaterCells, 1));
+    highp vec2 g = clamp((xz - uBrush.xy) / size * n, vec2(0.0), vec2(n - 1e-3));
+    highp vec2 i = floor(g);
+    vec2 f = g - i;
+    highp vec2 cell = size / n;
+    highp vec2 c00 = uBrush.xy + i * cell;
+    highp float h00 = cornerRise(c00);
+    highp float h10 = cornerRise(c00 + vec2(cell.x, 0.0));
+    highp float h01 = cornerRise(c00 + vec2(0.0, cell.y));
+    if (f.x + f.y <= 1.0)
+        return h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
+    highp float h11 = cornerRise(c00 + cell);
+    return h11 + (1.0 - f.x) * (h01 - h11) + (1.0 - f.y) * (h10 - h11);
 }
 
 // Along the perimeter, counter-clockwise from the (min x, min z) corner.
@@ -3993,14 +4103,16 @@ void main() {
         // On the surface, d in from the edge; rows crowd towards the brink.
         float u = 1.0 - float(r) / float(max(uTongueRows, 1));
         highp float d = uTongue * u * u;
-        // The surface rises off its pinned edge as its waves grow: lie
-        // above the highest it can reach here.
-        highp float y = uTop + lift + uSurfSlope * d;
         // Mitred at the corners: columns within d of one fold onto the
         // diagonal, where the next side's tongue begins.
         highp float aa = clamp(a, lo + d, hi - d);
-        p = vec3(0.0, y, 0.0);
+        p = vec3(0.0, 0.0, 0.0);
         p.xz = rim.xz + along * (aa - a) - out2 * d;
+        // On the water's surface as it is drawn, waves and all (they are
+        // pinned flat at the brink, where the tongue meets the fall), a hair
+        // above it -- and a little more where the waves move the surface's
+        // corners sideways, which this does not follow.
+        p.y = uTop + lift + surfaceRise(p.xz) + 0.15 * uWaveAmp * min(d / 48.0, 1.0);
         path = -d;
     } else {
         float t = float(r - uTongueRows) / float(max(uRows, 1));
@@ -4016,9 +4128,11 @@ void main() {
         // The wall below the rim leans out; the curtain never passes into
         // it, and a little spray holds it off the rock.
         highp float below = max(h - y, 0.0);
-        wall = uLean * min(below, max(h - uFloor, 0.0));
+        wall = uLean * smin(below, max(h - uFloor, 0.0), 120.0);
         highp float gap = min(below, 6.0) + 0.035 * min(below, 2000.0);
-        reach = max(arc, wall + gap);
+        // Exactly the brink at the top (it meets the tongue there), rounded
+        // further down.
+        reach = smax(arc, wall + gap, min(80.0, drop * 0.5));
         // Mitred at the world's corners, as the wall's foot is, so the falls
         // on two sides meet along the diagonal.
         highp float eps = uChunkX.z * 0.01;
@@ -4244,13 +4358,15 @@ void main() {
     float fallen = clamp(drop / wallDrop, 0.0, 1.0);
     float tear = smoothstep(0.10 + 0.22 * fallen, 0.30 + 0.25 * fallen,
                             streak * 0.65 + fine * 0.35);
-    alpha *= mix(1.0, 0.97, fallen) * mix(1.0, mix(0.82, 1.0, tear),
-                                          smoothstep(0.4, 1.2, fallen));
+    // Wholly solid in front of the cliff (nothing of the rock shows through
+    // it, so its foot draws no line across the fall); it tears only below.
+    highp float pastFoot = max(drop - wallDrop, 0.0) / wallDrop;
+    alpha *= mix(1.0, mix(0.82, 1.0, tear), smoothstep(0.0, 0.8, pastFoot));
     // And on without end: past the wall it falls on into the void, the
     // ropes drawing apart into spray and the spray thinning into the air
     // the further down it goes, so the eye loses it and no bottom is ever
     // seen.
-    highp float deep = max(drop - wallDrop * 0.5, 0.0);
+    highp float deep = max(drop - wallDrop, 0.0);
     float haze = 1.0 - exp(-deep / 6000.0);
     float veil = pfbm(s - uTime * 3.0, FallPos.y / 160.0 + uTime * 0.35, 80.0);
     vec3 hazeCol = uFogEnabled != 0 ? uFogColor : vec3(0.86, 0.90, 0.94);

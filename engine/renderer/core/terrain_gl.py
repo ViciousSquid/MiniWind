@@ -1137,7 +1137,7 @@ class TerrainGL:
     #: the fall over), and from the brink down; how far in from the edge the
     #: tongue begins; and how far below the strata wall's foot the fall
     #: reaches, fading as it goes, so no bottom is ever seen.
-    FALLS_TONGUE_ROWS = 8
+    FALLS_TONGUE_ROWS = 16
     FALLS_ROWS = 56
     FALLS_TONGUE = 260.0
     FALLS_DEPTH = 48000.0
@@ -1153,8 +1153,9 @@ class TerrainGL:
     FALLS_UNIFORMS = (
         'projection', 'view', 'uHeights', 'uChunkI', 'uChunkX', 'uSide',
         'uEdge', 'uLean', 'uFloor', 'uTop', 'uBottom', 'uRows', 'uTongueRows',
-        'uTongue', 'uSurfSlope', 'uPerimeter', 'uSpan', 'uTint', 'uOpacity',
+        'uTongue', 'uPerimeter', 'uSpan', 'uTint', 'uOpacity',
         'uReflectivity', 'uTime', 'uCamPos', 'uSkyState', 'uLightSteps', 'uDither',
+        'uWaterCells', 'uBrush', 'uWaveAmp', 'uWaveSpread', 'uFlowOffset', 'uWaterTime',
     )
 
     @staticmethod
@@ -1168,19 +1169,22 @@ class TerrainGL:
         return min(amp, float(height) * 0.45, 30.0)
 
     @classmethod
-    def edge_falls(cls, bounds, centres, halves, tints=None, params=None):
+    def edge_falls(cls, bounds, centres, halves, tints=None, params=None,
+                   spreads=None, flows=None):
         """The stretches of the terrain's edge that water pours over.
 
         *bounds* is ``(min x, max x, min z, max z)``; *centres* and
-        *halves* the water brushes' boxes (``(n, 3)`` each), *tints* and
-        *params* their ``water_tint`` and ``water_params`` rows. A brush
+        *halves* the water brushes' boxes (``(n, 3)`` each), *tints*,
+        *params*, *spreads* and *flows* their ``water_tint``,
+        ``water_params``, ``water_wave_spread`` and ``water_flow`` rows. A brush
         pours over every side of the terrain its box reaches (within
         ``FALLS_TOUCH``), along the part of that side it covers. Returns
-        ``[(side, lo, hi, top, tint, opacity, reflectivity, slope)]``: side
+        ``[(side, lo, hi, top, tint, opacity, reflectivity, waves)]``: side
         as :meth:`edge_sides`, *lo..hi* along that side (z for the x sides,
-        x for the z sides), *top* the water's surface, *slope* how far its
-        surface can rise per unit in from the edge (its waves, pinned flat
-        there, grow over one cell of its grid). Whether anything falls at a
+        x for the z sides), *top* the water's surface, *waves* ``(amplitude,
+        spread, flow x, flow z, min x, min z, max x, max z)``: its waves and
+        its rectangle, so the fall's tongue lies on its surface exactly as
+        the water draws it (terrain_falls.vert). Whether anything falls at a
         point is left to the ground there: only where it lies below *top*
         (terrain_falls.frag).
         """
@@ -1194,6 +1198,10 @@ class TerrainGL:
         if params is None:
             params = np.tile([0.75, 0.5, 0.5, 1.0, 0.0, 1.33, 0.0], (n, 1))
         params = np.asarray(params, dtype=np.float64).reshape(n, -1)
+        spreads = (np.zeros(n) if spreads is None
+                   else np.asarray(spreads, dtype=np.float64).reshape(-1))
+        flows = (np.zeros((n, 2)) if flows is None
+                 else np.asarray(flows, dtype=np.float64).reshape(-1, 2))
         min_x, max_x, min_z, max_z = (float(v) for v in bounds[:4])
         touch = max(cls.FALLS_TOUCH, 1e-5 * max(max_x - min_x, max_z - min_z))
         lo = centres - halves
@@ -1209,7 +1217,9 @@ class TerrainGL:
                 (2, z0 <= min_z + touch and z1 > min_z, x0, x1, min_x, max_x, z1 - z0),
                 (3, z1 >= max_z - touch and z0 < max_z, x0, x1, min_x, max_x, z1 - z0),
             )
-            for side, touches, a0, a1, e0, e1, depth in reaches:
+            waves = (amp, float(spreads[i]), float(flows[i, 0]), float(flows[i, 1]),
+                     float(x0), float(z0), float(x1), float(z1))
+            for side, touches, a0, a1, e0, e1, _depth in reaches:
                 a0, a1 = max(float(a0), e0), min(float(a1), e1)
                 if touches and a1 > a0:
                     # Reaching a world corner, the fall runs on round it
@@ -1218,11 +1228,9 @@ class TerrainGL:
                         a0 = e0 - cls.FALLS_CORNER_RUN
                     if a1 >= e1 - touch:
                         a1 = e1 + cls.FALLS_CORNER_RUN
-                    cell = max(float(depth) / cls.WATER_SURFACE_CELLS, 1.0)
                     falls.append((side, a0, a1, top,
                                   tuple(float(v) for v in tints[i]),
-                                  float(params[i, 0]), float(params[i, 1]),
-                                  amp / cell + 0.002))
+                                  float(params[i, 0]), float(params[i, 1]), waves))
         return falls
 
     @classmethod
@@ -1327,12 +1335,15 @@ class TerrainGL:
         return [entry for entry, keep in zip(out, inside.tolist()) if keep]
 
     def draw_falls(self, falls, projection, view, camera_pos, env_uniforms=None,
-                   time=0.0, sky_state=None):
+                   time=0.0, sky_state=None, flow_clock=None):
         """Draw the waterfalls pouring off the terrain's edge: *falls* as
         :meth:`edge_falls` gives them, over the terrain drawn last
         (:meth:`render`). Blended, after the water, writing no depth.
         *sky_state* is the sky the water reflects (night, cloud cover,
-        gloom, dusk), so the sheet's surface matches the water's.
+        gloom, dusk), so the sheet's surface matches the water's; *time*
+        and *flow_clock* the water pass's own (its waves' time, and how
+        long its flow has run: ``water_flow_clock``), so the tongue lies on
+        the waves exactly where the water draws them.
         Returns the chunk sides drawn."""
         self.falls_sides = 0
         pairs = self.falls_pairs(falls)
@@ -1346,12 +1357,13 @@ class TerrainGL:
         self.frame = frame
         try:
             return self._draw_falls(pairs, projection, view, camera_pos,
-                                    env_uniforms, time, sky_state)
+                                    env_uniforms, time, sky_state,
+                                    time if flow_clock is None else flow_clock)
         finally:
             self.frame = held
 
     def _draw_falls(self, pairs, projection, view, camera_pos, env_uniforms, time,
-                    sky_state=None):
+                    sky_state=None, flow_clock=0.0):
         frame = self.frame
         table = frame.table
         prog = self.falls_program
@@ -1387,6 +1399,8 @@ class TerrainGL:
             2.0 * ((edge[1] - edge[0]) + (edge[3] - edge[2])))
         put('uSkyState', gl_state.glUniform4f, *(float(v) for v in (sky_state or (0.0, 0.0, 0.0, 0.0))))
         put('uTime', gl_state.glUniform1f, float(time))
+        put('uWaterTime', gl_state.glUniform1f, float(time))
+        put('uWaterCells', gl_state.glUniform1i, int(self.WATER_SURFACE_CELLS))
         put('uCamPos', gl_state.glUniform3f, float(camera_pos[0]), float(camera_pos[1]),
             float(camera_pos[2]))
         appearance = frame.appearance or {}
@@ -1431,7 +1445,13 @@ class TerrainGL:
                 gl_state.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._height_pages[page])
                 bound_page = page
             if fall is not last_fall:
-                fside, lo, hi, top, tint, opacity, reflectivity, slope = fall
+                fside, lo, hi, top, tint, opacity, reflectivity, waves = fall
+                amp, spread, flow_x, flow_z = waves[:4]
+                put('uWaveAmp', gl_state.glUniform1f, float(amp))
+                put('uWaveSpread', gl_state.glUniform1f, float(spread))
+                put('uFlowOffset', gl_state.glUniform2f, float(flow_x) * float(flow_clock),
+                    float(flow_z) * float(flow_clock))
+                put('uBrush', gl_state.glUniform4f, *(float(v) for v in waves[4:8]))
                 put('uTop', gl_state.glUniform1f, float(top))
                 put('uBottom', gl_state.glUniform1f, self.falls_bottom(top, floor))
                 put('uSpan', gl_state.glUniform2f,
@@ -1439,7 +1459,6 @@ class TerrainGL:
                 put('uTint', gl_state.glUniform3f, *(float(v) for v in tint))
                 put('uOpacity', gl_state.glUniform1f, float(opacity))
                 put('uReflectivity', gl_state.glUniform1f, float(reflectivity))
-                put('uSurfSlope', gl_state.glUniform1f, float(slope))
                 last_fall = fall
             gl_state.glUniform2i(u['uChunkI'], res, layer)
             gl_state.glUniform3f(u['uChunkX'], *cx)

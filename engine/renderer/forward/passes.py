@@ -457,7 +457,8 @@ class PassesMixin:
             return []
         return TerrainGL.edge_falls(
             terrain.skirt, table.center[water], table.half[water],
-            table.water_tint[water], table.water_params[water])
+            table.water_tint[water], table.water_params[water],
+            table.water_wave_spread[water], table.water_flow[water])
 
     @timed_pass('falls')
     def draw_edge_falls(self, projection, view, camera_pos, config, table):
@@ -478,7 +479,9 @@ class PassesMixin:
         held[1].draw_falls(
             falls, projection, view, self._camera_xyz(camera_pos),
             env_uniforms=self.env_uniform_values(), time=config.get('time', 0.0),
-            sky_state=getattr(self, 'sky_state', None) or self.DEFAULT_SKY_STATE)
+            sky_state=getattr(self, 'sky_state', None) or self.DEFAULT_SKY_STATE,
+            # How far the water's flow has run (the water pass, just drawn).
+            flow_clock=getattr(self, '_water_flow_clock', None))
         self._current_shader = None
         self.render_stats.draw_calls += held[1].falls_sides
 

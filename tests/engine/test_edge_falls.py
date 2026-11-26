@@ -28,12 +28,14 @@ def test_water_inside_the_world_pours_over_nothing():
 
 def test_water_reaching_one_side_pours_over_that_side_only():
     (fall,) = falls((800.0, 50.0, 0.0), (200.0, 16.0, 300.0))
-    side, lo, hi, top, tint, opacity, reflectivity, slope = fall
+    side, lo, hi, top, tint, opacity, reflectivity, waves = fall
     assert side == 1                                  # +x
     assert (lo, hi) == (-300.0, 300.0)                # along z
     assert top == 66.0                                # the water's surface
     assert tint == (0.0, 0.32, 0.5) and opacity == 0.75 and reflectivity == 0.5
-    assert slope > 0.0
+    # Its waves and rectangle, for the tongue to lie on its surface.
+    assert waves[0] == TerrainGL.wave_amplitude(PARAMS, 32.0)
+    assert waves[4:] == (600.0, -300.0, 1000.0, 300.0)
 
 
 def test_water_round_a_corner_pours_over_both_sides_and_runs_on_round_it():
@@ -51,14 +53,18 @@ def test_a_brush_just_short_of_the_edge_does_not_pour():
     assert falls((790.0, 50.0, 0.0), (200.0, 16.0, 300.0)) == []
 
 
-def test_the_tongue_clears_the_waves_growing_off_the_pinned_edge():
-    (fall,) = falls((800.0, 50.0, 0.0), (200.0, 16.0, 300.0))
-    amp = TerrainGL.wave_amplitude(PARAMS, 32.0)
-    cell = 400.0 / TerrainGL.WATER_SURFACE_CELLS      # the brush is 400 deep
-    assert fall[7] >= amp / cell
+def test_the_tongue_follows_the_waters_waves_and_flow():
+    got = TerrainGL.edge_falls(BOUNDS, [(800.0, 50.0, 0.0)], [(200.0, 16.0, 300.0)],
+                               [[0.0, 0.32, 0.5]], [PARAMS], spreads=[0.4],
+                               flows=[(0.0, 4.0)])
+    amp, spread, fx, fz = got[0][7][:4]
+    assert amp > 0.0 and spread == 0.4 and (fx, fz) == (0.0, 4.0)
     calm = falls((800.0, 50.0, 0.0), (200.0, 16.0, 300.0),
                  params=[0.75, 0.5, 0.5, 0.0, 0.0, 1.33, 0.0])
-    assert calm[0][7] < fall[7]
+    assert calm[0][7][0] < amp
+    # The tongue reproduces water.vert's surface, triangles and all.
+    vert = shaders.DEFAULT_SHADERS['terrain_falls.vert']
+    assert 'surfaceRise' in vert and 'uWaterCells' in vert
 
 
 def test_the_perimeter_runs_on_round_every_corner():
