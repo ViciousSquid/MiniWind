@@ -7,8 +7,12 @@ its shape but turns greyscale and a little see-through (:data:`DEAD_OPACITY`),
 and the cross -- ``assets/sprites/heads/dead.png``,
 128 x 128, the heads folder's own, never Fio's
 ``assets/sprites/monsters/.../dead.png`` -- is laid over it in its own
-colours, fitted to the head: a small head (a chicken at 50 px, a crab at 64)
-gets a small cross. After :data:`CROSS_HOLD` seconds the cross fades out over
+colours, fitted to the head -- but never smaller than :data:`MIN_CROSS_PX`,
+the crab's (64 px): a chicken, drawn at 50, gets the same 64 px cross as a
+crab. For such a head the corpse image is a little larger than the head --
+the head at its own size in the middle, the cross filling it -- and the
+corpse is drawn at MIN_CROSS_PX while it is dead, its own size again if it
+is brought back. After :data:`CROSS_HOLD` seconds the cross fades out over
 :data:`CROSS_FADE`, leaving the grey head. Real time, so Slow Time does not
 stretch it.
 
@@ -46,6 +50,8 @@ CROSS_FADE = 1.0
 FADE_STEPS = 6
 #: How opaque a dead head is (the cross is drawn at its own strength).
 DEAD_OPACITY = 0.9
+#: The smallest a cross is drawn (px): the crab's, half the usual head.
+MIN_CROSS_PX = 64
 #: True while a play session runs: actors built then get their corpse image
 #: as they get their look (game/entities.py). False in the editor, so its
 #: maps never carry one.
@@ -64,15 +70,17 @@ def _repo_path(path: str) -> str:
     return p
 
 
-def _cache_name(rel: str, step: int) -> str:
-    """A cache file name for the look at *rel* at fade *step*
-    (``sprites/heads/chicken.png``, 0 -> ``heads__chicken__0.png``)."""
+def _cache_name(rel: str, step: int, drawn: int = 0) -> str:
+    """A cache file name for the look at *rel* at fade *step*, for a head
+    drawn at *drawn* px (``sprites/heads/chicken.png``, 0, 50 ->
+    ``heads__chicken__o90__c64__0.png``: its cross at 64)."""
     inner = rel[len("assets/"):]
     if inner.startswith("sprites/"):
         inner = inner[len("sprites/"):]
     stem, _ext = os.path.splitext(inner)
     # The opacity is in the name, so a change to it makes fresh images.
-    return f"{stem.replace('/', '__')}__o{int(round(DEAD_OPACITY * 100))}__{int(step)}.png"
+    pad = f"__c{MIN_CROSS_PX}" if 0 < drawn < MIN_CROSS_PX else ""
+    return f"{stem.replace('/', '__')}__o{int(round(DEAD_OPACITY * 100))}{pad}__{int(step)}.png"
 
 
 def cross_alpha(age: float) -> float:
@@ -97,11 +105,23 @@ def _grey(image):
     return grey
 
 
-def corpse_sprite(sprite_path: str, step: int = 0):
-    """The corpse image for an actor drawn as *sprite_path*, at fade *step*:
-    the image gone grey with the cross on it at ``1 - step / FADE_STEPS``
-    strength (none at FADE_STEPS), made if need be. Repo-relative, ready for
-    ``custom_dead``; or None when there is nothing to make it from."""
+def dead_size(drawn) -> int:
+    """The size (px) a corpse is drawn at, for a head drawn at *drawn*."""
+    try:
+        drawn = int(drawn)
+    except (TypeError, ValueError):
+        return 0
+    return max(drawn, MIN_CROSS_PX) if drawn > 0 else 0
+
+
+def corpse_sprite(sprite_path: str, step: int = 0, drawn: int = 0):
+    """The corpse image for an actor drawn as *sprite_path* (at *drawn* px),
+    at fade *step*: the image gone grey with the cross on it at
+    ``1 - step / FADE_STEPS`` strength (none at FADE_STEPS), made if need be.
+    For a head drawn smaller than MIN_CROSS_PX the image is larger than the
+    head by MIN_CROSS_PX / drawn, the head in the middle at its own size, so
+    drawn at :func:`dead_size` its cross is MIN_CROSS_PX. Repo-relative, ready
+    for ``custom_dead``; or None when there is nothing to make it from."""
     if not sprite_path:
         return None
     step = max(0, min(FADE_STEPS, int(step)))
@@ -111,7 +131,11 @@ def corpse_sprite(sprite_path: str, step: int = 0):
     cross = os.path.join(root, CROSS)
     if rel.startswith(CACHE_DIR + "/") or not os.path.isfile(src) or not os.path.isfile(cross):
         return None
-    out_rel = f"{CACHE_DIR}/{_cache_name(rel, step)}"
+    try:
+        drawn = int(drawn or 0)
+    except (TypeError, ValueError):
+        drawn = 0
+    out_rel = f"{CACHE_DIR}/{_cache_name(rel, step, drawn)}"
     out = os.path.join(root, out_rel)
     try:
         newest = max(os.path.getmtime(src), os.path.getmtime(cross))
@@ -120,6 +144,14 @@ def corpse_sprite(sprite_path: str, step: int = 0):
         from PIL import Image
         with Image.open(src) as head_image, Image.open(cross) as cross_image:
             corpse = _grey(head_image.convert("RGBA"))     # the head, grey, 90%
+            if 0 < drawn < MIN_CROSS_PX:
+                # A small head: a larger canvas, the head at its own size in
+                # the middle, so the cross over all of it is MIN_CROSS_PX.
+                w, h = corpse.size
+                cw, ch = (round(w * MIN_CROSS_PX / drawn), round(h * MIN_CROSS_PX / drawn))
+                canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+                canvas.alpha_composite(corpse, ((cw - w) // 2, (ch - h) // 2))
+                corpse = canvas
             strength = 1.0 - step / FADE_STEPS
             if strength > 0.0:
                 mark_image = cross_image.convert("RGBA").resize(corpse.size, Image.LANCZOS)
@@ -148,12 +180,39 @@ def mark(props) -> bool:
     if not look:
         return False
     step = FADE_STEPS if props.get("dead") else 0
-    want = corpse_sprite(look, step) or _repo_path(look)
+    drawn = props.get("_alive_size") or props.get("sprite_width") or 0
+    want = corpse_sprite(look, step, drawn) or _repo_path(look)
+    if props.get("dead"):
+        lay_out(props)                         # a loaded corpse: at its dead size
     if props.get("custom_dead") == want:
         return False
     props["custom_dead"] = want
     if step == FADE_STEPS:
         props["_cross_faded"] = True
+    return True
+
+
+def lay_out(props) -> bool:
+    """A corpse whose head is drawn smaller than MIN_CROSS_PX is drawn at
+    MIN_CROSS_PX while dead (its image is that much larger than the head), its
+    living size kept to come back to. True when the size changed."""
+    try:
+        drawn = int(props.get("sprite_width") or 0)
+    except (TypeError, ValueError):
+        return False
+    if "_alive_size" in props or not 0 < drawn < MIN_CROSS_PX:
+        return False
+    props["_alive_size"] = drawn
+    props["sprite_width"] = props["sprite_height"] = MIN_CROSS_PX
+    return True
+
+
+def restore_size(props) -> bool:
+    """Brought back: drawn at its living size again. True when it changed."""
+    size = props.pop("_alive_size", None)
+    if size is None:
+        return False
+    props["sprite_width"] = props["sprite_height"] = size
     return True
 
 
@@ -183,8 +242,12 @@ class CorpseFader:
             key = id(actor)
             seen.add(key)
             started = self._dying.setdefault(key, (actor, now))[1]
+            resized = lay_out(p)                 # a small head: drawn at the crab's size
             step = step_at(now - started)
-            want = corpse_sprite(look, step)
+            drawn = p.get("_alive_size") or p.get("sprite_width") or 0
+            want = corpse_sprite(look, step, drawn)
+            if resized and touch is not None and p.get("custom_dead") == want:
+                touch(actor)
             if want and p.get("custom_dead") != want:
                 p["custom_dead"] = want
                 changed += 1

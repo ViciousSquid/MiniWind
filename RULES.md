@@ -416,9 +416,11 @@ When the fate die fails, the save stands, and the box still shows the die
 * **A corpse keeps its face.** When an NPC, a creature or you die, the head
   (or the body's own picture) stays as it was but turns greyscale, at 90%
   opacity, and the cross from the heads folder (`assets/sprites/heads/dead.png`,
-  in its own colours) is laid over it, fitted to the head -- a chicken's
-  cross is as small as a chicken. After 3 seconds the cross fades out over 1
-  second, leaving the grey head. Brought back to life, it is in colour again.
+  in its own colours) is laid over it, fitted to the head but never smaller
+  than a crab's (64 px): a chicken, drawn at 50, gets the same 64 px cross,
+  its head staying 50 px in the middle. After 3 seconds the cross fades out
+  over 1 second, leaving the grey head. Brought back to life, it is in colour
+  again, at its own size.
   A body blown apart leaves no corpse, so nothing is drawn for it but the
   gore (`game/corpse_sprites.py`).
 * A killing blow of 120% or more of the victim's health — and **every

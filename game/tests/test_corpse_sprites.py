@@ -53,13 +53,42 @@ def test_once_the_cross_has_faded_it_is_the_grey_head_alone():
     assert all(_is_grey(corpse.getpixel((x, y))) for x in range(0, 128, 5) for y in range(0, 128, 5))
 
 
-def test_a_small_head_gets_a_cross_fitted_to_it():
-    # A chicken's image is drawn at 50 px: its cross is fitted to the image,
-    # so it is drawn at 50 px with it.
-    out = cs.corpse_sprite(CHICKEN, 0)
-    assert _open(out).size == _open(CHICKEN).size
+def test_a_chicken_gets_the_same_cross_as_a_crab_and_its_head_stays_its_size():
     from ..rpg import heads
-    assert heads.size_for({}, "chicken") == 50
+    crab_px, chicken_px = heads.size_for({}, "crab01"), heads.size_for({}, "chicken")
+    assert (crab_px, chicken_px) == (64, 50) and cs.MIN_CROSS_PX == crab_px
+    crab = _open(cs.corpse_sprite("assets/sprites/heads/crab01.png", 0, crab_px))
+    chick = _open(cs.corpse_sprite(CHICKEN, 0, chicken_px))
+    assert crab.size == (128, 128)                       # the crab: its cross is its head
+    canvas = round(128 * cs.MIN_CROSS_PX / chicken_px)
+    assert chick.size == (canvas, canvas)               # the chicken: a larger canvas
+    # Drawn at their dead sizes, the two crosses are the same size...
+    assert cs.dead_size(crab_px) == cs.dead_size(chicken_px) == 64
+    # ...and the chicken's head, in the middle of its canvas, is still 50 px.
+    head_on_screen = 128 * cs.dead_size(chicken_px) / canvas
+    assert head_on_screen == pytest.approx(chicken_px, abs=0.5)
+    head = _open(CHICKEN)
+    off = (canvas - 128) // 2
+    opaque = [(x, y) for x in range(0, 128, 8) for y in range(0, 128, 8)
+              if head.getpixel((x, y))[3] == 255 and _open(cs.CROSS).resize(
+                  (canvas, canvas)).getpixel((x + off, y + off))[3] == 0]
+    assert opaque and all(_is_grey(chick.getpixel((x + off, y + off))) for x, y in opaque)
+
+
+def test_a_small_corpse_is_drawn_at_the_crabs_size_and_back_to_its_own_if_revived():
+    now = [0.0]
+    fader = cs.CorpseFader(clock=lambda: now[0])
+    hen = SimpleNamespace(properties={"custom_idle": CHICKEN, "dead": True,
+                                      "sprite_width": 50, "sprite_height": 50})
+    fader.update([hen])
+    p = hen.properties
+    assert (p["sprite_width"], p["sprite_height"], p["_alive_size"]) == (64, 64, 50)
+    assert p["custom_dead"] == cs.corpse_sprite(CHICKEN, 0, 50)
+    p["dead"] = False
+    assert cs.restore_size(p) and (p["sprite_width"], p["sprite_height"]) == (50, 50)
+    big = SimpleNamespace(properties={"custom_idle": HEAD, "dead": True, "sprite_width": 128})
+    fader.update([big])
+    assert big.properties["sprite_width"] == 128 and "_alive_size" not in big.properties
 
 
 @pytest.mark.parametrize("age, alpha", [(0.0, 1.0), (2.9, 1.0), (3.0, 1.0),
