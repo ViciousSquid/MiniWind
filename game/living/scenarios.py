@@ -946,22 +946,14 @@ class ScenarioDirector:
     def _stage_patrol(self, t):
         return self.invoke("patrol", t)
     def spawned(self, j, things) -> None:
-        """A staged party became actors: give them the scene's conversation,
-        thoughts and lines (game/living/scene_talk.py), and hand out its quest."""
+        """Give materialised actors their scene-derived conversation and thoughts."""
         scene = self.scenes.get((j.stage or {}).get("scene", ""))
         if scene is None or not things:
             return
         self._give_talk(scene, j, things)
-        qid = scene.get("quest")
-        if qid and j.stage.get("role") == "avenger":
-            from ..rpg import quests as rpg_quests
-            q = rpg_quests.get(qid)
-            giver = things[0]
-            if q is not None:
-                tree = copy.deepcopy(giver.properties.get("dialogue"))
-                tree, _ = rpg_quests.offer_dialogue_branch(tree, qid, q.name, q.desc
-                                                           if getattr(q, "desc", "") else "")
-                giver.properties["dialogue"] = tree
+        module = self.modules.get(scene["kind"])
+        if module is not None:
+            module.spawned(self.context, scene, j, things)
 
     def _give_talk(self, scene, j, things) -> None:
         role = (j.stage or {}).get("role", "")
@@ -1023,15 +1015,12 @@ class ScenarioDirector:
         if scene is not None and not scene.get("resolved") and scene.get("hinted"):
             # They came near enough to know and went on their way.
             self._learn_scene(scene, False, "they came within sight of it and went on their way")
-        if scene is not None and scene["kind"] == "cult_rite":
-            handled = self.modules["cult_rite"].stage_expired(
-                self.context, j, scene, role, t)
-            if handled is not None:
-                return handled
-        handled = self.modules["avenger"].on_stage_expired(
-            self.context, j, stage, scene, t)
-        if handled is not None:
-            return handled
+        if scene is not None:
+            module = self.modules.get(scene["kind"])
+            if module is not None:
+                handled = module.stage_expired(self.context, j, scene, role, t)
+                if handled is not None:
+                    return handled
         if stage.get("borrowed") or j.resident:
             self._decide("world", f"{j.describe()} waited out the scene unmet and went back "
                          "to ordinary life.", journey=j.id, scene=stage.get("scene"))

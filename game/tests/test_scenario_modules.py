@@ -43,4 +43,6 @@ def test_each_module_owns_its_name_and_player_hint():
     }
     assert all(module.hints for module in modules.values())
     assert all(callable(module.watch) for module in modules.values())
+    assert all(callable(module.spawned) for module in modules.values())
+    assert all(callable(module.stage_expired) for module in modules.values())
     assert all(callable(module.thank_line) for module in modules.values())

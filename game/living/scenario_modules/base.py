@@ -159,6 +159,14 @@ class BaseScenario:
     THOUGHTS = {}
     AMBIENT = {}
 
+    def spawned(self, ctx, scene, journey, things):
+        """Handle scenario-specific work when staged actors materialise."""
+        return None
+
+    def stage_expired(self, ctx, journey, scene, role, t):
+        """Handle scenario-specific expiry; return None for shared release handling."""
+        return None
+
     def watch(self, ctx, scene, px, pz, t):
         """Handle scenario-specific watch behaviour; return True when consumed."""
         return False

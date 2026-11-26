@@ -1,5 +1,6 @@
 """Avenger: a resident pursues the actual person responsible for their grievance."""
 
+import copy
 import math
 from .. import journeys as jn, scene_talk
 from ...sim import story_text
@@ -240,6 +241,21 @@ class AvengerScenario(BaseScenario):
                         "(and is out of sight, free to leave)")
 
 
+    def spawned(self, ctx, scene, journey, things):
+        """Offer the optional kill-the-culprit quest when the avenger materialises."""
+        qid = scene.get("quest")
+        if not qid or (journey.stage or {}).get("role") != "avenger" or not things:
+            return
+        from ...rpg import quests as rpg_quests
+        quest = rpg_quests.get(qid)
+        if quest is None:
+            return
+        giver = things[0]
+        tree = copy.deepcopy(giver.properties.get("dialogue"))
+        tree, _ = rpg_quests.offer_dialogue_branch(
+            tree, qid, quest.name, quest.desc if getattr(quest, "desc", "") else "")
+        giver.properties["dialogue"] = tree
+
     def watch(self, ctx, scene, px, pz, t):
         journeys = scene.get("journeys") or {}
         if "avenger" in journeys and "attacker" not in journeys:
@@ -261,9 +277,10 @@ class AvengerScenario(BaseScenario):
     def learned_intervention(self, name):
         return f"they helped {name} settle the score"
 
-    def on_stage_expired(self, ctx, journey, stage, scene, t):
+    def stage_expired(self, ctx, journey, scene, role, t):
         """An unmet avenger continues toward the known culprit on their own."""
-        if stage.get("role") != "avenger" or not stage.get("onward"):
+        stage = journey.stage or {}
+        if role != "avenger" or not stage.get("onward"):
             return None
         lead = journey.leader()
         ctx._narrate(
