@@ -3,9 +3,6 @@
 from types import SimpleNamespace
 
 import pytest
-from PyQt5.QtCore import QPoint
-from PyQt5.QtGui import QImage, QPainter
-
 from engine.floating_windows import WindowManager
 from ..console import ConsoleContext, cmd_storyteller
 from ..living.journeys import KINDS
@@ -33,28 +30,27 @@ class View:
         self.updates += 1
 
 
-def paint(win, view):
-    image = QImage(view.width(), view.height(), QImage.Format_ARGB32)
-    painter = QPainter(image)
-    try:
-        win.draw(painter)
-    finally:
-        painter.end()
+@pytest.fixture(autouse=True)
+def _close_windows(qt_app):
+    yield
+    from ..ui import storyteller_window
+    for win in list(storyteller_window._open):
+        win.close()
 
 
-def test_command_opens_one_live_window_and_raises_it_on_repeat(qt_app):
+def test_command_opens_one_desktop_window_and_raises_it_on_repeat(qt_app):
+    from ..ui import storyteller_window
     story, _director, _hooks, _store = setup()
     view = View(story)
     ctx = ConsoleContext(logic_thread=view.logic_thread, play_mode=True,
                          main_window=SimpleNamespace(view_3d=view))
     cmd_storyteller(ctx, "studio")
-    win = view.window_manager.windows[0]
-    assert isinstance(win, StorytellerWindow)
-    other = object()
-    view.window_manager.add(other)
+    win = storyteller_window._open[-1]
+    assert isinstance(win, StorytellerWindow) and win.isWindow() and win.isVisible()
+    assert win.windowTitle() == "Storyteller Studio"
     cmd_storyteller(ctx, "studio")
-    assert view.window_manager.windows == [other, win]
-    win.active = False
+    assert [w for w in storyteller_window._open if w.view is view] == [win]
+    win.close()
     assert open_storyteller(view) is not win
 
 
@@ -85,36 +81,36 @@ def test_all_effective_levers_and_ten_observations_are_live_and_read_only(qt_app
     assert "bandits: weight 6; departs 18:00–06:00 (overnight)" in "\n".join(t for _, t in rows_for(story))
 
 
-@pytest.mark.parametrize("width,height", [(1280, 720), (640, 360)])
-def test_long_history_fits_small_view_and_can_be_scrolled_by_wheel_and_buttons(qt_app, width, height):
-    story, _director, _hooks, _store = setup()
+def test_the_live_tab_shows_the_report_and_reading_changes_nothing(qt_app):
+    story, _director, _hooks, store = setup()
     for i in range(12):
         story.tick(i)
-    view = View(story, width, height)
-    win = open_storyteller(view)
-    paint(win, view)
-    assert win._full_rect().right() < width and win._full_rect().bottom() < height
-    assert win._scroll_max > 0
-    assert win.handle_wheel(SimpleNamespace(angleDelta=lambda: QPoint(0, -120)))
-    assert win._scroll > 0
-    paint(win, view)
-    rect, _direction = win._buttons[-1]
-    before = win._scroll
-    assert win.handle_body_click(rect.center().x(), rect.center().y())
-    assert win._scroll > before
-    win._scroll_by(100000)
-    assert win._scroll == win._scroll_max
-    win._scroll_by(-100000)
-    assert win._scroll == 0
+    before = dict(store.d)
+    win = open_storyteller(View(story))
+    win.refresh(force=True)
+    assert f"State: {story.state}" in win.live.toPlainText()
+    assert win.live_state.text() == f"Live: {story.state}"
+    assert store.d == before
 
 
-def test_inspector_survives_session_end_and_can_open_on_new_session(qt_app):
+def test_studio_keeps_its_contents_when_play_mode_ends_and_goes_live_again(qt_app):
     story, _director, _hooks, _store = setup()
     view = View(story)
     win = open_storyteller(view)
-    view.logic_thread._miniwind = None
-    paint(win, view)
-    assert rows_for(win._storyteller()) == [("text", "No active MiniWind storyteller.")]
+    win.tab = "Levers"                               # its table, built while live
+    win.tab = "Live"
+    win.refresh(force=True)
+    shown = win.live.toPlainText()
+    assert f"State: {story.state}" in shown
+    view.logic_thread._miniwind = None               # Play Mode stops
+    win.refresh(force=True)
+    assert win.isVisible() and win.live.toPlainText() == shown
+    assert win.live_state.text() == "Play Mode ended"
+    win.tab = "World"                                # the other tab was kept too
+    assert win.world.toPlainText()
+    win.tab = "Levers"
+    assert not win.form_area.widget().isEnabled()    # nothing to edit, still shown
+    win.tab = "Live"
     assert open_storyteller(view) is None
     replacement = setup()[0]
     view.logic_thread._miniwind = SimpleNamespace(storyteller=replacement)
@@ -122,52 +118,39 @@ def test_inspector_survives_session_end_and_can_open_on_new_session(qt_app):
     assert win._storyteller() is replacement
 
 
-def test_studio_drags_a_numeric_cell_into_live_board_data_and_retains_edits(qt_app):
+def test_studio_lever_boxes_edit_live_board_data_and_retain_edits(qt_app):
     from ..sim.storyteller import Storyteller
     from .test_storyteller import board
 
     story, director, hooks, store = setup()
-    view = View(story)
-    win = open_storyteller(view)
-    win.tab, win.edit_state = "Levers", "CALM"
-    paint(win, view)
-    rect, (path, value) = next(c for c in win._cells if c[1][0] == ("population",))
-    point = rect.center()
-    assert win.handle_body_click(point.x(), point.y())
-    assert win.mouse_captured
-    moved = SimpleNamespace(x=lambda: point.x() + 15, y=lambda: point.y())
-    assert view.window_manager.handle_mouse_move(moved, view.width(), view.height())
-    assert view.window_manager.handle_mouse_release(moved)
-    assert not win.mouse_captured
+    win = open_storyteller(View(story))
+    win.tab = "Levers"
+    win.choose_state("CALM")
+    spin = win._spins[("population",)]
+    value = spin.value()
+    spin.setValue(value + 3)
+    spin.editingFinished.emit()
     assert story.levers["population"] == value + 3
     assert board(story)._lever("population", 0) == value + 3
     assert Storyteller(store, director, hooks).levers == story.levers
     assert "Studio edit" in dict(story.inspector_rows())
+    assert ("market_chance",) in win._spins and win._spins[("market_chance",)].maximum() == 1
+    assert win._spins[("kind_hours", "bandits", 0)].maximum() == 24
+    text = " ".join(w.text() for w in win.form_area.widget().findChildren(type(win.status)))
+    assert "Drag a value" not in text                    # the long notes are gone
+    win.reset_state()
+    assert story.levers["population"] == value
 
 
-def test_studio_resize_uses_window_manager_capture_and_reflows_scroll_area(qt_app):
+def test_studio_switches_pacing_and_the_state_being_edited(qt_app):
     story, _director, _hooks, _store = setup()
-    view = View(story)
-    win = open_storyteller(view)
-    paint(win, view)
-    old_width, old_height = win.width, win.content_height()
-    point = win._resize_rect.center()
-    press = SimpleNamespace(pos=lambda: point, x=lambda: point.x(), y=lambda: point.y())
-    assert view.window_manager.handle_mouse_press(press)
-    assert win.mouse_captured
-    moved = SimpleNamespace(x=lambda: point.x() + 120, y=lambda: point.y() + 40)
-    assert view.window_manager.handle_mouse_move(moved, view.width(), view.height())
-    view.window_manager.handle_mouse_release(moved)
-    paint(win, view)
-    assert win.width == old_width + 120
-    assert win.content_height() == old_height + 40
-    assert win._full_rect().right() < view.width() and win._full_rect().bottom() < view.height()
-    # Explicit size survives painting; smaller viewports still bound the window.
-    paint(win, view)
-    assert win.width == old_width + 120
-    view.size = (640, 360)
-    paint(win, view)
-    assert win._full_rect().right() < 640 and win._full_rect().bottom() < 360
+    win = open_storyteller(View(story))
+    win.tab = "Levers"
+    win.choose_state("PEAK")
+    assert win._state_buttons["PEAK"].isChecked() and not win._state_buttons["CALM"].isChecked()
+    on = story.enabled
+    win.pacing_button.click()
+    assert story.enabled is (not on)
 
 
 def test_studio_world_tab_and_causal_history_share_read_only_evidence(qt_app, monkeypatch):
@@ -183,7 +166,8 @@ def test_studio_world_tab_and_causal_history_share_read_only_evidence(qt_app, mo
     win = open_storyteller(view)
     win.tab = "World"
     before = dict(store.d), story.observations
-    paint(win, view)
+    win.refresh(force=True)
+    assert win.world.toPlainText()
     from PyQt5 import QtCore, QtWidgets
     window = sim_editor._WorldWindow(None, QtWidgets, QtCore)
     window._timer.stop()

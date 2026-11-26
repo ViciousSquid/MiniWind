@@ -505,6 +505,14 @@ class PauseActions:
     def pause_menu_set_record_encounters(self, on):
         self._set_game_option("record_encounters", bool(on))
 
+    def pause_menu_game_mode(self):
+        """``normal`` or ``dynamic`` ([GAME] game_mode, Normal by default)."""
+        value = str(self._game_option("game_mode", "normal")).strip().lower()
+        return "dynamic" if value == "dynamic" else "normal"
+
+    def pause_menu_set_game_mode(self, mode):
+        self._set_game_option("game_mode", "dynamic" if str(mode).lower() == "dynamic" else "normal")
+
     def pause_menu_grass_fire(self):
         """Whether fire spreads through long grass ([GAME] grass_fire, on by default)."""
         return str(self._game_option("grass_fire", "True")).lower() in ("1", "true", "yes", "on")

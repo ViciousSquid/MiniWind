@@ -456,7 +456,9 @@ class ViewAudio:
         Speaker requests carry an action ('play'/'stop'), looping,
         position/radius for spatial speakers, and entity_id.
         Looping speakers remain tracked so their attenuation follows the
-        listener as the player moves.
+        listener as the player moves; so does a one-shot sent with
+        ``stoppable`` and an entity_id, which a 'stop' can then cut short.
+        A 'move' with an entity_id and a position moves a tracked sound.
         """
         speaker_channels = getattr(self, "_speaker_channels", None)
         if speaker_channels is None:
@@ -487,6 +489,16 @@ class ViewAudio:
         for request in self.view.game_state.consume_sounds():
             action = request.get('action', 'play')
             entity_id = request.get('entity_id')
+
+            if action == 'move':
+                # A tracked sound follows its source (a bow's draw on an archer
+                # who walks while drawing): the next mix uses the new position.
+                meta = speaker_mix.get(entity_id)
+                channel = speaker_channels.get(entity_id)
+                if meta is not None and channel is not None and request.get('position') is not None:
+                    meta['position'] = request.get('position')
+                    apply_mix(channel, meta)
+                continue
 
             if action == 'stop':
                 channel = speaker_channels.pop(entity_id, None)
@@ -545,8 +557,10 @@ class ViewAudio:
                 apply_mix(channel, meta)
 
                 # Track only entity-owned looping channels. One-shots get the
-                # correct spatial mix at their start position.
-                if entity_id is not None and loops != 0:
+                # correct spatial mix at their start position -- unless asked
+                # for as 'stoppable', so a later 'stop' for the entity can cut
+                # them short (a bow's draw when the arrow is loosed early).
+                if entity_id is not None and (loops != 0 or request.get('stoppable')):
                     speaker_channels[entity_id] = channel
                     speaker_mix[entity_id] = meta
 

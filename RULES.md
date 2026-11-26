@@ -140,7 +140,9 @@ fading out. A Mage, and any other character who starts with spells
 (a birthsign's, a race's -- never a Warrior or Barbarian, who never use
 magic), is then shown the spellbook key ("Spellbook") the same way, at
 3 s after the first began or as soon as it has gone, whichever is later --
-never both at once. Pressing a hint's key (by your own binding, which is
+never both at once. Each hint plays a ping (`assets/sounds/ping.mp3`, loose or
+in a `.fiopak`; silent until that file exists) the moment it starts to fade
+in -- not for a hint that is skipped. Pressing a hint's key (by your own binding, which is
 the key shown) hides it at once; pressed before its hint shows, the hint is
 skipped. Real time, so Slow Time does not stretch them; a hint keeps its
 clock but is not drawn while a menu, a conversation or the pause menu is up,
@@ -456,11 +458,30 @@ shakes, never the HUD (`game/runtime.py`, `game/host.py`).
 | Your overkill | 0.032 | 0.48 |
 | Your critical killing blow | 0.044 | 0.60 |
 
+### The bow, heard
+
+Drawing your bow plays its draw (`assets/sounds/bow_draw.mp3`) the moment the
+charge pie appears; loosing the arrow cuts the draw off and plays the release
+(`bow_release.mp3`). Lowering the bow without loosing cuts the draw and makes
+no release; so does a loose that fails (no stamina, still recovering). Both
+are heard from the archer, through the spatial mix, and the draw follows an
+archer who walks while drawing. Not for a fist charge. The two clips are cut
+from `bowsounds.mp3`, a real bow drawn and loosed (`tools/split_bow_sounds.py`).
+
+### Arrows past your head
+
+An arrow someone else loosed that flies past you, missing by inches, whooshes
+(`assets/sounds/whoosh.mp3`, from where you stand). Its path must pass
+within 56 of you -- the 32 hit sphere and a few inches more -- coming toward
+you and flying on past, still in flight; once per arrow. Never your own
+arrow, never a spell, never one that hits you, sticks in something or falls
+short first (`game/near_miss.py`).
+
 ### Arrows in barrels
 
 An arrow or crossbow bolt -- yours or an archer's -- that hits a barrel sticks
 in it where it struck, at the angle it flew, with a thunk
-(`assets/sounds/thunk.wav`). It stays there, moving and turning with the
+(`assets/sounds/thunk.mp3`). It stays there, moving and turning with the
 barrel when it is pushed, topples, rolls or is carried; a barrel holds at most
 12 (another pushes the oldest out). Standing within 140 of a barrel with
 arrows in it, when it is the nearest thing to use, **E** pulls them all out
@@ -1075,6 +1096,78 @@ The world ends in a cliff of rock strata (`engine/shaders.py`,
   outcrop: within 3,500 units along the edge of each shore, fading out
   along the edge, never behind the falls (`TerrainGL._draw_underside`,
   `terrain_under.vert`).
+
+## 22. Game mode
+
+Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
+**Normal** (the default) or **Dynamic**. It can be changed at any time. The guide is
+[docs/game_modes.md](docs/game_modes.md).
+
+* **Normal.** The storyteller (`game/sim/storyteller.py`) is only allowed to
+  pace what the world already holds: it samples and biases journeys,
+  destinations and existing intents, and never makes anything up. Nothing
+  below happens.
+* **Dynamic.** A director (`game/living/scenarios.py`) may also *author*:
+  it stages scenes on the road ahead of you, so that you walk into them as
+  if by chance. Authored is not invented -- every scene is cast from the world:
+  * *Real people.* Victims are travellers already on the roads, or townsfolk
+    (as themselves -- name, face, dialogue, purse) taken off their schedule
+    while nobody can see them. Gangs and patrols already on the roads are
+    borrowed before any new party is made.
+  * *Real motives.* An avenger goes out only over a grievance they actually
+    hold: a death, attack or theft by brigands, cultists or monsters that
+    they saw or were told of, within the last 10 days, against them or
+    someone close to them. Someone who comes to settle a score with you --
+    vendetta, reckoning, restitution, or gratitude -- does so over their own
+    evidenced intent toward you; the director only picks the road and the hour.
+  * *The world's outcome.* A scene plays out whether or not you step in.
+    Near you it is a real fight; unmet, the board's ordinary dice settle it.
+    An avenger nobody helps goes after their quarry alone; a captive the cult
+    is left with is lost, and their kin hear of it, which can send one of
+    them out for revenge. News of every scene spreads like any news.
+* **The scenes.** A traveller waylaid by brigands; a townsperson out for
+  revenge, who offers a quest to kill the gang's leader (the reward is paid
+  from what they have); someone coming to settle a score with you, or to
+  thank you; the watch fighting brigands; and after dark, ambushes, cult
+  processions and cult rites with a townsperson held captive (cults hold
+  their rite 2.5 game hours). A rescued party thanks you from 380 units and
+  pays a reward from its own purse (10--120 gold). A
+  staged party waits 3 game hours, then goes back to ordinary life.
+* **Where.** Always on a road you are on (within 900 units of it), ahead of
+  you, 1,150--1,900 units away -- beyond any actor's sight -- and, for
+  hostile scenes, at least 900 units from a town. A line on screen hints at
+  a scene once you are within 1,300 units (an ambush only says the road has
+  gone quiet).
+* **Pacing.** A tension meter follows what you are going through: health
+  lost (+2.5 per whole bar) and hostiles fighting within 1,500 units (+0.02
+  each per second); it falls 0.04 a second when calm, 0.01 while
+  threatened. Four phases: *build* (a scene every 45--90 s) until tension
+  reaches 80%; *sustain* the peak 8--15 s; *ease off* -- nothing new until
+  tension is under 25% and the fighting is over; *rest* 60--120 s, with at
+  most one peaceful meeting. The first rest of a session is 40 s. Below 45%
+  health you get rest rules whatever the phase. At most 2 scenes are in play.
+  The storyteller's state scales it: the gap between scenes ×1.0 CALM, ×0.8
+  RISING, ×0.7 PEAK, ×1.6 RESPITE; hostile scenes ×1.0 / 1.3 / 1.5 / 0.4.
+* **Seeing what it decided.** Console `storyteller` opens a desktop window:
+  the **Story** tab says, in plain words, every decision the director took
+  and why (what it chose and what it passed over, and the reason for each),
+  and the **Raw** tab shows the numbers behind them. `storyteller report
+  dynamic` and `storyteller report raw` print the same in the console;
+  `storyteller watch on` logs each decision as it happens. Every staged
+  scene is also on the storyteller's activity feed.
+* **Learning.** After each peak the director looks at the lowest your health
+  got: below 30% it slows (time between scenes +0.1, hostile scenes −0.1);
+  80% or more it quickens (the reverse); otherwise no change. Stepping into a
+  scene makes that kind +0.05 likelier; seeing one and going on −0.1; one you
+  never came near changes nothing. Limits: time between scenes ×0.6--1.8,
+  hostile scenes ×0.5--1.5, each scene ×0.4--2. Every nudge is explained. What
+  it learned is saved in the save (minified JSON); `storyteller unlearn`
+  forgets it.
+* **Tuning.** `game/storyteller_normal.ini` (the storyteller, both modes) and
+  `game/storyteller_dynamic.ini` (the director, and how it learns). Every
+  setting ships switched off at its current value; switch one on to change it.
+* **Back to Normal.** Staged parties off screen go straight back to
+  ordinary life; any in view finish what they were doing.
 
 ## Known gaps
 

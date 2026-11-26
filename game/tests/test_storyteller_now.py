@@ -143,11 +143,9 @@ def test_console_watch_logs_activity_live_and_stops(monkeypatch):
 
 # -- the window ----------------------------------------------------------------
 @pytest.mark.qt
-def test_window_opens_once_paints_live_and_opens_studio(qt_app):
-    from PyQt5.QtCore import QPoint
-    from PyQt5.QtGui import QImage, QPainter
-
+def test_window_opens_once_as_a_desktop_window_reads_live_and_opens_studio(qt_app):
     from engine.floating_windows import WindowManager
+    from ..ui import storyteller_now
     from ..ui.storyteller_now import TITLE, StorytellerNowWindow
     from ..ui.storyteller_window import StorytellerWindow
 
@@ -173,27 +171,117 @@ def test_window_opens_once_paints_live_and_opens_studio(qt_app):
     view = View()
     ctx = console.ConsoleContext(logic_thread=view.logic_thread, play_mode=True,
                                  main_window=SimpleNamespace(view_3d=view))
-    console.cmd_storyteller(ctx, "")
-    win = view.window_manager.windows[0]
-    assert isinstance(win, StorytellerNowWindow) and win.title == TITLE
-    console.cmd_storyteller(ctx, "")
-    assert view.window_manager.windows == [win]
     before = copy.deepcopy(store.d)
-    image = QImage(640, 360, QImage.Format_ARGB32)
-    painter = QPainter(image)
+    console.cmd_storyteller(ctx, "")
+    win = storyteller_now._open[-1]
     try:
-        win.draw(painter)
+        assert isinstance(win, StorytellerNowWindow) and win.windowTitle() == TITLE
+        assert win.isWindow() and win.isVisible()          # a window of its own
+        console.cmd_storyteller(ctx, "")
+        assert [w for w in storyteller_now._open if w.view is view] == [win]
+        win.refresh(force=True)
+        assert store.d == before                           # reading changes nothing
+        rows = win.rows()
+        assert any(heading and "Activity" in text for _l, text, heading in rows)
+        assert any(label == "State" for label, _t, _h in rows)
+        assert "State" in win.story.toPlainText()
+        win.tab = "Raw"
+        assert win.raw.rowCount() > 0
+        keys = [win.raw.item(i, 0).text() for i in range(win.raw.rowCount())]
+        assert "state" in keys and any("summary()" in k for k in keys)
+        from ..ui import storyteller_window
+        win.studio_button.click()
+        studio = [w for w in storyteller_window._open if w.view is view]
+        assert studio and isinstance(studio[0], StorytellerWindow)
+        studio[0].close()
     finally:
-        painter.end()
-    assert store.d == before
-    assert win._full_rect().right() < 640 and win._full_rect().bottom() < 360
-    rows = win.rows()
-    assert any(heading and "Activity" in text for _l, text, heading in rows)
-    assert any(label == "State" for label, _t, _h in rows)
-    assert win._scroll_max > 0
-    win.handle_wheel(SimpleNamespace(angleDelta=lambda: QPoint(0, -120)))
-    assert win._scroll > 0
-    rect, action = win._buttons[0]
-    assert action == "studio"
-    assert win.handle_body_click(rect.center().x(), rect.center().y())
-    assert any(isinstance(w, StorytellerWindow) for w in view.window_manager.windows)
+        win.close()
+    assert win not in storyteller_now._open
+
+@pytest.mark.qt
+def test_both_windows_collapse_to_their_strip_and_pin_on_top(qt_app):
+    from PyQt5.QtCore import Qt
+    from engine.floating_windows import WindowManager
+    from ..ui.storyteller_now import StorytellerNowWindow
+    from ..ui.storyteller_window import StorytellerWindow
+
+    story = setup()[0]
+    view = SimpleNamespace(logic_thread=SimpleNamespace(_miniwind=session_for(story)),
+                           window_manager=WindowManager(), update=lambda: None)
+    for cls in (StorytellerNowWindow, StorytellerWindow):
+        win = cls(view)
+        win.resize(600, 500)
+        win.show()
+        qt_app.processEvents()
+        try:
+            strip = win.strip
+            assert strip.arrow.text() == "▼"
+            strip.arrow.click()
+            qt_app.processEvents()
+            assert not win.body.isVisible() and strip.isVisible()
+            assert win.height() < 120 and strip.arrow.text() == "▶"
+            strip.arrow.click()
+            qt_app.processEvents()
+            assert win.body.isVisible() and win.height() == 500
+            assert not win.windowFlags() & Qt.WindowStaysOnTopHint
+            strip.pin.click()
+            assert win.windowFlags() & Qt.WindowStaysOnTopHint and win.isVisible()
+            strip.pin.click()
+            assert not win.windowFlags() & Qt.WindowStaysOnTopHint
+        finally:
+            win.close()
+
+
+@pytest.mark.qt
+def test_debug_menu_storyteller_runs_the_console_command(qt_app, monkeypatch):
+    from PyQt5.QtWidgets import QAction, QMainWindow
+    from .. import integration
+
+    window = QMainWindow()
+    window.debug_menu = window.menuBar().addMenu("Debug")
+    window.position_action = QAction("Position", window)
+    window.debug_menu.addAction(window.position_action)
+    window.debug_menu.addAction(QAction("Project Overview", window))
+    logic = SimpleNamespace(_miniwind=None)
+    window.view_3d = SimpleNamespace(play_mode=True, logic_thread=logic)
+    integration._add_debug_menu_entries(window)
+    integration._add_debug_menu_entries(window)              # added once
+    labels = [a.text() for a in window.debug_menu.actions()]
+    assert labels == ["Position", "Project Overview", "Storyteller", "World Map"]   # alphabetical
+    calls = []
+    monkeypatch.setattr(console, "cmd_storyteller", lambda ctx, args: calls.append((ctx, args)))
+    window.storyteller_action.trigger()
+    ctx, args = calls[-1]
+    assert args == "" and ctx.play_mode is True and ctx.logic_thread is logic
+    assert ctx.main_window is window
+    window.close()
+
+
+@pytest.mark.qt
+def test_the_window_stays_open_with_its_last_report_when_play_mode_ends(qt_app):
+    from engine.floating_windows import WindowManager
+    from ..ui.storyteller_now import StorytellerNowWindow
+
+    story = setup()[0]
+    logic = SimpleNamespace(_miniwind=session_for(story))
+    view = SimpleNamespace(logic_thread=logic, window_manager=WindowManager(), update=lambda: None)
+    win = StorytellerNowWindow(view)
+    win.show()
+    try:
+        story_text = win.story.toPlainText()
+        win.tab = "Raw"
+        raw_rows = win.raw.rowCount()
+        win.tab = "Story"
+        assert "State" in story_text and raw_rows > 0
+        logic._miniwind = None                       # Play Mode stops
+        win.refresh()
+        assert win.isVisible() and win.ended
+        assert win.story.toPlainText() == story_text # nothing deleted
+        assert "Play Mode ended" in win.title.text() and "last report" in win.note.text()
+        win.tab = "Raw"                              # both tabs kept
+        assert win.raw.rowCount() == raw_rows
+        logic._miniwind = session_for(story)         # playing again
+        win.refresh()
+        assert not win.ended and "pacing" in win.title.text()
+    finally:
+        win.close()

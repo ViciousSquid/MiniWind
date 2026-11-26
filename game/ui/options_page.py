@@ -86,6 +86,13 @@ class OptionsPage:
         except Exception:
             return False
 
+    def _game_mode(self) -> str:
+        reader = getattr(self.menu.actions, "pause_menu_game_mode", None)
+        try:
+            return "dynamic" if str(reader()).lower() == "dynamic" else "normal"
+        except Exception:
+            return "normal"
+
     def _water_quality(self) -> str:
         reader = getattr(self.menu.actions, "pause_menu_water_quality", None)
         try:
@@ -160,7 +167,8 @@ class OptionsPage:
             rows.append(("grass_fire", "Grass fires", "On" if self._grass_fire() else "Off", True))
             rows.append(("graphics_back", "Back", "", True))
             return rows
-        rows = []
+        rows = [("game_mode", "Game mode",
+                 "Dynamic" if self._game_mode() == "dynamic" else "Normal", True)]
         if s is not None:
             mode = s.mode
             w, h = s.resolution
@@ -182,6 +190,11 @@ class OptionsPage:
         s = self.settings
         if key == "mode" and s is not None:
             return launcher.mode_help(s.mode)
+        if key == "game_mode":
+            if self._game_mode() == "dynamic":
+                return ("Dynamic: the storyteller stages scenes on the roads from the world's own "
+                        "people and grudges -- ambushes, rites, robberies, scores to settle.")
+            return "Normal: the storyteller only paces what the world already holds."
         if key == "res":
             if s is not None and s.mode != "Windowed":
                 return "The resolution is for Windowed mode."
@@ -243,6 +256,11 @@ class OptionsPage:
             return
         if key == "back":
             self.menu._leave_options()
+            return
+        if key == "game_mode":
+            self.menu._call_action("pause_menu_set_game_mode",
+                                   "normal" if self._game_mode() == "dynamic" else "dynamic")
+            self.menu.view.update()
             return
         if key == "keys":
             self.keys_mode, self.capture, self.index = True, None, 0
@@ -494,7 +512,7 @@ class OptionsPage:
         middle = QRectF(left.right(), rect.y(), rect.width() - 2 * arrow_w, rect.height())
         painter.setPen(colour if selected else (_TEXT if enabled else _DIM))
         painter.drawText(middle, int(Qt.AlignCenter), value)
-        if key in ("mode", "res"):
+        if key in ("mode", "res", "game_mode"):
             painter.setPen(_ACCENT if (selected and enabled) else colour)
             painter.drawText(left, int(Qt.AlignCenter), "◀")
             painter.drawText(right, int(Qt.AlignCenter), "▶")

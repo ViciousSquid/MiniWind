@@ -16,6 +16,7 @@ import math
 from .. import data
 from . import appraisal, crime, knowledge
 from .director import PLAYER_KEY, actor_key, peek_actor_key
+from . import story_text
 from .system import SimSystem
 
 
@@ -116,13 +117,30 @@ DEFAULT_TUNING = {
 }
 
 
-def load_tuning():
-    """Editable content plus mods, with code fallbacks and fixed-size lists."""
-    return data._merge(copy.deepcopy(DEFAULT_TUNING),
-                       data.load("storyteller", replace_lists=True), replace_lists=True)
+def load_tuning(use_ini=True, problems=None):
+    """Editable content plus mods, with code fallbacks and fixed-size lists;
+    then game/storyteller_normal.ini over it all (``game/sim/tuning_ini.py``)."""
+    tuning = data._merge(copy.deepcopy(DEFAULT_TUNING),
+                         data.load("storyteller", replace_lists=True), replace_lists=True)
+    if use_ini:
+        from . import tuning_ini
+        found = tuning_ini.apply_storyteller(tuning)
+        if problems is not None:
+            problems.extend(found)
+    return tuning
 
 
 TUNING = load_tuning()
+
+
+def reload_tuning():
+    """Read game/storyteller_normal.ini (and storyteller.json) again, in place, so
+    every holder of TUNING sees it. Returns the problems found."""
+    problems = []
+    fresh = load_tuning(problems=problems)
+    TUNING.clear()
+    TUNING.update(fresh)
+    return problems
 
 #: Justified kinds whose holder means the player harm; their staging is
 #: discharged by the holder's own later blow, as for kin vendettas.
@@ -206,6 +224,11 @@ class StorytellerHooks:
 
     def player_karma(self):
         return 0.0
+
+    def place_name(self, key=None, pos=None):
+        """A place's name, by key or nearest to (x, y, z); "" when unknown.
+        Only for explanations in plain words."""
+        return str(key or "")
 
 
 class Storyteller(SimSystem):
@@ -308,6 +331,15 @@ class Storyteller(SimSystem):
         if persist:
             self.persist()
 
+    def retune(self):
+        """Apply the current TUNING to this session now (after a reload): the
+        current state's levers are rebased on it; Studio edits stay on top."""
+        self._base_levers = copy.deepcopy(TUNING["states"][self.state]["levers"])
+        sensors = self.sensors if "law" in (self.sensors or {}) else {"law": {}}
+        self._adjust_levers(self.last_sample or 0, sensors)
+        self._note("edit", "Tuning reloaded from game/storyteller_normal.ini.")
+        self.persist()
+
     def reset_edits(self, state):
         self._studio_overrides.pop(state, None)
         if state == self.state:
@@ -357,6 +389,13 @@ class Storyteller(SimSystem):
                 listener(dict(entry))
             except Exception:
                 pass
+
+    def narrate(self, kind, text, now=None):
+        """Add a line to the activity feed on another system's behalf.
+
+        Used only by Dynamic game mode (game/living/scenarios.py), so a scene
+        it authored is always on the record; this class still authors nothing."""
+        self._note(kind, text, now)
 
     @property
     def activity(self):
@@ -513,9 +552,13 @@ class Storyteller(SimSystem):
                     town, located = self.hooks.actor_town(actor), True
                 if town:
                     threads.setdefault(town, set()).add(eid)
+                    holder_name = actor.properties.get("display_name") or actor.properties.get("name") or key
                     evidence.setdefault(town, []).append(dict(event=eid, holder=key,
-                        holder_name=actor.properties.get("display_name") or actor.properties.get("name") or key,
-                        kind=fact.get("kind", "crime")))
+                        holder_name=holder_name, kind=fact.get("kind", "crime"),
+                        # The same memory in plain words, for the activity feed.
+                        account=story_text.remembered(
+                            holder_name, fact, key, actor.properties,
+                            self.hooks.place_name(pos=fact.get("pos")))))
         self._threads = {town: len(events) for town, events in threads.items()}
         self._thread_facts = evidence
         health = max(0.0, min(1.0, float(self.hooks.player_health_fraction())))
@@ -763,6 +806,19 @@ class Storyteller(SimSystem):
         self._reason("Vendetta market destination", why)
         if key in self._vendetta_view:
             self._vendetta_view[key].update(staging=why, destination=town if ready else None)
+            if ready:
+                # Normal or Dynamic, the storyteller only weights a trip the
+                # townsperson was already making; it says so.
+                intent = justified[key][0]
+                fact = intent.fact or {}
+                name = self._vendetta_view[key].get("holder") or key
+                town_name = self.hooks.place_name(key=town) or town
+                self._vendetta_view[key]["story"] = (
+                    story_text.justified(kind, name, fact, key, holder.properties,
+                                         self.hooks.place_name(pos=fact.get("pos")))
+                    + f" Result: weighted {name}'s ordinary market trip toward {town_name}, "
+                    f"where {story_text.PLAYER} is staying. Nothing was created: {name} was "
+                    "already setting out for market, and what they do there is up to them.")
         return town if ready else None
 
     def journey_weight(self, kind, position, hostile):
@@ -800,6 +856,16 @@ class Storyteller(SimSystem):
             f"{r.get('holder_name', r['holder'])} ({r['holder']}) remembers {r['kind']} #{r['event']} in {journey.dest}" for r in evidence))
         if not evidence:
             why = "Ordinary authored destination sampling."
+        lead_name = (journey.leader() or {}).get("display") or journey.id
+        dest_name = self.hooks.place_name(key=journey.dest) or journey.dest
+        story = None
+        if influenced:
+            accounts = "; ".join(r.get("account", "").rstrip(".") for r in evidence if r.get("account"))
+            story = (f"The storyteller decided to weight {lead_name}'s {journey.kind} trip toward "
+                     f"{dest_name} (×{bias:g}) because "
+                     + (accounts or "townsfolk there remember unreported crimes")
+                     + f". Result: {lead_name} set out for {dest_name}. Nothing was created: the "
+                     "trip was already setting out; only where it went was weighted.")
         cause = getattr(journey, "cause", None)
         if cause:
             influenced = True
@@ -818,8 +884,15 @@ class Storyteller(SimSystem):
             if destination_sampled and staged.get("destination") == journey.dest:
                 influenced = True
                 why = staged["staging"]
+                story = staged.get("story") or story
                 events = [staged["event"]]
                 break
+            if arrived and staged.get("destination") == journey.dest and staged.get("story"):
+                mood = {"vendetta": "bent on their vendetta", "reckoning": "wanting a reckoning",
+                        "restitution": "wanting repayment",
+                        "gratitude": "grateful"}.get(staged.get("kind"), "with business of their own")
+                self._note("journey", f"Result: {lead_name} reached {dest_name}, where "
+                           f"{story_text.PLAYER} is staying, {mood}. What happens now is up to them.", now)
         if not arrived and not influenced:
             return
         # Remaining legs identify the board's current trip even if streaming
@@ -844,7 +917,8 @@ class Storyteller(SimSystem):
                 receipt["outcome"] = "Faction order departed"
         self._receipts = (*self._receipts, receipt)[-TUNING["receipt_cap"]:]
         if influenced:
-            self._note("journey", f"{receipt['party']} ({journey.kind}) → {journey.dest}: "
+            self._note("journey", story if story and not cause and not arrived else
+                       f"{receipt['party']} ({journey.kind}) → {journey.dest}: "
                        f"{receipt['outcome'].lower()}. {why}", now)
         self._reason("Journey outcome", f"{journey.id} {journey.kind} → {journey.dest}: {receipt['outcome']}. {why}")
 

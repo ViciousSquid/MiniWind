@@ -159,6 +159,9 @@ hour-long catch-up passes), and truly dormant ones not at all. It also owns the
 simulation's long-lived subsystems — the [**Storyteller**](docs/storyteller.md)'s
 pacing and the [faction actors](docs/factions.md) — which tick after each pass
 on world time and reset, save and load with the event history.
+Two [**game modes**](docs/game_modes.md) decide how far the storyteller may go:
+in Normal it only paces what the world already holds; in Dynamic a director
+also stages scenes on the roads, cast from the world's own people and grudges.
 
 ### The settlement watch
 

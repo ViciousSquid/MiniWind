@@ -150,3 +150,82 @@ def header(story) -> str:
         return "═══ STORYTELLER ═══"
     return (f"═══ STORYTELLER ═══  {story.state} · "
             f"{'pacing ON' if story.enabled else 'pacing OFF (pristine ecology)'}")
+
+
+# ---------------------------------------------------------------------------
+# Dynamic game mode's director (game/living/scenarios.py)
+# ---------------------------------------------------------------------------
+def director_of(session):
+    """The session's Dynamic-mode director, or None."""
+    living = getattr(session, "living", None)
+    return getattr(living, "scenarios", None)
+
+
+def dynamic_shown(session) -> bool:
+    """Whether the director has anything to show: Dynamic mode is on, or
+    scenes it staged are still playing out. Normal mode shows nothing."""
+    director = director_of(session)
+    if director is None:
+        return False
+    return bool(director.enabled() or director.scenes)
+
+
+def dynamic_rows(session, limit=15):
+    """``[(label, text)]``: the director's state and its decisions, newest
+    first, in plain words. Empty in Normal mode."""
+    if not dynamic_shown(session):
+        return []
+    director = director_of(session)
+    out = [("Director", director.status()), ("Learned", director.learned_text())]
+    for scene in director.scenes.values():
+        state = "played out" if scene.get("resolved") else "in play"
+        out.append(("Scene", f"{scene.get('text', scene['kind'])} ({state})"))
+    decisions = list(reversed(director.decisions))[:limit]
+    if not decisions:
+        out.append(("Decided", "Nothing yet: every choice, and why, appears here."))
+    for entry in decisions:
+        out.append((stamp(entry.get("time")), entry["text"]))
+        if entry.get("result"):
+            out.append(("Result", entry["result"]))
+        if entry.get("why"):
+            out.append(("Why now", entry["why"]))
+    return out
+
+
+def _flat(prefix, value, out, depth=0):
+    """Nested data as ``(key path, value)`` rows: short values on one line."""
+    import json
+    if isinstance(value, dict) and value and depth < 2:
+        for key, inner in value.items():
+            _flat(f"{prefix}.{key}" if prefix else str(key), inner, out, depth + 1)
+        return
+    if prefix in ("decisions", "activity", "observations") and isinstance(value, list):
+        for i, inner in enumerate(value):        # one row per entry, newest first
+            out.append((f"{prefix}[{i}]", json.dumps(inner, ensure_ascii=False, default=str)))
+        if not value:
+            out.append((prefix, "[]"))
+        return
+    out.append((prefix, json.dumps(value, ensure_ascii=False, default=str)))
+
+
+def raw_rows(story, session=None, *, decisions=20, observations=5):
+    """``[(heading or None, key, value text)]``: the raw data behind the
+    report -- the storyteller's summary and, in Dynamic mode, the director's
+    numbers -- for the debug window's Raw tab and ``storyteller report raw``."""
+    out = []
+    if story is not None:
+        s = story.summary()
+        s["observations"] = s.get("observations", [])[:observations]
+        s["activity"] = s.get("activity", [])[:decisions]
+        rows = []
+        _flat("", s, rows)
+        out.append(("Storyteller · summary()", None, None))
+        out += [(None, key, value) for key, value in rows]
+    if dynamic_shown(session):
+        raw = director_of(session).raw()
+        raw["decisions"] = raw["decisions"][:decisions]
+        rows = []
+        _flat("", raw, rows)
+        out.append(("Dynamic director · raw()", None, None))
+        out += [(None, key, value) for key, value in rows]
+    return out

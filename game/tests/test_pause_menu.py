@@ -321,11 +321,29 @@ def _row(page, key):
 def test_options_show_the_launchers_display_settings_and_the_music_volume(app):
     page = _options(_menu())
     rows = {key: (label, value) for key, label, value, _on in page.rows()}
-    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "keys", "hud",
-                         "advanced", "back"}
+    assert set(rows) == {"game_mode", "mode", "res", "vsync", "hidpi", "volume", "keys",
+                         "hud", "advanced", "back"}
+    assert rows["game_mode"][1] == "Normal"         # Normal unless chosen
     assert rows["mode"][1] == "Fullscreen"         # the launcher's default
     assert rows["volume"][1] == "50%"
     _draw(page.menu)                                # paints without error
+
+
+def test_game_mode_switches_between_normal_and_dynamic(app):
+    menu = _menu()
+    state = {"mode": "normal"}
+    menu.editor.pause_menu_game_mode = lambda: state["mode"]
+    menu.editor.pause_menu_set_game_mode = lambda mode: state.update(mode=mode)
+    page = _options(menu)
+    _row(page, "game_mode")
+    assert "only paces" in page._note("game_mode")
+    menu.handle_key(_key(QtCore.Qt.Key_Right))
+    assert state["mode"] == "dynamic"
+    assert dict((k, v) for k, _l, v, _o in page.rows())["game_mode"] == "Dynamic"
+    assert "stages scenes" in page._note("game_mode")
+    menu.handle_key(_key(QtCore.Qt.Key_Left))
+    assert state["mode"] == "normal"
+    _draw(menu)                                     # paints without error
 
 
 def test_rearrange_hud_leaves_the_menu_for_rearrange_mode(app):

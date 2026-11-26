@@ -9,6 +9,13 @@ override it at `game/data/mods/<name>/storyteller.json`. `TUNING` loads that
 content over `DEFAULT_TUNING` code fallbacks. Tuning lists replace rather than
 append, so overriding a two-hour departure window preserves two endpoints.
 
+> **Game modes.** Everything on this page is the storyteller in both game
+> modes. In **Normal** mode it is all there is; in **Dynamic** mode a separate
+> director may also author scenes on the roads, and its decisions appear in
+> the windows described below. See [Game modes](game_modes.md). Its values
+> can be fine-tuned in `game/storyteller_normal.ini` (see
+> [Tuning](game_modes.md#tuning-two-files-in-the-game-folder)).
+
 The Storyteller is the Director's pacing subsystem, not a second reactive-AI
 pipeline. The [Director documentation](director.md) explains how events become
 perceived facts, NPC intentions and runtime behaviour; this page covers how

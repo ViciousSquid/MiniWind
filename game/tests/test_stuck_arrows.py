@@ -3,7 +3,7 @@ Arrows stuck in barrels (game/stuck_arrows.py), in a real Play session.
 
 An arrow -- a projectile loosed with its ammunition in its metadata -- that
 meets a barrel stops in it, kept in the barrel's model space so it moves and
-turns with the barrel; it is heard (thunk.wav) where it strikes. E by the
+turns with the barrel; it is heard (thunk.mp3) where it strikes. E by the
 barrel pulls the arrows into the pack; E anywhere else does nothing. A barrel
 that explodes destroys its arrows.
 
@@ -144,7 +144,7 @@ def test_sticking_is_heard_where_it_struck(fio_session, clock):
     _session, game, _barrel_ = _shot_barrel(fio_session, clock)
     assert len(game.sounds) == 1
     name, pos = game.sounds[0]
-    assert name == ARROW_THUNK_SOUND == "thunk.wav"
+    assert name == ARROW_THUNK_SOUND == "thunk.mp3"
     assert _near(pos, (300.0, HEIGHT, 300.0 - RADIUS))
 
 
@@ -328,7 +328,7 @@ def test_the_thunk_is_quiet_while_the_sound_file_is_missing(monkeypatch, tmp_pat
 
     (tmp_path / ARROW_THUNK_SOUND).write_bytes(b"RIFF")
     assert play(owner, ARROW_THUNK_SOUND, (1.0, 2.0, 3.0)) is True
-    assert queued[0]["file"] == "thunk.wav"
+    assert queued[0]["file"] == "thunk.mp3"
     assert queued[0]["position"] == [1.0, 2.0, 3.0]
 
 
