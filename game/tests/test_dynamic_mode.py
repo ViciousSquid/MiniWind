@@ -95,6 +95,13 @@ def _world(mode="dynamic", hour=12.0, player=(2000.0, 0.0), facing=(1.0, 0.0)):
                            character=character, session=session, hooks=hooks)
 
 
+def _culprit_gang(board, t=12.0, name="black_rook", display="Black Rook"):
+    """Black Rook's band on the roads: the culprit as the gang's chief."""
+    gang = board.plan("bandits", t, origin="camp", dest="kettle")
+    gang.members[0]["name"], gang.members[0]["display"] = name, display
+    return gang
+
+
 def _trader(board, t=12.0):
     j = board.plan("trader", t, origin="farm", dest="kettle")
     assert j is not None
@@ -227,11 +234,15 @@ def test_rescuing_a_victim_is_thanked_rewarded_and_told():
     gang = w.board.journeys[scene["journeys"]["attacker"]]
     for m in gang.members:
         m["alive"] = False
-    lead = _Thing(2000.0, 100.0, display_name="Hal the Trader")
+    lead = _Thing(2000.0, 100.0, display_name="Hal the Trader", _member=0,
+                  inventory=[{"id": "gold", "qty": 50}])
     trader.live = True
     w.world.live[trader.id] = {"things": [lead]}
     w.director.watch()
-    assert scene["resolved"] and w.gold and w.barks
+    assert scene["resolved"] and w.barks
+    paid = w.gold[0]
+    assert 10 <= paid <= 50                                   # from what they hold
+    assert lead.properties["inventory"] == ([{"id": "gold", "qty": 50 - paid}] if paid < 50 else [])
     assert any("came to the aid of" in n["text"] for n in w.board.news.values())
     assert trader.stage is None and trader.state == "travel"
 
@@ -312,15 +323,19 @@ def test_an_avenger_goes_out_over_a_grievance_they_really_hold():
         "e": 41, "kind": "death", "actor": "black_rook", "actor_name": "Black Rook",
         "actor_faction": "bandits", "target": "aldo", "target_name": "Aldo",
         "day": 2, "hour": 3.0, "certainty": 0.9, "identified": True})
+    gang = _culprit_gang(w.board)
     scene = w.director._stage_avenger(12.0)
     assert scene is not None and scene["fact_e"] == 41
+    assert scene["journeys"]["attacker"] == gang.id           # the culprit's own band
     avenger = w.board.journeys[scene["journeys"]["avenger"]]
     assert avenger.resident == "edda" and avenger.members[0]["armed"]
     assert "Black Rook killed my brother Aldo" in avenger.stage["greeting"]
-    # Nobody comes: they walk on after their quarry alone.
+    # Nobody comes: they walk on after their quarry alone (and may meet the
+    # gang off screen at once, the board's dice settling it).
     w.board.update(12.0)
     w.board.update(12.0 + sc.HOLD_HOURS)
-    assert avenger.state == "travel" and avenger.stage.get("walking")
+    assert any("gone after the gang alone" in d["text"] for d in w.director.decisions)
+    assert avenger.state == "done" or avenger.stage.get("walking")
 
 
 def test_no_grievance_means_no_avenger():
@@ -455,6 +470,7 @@ def test_a_staged_avenger_names_the_grievance_and_says_what_was_done():
         "e": 41, "kind": "death", "actor": "black_rook", "actor_name": "Black Rook",
         "actor_faction": "bandits", "target": "aldo", "target_name": "Aldo", "pos": [-3900, 0, 0],
         "day": 2, "hour": 3.0, "certainty": 0.9, "identified": True, "source": "witnessed"})
+    _culprit_gang(w.board)
     scene = w.director._stage_avenger(12.0)
     assert scene["decision"] == ("The storyteller decided that Edda wants revenge on Black Rook "
                                  "because Black Rook killed their brother Aldo near Low Farm on day 2, "
@@ -651,3 +667,175 @@ def test_cultists_shout_their_own_lines_and_brigands_keep_theirs():
         x = _Thing(300.0, 0.0, combatant=True, triggered=True)
         living._react(j, x, [0.0, 64.0, 0.0])
         assert said[-1] in GREETINGS[kind]
+
+
+# -- review fixes -------------------------------------------------------------------
+def _edda(w, actor_faction="bandits", actor="black_rook", actor_name="Black Rook", gold=7):
+    from ..sim import knowledge
+    from ..sim.director import actor_key
+    w.session.clock.day = 2
+    edda = _Thing(-4000, 0, name="edda", display_name="Edda", npc_role="farmer",
+                  faction="villagers", type="npc", relationships={"Aldo": "brother"},
+                  inventory=[{"id": "gold", "qty": gold}, {"id": "bread", "qty": 2}])
+    w.world._residents["edda"] = edda
+    knowledge.learn(w.store, actor_key(edda), {
+        "e": 41, "kind": "death", "actor": actor, "actor_name": actor_name,
+        "actor_faction": actor_faction, "target": "aldo", "target_name": "Aldo",
+        "pos": [-3900, 0, 0], "day": 2, "hour": 3.0, "certainty": 0.9, "identified": True})
+    return edda
+
+
+def test_an_avenger_is_never_sent_after_a_stand_in_gang():
+    w = _world()
+    _edda(w)
+    w.board.plan("bandits", 12.0, origin="camp", dest="farm")    # some other gang
+    assert w.director._stage_avenger(12.0) is None
+    assert "Black Rook, who is neither on the roads nor anywhere to be found" in w.director._why
+    assert "no stand-in was sent" in w.director._why
+    assert not any(j.stage for j in w.board.journeys.values())
+
+
+def test_a_monster_grievance_never_becomes_a_bandit_one():
+    w = _world()
+    _edda(w, actor_faction="monsters", actor="grak", actor_name="Grak the Greenskin")
+    _culprit_gang(w.board)                                       # brigands about: not them
+    assert w.director._stage_avenger(12.0) is None
+    raiders = w.board.plan("bandits", 12.0, origin="camp", dest="kettle")
+    raiders.kind = "greenskins"
+    raiders.members[0]["name"], raiders.members[0]["display"] = "grak", "Grak the Greenskin"
+    scene = w.director._stage_avenger(12.0)
+    assert scene["journeys"]["attacker"] == raiders.id
+    assert scene["culprit"] == {"actor": "grak", "name": "Grak the Greenskin", "faction": "monsters"}
+
+
+def test_a_culprit_off_the_roads_is_where_the_avenger_goes():
+    w = _world()
+    _edda(w)
+    rook = _Thing(4000.0, 0.0, name="black_rook", display_name="Black Rook")
+    w.session._sim_actor_by_key = lambda key: rook if key == "black_rook" else None
+    scene = w.director._stage_avenger(12.0)
+    assert set(scene["journeys"]) == {"avenger"}                 # no gang staged
+    avenger = w.board.journeys[scene["journeys"]["avenger"]]
+    assert avenger.stage["onward_dest"] == "camp"                # where Black Rook is
+    assert "is not on the roads but is at Old Camp" in scene["result"]
+    assert "Black Rook" in avenger.stage["greeting"] and "Old Camp" in avenger.stage["greeting"]
+    rook.properties["dead"] = True                               # the culprit falls
+    lead = _Thing(-100.0, 0.0, display_name="Edda", _member=0, inventory=[])
+    avenger.live = True
+    w.world.live[avenger.id] = {"things": [lead]}
+    w.session._player_pos = lambda: [-100.0, 0.0, 0.0]
+    w.director.watch()
+    assert scene["resolved"]
+
+
+def test_the_avenger_carries_their_own_purse_and_offers_only_what_they_have():
+    w = _world()
+    _edda(w, gold=7)
+    registered = []
+    w.world._register = registered.append
+    _culprit_gang(w.board)
+    scene = w.director._stage_avenger(12.0)
+    member = w.board.journeys[scene["journeys"]["avenger"]].members[0]
+    assert member["gold"] == 0 and member["own_purse"]
+    assert member["inventory"] == [{"id": "gold", "qty": 7}, {"id": "bread", "qty": 2}]
+    quest = registered[-1]
+    assert quest["rewards"] == {"gold": 7} and "7 gold" in quest["offer"]
+    assert quest["stages"][0]["condition"]["target"] == "black_rook"     # the culprit, by name
+
+
+def test_a_rescue_never_pays_more_than_the_purse_and_nothing_from_an_empty_one():
+    w = _world()
+    trader = _trader(w.board)
+    scene = w.director._stage_waylaid(12.0)
+    for m in w.board.journeys[scene["journeys"]["attacker"]].members:
+        m["alive"] = False
+    lead = _Thing(2000.0, 100.0, display_name="Hal", _member=0, inventory=[{"id": "gold", "qty": 3}])
+    trader.live = True
+    w.world.live[trader.id] = {"things": [lead]}
+    w.director.watch()
+    assert w.gold == [3] and lead.properties["inventory"] == []          # all of it, no more
+    w2 = _world()
+    trader2 = _trader(w2.board)
+    scene2 = w2.director._stage_waylaid(12.0)
+    for m in w2.board.journeys[scene2["journeys"]["attacker"]].members:
+        m["alive"] = False
+    broke = _Thing(2000.0, 100.0, display_name="Hal", _member=0, inventory=[])
+    trader2.live = True
+    w2.world.live[trader2.id] = {"things": [broke]}
+    w2.director.watch()
+    assert w2.gold == [] and any("no gold to give" in t for t in w2.said)
+
+
+def test_a_townsperson_comes_home_with_what_they_carried_and_the_lent_sword_goes_back():
+    from ..living.world import LivingWorld, SessionHooks
+    home = _Thing(0.0, 0.0, name="edda", inventory=[{"id": "gold", "qty": 7}], health=60)
+    living = LivingWorld(SimpleNamespace())
+    living._residents["edda"] = home
+    living.set_hidden = lambda thing, hidden: None
+    j = jn.Journey("j9", "avenger", [{"resident": "edda", "own_purse": True, "health": 41,
+                                      "lent_weapon": "iron_shortsword",
+                                      "inventory": [{"id": "gold", "qty": 2},
+                                                    {"id": "iron_shortsword", "qty": 1}]}],
+                   "", "", [(0, 0), (1, 1)], 0.0, 1.0, 1, "")
+    SessionHooks(living).resident_home("edda", j, True)
+    assert home.properties["inventory"] == [{"id": "gold", "qty": 2}]   # spent 5; no free sword
+    assert home.properties["health"] == 41
+
+
+def test_a_materialised_reckoning_character_is_hostile_and_fights_the_player():
+    """Regression: 'armed' used to overwrite the grudge's hostility with
+    'defensive', so someone sent to settle a score never attacked."""
+    import pytest
+    pytest.importorskip("PyQt5")
+    from engine.player import Player
+    from engine.logic_thread import LogicThread
+    from editor.editor_state import EditorState
+    from engine.threaded_game_state import ThreadedGameState
+    from ..entities import Marker, NPC
+    from ..living.world import LivingWorld
+    from ..runtime import MiniwindSession
+
+    logic = LogicThread(ThreadedGameState(), EditorState())
+    try:
+        things = logic.editor_state.things
+        for name, x in (("Ashby", 0.0), ("Low Farm", -5000.0)):
+            things.append(Marker(pos=[x, 0, 0], properties={
+                "name": "loc_" + name, "marker_kind": "location", "place_name": name,
+                "discover_radius": 900}))
+        for i in range(4):
+            things.append(NPC(pos=[100.0 * i, 0, 300], properties={
+                "name": f"folk{i}", "npc_role": "villager", "faction": "villagers"}))
+        mara = NPC(pos=[-5000.0, 0, 200], properties={
+            "name": "mara", "display_name": "Mara", "npc_role": "farmer", "faction": "villagers",
+            "inventory": [{"id": "gold", "qty": 12}]})
+        things.append(mara)
+        logic.player_runtime.player = Player(1500, 0, angle=math.pi / 2)
+        logic.world_runtime.build_entity_caches()
+        session = MiniwindSession(logic, cfg={"start_hour": 12.0})
+        session.clock.set_time(12.0, 1)
+        session.dynamic_mode_enabled = lambda: True
+        world = LivingWorld(session, population=0)
+        assert world.build()
+        world.board.journeys.clear()
+        t = sc._now_hours(session.clock)
+        d = world.scenarios
+        member = d._resident_member(mara, "mara")
+        member.update(armed=True, grudge=True, grudge_kind="reckoning", grudge_victim="")
+        route = [(2400.0, 0.0), (1500.0, 0.0), (0.0, 0.0)]
+        j = d._new_journey("avenger", [member], route, "ashby", t)
+        d._walking(j, route, "ashby", "dynX", "seeker", t)
+        world._stream()
+        assert j.live
+        actor = world.live[j.id]["things"][0]
+        p = actor.properties
+        assert p["aggression"] == "hostile" and p["combatant"] is True       # not "defensive"
+        assert p["_base_aggression"] == "hostile"
+        said = []
+        session.bark = lambda thing, line, *a: said.append(line)
+        actor.pos[0], actor.pos[2] = 1900.0, 0.0                            # within sight
+        assert world._react(j, actor, session._player_pos())
+        assert p["sched_state"] == "COMBAT" and p["triggered"] is False
+        assert len(said) == 1                                               # the opening, once
+        world.shutdown()
+    finally:
+        logic.stop()

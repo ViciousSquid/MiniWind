@@ -1131,7 +1131,10 @@ Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
   thank you; the watch fighting brigands; and after dark, ambushes, cult
   processions and cult rites with a townsperson held captive (cults hold
   their rite 2.5 game hours). A rescued party thanks you from 380 units and
-  pays a reward from its own purse (10--120 gold). A
+  pays a reward from the gold it actually holds (about half, 10--120, never
+  more than it has). An avenger only ever pursues the real culprit; one who
+  cannot be found sends nobody. A townsperson taken into a scene carries their
+  own things and comes home with what they have then. A
   staged party waits 3 game hours, then goes back to ordinary life.
 * **Where.** Always on a road you are on (within 900 units of it), ahead of
   you, 1,150--1,900 units away -- beyond any actor's sight -- and, for

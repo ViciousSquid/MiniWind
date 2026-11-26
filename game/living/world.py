@@ -298,6 +298,20 @@ class SessionHooks(jn.WorldHooks):
             return
         t.properties.pop("away_on_journey", None)
         member = next((m for m in journey.members if m.get("resident") == resident_id), {})
+        if member.get("own_purse") and "inventory" in member:
+            # Dynamic mode took them out as themselves, with their own things:
+            # they come home with whatever they have now (a sword lent for the
+            # scene goes back).
+            carried = copy.deepcopy(member["inventory"])
+            lent = member.get("lent_weapon")
+            if lent:
+                from ..rpg import inventory as rpg_inventory
+                rpg_inventory.remove_item(carried, lent, 1)
+                if t.properties.get("equipped_weapon") == lent and not rpg_inventory.has_item(carried, lent):
+                    t.properties.pop("equipped_weapon", None)
+            t.properties["inventory"] = carried
+            if alive:
+                t.properties["health"] = member.get("health", t.properties.get("health", 60))
         if alive and journey.cause:
             t.properties["health"] = member.get("health", t.properties.get("health", 60))
             for key in ("inventory", "equipped_weapon", "alignment"):
@@ -692,6 +706,12 @@ class LivingWorld:
             p["damage"] = int(m.get("damage", p.get("damage", 6)))
             p["_base_aggression"] = props["aggression"]
             p["aggression"] = props["aggression"]
+            if m.get("grudge"):
+                # Dynamic mode: someone come to settle a score with the player.
+                # The NPC constructor folds an authored 'hostile' on a friendly
+                # faction back to 'defensive'; turning on the player is meant to
+                # happen to the live actor -- which this is.
+                p["_base_aggression"] = p["aggression"] = "hostile"
             p["triggered"] = True
             p["awake"] = False
             things.append(thing)
@@ -826,13 +846,18 @@ class LivingWorld:
                                             "victim": m.get("grudge_victim", "")}
         if m.get("armed"):
             # Dynamic mode: a townsperson who took up a blade over a grievance.
+            # Ready to defend themselves -- unless they came for the player, in
+            # which case the grudge's hostility above stands.
             props["combatant"] = True
-            props["aggression"] = "defensive"
+            if not m.get("grudge"):
+                props["aggression"] = "defensive"
             props["courage"] = max(0.7, float(props.get("courage", 0.0) or 0.0))
             if not props.get("equipped_weapon") and rpg_items.get("iron_shortsword"):
+                # Lent for the scene; taken back when they come home.
                 props["inventory"] = list(props.get("inventory", [])) + [
                     rpg_items.make("iron_shortsword", 1)]
                 props["equipped_weapon"] = "iron_shortsword"
+                m["lent_weapon"] = "iron_shortsword"
         return props
 
     def _despawn(self, jid, j) -> None:
