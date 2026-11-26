@@ -268,6 +268,14 @@ BOW_REACH = 2400.0
 #: Holding left mouse with a bow draws it: how long a full draw takes, and
 #: how far an arrow flies loosed with the bow barely drawn and fully drawn.
 BOW_FULL_DRAW_SECONDS = npc_archery.BOW_FULL_DRAW_SECONDS
+#: The player's bow, heard (assets/sounds; cut from bowsounds.mp3, a real bow
+#: drawn and loosed, by tools/split_bow_sounds.py): the draw while the bow is
+#: drawn and the charge pie is up, the release the moment the arrow is loosed.
+#: Both are heard from the archer -- centred on whoever holds the bow.
+BOW_DRAW_SOUND = "bow_draw.mp3"
+BOW_RELEASE_SOUND = "bow_release.mp3"
+#: The draw plays on this channel, so loosing or lowering the bow cuts it off.
+BOW_DRAW_CHANNEL = "player_bow_draw"
 BOW_MIN_RANGE = npc_archery.BOW_MIN_RANGE
 BOW_MAX_RANGE = npc_archery.BOW_MAX_RANGE
 #: How fast an arrow flies.
@@ -8594,7 +8602,25 @@ class MiniwindSession(SettlementLaw):
         self._bow_input.append(str(what))
 
     def _cancel_bow_draw(self) -> None:
+        if self.bow_charge is not None:
+            self._bow_draw_sound(False)     # lowered without loosing: the draw stops
         self.bow_charge = None
+
+    def _bow_draw_sound(self, start: bool) -> None:
+        """Start the bow's draw sound (*start*), from the archer, or cut it off."""
+        game_state = getattr(self.logic, "game_state", None)
+        queue = getattr(game_state, "queue_sound", None)
+        if queue is None:
+            return
+        if not start:
+            queue({"action": "stop", "entity_id": BOW_DRAW_CHANNEL})
+            return
+        pos = self._player_pos()
+        if pos is not None and sound_available(BOW_DRAW_SOUND):
+            self._bow_sound_at = tuple(pos)
+            queue({"file": BOW_DRAW_SOUND, "volume": 1.0, "radius": 900.0,
+                   "position": [float(pos[0]), float(pos[1]), float(pos[2])],
+                   "entity_id": BOW_DRAW_CHANNEL, "stoppable": True})
 
     def _update_bow_draw(self, delta) -> None:
         """Draw the bow while left mouse is held; loose on release.
@@ -8608,6 +8634,8 @@ class MiniwindSession(SettlementLaw):
             if what == "press":
                 if self.bow_charge is None and self._can_draw_bow():
                     self.bow_charge = 0.0
+                    if not self.fist_in_hand():
+                        self._bow_draw_sound(True)      # the pie is up: drawing
             elif what == "release":
                 charge = self.bow_charge
                 self.bow_charge = None
@@ -8615,7 +8643,10 @@ class MiniwindSession(SettlementLaw):
                     if self.fist_in_hand():
                         warrior_fist.strike(self, charge)
                     else:
-                        self._loose_drawn_arrow(charge)
+                        self._bow_draw_sound(False)
+                        if self._loose_drawn_arrow(charge):
+                            # From the archer, like the draw.
+                            self.play_sound_at(BOW_RELEASE_SOUND, self._player_pos())
             else:
                 self._cancel_bow_draw()
         if self.bow_charge is None:
@@ -8628,6 +8659,20 @@ class MiniwindSession(SettlementLaw):
         full = (warrior_fist.FULL_CHARGE_SECONDS if self.fist_in_hand()
                 else BOW_FULL_DRAW_SECONDS)
         self.bow_charge = min(1.0, self.bow_charge + max(0.0, float(delta)) / full)
+        if not self.fist_in_hand():
+            self._follow_bow_draw_sound()
+
+    def _follow_bow_draw_sound(self) -> None:
+        """Keep the draw's sound on the archer as they walk while drawing."""
+        pos = self._player_pos()
+        last = getattr(self, "_bow_sound_at", None)
+        if pos is None or (last is not None and math.dist(pos, last) < 4.0):
+            return
+        self._bow_sound_at = tuple(pos)
+        queue = getattr(getattr(self.logic, "game_state", None), "queue_sound", None)
+        if queue is not None:
+            queue({"action": "move", "entity_id": BOW_DRAW_CHANNEL,
+                   "position": [float(pos[0]), float(pos[1]), float(pos[2])]})
 
     def _can_draw_bow(self) -> bool:
         c = self.game.character

@@ -3,7 +3,8 @@ An arrow past your head: a whoosh.
 
 When an arrow someone else loosed flies past the player -- close enough to
 miss them by inches, but a miss -- and flies on, ``assets/sounds/whoosh.mp3``
-plays, centred on the player (an interface sound, heard as if by the ear).
+plays, centred on the player: from their position, through the game's
+spatial mix like every other sound in the world.
 
 The circumstances, exactly:
 
@@ -122,7 +123,7 @@ class NearMiss:
         self._heard &= set(seen)
         self._coming &= set(seen)
         if passed:
-            play = getattr(self.session, "play_ui_sound", None)
+            play = getattr(self.session, "play_sound_at", None)
             if play is not None:
-                play(WHOOSH_SOUND)
+                play(WHOOSH_SOUND, head)          # centred on the player, spatially
         return passed

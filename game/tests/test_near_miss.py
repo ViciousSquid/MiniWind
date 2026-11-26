@@ -21,7 +21,8 @@ def _world():
         combat_runtime=SimpleNamespace(_monster_projectiles=store),
         player_runtime=SimpleNamespace(player=SimpleNamespace(pos=(0.0, 100.0, 0.0))),
         session_runtime=SimpleNamespace(monster_lock=None))
-    session = SimpleNamespace(logic=logic, play_ui_sound=lambda name, volume=1.0: played.append(name))
+    session = SimpleNamespace(logic=logic, play_sound_at=lambda name, pos, volume=1.0, radius=900.0:
+                              played.append(name) if tuple(pos) == (0.0, 100.0, 0.0) else None)
     return store, nm.NearMiss(session), played
 
 

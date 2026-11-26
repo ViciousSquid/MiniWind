@@ -458,10 +458,20 @@ shakes, never the HUD (`game/runtime.py`, `game/host.py`).
 | Your overkill | 0.032 | 0.48 |
 | Your critical killing blow | 0.044 | 0.60 |
 
+### The bow, heard
+
+Drawing your bow plays its draw (`assets/sounds/bow_draw.mp3`) the moment the
+charge pie appears; loosing the arrow cuts the draw off and plays the release
+(`bow_release.mp3`). Lowering the bow without loosing cuts the draw and makes
+no release; so does a loose that fails (no stamina, still recovering). Both
+are heard from the archer, through the spatial mix, and the draw follows an
+archer who walks while drawing. Not for a fist charge. The two clips are cut
+from `bowsounds.mp3`, a real bow drawn and loosed (`tools/split_bow_sounds.py`).
+
 ### Arrows past your head
 
 An arrow someone else loosed that flies past you, missing by inches, whooshes
-(`assets/sounds/whoosh.mp3`, heard as if by your ear). Its path must pass
+(`assets/sounds/whoosh.mp3`, from where you stand). Its path must pass
 within 56 of you -- the 32 hit sphere and a few inches more -- coming toward
 you and flying on past, still in flight; once per arrow. Never your own
 arrow, never a spell, never one that hits you, sticks in something or falls
