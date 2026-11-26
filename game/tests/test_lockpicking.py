@@ -256,13 +256,21 @@ def _knock(s):
     return c
 
 
+def _knock_click(s, chest):
+    """Knock readied (the hand cursor), then the click on *chest*."""
+    s.spell_aiming = s.knock_aiming = True
+    return s.cast_at(None, container=chest)
+
+
 def test_knock_uses_the_spell_pipeline_to_clear_jams_without_stealing_the_contents(monkeypatch):
     s, chest = _picking()
     s.close_lockpicking()
     chest.properties["lock_jammed"] = True
     c = _knock(s)
     monkeypatch.setattr(magic, "cast_check", lambda *a, **kw: (True, {}))
-    assert s.do_cast()
+    assert s.do_cast() and s.knock_aiming            # readied: a hand cursor
+    assert chest.properties["lock_jammed"]           # nothing yet
+    assert s.cast_at(None, container=chest)
     assert c.magicka < 500
     assert not chest.properties["locked"] and not chest.properties["lock_jammed"]
     assert "lockpick_state" not in chest.properties
@@ -284,7 +292,7 @@ def test_unsuccessful_knock_never_clears_a_jam(reason, monkeypatch):
         chest.pos = [5000, 0, 0]
     else:
         monkeypatch.setattr(magic, "cast_check", lambda *a, **kw: (False, {}))
-    assert not s.do_cast()
+    assert not _knock_click(s, chest)
     assert chest.properties["lock_jammed"] and chest.properties["locked"]
 
 

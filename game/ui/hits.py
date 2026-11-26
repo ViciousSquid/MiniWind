@@ -182,6 +182,12 @@ class GamePointer:
         needs_creation = bool(getattr(session, "needs_char_creation", False))
         return bool((interactive_screen or needs_creation) and has_targets())
 
+    def cursor_shape(self) -> str:
+        """The cursor while the pointer is claimed: a hand while Knock is
+        readied (a click picks the container), else the arrow."""
+        session = self._session()
+        return "hand" if getattr(session, "knock_aiming", False) else "arrow"
+
     def _actor_at(self, x, y):
         pick = getattr(self.view, "actor_at", None)
         try:
@@ -252,6 +258,18 @@ class GamePointer:
         coop = getattr(session, "coop", None)
         if coop is not None and session.open_screen is None and session.dialogue is None:
             return self.party_world_press(event, coop)
+        if session is not None and getattr(session, "knock_aiming", False):
+            # Knock: the container under the hand (else the nearest to the
+            # ground there); right: put the spell away.
+            if event.button() == Qt.LeftButton:
+                import game.unlocking as unlocking
+                thing = unlocking.container_at(session, self.view, event.x(), event.y())
+                point = None if thing is not None else self.ground_point(event.x(), event.y())
+                queue(lambda s, p=point, t=thing: s.cast_at(p, None, container=t))
+            else:
+                queue(lambda s: s.cancel_spell_aim())
+            self.view.update()
+            return True
         if session is not None and getattr(session, "spell_aiming", False):
             # Left: cast there (at the creature under the cursor, else the
             # ground); right: put the spell away.

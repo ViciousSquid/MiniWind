@@ -50,6 +50,7 @@ from . import warrior_fist
 from . import held_weapons
 from . import farm_work
 from . import party
+from . import unlocking
 from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import training as rpg_training
@@ -412,6 +413,11 @@ JOIN_CIRCLE_PROMPT = "I wish to join the Arcane Circle."
 #: fizzles, and for how long.
 FIZZLE_TEXT = "*fizzled*"
 FIZZLE_SECONDS = 1.6
+
+
+def _is_knock(spell) -> bool:
+    """Whether *spell* is Knock (its effect opens a lock)."""
+    return spell is not None and any(e.get("kind") == "knock" for e in (spell.effects or []))
 #: Over every attacker in a fight -- the player, an NPC, an animal -- as its
 #: d20 to-hit roll lands or misses (game/rpg/armour_class.py).
 HIT_TEXT = "HIT"
@@ -863,6 +869,8 @@ class MiniwindSession(SettlementLaw):
         self._cast_cooldown = 0.0
         #: Waiting for a click to say where the spell goes (cast mode "aimed").
         self.spell_aiming = False
+        #: The aim is Knock's: a hand cursor, and a click picks a container.
+        self.knock_aiming = False
         #: The facing to cast along, in "aimed" mode once clicked: set for the
         #: one cast it was clicked for.
         self._cast_aim = None
@@ -1672,6 +1680,14 @@ class MiniwindSession(SettlementLaw):
         self.game.message(line)
         self.roll_log.append({"text": line, "why": str(result.get("why", "")),
                               "success": good, "t": ROLL_LOG_SECONDS})
+        del self.roll_log[:-ROLL_LOG_MAX]
+
+    def log_line(self, text, good=None, prominent=False) -> None:
+        """A line in the HUD's roll log (the list on the left), in the colour
+        of *good* (None: neutral); *prominent* draws it bold and gold on its
+        own plate, apart from the rolls around it."""
+        self.roll_log.append({"text": str(text), "why": "", "success": good,
+                              "t": ROLL_LOG_SECONDS, "prominent": bool(prominent)})
         del self.roll_log[:-ROLL_LOG_MAX]
 
     def _show_own_box(self, box) -> None:
@@ -9707,18 +9723,88 @@ class MiniwindSession(SettlementLaw):
             return self.do_cast(aim="facing")      # says why not, as ever
         if spell.delivery == rpg_magic.SELF:
             return self.do_cast()                  # nothing to aim
+        if _is_knock(spell):
+            return self.arm_knock()
         self.spell_aiming = True
         return True
 
     def cancel_spell_aim(self) -> None:
         self.spell_aiming = False
+        self.knock_aiming = False
 
-    def cast_at(self, point, target=None) -> bool:
+    def cast_at(self, point, target=None, container=None) -> bool:
         """The aimed cast's click: the spell goes to *point* (a world point
-        under the cursor) or at *target* (the creature clicked)."""
+        under the cursor) or at *target* (the creature clicked). Knock's
+        click names the *container* under the cursor (else the one nearest
+        *point*)."""
+        knock = self.knock_aiming
         self.spell_aiming = False
+        self.knock_aiming = False
+        if knock:
+            if container is None:
+                where = list(target.pos) if target is not None else point
+                container = unlocking.nearest_to(self, where)
+            return self.do_cast(knock_pick=True, container=container)
         return self.do_cast(aim=list(target.pos) if target is not None else point,
                             target=target)
+
+    # -- Knock: a click on a container near you, twice a day ----------------
+    def _knock_key(self) -> str:
+        return f"knock.uses.{self._resurrect_day()}"
+
+    def knock_uses_today(self) -> int:
+        try:
+            return int(self.store.get(self._knock_key(), "0") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def arm_knock(self) -> bool:
+        """Ready Knock: the cursor becomes a hand, and the next click picks
+        the container (``cast_at``). Worked out for the day, it says so."""
+        if self.knock_uses_today() >= unlocking.KNOCK_PER_DAY:
+            self.float_text(self.player_actor, unlocking.NOT_AGAIN, 2.5)
+            return False
+        self.spell_aiming = True
+        self.knock_aiming = True
+        return True
+
+    def _knock(self, spell, thing) -> bool:
+        """Knock's click on *thing* (a container, or None): too far, not
+        locked, or -- the spell worked -- unlocked through the console's
+        ``unlock`` (game/unlocking.py). Missing keeps the hand up."""
+        if thing is None:
+            self.spell_aiming = self.knock_aiming = True      # pick again
+            return False
+        ppos = self._player_pos()
+        if ppos is None or self._dist2d(thing.pos, ppos) > unlocking.KNOCK_REACH:
+            self.float_text(self.player_actor, unlocking.TOO_FAR, 2.0)
+            self.spell_aiming = self.knock_aiming = True
+            return False
+        if not unlocking.is_locked(thing):
+            self.notify("That is not locked.", 2.5)
+            self.spell_aiming = self.knock_aiming = True
+            return False
+        self._cast_cooldown = 0.7
+        res = self.game.cast_active_spell()
+        if not res.cast:
+            if res.reason == "not enough magicka":
+                self.notify("Not enough magicka")
+            elif res.reason == "fizzle":
+                self.fizzled(self.player_actor)
+            return False
+        jammed = bool(thing.properties.get("lock_jammed"))
+        unlocking.unlock(self, thing)
+        uses = self.knock_uses_today() + 1
+        self.store.set(self._knock_key(), str(uses))
+        left = unlocking.KNOCK_PER_DAY - uses
+        self.float_text(self.player_actor,
+                        unlocking.ONCE_MORE if left == 1 else unlocking.NOT_AGAIN
+                        if left <= 0 else f"Can be used {left} more times", 2.5)
+        self.notify("Knock clears the sheared pick and opens the lock." if jammed
+                    else "Knock opens the lock.", 4.0)
+        self._spell_sound(self.player_actor, SPELLCAST_SOUND)
+        self.show_cast(self.player_actor, spell)
+        return True
 
     def _face(self, point) -> None:
         """Turn the player toward *point*: one casts where one looks."""
@@ -9742,7 +9828,8 @@ class MiniwindSession(SettlementLaw):
             return [float(aim[0]), start[1], float(aim[2])]   # level flight
         return None
 
-    def do_cast(self, aim=None, target=None, hand=None) -> bool:
+    def do_cast(self, aim=None, target=None, hand=None, knock_pick=False,
+                container=None) -> bool:
         """Cast the active spell. PROJECTILE spells launch a visible bolt that
         flies from the player and damages the first creature it strikes;
         TARGET/TOUCH spells resolve instantly on the aimed creature; SELF spells
@@ -9750,7 +9837,9 @@ class MiniwindSession(SettlementLaw):
 
         *aim* is where it goes: ``"facing"`` (straight out ahead), a world
         point (clicked), or None (the nearest creature in front, as before);
-        *target* a creature clicked on."""
+        *target* a creature clicked on. Knock is readied first (a hand
+        cursor) and cast by the click, with *knock_pick* and the *container*
+        clicked (``cast_at``)."""
         c = self.game.character
         if hand is not None:
             held = eq.hand_spell(c, hand)
@@ -9765,6 +9854,8 @@ class MiniwindSession(SettlementLaw):
             return False
         if c.is_dead or self._cast_cooldown > 0 or not c.active_spell:
             return False
+        if not knock_pick and _is_knock(rpg_magic.get(c.active_spell)):
+            return self.arm_knock()
         self._cast_cooldown = 0.7
         # Worn metal stops every spell, Resurrection and Knock included,
         # before any magicka is spent.
@@ -9778,11 +9869,9 @@ class MiniwindSession(SettlementLaw):
         if spell is not None and any(e.get("kind") == "resurrect"
                                      for e in (spell.effects or [])):
             return self._do_resurrect(spell, target=target, aim=aim)
-        knock = spell is not None and any(e.get("kind") == "knock" for e in spell.effects)
-        knock_target = self.nearest_knock_target() if knock else None
-        if knock and knock_target is None:
-            self.notify("Knock needs a locked or jammed container within reach.", 3.0)
-            return False
+        if _is_knock(spell):
+            self._cast_cooldown = 0.0             # set by the cast itself
+            return self._knock(spell, container)
         res = self.game.cast_active_spell()
         if not res.cast:
             if res.reason == "not enough magicka":
@@ -9799,19 +9888,6 @@ class MiniwindSession(SettlementLaw):
                     self.notify("The spell fizzles")
             return False
         if spell is None:
-            return True
-        if knock_target is not None:
-            p = knock_target.properties
-            jammed = p.get("lock_jammed")
-            p["lock_jammed"] = False
-            p["locked"] = False
-            p.pop("lockpick_state", None)
-            if self.lockpick_thing is knock_target:
-                self.close_lockpicking(save_progress=False)
-            self.notify("Knock clears the sheared pick and opens the lock." if jammed
-                        else "Knock opens the lock.", 4.0)
-            self._spell_sound(self.player_actor, SPELLCAST_SOUND)
-            self.show_cast(self.player_actor, spell)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
@@ -12249,21 +12325,6 @@ class MiniwindSession(SettlementLaw):
         self.dialogue_npc = None
 
     # -- containers ---------------------------------------------------------
-    def nearest_knock_target(self):
-        pos = self._player_pos()
-        if pos is None:
-            return None
-        best, best_d = None, float("inf")
-        for thing in self._things_of_type("container"):
-            p = thing.properties
-            if p.get("hidden") or not (p.get("locked") or p.get("lock_jammed")):
-                continue
-            radius = min(TALK_RADIUS, max(0.0, float(p.get("use_radius", TALK_RADIUS))))
-            d = (pos[0] - thing.pos[0]) ** 2 + (pos[2] - thing.pos[2]) ** 2
-            if d <= radius * radius and d < best_d:
-                best, best_d = thing, d
-        return best
-
     def _container_things(self):
         """Stock containers, including the inventories on placed mills."""
         return _chain(self._things_of_type("container"), self.windmills.bodies())

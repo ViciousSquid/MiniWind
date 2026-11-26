@@ -43,6 +43,16 @@ def game_pointer_open(view) -> bool:
         return False
 
 
+def cursor_shape(view) -> str:
+    """The cursor the game's pointer asks for ("arrow" or "hand"); duck-typed
+    ``cursor_shape()``, the arrow when it has none."""
+    shape = getattr(getattr(view, 'game_pointer', None), 'cursor_shape', None)
+    try:
+        return "hand" if shape is not None and shape() == "hand" else "arrow"
+    except Exception:
+        return "arrow"
+
+
 def window_wants_cursor(view) -> bool:
     """Whether a gameplay window needs a free mouse cursor (see CURSOR_WINDOWS)."""
     manager = getattr(view, 'floating_windows', None)
@@ -65,16 +75,22 @@ class ViewPointer:
 
     def sync(self):
         """Show the cursor while the game wants the pointer (or a floating
-        window does), recapture it after."""
+        window does), recapture it after. The game's pointer may ask for a
+        hand (``cursor_shape()`` -> "hand") instead of the arrow."""
         view = self.view
-        want = game_pointer_open(view) or window_wants_cursor(view)
-        if want == view._game_pointer_shown:
+        claimed = game_pointer_open(view)
+        want = claimed or window_wants_cursor(view)
+        shape = cursor_shape(view) if claimed else "arrow"
+        if want == view._game_pointer_shown and (
+                not want or shape == getattr(view, '_game_pointer_shape', "arrow")):
             return
         view._game_pointer_shown = want
+        view._game_pointer_shape = shape
         if want:
             while QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
-            QApplication.setOverrideCursor(Qt.ArrowCursor)
+            QApplication.setOverrideCursor(
+                Qt.PointingHandCursor if shape == "hand" else Qt.ArrowCursor)
         elif (view.play_mode and not view.console_overlay_active
               and view._actor_pick is None and view.pause_menu is None
               and not play_menu_open(view)):

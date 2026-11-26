@@ -244,6 +244,7 @@ def capture(coop):
             "floaters": clean(s.floaters),
             "bow_charge": s.bow_charge,
             "spell_aiming": s.spell_aiming,
+            "knock_aiming": getattr(s, "knock_aiming", False),
             "strip_selected": s.strip_selected,
             "blocking": s._blocking,
             "attack_anim": s._attack_anim_time,
@@ -458,6 +459,7 @@ def apply(coop, message):
             s.floaters = list(data.get("floaters", []))
             s.bow_charge = data.get("bow_charge")
             s.spell_aiming = bool(data.get("spell_aiming"))
+            s.knock_aiming = bool(data.get("knock_aiming"))
             s.strip_selected = int(data.get("strip_selected", 0))
             s._blocking = bool(data.get("blocking"))
             s._attack_anim_time = float(data.get("attack_anim", 0.0))

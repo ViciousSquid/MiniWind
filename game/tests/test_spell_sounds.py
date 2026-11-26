@@ -50,9 +50,9 @@ def test_knock_plays_spellcast(monkeypatch):
     c.known_spells = ["knock"]
     eq.equip_spell(c, "knock", "main")
     chest = _Thing("Chest", locked=True)
-    s.nearest_knock_target = lambda: chest
     s.game.cast_active_spell = lambda: SimpleNamespace(cast=True, reason="", roll=None)
-    assert s.do_cast(aim="facing", hand="main")
+    assert s.do_cast(aim="facing", hand="main") and not queued    # readied
+    assert s.cast_at(None, container=chest)
     assert _files(queued) == ["spellcast.mp3"]
 
 

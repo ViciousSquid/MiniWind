@@ -2386,6 +2386,24 @@ ROLL_LOG_BOTTOM = 128
 ROLL_LOG_FADE = 1.0
 
 
+#: A prominent roll-log line ("Unlocked!"): bright gold, bold and larger, on
+#: a deep plate with a gold edge, so it stands out from the rolls around it.
+_LOG_GOLD = (255, 214, 90)
+_LOG_PLATE = (40, 26, 0)
+
+
+def _draw_prominent_log_line(painter, x, y, text, alpha):
+    fm = QFontMetrics(T.font(12, True, family="Segoe UI"))
+    rect = QRect(x, y - 2, fm.horizontalAdvance(text) + 22, ROLL_LOG_LINE + 2)
+    painter.setPen(QPen(QColor(*_LOG_GOLD, alpha), 1.5))
+    painter.setBrush(QColor(*_LOG_PLATE, int(alpha * 0.85)))
+    painter.drawRoundedRect(rect, 3, 3)
+    T.text_in(painter, rect.adjusted(10, 0, -6, 0), text, size=12, bold=True,
+              color=QColor(*_LOG_GOLD, alpha), align=T.ALIGN_LEFT,
+              family="Segoe UI")
+    return rect
+
+
 def _draw_roll_log(painter, session, width, height):
     """The last few explained rolls, newest at the bottom, each one in the
     colour of its outcome: "Roll to hit Bandit: 7 (need 14+) — FAILED"."""
@@ -2399,6 +2417,10 @@ def _draw_roll_log(painter, session, width, height):
     painter.save()
     for entry in log:
         alpha = int(255 * max(0.0, min(1.0, entry["t"] / ROLL_LOG_FADE)))
+        if entry.get("prominent"):
+            drawn = drawn.united(_draw_prominent_log_line(painter, x, y, entry["text"], alpha))
+            y += ROLL_LOG_LINE
+            continue
         success = entry.get("success")
         color = (QColor(226, 224, 236, alpha) if success is None
                  else _verdict_color(bool(success), alpha))

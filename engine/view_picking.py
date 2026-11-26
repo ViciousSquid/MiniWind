@@ -375,8 +375,12 @@ class ViewPicking:
     def actor_pick_active(self) -> bool:
         return self.view._actor_pick is not None
 
-    def begin_actor_pick(self, on_pick=None) -> bool:
+    def begin_actor_pick(self, on_pick=None, find=None, verb=None) -> bool:
         """Arm a one-shot click-to-pick of an actor in Play Mode.
+
+        *find(mx, my)*, when given, says what is under the cursor instead of
+        the actor pick (a game picking a container, say), and *verb* names
+        the pick in its hint ("Inspect" by default).
 
         The world pauses (``LogicThread.session_runtime.set_world_paused``) so the actor holds
         still, and the cursor is freed. The next left-click on an actor ends
@@ -386,7 +390,7 @@ class ViewPicking:
         """
         if not self.view.play_mode:
             return False
-        self.view._actor_pick = {'on_pick': on_pick}
+        self.view._actor_pick = {'on_pick': on_pick, 'find': find, 'verb': verb}
         self.view.actor_pick_hover = None
         logic = self.view.logic_thread
         if logic is not None:
@@ -457,15 +461,27 @@ class ViewPicking:
             if render_state is not None:
                 self.view.game_state.release_render_state(render_state)
 
+    def _picked_at(self, mx, my):
+        """What an armed pick would take at (mx, my): its finder's choice, or
+        the actor there."""
+        find = (self.view._actor_pick or {}).get('find')
+        if find is None:
+            return self.actor_at(mx, my)
+        try:
+            return find(mx, my)
+        except Exception as exc:
+            debug_log("Error", f"pick finder failed: {exc}")
+            return None
+
     def _update_actor_pick_hover(self, mx, my):
-        hovered = self.actor_at(mx, my)
+        hovered = self._picked_at(mx, my)
         if hovered is not self.view.actor_pick_hover:
             self.view.actor_pick_hover = hovered
             self.view.update()
 
     def _click_actor_pick(self, mx, my) -> bool:
         """Resolve an armed pick at the clicked pixel. True if it ended."""
-        actor = self.actor_at(mx, my)
+        actor = self._picked_at(mx, my)
         if actor is None:
             return False
         on_pick = self.view._actor_pick.get('on_pick') or self._open_inspector_for
@@ -498,8 +514,13 @@ class ViewPicking:
         if hovered is not None:
             props = getattr(hovered, 'properties', {}) or {}
             name = str(props.get('name') or props.get('type') or "")
-        text = (f"Inspect: {name} - click to open (Esc to cancel)" if name
-                else "Inspect (paused): click an actor (Esc to cancel)")
+        verb = (self.view._actor_pick or {}).get('verb')
+        if verb:
+            text = (f"{verb}: {name} - click (Esc to cancel)" if name
+                    else f"{verb} (paused): click one (Esc to cancel)")
+        else:
+            text = (f"Inspect: {name} - click to open (Esc to cancel)" if name
+                    else "Inspect (paused): click an actor (Esc to cancel)")
         metrics = QFontMetrics(self.view._hud_msg_font)
         tw = metrics.horizontalAdvance(text)
         x, y = viewport_width // 2 - tw // 2, 40

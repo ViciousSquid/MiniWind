@@ -1621,7 +1621,9 @@ class MiniwindGame:
                 painter.translate(*jolt)
                 hud.draw(painter, session, w, h)
                 painter.translate(-jolt[0], -jolt[1])
-                if getattr(session, "spell_aiming", False):
+                if (getattr(session, "spell_aiming", False)
+                        and not getattr(session, "knock_aiming", False)):
+                    # (Knock's aim is the hand cursor, not a reticle.)
                     import game.rpg.magic as rpg_magic
                     spell = rpg_magic.get(session.game.character.active_spell or "")
                     magic_overlay.draw_aim(painter, hits.pointer,
