@@ -25,7 +25,7 @@ class CultRiteScenario(BaseScenario):
     def thank_line(self, scene):
         return "You came for me... I thought I was done for. Thank you."
 
-    def topic(self, role, talk, want="")
+    def topic(self, role, talk, want=""):
         if role != "victim":
             return None
         from .. import scene_talk as st
