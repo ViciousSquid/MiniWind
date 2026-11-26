@@ -94,18 +94,29 @@ def test_a_map_in_a_mounted_package_reads_its_paint_from_there(tmp_path, monkeyp
     assert terrain_stamp.join_level(marked, path)["terrain_data"] == level["terrain_data"]
 
 
-def test_the_overworld_keeps_its_paint_in_its_paint_file():
+def test_the_overworld_carries_its_own_paint():
+    """Its roads and district borders are in the map itself
+    (game/tools/embed_paint.py), so every load has them, and no paint file
+    is beside it to fall out of step."""
     path = os.path.join(ROOT, "maps", "miniwind_world.json")
     with open(path, encoding="utf-8") as fh:
         level = json.load(fh)
     td = level["terrain_data"]
-    assert td.get("paint_file") is True
-    assert not any(k in td for k in terrain_stamp._MOVED_KEYS)
-    assert not os.path.exists(os.path.join(ROOT, "maps", "miniwind_world.stamp"))
+    assert "paint_file" not in td
+    assert td["texture_paint_resolution"] == 512
+    assert len(td["texture_paint"]) > 100
+    assert terrain_stamp.paint_path(path) is None
     assert terrain_stamp.missing_paint_file(level, path) is None
-    terrain_stamp.join_level(level, path)
-    assert level["terrain_data"]["texture_paint_resolution"] == 512
-    assert len(level["terrain_data"]["texture_paint"]) > 100
+    # Loading it is the map as it is: nothing to join.
+    assert terrain_stamp.join_level(level, path) is level
+
+
+def test_the_overworld_is_minified():
+    """The map is tens of megabytes: no padding in it."""
+    path = os.path.join(ROOT, "maps", "miniwind_world.json")
+    with open(path, encoding="utf-8") as fh:
+        head = fh.read(4096)
+    assert ", " not in head and '": ' not in head
 
 
 def test_paint_resolution_follows_the_chunk_size():
