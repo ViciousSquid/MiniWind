@@ -26,7 +26,7 @@ class PatrolScenario(BaseScenario):
     def learned_intervention(self, name):
         return "they helped the watch beat the brigands"
 
-    def topic(self, role, talk, want="")
+    def topic(self, role, talk, want=""):
         if role != "victim":
             return None
         from .. import scene_talk as st
