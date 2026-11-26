@@ -11,7 +11,7 @@ a badge with the pacing state, then two tabs.
   population caps, Studio edits, biased journeys), newest first.
 * **Raw** -- the data behind it: the storyteller's ``summary()`` and, in
   Dynamic mode, the director's ``raw()`` (numbers, weights, rejections,
-  journey ids), as a key / value table you can select and copy.
+  journey ids), as a key / value table.
 
 The strip along the top collapses the window to just itself (the arrow) and
 keeps it above other windows (the drawing pin; :mod:`game.ui.window_strip`).

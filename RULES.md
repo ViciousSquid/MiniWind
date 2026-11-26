@@ -1079,7 +1079,8 @@ The world ends in a cliff of rock strata (`engine/shaders.py`,
 ## 22. Game mode
 
 Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
-**Normal** (the default) or **Dynamic**. It can be changed at any time.
+**Normal** (the default) or **Dynamic**. It can be changed at any time. The guide is
+[docs/game_modes.md](docs/game_modes.md).
 
 * **Normal.** The storyteller (`game/sim/storyteller.py`) is only allowed to
   pace what the world already holds: it samples and biases journeys,
@@ -1109,7 +1110,7 @@ Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
   thank you; the watch fighting brigands; and after dark, ambushes, cult
   processions and cult rites with a townsperson held captive (cults hold
   their rite 2.5 game hours). A rescued party thanks you from 380 units and
-  pays a reward from its own purse (10--120 gold); the watch remembers. A
+  pays a reward from its own purse (10--120 gold). A
   staged party waits 3 game hours, then goes back to ordinary life.
 * **Where.** Always on a road you are on (within 900 units of it), ahead of
   you, 1,150--1,900 units away -- beyond any actor's sight -- and, for
