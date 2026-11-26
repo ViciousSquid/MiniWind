@@ -33,6 +33,10 @@ _DIM = QColor(130, 130, 138)
 _NOTE = QColor(200, 170, 90)
 _PANEL = QColor(8, 8, 12, 205)
 _ROW_SEL = QColor(196, 30, 58, 60)
+#: The banner under Game mode: what the chosen mode is, in a line.
+GAME_MODE_BANNERS = {"normal": "Experience the world as it unfolds.",
+                     "dynamic": "The world brings emerging stories to you."}
+_BANNER = QColor(196, 30, 58, 38)
 
 
 class OptionsPage:
@@ -456,7 +460,9 @@ class OptionsPage:
         bottom_room = max(70, h // 9)
         avail = max(row_h * len(rows), h - top - bottom_room)
         row_h = min(row_h, max(20, avail // (len(rows) + 1)))
-        panel = QRectF(x0, top, panel_w, row_h * len(rows) + row_h)
+        has_banner = any(r[0] == "game_mode" for r in rows)
+        banner_h = int(row_h * 0.85) if has_banner else 0
+        panel = QRectF(x0, top, panel_w, row_h * len(rows) + row_h + banner_h)
 
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
@@ -492,6 +498,22 @@ class OptionsPage:
                 self._draw_value(painter, key, vrect, value, enabled, selected,
                                  text_font, label_pt)
             y += row_h
+            if key == "game_mode":
+                # The banner: the chosen mode in a line, under its row.
+                banner = QRectF(x0 + 22, y, panel_w - 44, banner_h - 4)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(_BANNER)
+                painter.drawRoundedRect(banner, 4, 4)
+                painter.fillRect(QRectF(banner.x(), banner.y(), 2, banner.height()), _ACCENT)
+                font = text_font(max(9, label_pt - 2))
+                font.setItalic(True)
+                painter.setFont(font)
+                painter.setPen(_NOTE)
+                painter.drawText(banner, int(Qt.AlignCenter),
+                                 GAME_MODE_BANNERS[self._game_mode()
+                                                   if self._game_mode() in GAME_MODE_BANNERS
+                                                   else "normal"])
+                y += banner_h
         self._row_rects = row_rects
 
         # What the highlighted row does, under the panel.
