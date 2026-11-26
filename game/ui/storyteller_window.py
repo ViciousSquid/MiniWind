@@ -202,6 +202,9 @@ class StorytellerWindow(QWidget):
         layout.addWidget(self.status)
 
         self._shown = {}
+        #: Live and World as last read from a live session (kept when Play
+        #: Mode ends).
+        self._kept = {}
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
         self._timer.start(REFRESH_MS)
@@ -239,36 +242,64 @@ class StorytellerWindow(QWidget):
     # -- showing it ----------------------------------------------------------
     def refresh(self, force=False):
         story = self._storyteller()
-        self.live_state.setText(f"Live: {story.state}" if story is not None else "No active storyteller")
         tab = self.tab
+        if story is None and (self._kept or self._levers_for is not None):
+            # Play Mode has ended: keep what was last shown, read-only.
+            self.live_state.setText("Play Mode ended")
+            self.message = "Play Mode ended · showing the last report · live again when you next play"
+            self.status.setText(self.message)
+            if tab == "Levers":
+                self._refresh_levers(None, force)
+            elif tab in self._kept and self._shown.get(tab) != self._kept[tab]:
+                self._show_text(tab, self._kept[tab])
+            return
+        if story is not None and self.message.startswith("Play Mode ended"):
+            self.message = ""
+        self.live_state.setText(f"Live: {story.state}" if story is not None else "No active storyteller")
+        if story is not None:
+            # Both text tabs, so either can still be read once Play Mode ends.
+            for name in ("Live", "World"):
+                if name != tab:
+                    self._kept[name] = self._text_rows(story, name)
         if tab == "Levers":
             self._refresh_levers(story, force)
         else:
-            if story is None:
-                rows = [("text", "No active MiniWind storyteller.")]
-            elif tab == "World":
-                rows = []
-                for group, label, reason, _events in world_explanations(story):
-                    rows += [("heading", f"{group}: {label}"), ("text", reason)]
-            else:
-                rows = rows_for(story)
+            rows = self._text_rows(story, tab)
+            if story is not None:
+                self._kept[tab] = rows
             if force or self._shown.get(tab) != rows:
-                self._shown[tab] = rows
-                browser = self.world if tab == "World" else self.live
-                bar = browser.verticalScrollBar()
-                at = bar.value()
-                browser.setHtml(_html(rows))
-                bar.setValue(at)
+                self._show_text(tab, rows)
         self.status.setText(self.message)
+
+    def _text_rows(self, story, tab):
+        if story is None:
+            return [("text", "No active MiniWind storyteller.")]
+        if tab == "World":
+            rows = []
+            for group, label, reason, _events in world_explanations(story):
+                rows += [("heading", f"{group}: {label}"), ("text", reason)]
+            return rows
+        return rows_for(story)
+
+    def _show_text(self, tab, rows):
+        self._shown[tab] = rows
+        browser = self.world if tab == "World" else self.live
+        bar = browser.verticalScrollBar()
+        at = bar.value()
+        browser.setHtml(_html(rows))
+        bar.setValue(at)
 
     def _refresh_levers(self, story, force):
         enabled = story is not None
         for button in (*self._state_buttons.values(), self.reset_button, self.pacing_button):
             button.setEnabled(enabled)
         if story is None:
-            self.form_area.takeWidget()
-            self._spins, self._levers_for = {}, None
+            # Nothing to edit without a session; the last table stays visible.
+            if self.form_area.widget() is not None:
+                self.form_area.widget().setEnabled(False)
             return
+        if self.form_area.widget() is not None:
+            self.form_area.widget().setEnabled(True)
         if self.edit_state is None:
             self.edit_state = story.state
         for state, button in self._state_buttons.items():

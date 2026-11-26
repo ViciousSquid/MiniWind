@@ -255,3 +255,33 @@ def test_debug_menu_storyteller_runs_the_console_command(qt_app, monkeypatch):
     assert args == "" and ctx.play_mode is True and ctx.logic_thread is logic
     assert ctx.main_window is window
     window.close()
+
+
+@pytest.mark.qt
+def test_the_window_stays_open_with_its_last_report_when_play_mode_ends(qt_app):
+    from engine.floating_windows import WindowManager
+    from ..ui.storyteller_now import StorytellerNowWindow
+
+    story = setup()[0]
+    logic = SimpleNamespace(_miniwind=session_for(story))
+    view = SimpleNamespace(logic_thread=logic, window_manager=WindowManager(), update=lambda: None)
+    win = StorytellerNowWindow(view)
+    win.show()
+    try:
+        story_text = win.story.toPlainText()
+        win.tab = "Raw"
+        raw_rows = win.raw.rowCount()
+        win.tab = "Story"
+        assert "State" in story_text and raw_rows > 0
+        logic._miniwind = None                       # Play Mode stops
+        win.refresh()
+        assert win.isVisible() and win.ended
+        assert win.story.toPlainText() == story_text # nothing deleted
+        assert "Play Mode ended" in win.title.text() and "last report" in win.note.text()
+        win.tab = "Raw"                              # both tabs kept
+        assert win.raw.rowCount() == raw_rows
+        logic._miniwind = session_for(story)         # playing again
+        win.refresh()
+        assert not win.ended and "pacing" in win.title.text()
+    finally:
+        win.close()

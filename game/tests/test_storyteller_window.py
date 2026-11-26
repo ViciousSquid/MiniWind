@@ -93,13 +93,24 @@ def test_the_live_tab_shows_the_report_and_reading_changes_nothing(qt_app):
     assert store.d == before
 
 
-def test_studio_survives_session_end_and_can_open_on_new_session(qt_app):
+def test_studio_keeps_its_contents_when_play_mode_ends_and_goes_live_again(qt_app):
     story, _director, _hooks, _store = setup()
     view = View(story)
     win = open_storyteller(view)
-    view.logic_thread._miniwind = None
+    win.tab = "Levers"                               # its table, built while live
+    win.tab = "Live"
     win.refresh(force=True)
-    assert "No active MiniWind storyteller" in win.live.toPlainText()
+    shown = win.live.toPlainText()
+    assert f"State: {story.state}" in shown
+    view.logic_thread._miniwind = None               # Play Mode stops
+    win.refresh(force=True)
+    assert win.isVisible() and win.live.toPlainText() == shown
+    assert win.live_state.text() == "Play Mode ended"
+    win.tab = "World"                                # the other tab was kept too
+    assert win.world.toPlainText()
+    win.tab = "Levers"
+    assert not win.form_area.widget().isEnabled()    # nothing to edit, still shown
+    win.tab = "Live"
     assert open_storyteller(view) is None
     replacement = setup()[0]
     view.logic_thread._miniwind = SimpleNamespace(storyteller=replacement)

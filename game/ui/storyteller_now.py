@@ -112,6 +112,11 @@ class StorytellerNowWindow(QWidget):
         layout.addLayout(bottom)
 
         self._shown = {}                 # tab -> the content last put up
+        #: Both tabs' rows as last read from a live session: kept when Play
+        #: Mode ends, so the window still shows what it last showed.
+        self._kept = {}
+        self._kept_badge = None          # (state, title) of the last live read
+        self.ended = False
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
         self._timer.start(REFRESH_MS)
@@ -151,14 +156,35 @@ class StorytellerNowWindow(QWidget):
     # -- showing it ----------------------------------------------------------
     def refresh(self, force=False):
         story = self._storyteller()
+        tab = self.tab
+        if story is None and self._kept:
+            # Play Mode has ended: keep the last report up, marked as such.
+            if not self.ended:
+                self.ended, force = True, True
+                self.badge.setStyleSheet("background: rgb(120,125,135); color: #14161c;")
+                self.title.setText("STORYTELLER · Play Mode ended")
+                self.note.setText("Play Mode ended · showing the last report · live again "
+                                  "when you next play")
+            rows = self._kept.get(tab, [])
+            if force or self._shown.get(tab) != rows:
+                self._shown[tab] = rows
+                (self._fill_raw if tab == "Raw" else self._fill_story)(rows)
+            return
+        if self.ended and story is not None:
+            self.ended, force = False, True
+            self.note.setText("Read-only · live")
         state = getattr(story, "state", None)
         r, g, b = report.STATE_COLOURS.get(state, (120, 125, 135))
         self.badge.setText(state or "—")
         self.badge.setStyleSheet(f"background: rgb({r},{g},{b}); color: #14161c;")
-        self.title.setText("STORYTELLER" if story is None else (
-            "STORYTELLER · pacing ON" if story.enabled else "STORYTELLER · pacing OFF (pristine)"))
-        tab = self.tab
+        title = "STORYTELLER" if story is None else (
+            "STORYTELLER · pacing ON" if story.enabled else "STORYTELLER · pacing OFF (pristine)")
+        self.title.setText(title)
         rows = self.rows(tab)
+        if story is not None:
+            # Both tabs, so either can still be read once Play Mode ends.
+            self._kept = {tab: rows, **{t: self.rows(t) for t in self.TABS if t != tab}}
+            self._kept_badge = (state, title)
         if not force and self._shown.get(tab) == rows:
             return                      # unchanged: keep the reader's place
         self._shown[tab] = rows
