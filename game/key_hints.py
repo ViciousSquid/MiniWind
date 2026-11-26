@@ -23,6 +23,10 @@ hint. A hint that has started keeps its clock while a menu, a conversation or
 the pause menu is up, and is simply not drawn meanwhile; a hint that has not
 started yet waits for play to be in view again.
 
+Each hint plays ``assets/sounds/ping.wav`` (loose, or in a ``.fiopak``) the
+moment it starts fading in -- once per hint, never for one that was skipped.
+Until the file exists the hint is silent.
+
 Not for a loaded save or CONTINUE: only :meth:`MiniwindSession.begin_new_character`
 arms the hints. Drawn by :func:`game.ui.hud.draw_key_hints`.
 """
@@ -38,6 +42,9 @@ DURATION = FADE_IN + HOLD + FADE_OUT
 #: The spellbook hint comes no sooner than this long after the inventory
 #: hint began (and never while it is up).
 SPELLBOOK_DELAY = 3.0
+
+#: The interface sound each hint plays as it starts to fade in.
+PING_SOUND = "ping.wav"
 
 #: (bindable action, the word under its key), in the order they show.
 INVENTORY = ("inventory", "Inventory")
@@ -77,6 +84,8 @@ class KeyHints:
         self.started = None
         #: When the previous hint ended (faded out, hidden or skipped).
         self.ended = None
+        #: Hints that have started fading in and not yet played their ping.
+        self._started = []
         #: Actions whose key was pressed (or screen opened) since arming.
         self.used = set()
         #: Since when play has been in view without a break (None: not now).
@@ -120,6 +129,7 @@ class KeyHints:
             if now < start:
                 return
             self.started = start
+            self._started.append(action)        # its ping is due
             return
 
     # -- input --------------------------------------------------------------
@@ -164,6 +174,12 @@ class KeyHints:
                 return None
             action, caption = self.queue[self.index]
             return action, caption, alpha
+
+    def take_started(self):
+        """The hints that have begun fading in since last asked (each once)."""
+        with self._lock:
+            started, self._started = self._started, []
+            return started
 
     def showing(self, now: float = None):
         """The action whose hint is running at *now* (drawn or not), or None."""
@@ -292,6 +308,11 @@ def current(session, now: float = None):
     if screen in SCREEN_ACTIONS and SCREEN_ACTIONS[screen] not in hints.used:
         hints.press(SCREEN_ACTIONS[screen], now)
     shown = hints.frame(now, is_free(session))
+    for _action in hints.take_started():
+        # The moment a hint starts to fade in.
+        play = getattr(session, "play_ui_sound", None)
+        if play is not None:
+            play(PING_SOUND)
     if hints.done:
         session.key_hints = None
     if shown is None:
