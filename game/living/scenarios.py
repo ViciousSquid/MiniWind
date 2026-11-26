@@ -799,13 +799,36 @@ class ScenarioDirector:
         return j, False
 
     def _resident_member(self, thing, rid) -> Dict:
+        """A townsperson as a road party's member: the same person, with their
+        own things and their own purse (the gold in their inventory); what
+        they come home with is reconciled then (world.SessionHooks.resident_home)."""
+        from ..rpg import inventory as rpg_inventory
         p = thing.properties
         return {"role": p.get("npc_role", "villager"), "name": p.get("name", rid),
                 "display": p.get("display_name", p.get("name", "Someone")),
                 "health": p.get("health", 60), "max_health": p.get("max_health", p.get("health", 60)),
                 "damage": p.get("damage", 5), "style": "melee", "alive": True,
-                "gold": self.session.rng.randint(15, 45), "head": p.get("head", ""),
-                "resident": rid}
+                "gold": 0,                 # their real gold is in their inventory
+                "inventory": copy.deepcopy(rpg_inventory.get_inventory(thing)),
+                "own_purse": True, "head": p.get("head", ""), "resident": rid}
+
+    def _purse(self, j, lead) -> int:
+        """Gold the person who pays (*lead*, a live actor) actually holds."""
+        from ..rpg import inventory as rpg_inventory
+        return rpg_inventory.quantity(rpg_inventory.get_inventory(lead), "gold")
+
+    def _pay(self, j, lead, amount) -> int:
+        """Take up to *amount* gold from what *lead* holds; returns what was
+        taken. A member whose inventory is not carried keeps its purse figure
+        in step, so the gold is not there again when it next appears."""
+        from ..rpg import inventory as rpg_inventory
+        taken = rpg_inventory.remove_item(rpg_inventory.get_inventory(lead), "gold", int(amount))
+        idx = lead.properties.get("_member")
+        if j is not None and isinstance(idx, int) and idx < len(j.members):
+            m = j.members[idx]
+            if "inventory" not in m:
+                m["gold"] = max(0, int(m.get("gold", 0) or 0) - taken)
+        return taken
 
     def _can_take(self, rid) -> bool:
         board = self.board
@@ -934,55 +957,91 @@ class ScenarioDirector:
         out.sort(key=lambda row: (-int(row[2].get("day", 0) or 0), -float(row[2].get("hour", 0) or 0)))
         return out
 
-    def _culprit_gang(self, fact):
-        """The very party the culprit rides with, if they are on the roads."""
+    def _culprit_member(self, fact):
+        """``(party, member)``: the culprit themselves, riding with a party on
+        the roads (off screen, unstaged), or None."""
         from ..sim.director import actor_key
         culprit = fact.get("actor", "")
+        if not culprit:
+            return None
         for j in self.board.journeys.values():
             if j.live or j.stage is not None or j.state == "done" or not j.alive():
                 continue
-            if j.faction != fact.get("actor_faction"):
-                continue
             for m in j.alive():
-                if culprit and culprit in (actor_key(m.get("id") or ""), actor_key(m.get("name") or "")):
-                    return j
+                if culprit in (actor_key(m.get("id") or ""), actor_key(m.get("name") or "")):
+                    return j, m
         return None
 
-    def _culprit_gang_was(self, fact, gang):
-        from ..sim.director import actor_key
+    def _culprit_actor(self, fact):
+        """The culprit as an actor somewhere in the world (a brigand at their
+        camp, a beast at its lair), alive, or None."""
+        find = getattr(self.session, "_sim_actor_by_key", None)
         culprit = fact.get("actor", "")
-        return bool(culprit) and any(culprit in (actor_key(m.get("id") or ""), actor_key(m.get("name") or ""))
-                                     for m in gang.members)
+        if find is None or not culprit:
+            return None
+        try:
+            thing = find(culprit)
+        except Exception:
+            return None
+        if thing is None or getattr(thing, "pos", None) is None \
+                or (getattr(thing, "properties", None) or {}).get("dead"):
+            return None
+        return thing
 
     def _stage_avenger(self, t):
-        """A townsperson out to settle a real score with an outlaw gang."""
+        """A townsperson out to settle a real score -- with the real culprit.
+
+        The avenger only ever goes after whoever did it: the culprit riding
+        with a party on the roads (that party is staged up the road), or the
+        culprit as an actor elsewhere in the world (the avenger sets out for
+        where they are). A culprit who is nowhere to be found sends nobody: no
+        stand-in gang is ever put in their place, and the log says why."""
         from ..sim.director import actor_key
         done = {sc.get("fact_e") for sc in self.scenes.values()}
+        unfound = []
         for thing, rid, fact, tie in self._grievances():
             if fact.get("e") in done or not self._can_take(rid):
+                continue
+            culprit = fact.get("actor_name") or "an outlaw"
+            holder = thing.properties.get("display_name") or thing.properties.get("name") or rid
+            riding = self._culprit_member(fact)
+            actor = None if riding else self._culprit_actor(fact)
+            if riding is None and actor is None:
+                unfound.append(f"{holder}'s grievance is against {culprit}, who is neither on the "
+                               "roads nor anywhere to be found -- no stand-in was sent")
                 continue
             spot = self._road_ahead(hostile=True)
             if spot is None:
                 return self._no("no road the player is on has a free spot out of sight ahead")
             x, z = spot[7], spot[8]
-            route, dest = self._away_from_player(spot, QUARRY_GAP)
-            gx, gz = route[0]
-            gang = self._culprit_gang(fact)
-            borrowed = gang is not None
-            if gang is None:
-                kind = "cultists" if fact.get("actor_faction") == "cultists" else "bandits"
-                gang, borrowed = self._gang((gx, gz), t, kind)
-            if gang is None:
-                return self._no("no outlaw party to be the avenger's quarry")
+            if riding is not None:
+                gang, target = riding
+                route, dest = self._away_from_player(spot, QUARRY_GAP)
+                gx, gz = route[0]
+                quarry_place = None
+            else:
+                gang, target = None, None
+                quarry_place = self._place_at(actor.pos[0], actor.pos[2])
+                start_place = self._place_at(x, z)
+                if start_place == quarry_place:   # already the nearest place: straight there
+                    q = self.board.places[quarry_place]
+                    path = [(q["x"], q["z"])]
+                else:
+                    path = self.board._route(start_place, quarry_place)
+                if not path:
+                    unfound.append(f"{culprit} is at {self.board.place_name(quarry_place)}, but no "
+                                   f"road leads there from where {holder} would set out")
+                    continue
+                route, dest = [(x, z)] + [tuple(p) for p in path], quarry_place
             sid = self._new_id()
             member = self._resident_member(thing, rid)
             member["armed"] = True
             name = member["display"]
             what = {"death": "killed", "attack": "attacked", "theft": "robbed"}[fact["kind"]]
             whom = (f"my {tie} {fact.get('target_name', '')}".strip() if tie else "me")
-            culprit = fact.get("actor_name") or "Outlaws"
-            greeting = (f"{culprit} {what} {whom}. They're camped up the road -- "
-                        "I'm going after them, with or without you.")
+            where = ("They're camped up the road" if gang is not None else
+                     f"They're at {self.board.place_name(quarry_place)}")
+            greeting = f"{culprit} {what} {whom}. {where} -- I'm going after them, with or without you."
             j = self._new_journey("avenger", [member], [(x, z), (x + 1.0, z + 1.0)], dest, t,
                                   home=self.board.nearest_place(thing.pos[0], thing.pos[2], jn.HOMES))
             self._take_resident(j, rid)
@@ -990,43 +1049,64 @@ class ScenarioDirector:
                        wander=50.0)
             j.stage["onward"] = [list(p) for p in route]
             j.stage["onward_dest"] = dest
-            self._hold(gang, gx, gz, sid, "attacker", t, borrowed=borrowed, wander=110.0)
-            self._keep_apart(j, gang)
-            chief = gang.leader()
-            quest = self._avenger_quest(sid, j, member, chief, culprit, what, whom)
+            journeys = {"avenger": j.id}
+            if gang is not None:
+                gx, gz = route[0]
+                self._hold(gang, gx, gz, sid, "attacker", t, borrowed=True, wander=110.0)
+                self._keep_apart(j, gang)
+                journeys["attacker"] = gang.id
+            # The quest: kill the culprit, by name.
+            target_name = (target or {}).get("name") or (actor.properties.get("name") if actor else "")
+            target_display = (target or {}).get("display") or culprit
+            purse = sum(int(st.get("qty", 0)) for st in member["inventory"]
+                        if str(st.get("id")) == "gold")
+            quest = self._avenger_quest(sid, member, target_name, target_display, culprit, what,
+                                        whom, purse, here=gang is not None,
+                                        place=self.board.place_name(quarry_place) if quarry_place else "")
             quest_name = f"'{name}'s Score'" if quest else "none"
+            if gang is not None:
+                found = (f"put {target_display}'s own band ({self._from(gang, True)}) "
+                         f"{QUARRY_GAP:,.0f} units beyond -- the party the culprit rides with")
+            else:
+                found = (f"{culprit} is not on the roads but is at "
+                         f"{self.board.place_name(quarry_place)}, so {name} sets out for there")
             return self._record(
-                sid, "avenger", {"avenger": j.id, "attacker": gang.id}, x, z, t,
-                fact_e=fact.get("e"), quest=quest, reward=False,
+                sid, "avenger", journeys, x, z, t,
+                fact_e=fact.get("e"), quest=quest, quest_reward=purse, reward=False,
+                culprit={"actor": fact.get("actor", ""), "name": culprit,
+                         "faction": fact.get("actor_faction", "")},
                 decision=story_text.grievance(name, fact, actor_key(thing), thing.properties,
                                               self._place_of(fact)),
                 result=(f"Spawned {name} ({self._from(j, False)}), armed, on the road "
-                        f"{self._where(x, z)}, and put {self._lead(gang)}'s band "
-                        f"({'the very gang the culprit rides with' if self._culprit_gang_was(fact, gang) else self._from(gang, borrowed)}) "
-                        f"{QUARRY_GAP:,.0f} units beyond. {name} offers {story_text.PLAYER} a quest "
-                        f"({quest_name}); if nobody comes within {HOLD_HOURS * 0.5:g} game hours they go "
-                        "after the gang alone."))
+                        f"{self._where(x, z)}, and {found}. {name} offers {story_text.PLAYER} a "
+                        f"quest ({quest_name}) to kill {target_display}, for what they have "
+                        f"({purse} gold); if nobody comes within {HOLD_HOURS * 0.5:g} game hours "
+                        "they go alone."))
+        if unfound:
+            return self._no("; ".join(unfound))
         return self._no("no townsperson holds a fresh, certain grievance against outlaws "
                         "(and is out of sight, free to leave)")
 
-    def _avenger_quest(self, sid, j, member, chief, culprit, what, whom):
-        if chief is None:
+    def _avenger_quest(self, sid, member, target_name, target_display, culprit, what, whom,
+                       purse, here=True, place=""):
+        """The quest an avenger offers: kill the culprit, for what they have."""
+        if not target_name:
             return None
         qid = f"dyn_avenge_{sid}"
-        reward = 40 + int(member.get("gold", 0)) * 2
+        where = "just up the road" if here else f"at {place}"
+        pay = (f"Help me end it and what I have is yours -- {purse} gold." if purse else
+               "I've no gold to give, only my thanks.")
         quest = {"id": qid, "name": f"{member['display']}'s Score",
                  "giver": member["name"],
-                 "offer": (f"{culprit} {what} {whom}. {chief['display']} leads them, "
-                           f"just up the road. Help me end it and what I have is yours -- "
-                           f"{reward} gold."),
-                 "xp": 50, "rewards": {"gold": reward},
+                 "offer": f"{culprit} {what} {whom}. {target_display} is {where}. {pay}",
+                 "xp": 50, "rewards": {"gold": int(purse)} if purse else {},
                  "stages": [
                      {"index": 0, "journal": f"Help {member['display']} deal with "
-                                             f"{chief['display']}'s band, camped up the road.",
-                      "objective": f"Kill {chief['display']}",
-                      "condition": {"kind": "kill", "target": chief["name"], "count": 1},
-                      "waypoint": chief["name"]},
-                     {"index": 10, "journal": f"{chief['display']} is dead. "
+                                             f"{target_display}, {where}.",
+                      "objective": f"Kill {target_display}",
+                      "condition": {"kind": "kill", "target": target_name, "count": 1},
+                      "waypoint": target_name},
+                     {"index": 10, "journal": f"{target_display} is dead. "
                                               f"{member['display']} has their score settled.",
                       "finishes": True}]}
         self.world._register(quest)
@@ -1393,9 +1473,13 @@ class ScenarioDirector:
                                   f"is over -- {story_text.PLAYER} came near and the attackers "
                                   "are gone.", scene=scene["id"])
                 continue
-            if "attacker" not in js or "victim" not in js and "avenger" not in js:
+            if "avenger" in js and "attacker" not in js:
+                # Gone after a culprit off the roads: settled when they are dead.
+                if self._culprit_actor(scene.get("culprit") or {}) is not None:
+                    continue
+            elif "attacker" not in js or "victim" not in js and "avenger" not in js:
                 continue
-            if self._party_up(js["attacker"]):
+            elif self._party_up(js["attacker"]):
                 continue
             friend = js.get("victim") or js.get("avenger")
             things = self._live_things(friend)
@@ -1430,11 +1514,19 @@ class ScenarioDirector:
             kind, "Gods bless you, stranger -- they'd have had everything.")
         s.bark(lead, line)
         amount = 0
+        purse = self._purse(j, lead)
         if scene.get("reward") and j is not None:
-            purse = sum(int(m.get("gold", 0) or 0) for m in j.alive())
-            amount = max(10, min(120, purse // 2 + s.rng.randint(5, 25)))
-            for m in j.alive():
-                m["gold"] = max(0, int(m.get("gold", 0) or 0) - amount // max(1, len(j.alive())))
+            # Only what they really hold: about half, at most 120.
+            want = min(120, purse // 2 + s.rng.randint(5, 25))
+            amount = self._pay(j, lead, min(purse, max(10, want)))
+        elif kind == "avenger" and scene.get("quest") and scene.get("quest_reward"):
+            # The score is settled: the quest's reward was their own purse.
+            quests = getattr(getattr(s, "game", None), "quests", None)
+            if quests is not None and quests.is_complete(scene["quest"]):
+                amount = self._pay(j, lead, min(purse, int(scene["quest_reward"])))
+                scene["quest_reward"] = 0
+                amount = 0                 # the quest paid the player; this is its source
+        if amount:
             credit = getattr(s, "_credit_found_gold", None)
             if credit is not None:
                 credit(amount, "Rewarded")
@@ -1449,7 +1541,8 @@ class ScenarioDirector:
         self._learn_scene(scene, True, {"patrol": "they helped the watch beat the brigands",
                                         "avenger": f"they helped {name} settle the score"}.get(
             kind, f"they came to {name}'s aid"))
-        paid = f" They paid {amount} gold from their own purse." if amount else ""
+        paid = (f" They paid {amount} gold from their own purse." if amount else
+                " They had no gold to give." if scene.get("reward") and not purse else "")
         self._narrate(f"Outcome: {story_text.PLAYER} stepped in -- the attackers are dead and {name} "
                       f"was saved.{paid} News of it spread from {self.board.place_name(place)}.",
                       scene=scene["id"], gold=amount)
@@ -1465,12 +1558,10 @@ class ScenarioDirector:
         s = self.session
         scene["resolved"] = True
         j = self.board.journeys.get(jid)
-        amount = 0
-        if j is not None and j.alive():
-            m = j.alive()[0]
-            amount = max(5, min(40, int(m.get("gold", 0) or 0) // 2))
-            m["gold"] = max(0, int(m.get("gold", 0) or 0) - amount)
-        s.bark(lead, "I never thanked you properly. Here -- it isn't much.")
+        purse = self._purse(j, lead)
+        amount = self._pay(j, lead, min(purse, max(5, min(40, purse // 2)))) if purse else 0
+        s.bark(lead, "I never thanked you properly. Here -- it isn't much." if amount else
+               "I never thanked you properly. I've nothing to give, but -- thank you.")
         credit = getattr(s, "_credit_found_gold", None)
         if credit is not None and amount:
             credit(amount, "Given")
