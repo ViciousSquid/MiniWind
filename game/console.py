@@ -492,11 +492,9 @@ def _toggle_overlay(ctx, key, what):
 
 
 def cmd_worldmap(ctx, args):
-    """worldmap -- (editor) the world map in a window of its own, with the
-    editor camera on it, refreshed ten times a second."""
-    if ctx.play_mode:
-        debug_log("Error", "worldmap: editor only (in Play, the map is in the pause menu).")
-        return None
+    """worldmap -- the world map in a window of its own, refreshed ten times a
+    second: with the editor camera on it, or in Play the player (click to
+    teleport there)."""
     if ctx.main_window is None:
         debug_log("Error", "worldmap: needs the editor window.")
         return None
@@ -861,7 +859,7 @@ COMMANDS = (
     (("weather",), cmd_weather,
      "[sunny|overcast|rain|storm|snow] [hours] — What the sky is doing; turn it (fades in) (Play Mode)"),
     (("worldmap",), cmd_worldmap,
-     "— (Editor) The world map in a window, with the editor camera on it (10 Hz)"),
+     "— The world map in a window (10 Hz): the editor camera on it, or in Play the player (click to teleport)"),
     (("viewcone", "viewcones"), cmd_viewcone,
      "— Show/hide every head's view cone and blind spot (debug; settings.ini: [developer] view_cones)"),
     (("showsound",), cmd_showsound,
