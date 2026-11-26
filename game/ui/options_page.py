@@ -195,10 +195,7 @@ class OptionsPage:
         if key == "mode" and s is not None:
             return launcher.mode_help(s.mode)
         if key == "game_mode":
-            if self._game_mode() == "dynamic":
-                return ("Dynamic: the storyteller stages scenes on the roads from the world's own "
-                        "people and grudges -- ambushes, rites, robberies, scores to settle.")
-            return "Normal: the storyteller only paces what the world already holds."
+            return ""                      # the banner under the row says it
         if key == "res":
             if s is not None and s.mode != "Windowed":
                 return "The resolution is for Windowed mode."
