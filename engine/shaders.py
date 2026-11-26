@@ -1692,23 +1692,10 @@ void main()
             smoothstep(0.68, 0.92, WaveCrest) *
             smoothstep(0.35, 0.75, foamNoise) *
             smoothstep(0.42, 0.72, foamPatches);
-        float shoreWave =
-            0.5 + 0.5 * sin(ShoreDist * 0.30 - time * 1.8);
-        float shoreFoam =
-            (1.0 - smoothstep(2.0, 26.0, ShoreDist)) *
-            (0.30 + 0.70 * shoreWave) *
-            smoothstep(0.25, 0.60, foamNoise + 0.15);
-        if (haveDepth) {
-            // Foam along the line where the water touches anything, not only at
-            // the brush edges. Measured vertically, so a shallow flat stays clear
-            // and only the waterline itself foams.
-            float contact = 1.0 - smoothstep(0.0, 2.5, bedDepth);
-            float lapping = 0.5 + 0.5 * sin(bedDepth * 2.5 - time * 2.2);
-            shoreFoam = max(shoreFoam,
-                            contact * (0.35 + 0.65 * lapping) *
-                            smoothstep(0.2, 0.55, foamNoise + 0.1));
-        }
-        foam = clamp(crestFoam + shoreFoam, 0.0, 1.0);
+        // No foam lines: not along the brush's edges (straight lines, and
+        // where the water pours off the world's edge a line round the fall),
+        // nor along the waterline. Only breaking crests foam.
+        foam = clamp(crestFoam, 0.0, 1.0);
     }
 
     color += specular * (0.35 + 0.65 * waterReflectivity);
@@ -4119,16 +4106,18 @@ void main() {
         highp float total = max(uTop - uBottom, 1.0);
         highp float drop = total * pow(t, 2.4);
         highp float y = uTop + lift - drop;
-        // Thrown off the brink: the deeper the water over it, the faster it
-        // goes and the further out it arcs (out = sqrt(2 * drop * head)).
-        // Further down every column follows the same path, so the sheet
-        // stays smooth however the sea floor varies along the edge.
-        highp float head = mix(6.0 + 0.45 * lip, 60.0, smoothstep(0.0, 500.0, drop));
+        // Barely thrown off the brink: the sheet leaves it and goes down the
+        // rock face at once. (Seen from above, water thrown out showed as a
+        // band along the sea's edge, between the water and the curtain.)
+        // Every column follows the same path, so the sheet stays smooth
+        // however the sea floor varies along the edge.
+        highp float head = 1.5;
         highp float arc = sqrt(2.0 * drop * head);
-        // The wall below the rim leans out; the curtain never passes into
-        // it, and a little spray holds it off the rock.
+        // The wall below the rim leans out; the curtain follows it down at
+        // the same angle, past its foot too (on into the haze), never passing
+        // into it, and a little spray holds it off the rock.
         highp float below = max(h - y, 0.0);
-        wall = uLean * smin(below, max(h - uFloor, 0.0), 120.0);
+        wall = uLean * below;
         highp float gap = min(below, 6.0) + 0.035 * min(below, 2000.0);
         // Exactly the brink at the top (it meets the tongue there), rounded
         // further down.
@@ -4297,13 +4286,36 @@ void main() {
     float ropes = pfbm(s, flow * 1.6, 22.0);
     float streak = pfbm(s + ropes * 15.0, flow * 7.0, 5.0);
     float fine = pnoise1(s + streak * 3.6, flow * 26.0, 1.8);
-    float detail = 1.0 - smoothstep(2.0, 9.0, aa);
+    // Beyond a world corner, in the square where the two edges' sheets meet
+    // (the curtain keeps the corner's right angle), the ropes come apart
+    // into an even spray: every pattern here is laid along the edge, and
+    // smeared across that square it would draw lines out from the corner.
+    highp float offX = max(uEdge.x - FallPos.x, FallPos.x - uEdge.y);
+    highp float offZ = max(uEdge.z - FallPos.z, FallPos.z - uEdge.w);
+    float wedge = smoothstep(0.0, 800.0, min(offX, offZ));
+    // Over the brink: seen from above (the game's only view), the water
+    // thrown off the brink shows as a band beside it, and past that the
+    // sheer curtain. The water's look turns from the surface's to the
+    // curtain's across that band -- from the border's at the brink to the
+    // curtain's white where it meets the fall -- so neither of its edges
+    // shows as a line. (Deeper water is thrown further: a wider band.)
+    float away = path > 0.0 ? smoothstep(0.0, 24.0 + 0.12 * lip, drop) : 0.0;
+    // Where two edges' surfaces meet at a corner their streaks run two ways;
+    // they fade out there, so no crease shows along the diagonal.
+    float meet = path < 0.0 ? CornerNear : 0.0;
+    ropes = mix(ropes, 0.5, max(meet, wedge));
+    // Seen from above, the first of the fall is crowded into a thin band
+    // beside the brink: the streaks come up gradually, from in on the
+    // surface, through the brink, to well down the fall, so the water's look
+    // runs on into the curtain's with no line between them.
+    float settle = path < 0.0 ? 0.5 * smoothstep(-uTongue, 0.0, path) : 0.5 + 0.5 * away;
+    float detail = (1.0 - smoothstep(2.0, 9.0, aa)) * (1.0 - wedge) * (1.0 - meet) * settle;
     streak = mix(0.5, streak, detail);
     fine = mix(0.5, fine, detail);
 
     // How much water comes over here: thin by the shore, where the side of
     // the fall frays, tearing further in the further it has fallen.
-    float fray = pfbm(s, drop / 160.0 + flow * 0.4, 30.0);
+    float fray = mix(pfbm(s, drop / 160.0 + flow * 0.4, 30.0), 0.5, max(meet, wedge));
     float thick = smoothstep(0.12, 0.55, LipDepth / 70.0 + (fray - 0.5) * 0.5
                                          - 0.35 * smoothstep(0.0, 1500.0, drop));
     if (thick <= 0.0) discard;
@@ -4313,7 +4325,12 @@ void main() {
     // (outward). Near a world corner the two edges' outward ways blend, so
     // the corner reads as one rounded fall, not two sheets meeting.
     vec3 outward = normalize(FallOut + FallSide * CornerNear);
-    float bend = smoothstep(0.0, 14.0 + 0.12 * lip, path);
+    // Over a long drop: seen from above, the top of the fall keeps the
+    // surface's look and turns to the curtain's gradually, a feathered band
+    // rather than one with edges.
+    // (Eased in, so the water whitens as it goes over before it turns from
+    // the sky: no darker strip between the surface and the white.)
+    float bend = away * away;
     vec3 up = vec3(0.0, 1.0, 0.0);
     vec3 across = normalize(vec3(outward.z, 0.0, -outward.x));
     float ripple = (streak - 0.5) * detail;
@@ -4333,11 +4350,26 @@ void main() {
     vec3 water = mix(bodyCol, sky, reflW);
 
     // ---- white water ------------------------------------------------------
-    // Clear and glassy over the brink, turning white as it falls; the brink
-    // itself drawn into fine lines as the water quickens over it.
-    float aer = smoothstep(2.0, 46.0 + 0.35 * lip, drop);
+    // A border in from the brink, on the surface: the water quickens and
+    // starts to break white before it goes over, its inner edge ragged and
+    // drifting, so the sea runs into the fall with no line at the brink and
+    // no hard corner where two edges meet. Over the brink it whitens on as
+    // it falls.
+    float rag = mix(pfbm(s, flow * 0.25 + 3.1, 260.0), 0.5, meet);
+    // (Ragged within, never at the brink: there the border meets the fall
+    // exactly, so nothing changes across the line where the water goes over.)
+    float atBrink = smoothstep(-uTongue * 0.45, 0.0, min(path, 0.0));
+    float ragged = (rag - 0.5) * (1.0 - atBrink);
+    float border = path < 0.0
+        ? smoothstep(-uTongue, 0.0, path + ragged * uTongue * 0.6) : 1.0;
+    border = border * border * border * (0.7 + 0.3 * streak);
+    // (The throw's white no brighter than the curtain beyond it: no crest
+    // drawn along the fold.)
+    float aer = max(away * mix(1.0, 0.72, smoothstep(0.0, 400.0, drop) < 1.0 ? 1.0 - smoothstep(0.0, 400.0, drop) : 0.0), 0.55 * border);
     float brink = smoothstep(-uTongue * 0.35, 0.0, path) * (1.0 - smoothstep(0.0, 24.0, drop));
-    float churn = (1.0 - smoothstep(4.0, 30.0, WallGap)) * step(0.0, path);
+    // (Not at the brink itself, where the curtain leaves the rock's top:
+    // that would draw a white line round the water.)
+    float churn = (1.0 - smoothstep(6.0, 160.0, WallGap)) * away;
     vec3 foam = vec3(0.97, 0.985, 1.0);
     float white = clamp(aer * (0.70 + 0.50 * streak) + churn * 0.35, 0.0, 1.0);
     vec3 col = mix(water, foam, white);
@@ -4346,12 +4378,11 @@ void main() {
     col = mix(col, water * 1.15, clamp(channel * 1.3, 0.0, 0.7));
     col *= mix(1.0, 0.82 + 0.30 * ropes, max(aer, brink * 0.5));
     col *= 1.0 + (fine - 0.5) * 0.18 * max(aer, brink);
-    col += brink * 0.10 * smoothstep(0.55, 0.9, streak) * vec3(0.8, 0.9, 0.95);
 
     // ---- how much of it there is ----------------------------------------
     // On the surface: nothing at the tongue's far end, all of it by the
     // brink, so the sea flows into the fall without an edge.
-    float onSurface = 1.0 - smoothstep(0.0, uTongue, -path);
+    float onSurface = 1.0 - smoothstep(0.0, uTongue, -path - ragged * uTongue * 0.4);
     float alpha = path < 0.0 ? onSurface * onSurface * (3.0 - 2.0 * onSurface) : 1.0;
     // Over the brink the curtain is solid, then thins and tears as it falls.
     float wallDrop = max(uTop - uFloor, 1.0);
@@ -4368,11 +4399,12 @@ void main() {
     // seen.
     highp float deep = max(drop - wallDrop, 0.0);
     float haze = 1.0 - exp(-deep / 6000.0);
-    float veil = pfbm(s - uTime * 3.0, FallPos.y / 160.0 + uTime * 0.35, 80.0);
+    float veil = mix(pfbm(s - uTime * 3.0, FallPos.y / 160.0 + uTime * 0.35, 80.0), 0.5, wedge);
     vec3 hazeCol = uFogEnabled != 0 ? uFogColor : vec3(0.86, 0.90, 0.94);
     col = mix(col, hazeCol * (0.94 + 0.10 * veil), haze * 0.6);
     float ropesApart = mix(1.0, smoothstep(0.25, 0.75, ropes * 0.7 + veil * 0.3), haze);
     alpha *= exp(-deep / 10400.0) * ropesApart;
+    col = mix(col, foam * 0.97, wedge * 0.25);
     alpha *= 1.0 - smoothstep(0.45, 1.0, drop / max(uTop - uBottom, 1.0));
     // A thin flow (the shallows by the shore) falls as separate ribbons.
     float ribbons = smoothstep(0.55 - 0.55 * thick, 0.85 - 0.5 * thick,
@@ -4397,7 +4429,9 @@ void main() {
             highp float hi = abs(o2.x) > 0.5 ? uEdge.w : uEdge.y;
             if (a > lo && a < hi) {
                 float px = max(fwidth(hit.y), 1e-3);
-                alpha *= 1.0 - smoothstep(-px, px, uTop - hit.y);
+                // (Not at the brink itself, which the surface covers: a
+                // hairline there would show as a line round the water.)
+                alpha *= 1.0 - smoothstep(-px, px, uTop - hit.y) * smoothstep(4.0, 30.0, drop);
             }
         }
     }

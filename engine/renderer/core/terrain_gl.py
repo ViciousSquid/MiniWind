@@ -1139,7 +1139,7 @@ class TerrainGL:
     #: reaches, fading as it goes, so no bottom is ever seen.
     FALLS_TONGUE_ROWS = 16
     FALLS_ROWS = 56
-    FALLS_TONGUE = 260.0
+    FALLS_TONGUE = 520.0
     FALLS_DEPTH = 48000.0
     #: How near the edge a water brush's side must come to pour over it.
     FALLS_TOUCH = 2.0
