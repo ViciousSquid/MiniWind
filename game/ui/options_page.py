@@ -497,19 +497,21 @@ class OptionsPage:
             y += row_h
             if key == "game_mode":
                 # The banner: the chosen mode in a line, under its row.
-                banner = QRectF(x0 + 22, y, panel_w - 44, banner_h - 4)
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(_BANNER)
-                painter.drawRoundedRect(banner, 4, 4)
-                painter.fillRect(QRectF(banner.x(), banner.y(), 2, banner.height()), _ACCENT)
+                # Under the value column, its line centred over the slider
+                # track below (the same track _draw_slider lays out).
+                text = GAME_MODE_BANNERS.get(self._game_mode(), GAME_MODE_BANNERS["normal"])
                 font = text_font(max(9, label_pt - 2))
                 font.setItalic(True)
                 painter.setFont(font)
+                label_w = max(value_w * 0.22, row_h * 3.2)
+                track_mid = value_x + 4 + (value_w - label_w - 14) / 2.0
+                strip_w = painter.fontMetrics().horizontalAdvance(text) + 28
+                banner = QRectF(track_mid - strip_w / 2.0, y, strip_w, banner_h - 4)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(_BANNER)
+                painter.drawRoundedRect(banner, 4, 4)
                 painter.setPen(_NOTE)
-                painter.drawText(banner, int(Qt.AlignCenter),
-                                 GAME_MODE_BANNERS[self._game_mode()
-                                                   if self._game_mode() in GAME_MODE_BANNERS
-                                                   else "normal"])
+                painter.drawText(banner, int(Qt.AlignCenter), text)
                 y += banner_h
         self._row_rects = row_rects
 
