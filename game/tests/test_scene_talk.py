@@ -160,3 +160,52 @@ def test_ambient_beats_come_from_the_scene_now_and_then_near_the_player(monkeypa
     allowed |= set(sum(st.thoughts("waylaid", "victim", talk).values(), []))
     allowed |= set(sum(st.thoughts("waylaid", "attacker", talk).values(), []))
     assert set(w.barks + thoughts) <= allowed
+
+
+def test_repayment_can_be_paid_in_the_conversation_and_settles_the_theft():
+    from ..rpg import items as rpg_items
+    loaf = next((i for i in ("bread", "loaf", "apple") if rpg_items.get(i)), None)
+    owed = st.owed("theft", loaf or "")
+    assert owed >= st.LEAST_OWED and st.owed("lockpick") == st.LOCKPICK_OWED
+    assert st.owed("death") == 0
+    talk = {"deed": "took a loaf of bread from me", "owed": owed, "scene": "dyn3", "event": 17}
+    found = st.topic("reckoning", "seeker", talk, "restitution")
+    pay, short, refuse = found["nodes"]["scene"]["responses"]
+    assert pay["text"] == f"Here: {owed} gold." and pay["condition"] == {"has_item": "gold", "qty": owed}
+    assert pay["actions"] == [{"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": owed}]
+    assert short["condition"] == {"lacks_item": "gold", "qty": owed}
+    assert refuse["goto"] == "scene_refuse"
+
+
+def test_paying_settles_the_theft_gives_them_the_gold_and_ends_the_scene():
+    from ..sim import crime
+    from ..rpg import inventory as rpg_inventory
+    w = _world()
+    w.director.scenes["dyn3"] = {"id": "dyn3", "kind": "reckoning", "journeys": {},
+                                 "resolved": False, "x": 0.0, "z": 0.0, "hinted": True}
+    seeker = _Thing(0, 0, display_name="Hal", inventory=[])
+    assert not crime.settled(w.store, 17)
+    w.director.repaid(seeker, "dyn3", 17, 12)
+    assert crime.settled(w.store, 17)
+    assert rpg_inventory.quantity(rpg_inventory.get_inventory(seeker), "gold") == 12
+    assert w.director.scenes["dyn3"]["resolved"]
+    assert any("repaid 12 gold" in d for d in w.said)
+
+
+def test_the_player_pays_from_their_purse_and_only_with_enough(monkeypatch):
+    from types import SimpleNamespace
+    from .. import runtime
+    from .test_cast_controls import _Logic
+    s = runtime.MiniwindSession(_Logic(), cfg={})
+    paid = []
+    s.living = SimpleNamespace(scenarios=SimpleNamespace(
+        repaid=lambda npc, sid, e, gold: paid.append((sid, e, gold))))
+    npc = _Thing(0, 0, display_name="Hal")
+    s.game.character.gold = 8
+    assert not s._dialogue_has("gold", 12, {})
+    s._dialogue_action(npc, {"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": 12})
+    assert s.game.character.gold == 8 and not paid               # not enough: nothing
+    s.game.character.gold = 20
+    assert s._dialogue_has("gold", 12, {})
+    s._dialogue_action(npc, {"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": 12})
+    assert s.game.character.gold == 8 and paid == [("dyn3", 17, 12)]

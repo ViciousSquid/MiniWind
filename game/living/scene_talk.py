@@ -232,6 +232,23 @@ def topic(kind: str, role: str, talk: Dict, want: str = "") -> Optional[Dict]:
         if want == "restitution":
             text = f"You {t['deed']}. I want it back -- or its worth, in gold."
             prompt = "What do you want?"
+            owed = int(t.get("owed", 0) or 0)
+            if owed > 0:
+                nodes["scene_paid"] = {"text": "That squares it. We're done, you and I.",
+                                       "responses": [{"text": "Farewell.", "goto": "END"}]}
+                nodes["scene_short"] = {"text": "Then find it. I'll not wait forever.",
+                                        "responses": [back]}
+                nodes["scene_refuse"] = {"text": "Then we'll settle it some other way.",
+                                         "responses": [{"text": "...", "goto": "END"}]}
+                nodes["scene"] = {"text": f"{text} {owed} gold squares it.", "responses": [
+                    {"text": f"Here: {owed} gold.", "goto": "scene_paid",
+                     "condition": {"has_item": "gold", "qty": owed},
+                     "actions": [{"op": "scene_repay", "scene": t.get("scene", ""),
+                                  "event": t.get("event", 0), "gold": owed}]},
+                    {"text": f"I haven't got {owed} gold.", "goto": "scene_short",
+                     "condition": {"lacks_item": "gold", "qty": owed}},
+                    {"text": "I'm not paying you.", "goto": "scene_refuse"}]}
+                return {"prompt": prompt, "nodes": nodes, "first": "scene"}
         else:
             text = f"You {t['deed']}. I've not forgotten it."
             prompt = "Do I know you?"
@@ -267,6 +284,27 @@ def add_topic(tree, found: Optional[Dict]):
 
 
 # ------------------------------------------------------------ deeds, in brief
+#: What a lock picked open is owed, when nothing was taken (gold).
+LOCKPICK_OWED = 10
+#: The least a theft is owed, whatever the thing was worth (gold).
+LEAST_OWED = 5
+
+
+def owed(kind: str, item_id: str = "") -> int:
+    """The gold that settles a theft (what the thing was worth) or a picked
+    lock; 0 for anything else."""
+    if kind == "lockpick":
+        return LOCKPICK_OWED
+    if kind != "theft":
+        return 0
+    worth = 0
+    try:
+        from ..rpg import items as rpg_items
+        info = rpg_items.get(item_id) if item_id else None
+        worth = int(getattr(info, "value", 0) or 0) if info is not None else 0
+    except Exception:
+        worth = 0
+    return max(LEAST_OWED, worth)
 def deed(kind: str, item: str = "", victim: str = "", place: str = "") -> str:
     """What the player did, said to their face: "stole a loaf of bread from
     me near Ashby", "saved my brother Aldo near Low Farm"."""

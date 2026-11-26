@@ -12268,6 +12268,18 @@ class MiniwindSession(SettlementLaw):
                 self.notify(f"You have joined the {guilds.get(action.get('guild','')).name}.")
         elif op in ("open_training", "open_tutor"):
             self.open_teaching(npc, "training" if op == "open_training" else "tutor")
+        elif op == "scene_repay":
+            # Dynamic mode: repaying someone come for what was taken
+            # (game/living/scene_talk.py); the gold was taken by take_item.
+            gold = int(action.get("gold", 0) or 0)
+            if gold <= 0 or int(self.game.character.gold) < gold:
+                self.notify(f"You haven't got {gold} gold.", 3.0)
+                return
+            self.game.add_gold(-gold)
+            director = getattr(getattr(self, "living", None), "scenarios", None)
+            if director is not None:
+                director.repaid(npc, action.get("scene", ""), action.get("event", 0), gold)
+            self.notify("Debt repaid.", 3.0)
 
     def _dialogue_quest_item(self, iid, tree):
         if getattr(self, "coop", None) is None:
@@ -12282,6 +12294,9 @@ class MiniwindSession(SettlementLaw):
     def _dialogue_has(self, iid, count, tree):
         if self._dialogue_quest_item(iid, tree):
             return self.coop.party_quests.quantity(iid) >= count
+        if iid == "gold":
+            # The player's gold is a purse, not a stack in the pack.
+            return int(self.game.character.gold) >= int(count)
         return inv.has_item(self.game.character.inventory, iid, count)
 
     def _dialogue_take(self, iid, count, tree):

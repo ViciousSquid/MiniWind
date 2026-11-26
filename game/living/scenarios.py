@@ -1196,7 +1196,10 @@ class ScenarioDirector:
                 talk={"seeker": name, "victim_first": scene_talk._first(victim) if victim else "",
                       "deed": scene_talk.deed(fact.get("kind", ""),
                                               story_text.item_name(str(fact.get("item", "") or "")),
-                                              spoken, self._place_of(fact))},
+                                              spoken, self._place_of(fact)),
+                      "owed": scene_talk.owed(fact.get("kind", ""), str(fact.get("item", "") or ""))
+                      if kind == "restitution" else 0,
+                      "scene": sid, "event": fact.get("e", 0)},
                 decision=story_text.justified(kind, name, fact, actor_key(thing), thing.properties,
                                               self._place_of(fact)),
                 result=(f"Spawned {name}{armed} ({self._from(j, False)}) on the road "
@@ -1385,6 +1388,28 @@ class ScenarioDirector:
             think(thing, rng.choice(minds))
         elif lines:
             s.bark(thing, rng.choice(lines))
+
+    def repaid(self, npc, scene_id, event, gold) -> None:
+        """The player paid *gold* to someone come for repayment: the theft is
+        settled (they want nothing more for it), the gold is theirs, and the
+        scene is over."""
+        s = self.session
+        if event:
+            s.store.set(f"crime.{int(event)}.settled", "1")
+        try:
+            from ..rpg import inventory as rpg_inventory
+            from ..rpg import items as rpg_items
+            coins = rpg_items.make("gold", int(gold)) or rpg_inventory.make_item(
+                "gold", "Gold", qty=int(gold))
+            rpg_inventory.add_item(rpg_inventory.get_inventory(npc), coins)
+        except Exception:
+            pass
+        scene = self.scenes.get(scene_id or "")
+        name = npc.properties.get("display_name") or npc.properties.get("name") or "They"
+        if scene is not None and not scene.get("resolved"):
+            scene["resolved"] = True
+            self._narrate(f"Outcome: {name} was repaid {gold} gold by {story_text.PLAYER} -- "
+                          "the theft is settled.", scene=scene["id"])
 
     def stage_expired(self, j, t) -> bool:
         """A staged party waited out its time unmet; the world moves on."""
