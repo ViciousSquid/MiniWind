@@ -10124,8 +10124,10 @@ class MiniwindSession(SettlementLaw):
             return False
         p["dead"] = False
         p["hidden"] = False
-        # Its next death has a cross again (game/corpse_sprites.py).
+        # Its own size and colour again, and its next death has a cross
+        # (game/corpse_sprites.py).
         p.pop("_cross_faded", None)
+        corpse_sprites.restore_size(p)
         corpse_sprites.mark(p)
         p["is_shooting"] = False
         _journal(thing)
