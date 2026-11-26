@@ -1204,7 +1204,8 @@ Pause menu › Options › **Game mode** (`[GAME] game_mode` in `settings.ini`):
     **attack you**, and will never take it later. Then a **d6 + your Luck
     bonus** (the attack-roll one: +1 per full 20 points of Luck above 40, −1 per
     full 20 below) of **4 or more** keeps your gold; less, and they take it
-    anyway -- it goes to their inventory -- and still fight. The theft stays
+    anyway -- it goes to their inventory -- with a taunt ("Pathetic!", "Ha!
+    Too slow!") and still fight. The theft stays
     unsettled.
 * **Where.** Always on a road you are on (within 900 units of it), ahead of
   you, 1,150--1,900 units away -- beyond any actor's sight -- and, for
