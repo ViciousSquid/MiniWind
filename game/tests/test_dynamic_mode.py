@@ -598,3 +598,56 @@ def test_unlearn_forgets_and_says_so():
     assert w.director.learned == w.director.fresh_learning()
     assert "forgot" in w.director.decisions[-1]["text"]
     assert json.loads(w.store[sc.LEARNED_KEY])["gap"] == 1.0
+
+
+# -- what they say ----------------------------------------------------------------
+def test_a_score_settler_opens_with_an_introduction_an_insult_or_a_scream():
+    rng = random.Random(3)
+    styles = set()
+    for _ in range(200):
+        style, line = sc.opening_line(rng, "vendetta", "aldo")
+        styles.add(style)
+        assert line and "{" not in line
+        assert line in [o.format(victim="aldo", Victim="Aldo")
+                        for o in sc.OPENINGS[style]["vendetta"]]
+    assert styles == {"introduction", "insult", "scream"}
+    for _ in range(50):                              # nobody to name: no {victim} lines
+        assert "{" not in sc.opening_line(rng, "reckoning")[1]
+
+
+def _world_with_bark():
+    from ..living.world import LivingWorld
+    said = []
+    session = SimpleNamespace(rng=random.Random(5), bark=lambda thing, line, *a: said.append(line),
+                              _nearest_hostile=lambda x, r: None,
+                              _player_pos=lambda: [0.0, 64.0, 0.0], player_actor=object(),
+                              faction_spine=None)
+    living = LivingWorld(session)
+    living.board = jn.JourneyBoard(roads.RoadNetwork(), {}, 1.0 / 60.0, hooks=jn.WorldHooks())
+    return living, said
+
+
+def test_the_opening_is_said_once_then_the_fight_starts():
+    living, said = _world_with_bark()
+    j = jn.Journey("j1", "avenger", [{"display": "Edda", "grudge": True, "alive": True}],
+                   "", "", [(0, 0), (1, 1)], 0.0, 1.0, 1, "")
+    living.board.journeys["j1"] = j
+    x = _Thing(300.0, 0.0, combatant=True, triggered=True, aggression="hostile",
+               _journey="j1", _member=0,
+               _grudge_opening={"kind": "vendetta", "victim": "Aldo"})
+    assert living._react(j, x, [0.0, 64.0, 0.0])
+    assert len(said) == 1 and x.properties["sched_state"] == "COMBAT"
+    x.properties["triggered"] = True                 # seen again later: no second opening
+    living._react(j, x, [0.0, 64.0, 0.0])
+    assert len(said) == 1 and j.members[0]["grudge_opened"]
+
+
+def test_cultists_shout_their_own_lines_and_brigands_keep_theirs():
+    from ..living.world import GREETINGS
+    living, said = _world_with_bark()
+    for kind in ("cultists", "bandits"):
+        j = jn.Journey("c", kind, [{"display": "x", "alive": True}], "", "", [(0, 0), (1, 1)],
+                       0.0, 1.0, 1, "")
+        x = _Thing(300.0, 0.0, combatant=True, triggered=True)
+        living._react(j, x, [0.0, 64.0, 0.0])
+        assert said[-1] in GREETINGS[kind]

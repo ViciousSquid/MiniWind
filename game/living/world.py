@@ -821,6 +821,9 @@ class LivingWorld:
             # Dynamic mode: someone whose own grievance with the player is real
             # (a cached intent backed by their own memory) comes to settle it.
             props["aggression"] = "hostile"
+            if not m.get("grudge_opened"):
+                props["_grudge_opening"] = {"kind": m.get("grudge_kind", "vendetta"),
+                                            "victim": m.get("grudge_victim", "")}
         if m.get("armed"):
             # Dynamic mode: a townsperson who took up a blade over a grievance.
             props["combatant"] = True
@@ -1039,7 +1042,8 @@ class LivingWorld:
                     and math.hypot(x.pos[0] - offender.pos[0], x.pos[2] - offender.pos[2]) <= SIGHT
                     and s._law_visible(x, offender.pos) and s._apply_sim_intent(x)):
                 if offender is getattr(s, "player_actor", None):
-                    self._say_why(x)
+                    if not self._grudge_opening(x):
+                        self._say_why(x)
                 return True
         p = x.properties
         combatant = bool(p.get("combatant"))
@@ -1062,7 +1066,12 @@ class LivingWorld:
                     s.bark(x, f"There's {self.board.hooks.player_bounty()} gold walking "
                               "on two legs. Take them!")
                 elif j.hostile and player_threat:
-                    s.bark(x, s.rng.choice(GREETINGS.get("bandits", ("Get them!",))))
+                    # A cult has its own words (Dynamic mode's cultists); every
+                    # other hostile party keeps the brigands' lines.
+                    lines = GREETINGS.get("cultists") if j.kind == "cultists" else None
+                    s.bark(x, s.rng.choice(lines or GREETINGS.get("bandits", ("Get them!",))))
+                elif player_threat:
+                    self._grudge_opening(x)
             p["triggered"] = False
             p["awake"] = True
             if enemy is not None:
@@ -1081,6 +1090,24 @@ class LivingWorld:
                 p["_fled_bark"] = True
                 s.bark(x, s.rng.choice(("Help! Help!", "Run!", "Not my purse!",
                                         "Gods preserve us!")))
+        return True
+
+    def _grudge_opening(self, x) -> bool:
+        """Someone come to settle a score with the player opens the fight
+        once: an introduction, an insult or a scream as they charge, then the
+        fight at once (Dynamic mode; game/living/scenarios.py OPENINGS)."""
+        p = x.properties
+        opening = p.get("_grudge_opening")
+        if not opening or p.get("_grudge_opened"):
+            return False
+        p["_grudge_opened"] = True
+        j = self.board.journeys.get(p.get("_journey")) if self.board is not None else None
+        if j is not None and isinstance(p.get("_member"), int) and p["_member"] < len(j.members):
+            j.members[p["_member"]]["grudge_opened"] = True   # once, even if seen again
+        from .scenarios import opening_line
+        _style, line = opening_line(self.session.rng, opening.get("kind", "vendetta"),
+                                    opening.get("victim", ""))
+        self.session.bark(x, line)
         return True
 
     @staticmethod
