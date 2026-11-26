@@ -1024,6 +1024,33 @@ Reach** and **Cairnmoor** (desert; Cairnmoor takes in Whisperdeep),
 * *Seeing them.* `python -m game.tools.district_map` draws the world map
   with every border, seat and name (`docs/images/districts_map.png`).
 
+## 21. The edge of the world
+
+The world ends in a cliff of rock strata (`engine/shaders.py`,
+`terrain_skirt.*`). Where water reaches that edge it spills over it.
+
+* *The sea drifts to the edge.* The sea in the world map's top-right corner
+  flows slowly towards that corner (`water_flow` SE, 4 units a second in
+  world axes; a player is about 64 tall): its waves, ripples and foam all
+  drift that way. A storm quickens it, up to 4 times as fast in a full
+  storm, easing up and down with the storm with no jump (`game/host.py`
+  `STORM_FLOW_BOOST`).
+* *The falls.* Wherever a water brush reaches the world's edge over ground
+  lower than its surface, the water pours over in one sheet with the
+  surface: it quickens over the last 260 units before the brink, rolls
+  over it glassy and turns white as it falls, hugs the cliff, and falls on
+  past the cliff's foot without end, thinning into haze so no bottom is
+  ever seen. It wraps round a corner of the world as one fall, thins to
+  ribbons and frays where the shore meets the edge, and pours nowhere the
+  ground at the edge is above the water. Purely visual
+  (`engine/renderer/core/terrain_gl.py`, `TerrainGL.draw_falls`;
+  `terrain_falls.*`).
+* *Outcrops beside the falls.* Where the land meets the falls at the edge,
+  the land hangs below the cliff's foot upside down, mirrored, as a rocky
+  outcrop: within 3,500 units along the edge of each shore, fading out
+  along the edge, never behind the falls (`TerrainGL._draw_underside`,
+  `terrain_under.vert`).
+
 ## Known gaps
 
 Places where the code does not yet do what something in the game describes:

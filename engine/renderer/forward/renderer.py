@@ -1104,7 +1104,7 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
             # without them every resident chunk was drawn, and pulling the
             # view distance in did nothing for the terrain's cost.
             self.render_terrain(projection, view, camera_pos, terrain, lights,
-                                frustum_planes=entity_planes)
+                                frustum_planes=entity_planes, table=_tbl)
         if (config.get('play_mode', False)
                 and self._portal_gl_ready):
             # Portal discovery is a numeric EntityTable selection. No Thing
@@ -1294,6 +1294,9 @@ class ForwardRenderer(TexturedMixin, SolidLitMixin, WireframeMixin, OverlayMixin
             self.draw_water_brushes(
                 projection, view, camera_pos, water_brushes, lights, config,
                 table=_tbl)
+            # Water reaching the world's edge pours over it.
+            if not look:
+                self.draw_edge_falls(projection, view, camera_pos, config, table=_tbl)
             self.draw_glass_brushes(projection, view, camera_pos, glass_brushes, lights, config,
                                      table=_tbl)
             self.draw_fog_volumes(projection, view, camera_pos, fog_volumes, lights, config,

@@ -3339,6 +3339,8 @@ uniform float uLean;
 out highp vec3 WallPos;
 out highp float SurfaceY;
 flat out vec3 WallNormal;
+out highp float UnderDepth;     // the underside's depth here (the wall: none)
+out highp float FootMirror;     // how deep the underside hangs below this foot
 """
 
 _SKIRT_VERT_MAIN = """void main() {
@@ -3374,6 +3376,8 @@ _SKIRT_VERT_MAIN = """void main() {
         p.y = foot;
     }
     WallNormal = normalize(vec3(out2.x, uLean, out2.y));
+    UnderDepth = 1.0e6;
+    FootMirror = mirrorDepth(rim.xz, h);
     SurfaceY = h;
     WallPos = p;
 
@@ -3406,6 +3410,8 @@ _SKIRT_FRAG_DECLS = """
 in highp vec3 WallPos;
 in highp float SurfaceY;
 flat in vec3 WallNormal;
+in highp float UnderDepth;
+in highp float FootMirror;
 uniform highp float uFloor;      // the wall's foot
 uniform highp float uBasement;   // top of the crystalline basement
 uniform highp float uMeta;       // top of the folded metamorphic band
@@ -3545,6 +3551,9 @@ vec4 fossil(vec2 q, float R, float kind, float aa) {
 """
 
 _SKIRT_STRATA_MAIN = """
+    // The underside where it has shrunk to nothing (under the falls): not
+    // there at all.
+    if (UnderDepth < 1.0) discard;
     vec3 p = WallPos;
     vec2 hp = p.xz;
     // Along the wall: x + z runs continuously round the world's corners.
@@ -3730,8 +3739,10 @@ _SKIRT_STRATA_MAIN = """
     // the rim (terrain.frag's material, run on the rim point).
     float onLip = 1.0 - smoothstep(lip - aa, lip + aa, depth);
     col = mix(col, ground, onLip);
-    // A dark foot, so the block reads as a cut.
-    col *= mix(0.35, 1.0, smoothstep(uFloor, uFloor + 14.0, p.y));
+    // A dark foot, so the block reads as a cut -- unless the wall goes on
+    // below it, mirrored (terrain_under.vert), where there is no foot.
+    float footDark = 1.0 - smoothstep(0.0, 40.0, FootMirror);
+    col *= mix(mix(0.35, 1.0, smoothstep(uFloor, uFloor + 14.0, p.y)), 1.0, 1.0 - footDark);
 
     // ---- light, as terrain.frag lights the ground -----------------------
     // The top layer is lit as open ground is, so it is the land's colour on
@@ -3763,12 +3774,68 @@ _SKIRT_STRATA_MAIN = """
 """
 
 
+# Where the underside hangs (shared by terrain_under.vert and, for the
+# wall's foot, terrain_skirt.vert): only round the shores where land meets
+# a fall at the world's edge, fading out along the edge either way.
+_UNDER_COMMON = """
+uniform highp float uReach;     // how far in the reflected land rises to the foot
+uniform highp float uShore;     // over how much height above a fall it grows back
+uniform highp float uShoreRun;  // how far along the edge from a shore it reaches
+uniform int uFallCount;
+uniform highp vec4 uFall[8];    // the falls: side, along lo, along hi, top
+uniform int uShoreCount;
+uniform highp vec4 uShorePt[8]; // the shores: side, along, -, -
+
+// How far in from the world's nearest edge a point is.
+highp float inFromEdge(vec2 xz) {
+    return min(min(xz.x - uEdge.x, uEdge.y - xz.x), min(xz.y - uEdge.z, uEdge.w - xz.y));
+}
+
+highp float inFromSide(vec2 xz, int side) {
+    return side == 0 ? xz.x - uEdge.x : side == 1 ? uEdge.y - xz.x
+         : side == 2 ? xz.y - uEdge.z : uEdge.w - xz.y;
+}
+
+// 1 under land, falling to 0 where a fall pours over the edge: the ground
+// comes down to the water's surface (within uShore above it) along the
+// stretch of edge the fall covers.
+float overLand(vec2 xz, highp float h) {
+    float f = 1.0;
+    for (int i = 0; i < uFallCount && i < 8; ++i) {
+        int side = int(uFall[i].x + 0.5);
+        highp float a = side < 2 ? xz.y : xz.x;
+        if (a < uFall[i].y || a > uFall[i].z) continue;
+        f = min(f, smoothstep(uFall[i].w, uFall[i].w + uShore, h));
+    }
+    return f;
+}
+
+// 1 by a shore where land meets a fall, fading to 0 along the edge.
+float nearShore(vec2 xz) {
+    float w = 0.0;
+    for (int i = 0; i < uShoreCount && i < 8; ++i) {
+        int side = int(uShorePt[i].x + 0.5);
+        if (inFromSide(xz, side) > uReach) continue;
+        highp float a = side < 2 ? xz.y : xz.x;
+        w = max(w, 1.0 - smoothstep(0.35 * uShoreRun, uShoreRun, abs(a - uShorePt[i].y)));
+    }
+    return w;
+}
+
+// How far below the foot the reflection reaches under a point of the land.
+highp float mirrorDepth(vec2 xz, highp float h) {
+    if (uShoreCount == 0) return 0.0;
+    highp float taper = 1.0 - smoothstep(0.0, uReach, inFromEdge(xz));
+    return max(h - uFloor, 0.0) * taper * overLand(xz, h) * nearShore(xz);
+}
+"""
+
 def _terrain_skirt_sources():
     """``terrain_skirt.vert`` and ``terrain_skirt.frag``: the terrain's
     shaders with the wall added (see above)."""
     head, marker, _ = DEFAULT_SHADERS['terrain.vert'].partition('void main() {')
     assert marker, 'terrain.vert: main() not found'
-    vert = head + _SKIRT_VERT_DECLS + _SKIRT_VERT_MAIN
+    vert = head + _SKIRT_VERT_DECLS + _UNDER_COMMON + _SKIRT_VERT_MAIN
     fhead, marker, fbody = DEFAULT_SHADERS['terrain.frag'].partition('void main() {')
     assert marker, 'terrain.frag: main() not found'
     material, marker, _ = fbody.partition('    // ---- Lighting')
@@ -3783,6 +3850,550 @@ def _terrain_skirt_sources():
 (DEFAULT_SHADERS['terrain_skirt.vert'],
  DEFAULT_SHADERS['terrain_skirt.frag']) = _terrain_skirt_sources()
 
+
+# ==============================================================================
+# The world's underside: the edge land mirrored below the strata wall
+# ==============================================================================
+# Below the strata wall's foot the land goes on, upside down: the wall
+# reflected in its foot (leaning back in as the wall leans out), then the
+# edge land itself reflected under that, rising back to the foot further in,
+# so the world's rim hangs over the void in rocky outcrops that are the
+# mountains above turned over. Only under land: where a fall pours over the
+# edge (a water brush reaching it, over ground below its surface) the
+# reflection shrinks away to nothing as the land at the edge comes down to
+# the water, and none hangs behind the falls.
+#
+# Drawn by TerrainGL._draw_underside with terrain_skirt.frag, the wall's own
+# shading: the reflected wall shows the wall's own beds, mirrored in its
+# foot (the two share their foot vertices and their rock there, so they meet
+# without a line), and the reflected land the bedrock it would have cut
+# through. uPart 0 draws a side's reflected wall (a strip, as the wall is),
+# 1 a chunk's reflected land (6 vertices a quad, no buffers).
+_UNDER_VERT_DECLS = """
+uniform int uPart;              // 0: the reflected wall; 1: the reflected land
+uniform int uSide;              // 0: -x, 1: +x, 2: -z, 3: +z
+uniform highp float uFloor;     // the wall's foot, world y
+uniform highp vec4 uEdge;       // the terrain's min x, max x, min z, max z
+uniform float uLean;
+out highp vec3 WallPos;
+out highp float SurfaceY;
+flat out vec3 WallNormal;
+out highp float UnderDepth;
+out highp float FootMirror;
+"""
+
+_UNDER_VERT_MAIN = """void main() {
+    int res = uChunkI.x;
+    highp vec3 p;
+    highp vec3 mat;
+    highp vec3 rim;
+    ivec2 g;
+    if (uPart == 0) {
+        int j = gl_VertexID / 2;
+        bool atFoot = (gl_VertexID & 1) == 0;
+        g = uSide == 0 ? ivec2(0, j)
+          : uSide == 1 ? ivec2(res, j)
+          : uSide == 2 ? ivec2(j, 0)
+          :              ivec2(j, res);
+        rim = gridPoint(g);
+        highp float h = rim.y;
+        vec2 out2 = uSide == 0 ? vec2(-1.0, 0.0)
+                  : uSide == 1 ? vec2( 1.0, 0.0)
+                  : uSide == 2 ? vec2(0.0, -1.0)
+                  :              vec2(0.0,  1.0);
+        vec2 along = vec2(abs(out2.y), abs(out2.x));
+        highp float foot = min(uFloor, h - 1.0);
+        // Mitred at the world's corners, exactly as the wall's foot is.
+        highp float eps = uChunkX.z * 0.01;
+        highp float a = dot(rim.xz, along);
+        highp float lo = uSide < 2 ? uEdge.z : uEdge.x;
+        highp float hi = uSide < 2 ? uEdge.w : uEdge.y;
+        float mitre = a <= lo + eps ? -1.0 : (a >= hi - eps ? 1.0 : 0.0);
+        vec2 outward = out2 + along * mitre;
+        highp float D = mirrorDepth(rim.xz, h);
+        UnderDepth = D;
+        // The wall at height foot + D lies this far out; its reflection at
+        // foot - D the same, so the reflected wall leans back in.
+        highp float upY = atFoot ? foot : foot + D;
+        vec2 xz = rim.xz + outward * (h - upY) * uLean;
+        p = vec3(xz.x, atFoot ? foot : foot - D, xz.y);
+        mat = vec3(xz.x, upY, xz.y);
+        WallNormal = normalize(vec3(out2.x, -uLean, out2.y));
+    } else {
+        int quad = gl_VertexID / 6;
+        int corner = gl_VertexID - quad * 6;
+        int col = quad % res;
+        int row = quad / res;
+        // (0,0) (1,0) (0,1)  (1,0) (1,1) (0,1)
+        int dc = (corner == 1 || corner == 3 || corner == 4) ? 1 : 0;
+        int dr = (corner == 2 || corner == 4 || corner == 5) ? 1 : 0;
+        g = ivec2(col + dc, row + dr);
+        rim = gridPoint(g);
+        highp float D = mirrorDepth(rim.xz, rim.y);
+        UnderDepth = D;
+        p = vec3(rim.x, uFloor - D, rim.z);
+        mat = vec3(rim.x, uFloor + D, rim.z);
+        // Facing down: the reflected surface's slope, from the grid's
+        // neighbours (the ring round the chunk supplies those at its edge).
+        highp float step2 = 2.0 * uChunkX.z;
+        vec3 px = gridPoint(g + ivec2(1, 0));
+        vec3 nx = gridPoint(g - ivec2(1, 0));
+        vec3 pz = gridPoint(g + ivec2(0, 1));
+        vec3 nz = gridPoint(g - ivec2(0, 1));
+        highp float fx = (mirrorDepth(nx.xz, nx.y) - mirrorDepth(px.xz, px.y)) / step2;
+        highp float fz = (mirrorDepth(nz.xz, nz.y) - mirrorDepth(pz.xz, pz.y)) / step2;
+        WallNormal = normalize(vec3(fx, -1.0, fz));
+    }
+    // Shaded as the wall's bedrock, never its soil: the surface is taken
+    // to lie well above every point of the reflection, which has no foot.
+    SurfaceY = rim.y + 400.0;
+    FootMirror = 1.0e6;
+    WallPos = mat;
+    SmoothNormal = vec3(0.0, 1.0, 0.0);
+    Normal = SmoothNormal;
+    if (uFlatMode != 0) {
+        VertexColor = vec3(0.7);
+    } else {
+        float norm = clamp((rim.y - uHeightRange.x)
+                           / max(uHeightRange.y - uHeightRange.x, 1e-3), 0.0, 1.0);
+        VertexColor = gradientColour(norm);
+    }
+    TexCoords = rim.xz / uTiling;
+    PaintCoords = vec2(float(g.x), float(g.y)) / float(max(res, 1));
+    FragPos = rim;
+    gl_Position = projection * view * vec4(p, 1.0);
+}
+"""
+
+
+def _terrain_under_source():
+    """``terrain_under.vert``: terrain.vert's head with the reflection
+    added (see above); drawn with terrain_skirt.frag."""
+    head, marker, _ = DEFAULT_SHADERS['terrain.vert'].partition('void main() {')
+    assert marker, 'terrain.vert: main() not found'
+    return head + _UNDER_VERT_DECLS + _UNDER_COMMON + _UNDER_VERT_MAIN
+
+
+DEFAULT_SHADERS['terrain_under.vert'] = _terrain_under_source()
+
+
+# ==============================================================================
+# Waterfalls off the edge of the world
+# ==============================================================================
+# Where a body of water reaches the terrain's edge it spills over it, and the
+# sea and its fall are one sheet of water: a "tongue" lying on the surface
+# fades in from nothing over the last stretch before the brink, quickening
+# towards it; at the brink it bends over (the surface was pinned flat at the
+# brush's edge, water.vert, so the two meet exactly), arcs out, hugs the
+# strata wall where the wall leans out past it, and falls on past the wall's
+# foot without end, into haze. One grid of quads a chunk side, drawn by
+# TerrainGL.draw_falls after the water, along the stretches of the edge a
+# water brush covers and only where the ground at the edge lies below that
+# water's surface (there the fall thins to ribbons and stops).
+#
+# The pattern runs on a perimeter coordinate that is continuous round the
+# world's corners and wraps exactly once round it (the noise is periodic in
+# it), so neither a corner nor the start of the perimeter shows a seam.
+DEFAULT_SHADERS['terrain_falls.vert'] = """#version 330 core
+precision highp float;
+precision highp int;
+uniform mat4 projection;
+uniform mat4 view;
+// The chunk's height grid, as terrain.vert reads it.
+uniform highp sampler2DArray uHeights;
+uniform ivec2 uChunkI;          // (quads per side, texture layer)
+uniform vec3  uChunkX;          // (world x, world z, grid step)
+uniform int uSide;              // 0: -x, 1: +x, 2: -z, 3: +z
+uniform highp vec4 uEdge;       // the terrain's min x, max x, min z, max z
+uniform float uLean;            // the strata wall's lean per unit of drop
+uniform highp float uFloor;     // the strata wall's foot
+uniform highp float uTop;       // the water's surface: the brink
+uniform highp float uBottom;    // far below, where the fall has faded out
+uniform int uTongueRows;        // quads on the surface before the brink
+uniform int uRows;              // quads from the brink down
+uniform highp float uTongue;    // how far in from the edge the tongue starts
+uniform float uSurfSlope;       // how far the surface may rise per unit in
+out highp vec3 FallPos;         // world position
+out highp vec2 FallUV;          // (perimeter coordinate, path: <0 on the tongue)
+out highp float LipDepth;       // water over the brink: uTop - ground
+out highp float WallGap;        // how far the curtain is out from the wall
+out highp float CornerNear;     // 1 at a world corner, 0 well along an edge
+flat out vec3 FallOut;          // the edge's outward direction
+flat out vec3 FallSide;         // the outward direction of the nearer corner's other edge
+
+float heightAt(int i, int k) {
+    return texelFetch(uHeights, ivec3(k + 1, i + 1, uChunkI.y), 0).r;
+}
+
+// Along the perimeter, counter-clockwise from the (min x, min z) corner.
+highp float perimeter(vec2 p) {
+    highp float w = uEdge.y - uEdge.x;
+    highp float d = uEdge.w - uEdge.z;
+    if (uSide == 2) return p.x - uEdge.x;
+    if (uSide == 1) return w + (p.y - uEdge.z);
+    if (uSide == 3) return w + d + (uEdge.y - p.x);
+    return 2.0 * w + d + (uEdge.w - p.y);
+}
+
+void main() {
+    int res = uChunkI.x;
+    int quad = gl_VertexID / 6;
+    int corner = gl_VertexID - quad * 6;
+    int col = quad % res;
+    int row = quad / res;
+    // (0,0) (1,0) (0,1)  (1,0) (1,1) (0,1)
+    int dc = (corner == 1 || corner == 3 || corner == 4) ? 1 : 0;
+    int dr = (corner == 2 || corner == 4 || corner == 5) ? 1 : 0;
+    int j = col + dc;
+    int r = row + dr;
+    ivec2 g = uSide == 0 ? ivec2(0, j)
+            : uSide == 1 ? ivec2(res, j)
+            : uSide == 2 ? ivec2(j, 0)
+            :              ivec2(j, res);
+    highp vec3 rim = vec3(uChunkX.x + float(g.x) * uChunkX.z,
+                          heightAt(g.x, g.y),
+                          uChunkX.y + float(g.y) * uChunkX.z);
+    highp float h = rim.y;
+    vec2 out2 = uSide == 0 ? vec2(-1.0, 0.0)
+              : uSide == 1 ? vec2( 1.0, 0.0)
+              : uSide == 2 ? vec2(0.0, -1.0)
+              :              vec2(0.0,  1.0);
+    vec2 along = vec2(abs(out2.y), abs(out2.x));
+    highp float a = dot(rim.xz, along);
+    highp float lo = uSide < 2 ? uEdge.z : uEdge.x;
+    highp float hi = uSide < 2 ? uEdge.w : uEdge.y;
+    highp float lip = max(uTop - h, 0.0);
+    // A hair above the surface, so the sheet lies over the water drawn
+    // under it (the surface's edge row is exactly uTop).
+    highp float lift = 1.5;
+    highp vec3 p;
+    highp float path;
+    highp float reach = 0.0;
+    highp float wall = 0.0;
+    if (r < uTongueRows) {
+        // On the surface, d in from the edge; rows crowd towards the brink.
+        float u = 1.0 - float(r) / float(max(uTongueRows, 1));
+        highp float d = uTongue * u * u;
+        // The surface rises off its pinned edge as its waves grow: lie
+        // above the highest it can reach here.
+        highp float y = uTop + lift + uSurfSlope * d;
+        // Mitred at the corners: columns within d of one fold onto the
+        // diagonal, where the next side's tongue begins.
+        highp float aa = clamp(a, lo + d, hi - d);
+        p = vec3(0.0, y, 0.0);
+        p.xz = rim.xz + along * (aa - a) - out2 * d;
+        path = -d;
+    } else {
+        float t = float(r - uTongueRows) / float(max(uRows, 1));
+        highp float total = max(uTop - uBottom, 1.0);
+        highp float drop = total * pow(t, 2.4);
+        highp float y = uTop + lift - drop;
+        // Thrown off the brink: the deeper the water over it, the faster it
+        // goes and the further out it arcs (out = sqrt(2 * drop * head)).
+        // Further down every column follows the same path, so the sheet
+        // stays smooth however the sea floor varies along the edge.
+        highp float head = mix(6.0 + 0.45 * lip, 60.0, smoothstep(0.0, 500.0, drop));
+        highp float arc = sqrt(2.0 * drop * head);
+        // The wall below the rim leans out; the curtain never passes into
+        // it, and a little spray holds it off the rock.
+        highp float below = max(h - y, 0.0);
+        wall = uLean * min(below, max(h - uFloor, 0.0));
+        highp float gap = min(below, 6.0) + 0.035 * min(below, 2000.0);
+        reach = max(arc, wall + gap);
+        // Mitred at the world's corners, as the wall's foot is, so the falls
+        // on two sides meet along the diagonal.
+        highp float eps = uChunkX.z * 0.01;
+        float mitre = a <= lo + eps ? -1.0 : (a >= hi - eps ? 1.0 : 0.0);
+        p = vec3(rim.x, y, rim.z);
+        p.xz += (out2 + along * mitre) * reach;
+        path = drop;
+    }
+    // The corner this column is nearer, and its other edge's outward way.
+    bool lowEnd = a - lo < hi - a;
+    highp float toCorner = lowEnd ? a - lo : hi - a;
+    vec2 other = uSide < 2 ? vec2(0.0, lowEnd ? -1.0 : 1.0)
+                           : vec2(lowEnd ? -1.0 : 1.0, 0.0);
+
+    FallPos = p;
+    FallUV = vec2(perimeter(rim.xz), path);
+    LipDepth = uTop - h;
+    WallGap = reach - wall;
+    CornerNear = 1.0 - smoothstep(0.0, 900.0, toCorner);
+    FallOut = vec3(out2.x, 0.0, out2.y);
+    FallSide = vec3(other.x, 0.0, other.y);
+    gl_Position = projection * view * vec4(p, 1.0);
+}
+"""
+
+DEFAULT_SHADERS['terrain_falls.frag'] = """#version 330 core
+precision highp float;
+in highp vec3 FallPos;
+in highp vec2 FallUV;
+in highp float LipDepth;
+in highp float WallGap;
+in highp float CornerNear;
+flat in vec3 FallOut;
+flat in vec3 FallSide;
+out vec4 FragColor;
+
+uniform highp float uTop;
+uniform highp float uFloor;
+uniform highp float uBottom;
+uniform highp float uTongue;
+uniform highp vec4 uEdge;       // the terrain's min x, max x, min z, max z
+uniform highp float uPerimeter; // once round the world's edge
+uniform highp vec2 uSpan;       // the stretch of edge this water covers (perimeter)
+uniform vec3 uTint;             // the water's tint, as water.frag has it
+uniform float uOpacity;         // the water's opacity
+uniform float uReflectivity;    // the water's reflectivity
+uniform float uTime;
+uniform highp vec3 uCamPos;
+uniform vec4 uSkyState;         // night, cloud cover, gloom, dusk (water.frag)
+uniform int uLightSteps;
+uniform int uDither;
+
+uniform int   uFogEnabled;
+uniform vec3  uFogColor;
+uniform float uFogStart;
+uniform float uFogEnd;
+uniform float uFogDensity;
+uniform highp vec3 uFogCamPos;
+uniform vec3  uAmbient;
+
+const vec3 SUN_DIR   = vec3(0.4767, 0.6555, 0.5859);   // as water.frag
+const vec3 SUN_COLOR = vec3(1.00, 0.95, 0.82);
+
+float fogFactor(highp vec3 fragPos) {
+    if (uFogEnabled == 0) return 0.0;
+    highp float d = length(fragPos - uFogCamPos);
+    float band = max(uFogEnd - uFogStart, 1e-4);
+    float f = clamp((d - uFogStart) / band, 0.0, 1.0);
+    if (uFogDensity > 0.0) {
+        float e = uFogDensity * max(d - uFogStart, 0.0);
+        f = max(f, clamp(1.0 - exp(-e * e), 0.0, 1.0));
+    }
+    return f;
+}
+
+float bayer4(vec2 p) {
+    ivec2 q = ivec2(mod(p, 4.0));
+    int i = q.x + q.y * 4;
+    int m[16] = int[](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+    return (float(m[i]) + 0.5) / 16.0;
+}
+
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+// Value noise whose x repeats every n cells (n a whole number): laid along
+// the perimeter with n cells once round it, it closes on itself exactly.
+float pnoise(highp vec2 p, highp float n) {
+    highp vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    highp float i0 = mod(i.x, n);
+    highp float i1 = mod(i.x + 1.0, n);
+    return mix(mix(hash12(vec2(i0, i.y)), hash12(vec2(i1, i.y)), u.x),
+               mix(hash12(vec2(i0, i.y + 1.0)), hash12(vec2(i1, i.y + 1.0)), u.x), u.y);
+}
+// Fractal noise along the perimeter: *scale* world units a cell (rounded so
+// a whole number fit once round), *y* the other coordinate.
+float pfbm(highp float s, highp float y, float scale) {
+    highp float n = max(floor(uPerimeter / scale + 0.5), 1.0);
+    highp vec2 p = vec2(s / uPerimeter * n, y);
+    float a = 0.5;
+    float sum = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        sum += a * pnoise(p, n);
+        p = vec2(p.x * 2.0, p.y * 2.07 + 13.7);
+        n *= 2.0;
+        a *= 0.5;
+    }
+    return sum / 0.9375;
+}
+float pnoise1(highp float s, highp float y, float scale) {
+    highp float n = max(floor(uPerimeter / scale + 0.5), 1.0);
+    return pnoise(vec2(s / uPerimeter * n, y), n);
+}
+
+// The sky the water reflects, as water.frag's procedural sky (no clouds).
+vec3 skyColour(vec3 dir) {
+    float night = clamp(uSkyState.x, 0.0, 1.0);
+    float gloom = clamp(uSkyState.z, 0.0, 1.0);
+    float dusk = clamp(uSkyState.w, 0.0, 1.0);
+    float h = clamp(dir.y, 0.0, 1.0);
+    vec3 top = mix(vec3(0.19, 0.38, 0.66), vec3(0.03, 0.07, 0.19), night);
+    vec3 horizon = mix(mix(vec3(0.66, 0.76, 0.83), vec3(0.09, 0.14, 0.27), night),
+                       vec3(0.96, 0.56, 0.34), dusk);
+    vec3 sky = mix(horizon, top, pow(h, 0.55));
+    return mix(sky, mix(vec3(0.56, 0.59, 0.63), vec3(0.03, 0.04, 0.07), night), gloom * 0.8);
+}
+
+void main() {
+    highp float s = FallUV.x;          // round the perimeter, world units
+    highp float path = FallUV.y;       // < 0: in from the brink; > 0: fallen
+    highp float drop = max(path, 0.0);
+    highp float lip = max(LipDepth, 0.0);
+    // Dry ground at the edge: nothing pours over it.
+    if (LipDepth <= 0.0) discard;
+    // Only along this water's stretch of the edge.
+    float span = smoothstep(uSpan.x - 4.0, uSpan.x + 12.0, s)
+               * (1.0 - smoothstep(uSpan.y - 12.0, uSpan.y + 4.0, s));
+    if (span <= 0.0) discard;
+
+    float aa = max(max(fwidth(s), fwidth(path)), 1e-3);
+    // How long the water has been on its way, which is what the pattern
+    // scrolls in: on the surface it quickens towards the brink; over it, it
+    // falls freely, from v0 at the brink gathering speed with the drop --
+    // streaks short and slow at the brink, long and fast below. Continuous
+    // in value and in rate across the brink.
+    float g = 900.0;
+    float v0 = 70.0 + 2.5 * lip;
+    float tau;
+    if (path < 0.0) {
+        float d = -path;
+        tau = -(d + d * d / 120.0) / v0;
+    } else {
+        tau = (sqrt(v0 * v0 + 2.0 * g * drop) - v0) / g;
+    }
+    float flow = tau - uTime;
+    // Ropes of water side by side across the curtain, each falling at its
+    // own pace, and the white water breaking out of them.
+    float ropes = pfbm(s, flow * 1.6, 22.0);
+    float streak = pfbm(s + ropes * 15.0, flow * 7.0, 5.0);
+    float fine = pnoise1(s + streak * 3.6, flow * 26.0, 1.8);
+    float detail = 1.0 - smoothstep(2.0, 9.0, aa);
+    streak = mix(0.5, streak, detail);
+    fine = mix(0.5, fine, detail);
+
+    // How much water comes over here: thin by the shore, where the side of
+    // the fall frays, tearing further in the further it has fallen.
+    float fray = pfbm(s, drop / 160.0 + flow * 0.4, 30.0);
+    float thick = smoothstep(0.12, 0.55, LipDepth / 70.0 + (fray - 0.5) * 0.5
+                                         - 0.35 * smoothstep(0.0, 1500.0, drop));
+    if (thick <= 0.0) discard;
+
+    // ---- the surface's own look ------------------------------------------
+    // The sheet bends from the surface (up) over the brink to the fall
+    // (outward). Near a world corner the two edges' outward ways blend, so
+    // the corner reads as one rounded fall, not two sheets meeting.
+    vec3 outward = normalize(FallOut + FallSide * CornerNear);
+    float bend = smoothstep(0.0, 14.0 + 0.12 * lip, path);
+    vec3 up = vec3(0.0, 1.0, 0.0);
+    vec3 across = normalize(vec3(outward.z, 0.0, -outward.x));
+    float ripple = (streak - 0.5) * detail;
+    vec3 N = normalize(mix(up, outward, bend)
+                       + across * ripple * mix(0.12, 0.9, bend)
+                       + outward * (ropes - 0.5) * 0.15 * (1.0 - bend));
+    vec3 viewDir = normalize(uCamPos - FallPos);
+    float NdV = max(dot(N, viewDir), 0.0);
+    vec3 deepCol = uTint * 0.55;
+    vec3 shallowCol = uTint * 1.25 + vec3(0.02, 0.10, 0.09);
+    vec3 bodyCol = mix(deepCol, shallowCol, pow(1.0 - NdV, 1.5) * 0.7 + 0.15);
+    bodyCol *= 0.45 + 0.55 * max(dot(N, SUN_DIR), 0.0);
+    float f0 = 0.020373;
+    float fresnel = f0 + (1.0 - f0) * pow(1.0 - NdV, 5.0);
+    float reflW = max(max(fresnel, clamp(uReflectivity, 0.0, 1.0) * 0.5), 0.35 * (1.0 - bend));
+    vec3 sky = skyColour(reflect(-viewDir, normalize(mix(up, N, 0.35))));
+    vec3 water = mix(bodyCol, sky, reflW);
+
+    // ---- white water ------------------------------------------------------
+    // Clear and glassy over the brink, turning white as it falls; the brink
+    // itself drawn into fine lines as the water quickens over it.
+    float aer = smoothstep(2.0, 46.0 + 0.35 * lip, drop);
+    float brink = smoothstep(-uTongue * 0.35, 0.0, path) * (1.0 - smoothstep(0.0, 24.0, drop));
+    float churn = (1.0 - smoothstep(4.0, 30.0, WallGap)) * step(0.0, path);
+    vec3 foam = vec3(0.97, 0.985, 1.0);
+    float white = clamp(aer * (0.70 + 0.50 * streak) + churn * 0.35, 0.0, 1.0);
+    vec3 col = mix(water, foam, white);
+    // Denser channels of water between the white ropes: darker, bluer.
+    float channel = pow(1.0 - streak, 3.0) * aer;
+    col = mix(col, water * 1.15, clamp(channel * 1.3, 0.0, 0.7));
+    col *= mix(1.0, 0.82 + 0.30 * ropes, max(aer, brink * 0.5));
+    col *= 1.0 + (fine - 0.5) * 0.18 * max(aer, brink);
+    col += brink * 0.10 * smoothstep(0.55, 0.9, streak) * vec3(0.8, 0.9, 0.95);
+
+    // ---- how much of it there is ----------------------------------------
+    // On the surface: nothing at the tongue's far end, all of it by the
+    // brink, so the sea flows into the fall without an edge.
+    float onSurface = 1.0 - smoothstep(0.0, uTongue, -path);
+    float alpha = path < 0.0 ? onSurface * onSurface * (3.0 - 2.0 * onSurface) : 1.0;
+    // Over the brink the curtain is solid, then thins and tears as it falls.
+    float wallDrop = max(uTop - uFloor, 1.0);
+    float fallen = clamp(drop / wallDrop, 0.0, 1.0);
+    float tear = smoothstep(0.10 + 0.22 * fallen, 0.30 + 0.25 * fallen,
+                            streak * 0.65 + fine * 0.35);
+    alpha *= mix(1.0, 0.97, fallen) * mix(1.0, mix(0.82, 1.0, tear),
+                                          smoothstep(0.4, 1.2, fallen));
+    // And on without end: past the wall it falls on into the void, the
+    // ropes drawing apart into spray and the spray thinning into the air
+    // the further down it goes, so the eye loses it and no bottom is ever
+    // seen.
+    highp float deep = max(drop - wallDrop * 0.5, 0.0);
+    float haze = 1.0 - exp(-deep / 6000.0);
+    float veil = pfbm(s - uTime * 3.0, FallPos.y / 160.0 + uTime * 0.35, 80.0);
+    vec3 hazeCol = uFogEnabled != 0 ? uFogColor : vec3(0.86, 0.90, 0.94);
+    col = mix(col, hazeCol * (0.94 + 0.10 * veil), haze * 0.6);
+    float ropesApart = mix(1.0, smoothstep(0.25, 0.75, ropes * 0.7 + veil * 0.3), haze);
+    alpha *= exp(-deep / 10400.0) * ropesApart;
+    alpha *= 1.0 - smoothstep(0.45, 1.0, drop / max(uTop - uBottom, 1.0));
+    // A thin flow (the shallows by the shore) falls as separate ribbons.
+    float ribbons = smoothstep(0.55 - 0.55 * thick, 0.85 - 0.5 * thick,
+                               pnoise1(s, 0.5, 7.0) * 0.8 + 0.2 * ropes);
+    alpha *= thick * mix(ribbons, 1.0, thick * thick) * span;
+    // Behind the water: seen from above the sea, over the brink, a part of
+    // the fall whose view ray crosses the edge below the surface lies behind
+    // the water (which writes no depth), and is hidden by it -- exactly up
+    // to the water's own edge on screen.
+    if (path > 0.0 && uCamPos.y > uTop) {
+        vec2 o2 = FallOut.xz;
+        vec2 al = vec2(abs(o2.y), abs(o2.x));
+        highp float E = o2.x > 0.5 ? uEdge.y : o2.x < -0.5 ? -uEdge.x
+                      : o2.y > 0.5 ? uEdge.w : -uEdge.z;
+        highp float co = dot(uCamPos.xz, o2);
+        highp float po = dot(FallPos.xz, o2);
+        if (co < E && po > E) {
+            highp float t = (E - co) / (po - co);
+            highp vec3 hit = mix(uCamPos, FallPos, t);
+            highp float a = dot(hit.xz, al);
+            highp float lo = abs(o2.x) > 0.5 ? uEdge.z : uEdge.x;
+            highp float hi = abs(o2.x) > 0.5 ? uEdge.w : uEdge.y;
+            if (a > lo && a < hi) {
+                float px = max(fwidth(hit.y), 1e-3);
+                alpha *= 1.0 - smoothstep(-px, px, uTop - hit.y);
+            }
+        }
+    }
+    if (alpha < 0.003) discard;
+
+    // ---- light ------------------------------------------------------------
+    vec3 skyAmb = vec3(0.6, 0.75, 0.9);
+    vec3 groundAmb = vec3(0.3, 0.25, 0.2);
+    vec3 lit = (mix(groundAmb, skyAmb, (N.y + 1.0) * 0.5) * 0.45 + uAmbient);
+    float wrapped = (max(dot(N, SUN_DIR), 0.0) + 0.45) / 1.45;
+    if (uLightSteps > 0) {
+        float steps = float(uLightSteps);
+        wrapped = floor(wrapped * steps + 0.5) / steps;
+    }
+    lit += wrapped * vec3(1.0, 0.95, 0.85) * 0.62;
+    // The water's own colour already carries its light (water.frag lights
+    // its body by the sun and reflects the sky); the foam takes the light.
+    vec3 result = mix(col, col * min(lit * 1.25, vec3(1.15)), white * (1.0 - haze * 0.6));
+    // Sun glints on the glassy water, as on the surface.
+    vec3 Hs = normalize(SUN_DIR + viewDir);
+    float spec = pow(max(dot(N, Hs), 0.0), mix(320.0, 40.0, bend));
+    result += SUN_COLOR * spec * mix(2.2, 0.5, bend) * (1.0 - white * 0.8)
+            * (0.35 + 0.65 * clamp(uReflectivity, 0.0, 1.0));
+    result = mix(result, uFogColor, fogFactor(FallPos));
+    if (uDither > 0) {
+        float levels = float(uDither);
+        result = floor(clamp(result, 0.0, 1.0) * levels + bayer4(gl_FragCoord.xy)) / levels;
+    }
+    FragColor = vec4(result, clamp(alpha, 0.0, 1.0));
+}
+"""
 
 
 # The optional 360-degree void panorama, used by renderers which support a

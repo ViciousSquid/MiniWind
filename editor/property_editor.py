@@ -2236,7 +2236,7 @@ class PropertyEditor(QWidget):
         return group
 
     def _add_water_flow_rows(self, brush, form):
-        """"Direction": ticked, the water flows -- N, S, E or W, at its Flow
+        """"Direction": ticked, the water flows -- N, S, E, W or a diagonal, at its Flow
         Speed -- and both controls show; unticked, they hide and the brush's
         flow keys go, leaving the water exactly as it was before. The
         controls keep their values while the panel is open, so ticking it
@@ -2252,8 +2252,8 @@ class PropertyEditor(QWidget):
                            "water, exactly as before.")
         combo = _make_combo(directions, direction if flowing else directions[0],
                             tooltip="The way the water flows: north (+Z), south, "
-                                    "east (+X) or west")
-        # One letter: as wide as that and its arrow, beside the checkbox.
+                                    "east (+X), west, or a diagonal between them")
+        # One or two letters: as wide as those and its arrow, beside the checkbox.
         from editor.form_layout import SNUG
         combo.setProperty(SNUG, True)
         widest = max(combo.fontMetrics().horizontalAdvance(d) for d in directions)

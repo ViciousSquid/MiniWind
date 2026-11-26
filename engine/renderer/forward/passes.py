@@ -356,7 +356,8 @@ class PassesMixin:
     # Terrain
     # --------------------------------------------------------------------------
     @timed_pass('terrain')
-    def render_terrain(self, projection, view, camera_pos, terrain, lights, frustum_planes=None):
+    def render_terrain(self, projection, view, camera_pos, terrain, lights, frustum_planes=None,
+                       table=None):
         """Draw the published terrain: *terrain* is a ``TerrainFrame`` (the
         dense table, its products and this frame's appearance), never the
         terrain object. Every GL name it is drawn with is this renderer's,
@@ -416,6 +417,10 @@ class PassesMixin:
             snow_cover=float(getattr(self, 'snow_cover', 0.0) or 0.0),
             # A game's district borders (game/districts.py), or None.
             district_overlay=getattr(self, 'district_overlay', None),
+            # Where the water pours off the world's edge: the underside
+            # hangs only under land (*table* is the frame's RenderTable).
+            edge_falls=(self.edge_falls_of(terrain, table)
+                        if getattr(self, 'water_enabled', True) else None),
         )
         # The terrain binds its own cube-maps (or placeholders) on the shadow
         # units: the next lit pass binds the renderer's again.
@@ -436,6 +441,48 @@ class PassesMixin:
                 held[1].cleanup()
             held = self._terrain_gl_state = (key, TerrainGL())
         return held[1]
+
+    @staticmethod
+    def edge_falls_of(terrain, table):
+        """Where water pours off the edge of *terrain* (a TerrainFrame):
+        every water brush in *table* that reaches it (TerrainGL.edge_falls),
+        in view or not -- a fall hangs far below and beyond its water."""
+        if terrain is None or terrain.skirt is None or table is None:
+            return []
+        count = int(table.count)
+        if not count:
+            return []
+        water = np.flatnonzero(
+            ((table.class_bits[:count] & render_table.CLASS_WATER) != 0)
+            & ~table.hidden[:count])
+        if not len(water):
+            return []
+        return TerrainGL.edge_falls(
+            terrain.skirt, table.center[water], table.half[water],
+            table.water_tint[water], table.water_params[water])
+
+    @timed_pass('falls')
+    def draw_edge_falls(self, projection, view, camera_pos, config, table):
+        """The waterfalls off the edge of the world: wherever a water brush
+        reaches the terrain's edge, over ground lower than its surface, the
+        water pours over the strata wall (TerrainGL.draw_falls). Every water
+        brush counts, not only those in view: a fall hangs far below and
+        beyond the water it comes from."""
+        terrain = config.get('terrain', None)
+        held = self._terrain_gl_state
+        if (terrain is None or not terrain.enabled or terrain.skirt is None
+                or table is None or held is None or held[0] != terrain.key
+                or not getattr(self, 'water_enabled', True)):
+            return
+        falls = self.edge_falls_of(terrain, table)
+        if not falls:
+            return
+        held[1].draw_falls(
+            falls, projection, view, self._camera_xyz(camera_pos),
+            env_uniforms=self.env_uniform_values(), time=config.get('time', 0.0),
+            sky_state=getattr(self, 'sky_state', None) or self.DEFAULT_SKY_STATE)
+        self._current_shader = None
+        self.render_stats.draw_calls += held[1].falls_sides
 
     # --------------------------------------------------------------------------
     # Models
@@ -1820,6 +1867,24 @@ class PassesMixin:
     # --------------------------------------------------------------------------
     # Water / Glass / Fog
     # --------------------------------------------------------------------------
+    def water_flow_clock(self, now):
+        """Seconds of flow the water's surface has drifted by at frame time
+        *now*: the frame's time run at ``water_flow_boost`` (a game sets it,
+        as it sets ``sky_state``: faster in a storm; 1 otherwise), added up
+        frame by frame so a change of pace never makes the surface jump.
+        At a steady 1 it is the frame's time itself."""
+        now = float(now or 0.0)
+        boost = max(0.0, float(getattr(self, 'water_flow_boost', 1.0) or 0.0))
+        last = getattr(self, '_water_flow_last', None)
+        clock = getattr(self, '_water_flow_clock', None)
+        if last is None or clock is None:
+            clock = now
+        else:
+            clock += (now - last) * boost
+        self._water_flow_last = now
+        self._water_flow_clock = clock
+        return clock
+
     @timed_pass('water')
     def draw_water_brushes(self, projection, view, camera_pos, brushes, lights, config,
                            table):
@@ -1979,15 +2044,15 @@ class PassesMixin:
         spreads = table.water_wave_spread[brushes].tolist()
         spread_loc = uniforms['waveSpread']
         # "Direction": how far each flowing brush's surface has moved (its
-        # velocity, world units a second, times the frame's time). Still
-        # water is (0, 0), what the uniform holds unless a brush flows, so a
-        # map with no flowing water sets it once a frame.
+        # velocity, world units a second, times the water's flow clock).
+        # Still water is (0, 0), what the uniform holds unless a brush flows,
+        # so a map with no flowing water sets it once a frame.
         flows = table.water_flow[brushes]
         flow_loc = uniforms['flowOffset']
         flowing = bool(flows.any())
         if flowing:
             travelled = (np.asarray(flows, dtype=np.float64)
-                         * float(config.get('time', 0.0))).tolist()
+                         * self.water_flow_clock(config.get('time', 0.0))).tolist()
         flow_now = (0.0, 0.0)
         if flow_loc != -1:
             gl_state.glUniform2f(flow_loc, 0.0, 0.0)

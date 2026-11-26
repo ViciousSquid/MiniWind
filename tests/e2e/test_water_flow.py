@@ -73,7 +73,7 @@ def test_the_checkbox_shows_the_controls_and_unticking_restores_the_brush(fio_se
     tick, combo, speed = _panel(session, brush)
     assert not tick.isChecked()
     assert combo.isHidden() and speed.isHidden()          # off: nothing exposed
-    assert [combo.itemText(i) for i in range(combo.count())] == ['N', 'S', 'E', 'W']
+    assert [combo.itemText(i) for i in range(combo.count())] == ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW']
 
     tick.setChecked(True)
     assert not combo.isHidden() and not speed.isHidden()

@@ -50,6 +50,10 @@ def _names_by_code():
 _NAV_BY_CODE = _names_by_code()
 
 # action bindings (single-press unless noted)
+#: How much faster flowing water drifts in a full storm: 1 + this, times
+#: its Flow Speed (engine renderer ``water_flow_boost``).
+STORM_FLOW_BOOST = 3.0
+
 K_ATTACK = "f"
 K_BLOCK = "b"          # held
 K_INTERACT = "e"       # talk to / trade with / use the nearest NPC
@@ -910,6 +914,7 @@ class MiniwindGame:
             if getattr(renderer, "grass_wind", None) is not None:
                 renderer.grass_wind = None
             renderer.snow_cover = 0.0
+            renderer.water_flow_boost = 1.0
             renderer.district_overlay = None
             return
         host = getattr(self, "_host", None)
@@ -924,6 +929,11 @@ class MiniwindGame:
         weather = getattr(session, "weather", None)
         renderer.snow_cover = (float(getattr(weather, "snow", 0.0))
                                if weather is not None and session.weather_enabled() else 0.0)
+        # Flowing water (the sea drifting to the world's edge) runs faster
+        # as a storm builds (game/weather.py).
+        storm = (float(getattr(weather, "storm", 0.0))
+                 if weather is not None and session.weather_enabled() else 0.0)
+        renderer.water_flow_boost = 1.0 + STORM_FLOW_BOOST * max(0.0, min(1.0, storm))
         # District borders on the ground (game/districts.py): purely visual.
         overlay = getattr(session, "district_overlay", None)
         renderer.district_overlay = overlay() if callable(overlay) else None
