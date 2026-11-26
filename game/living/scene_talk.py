@@ -297,6 +297,11 @@ ACCEPTED_GRUDGINGLY = ("...Fine. That squares it. Don't cross me again.",
 REFUSED = ("Gold? You think gold mends this?", "Keep your coin. This isn't about money.",
            "I don't want your money. I want you to answer for it.")
 REFUSED_AGAIN = ("I told you. Keep your coin.",)
+#: Refused, a d6 + the player's Luck bonus at least this keeps their gold;
+#: less and the seeker takes it anyway (and still attacks).
+KEEP_GOLD_TARGET = 4
+SNATCHED = ("I'll have this for my trouble -- and you besides!",
+            "Mine now. And you'll still answer for it!")
 
 
 def temper(disposition: int, furious: bool = False) -> str:

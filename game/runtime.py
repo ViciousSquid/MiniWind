@@ -12105,8 +12105,50 @@ class MiniwindSession(SettlementLaw):
             if not npc.properties.get("dead"):
                 self.end_dialogue()
                 self._sim_engage(npc, self.player_actor)
+            # Then a d6 + Luck: does the player keep their gold?
+            self._keep_gold_roll(npc, gold, name)
 
         # Told once the die has landed, never before (RULES.md §1).
+        self._after_dice(self._reveal_delay(self.player_actor), tell)
+
+    def _keep_gold_roll(self, npc, gold, name) -> None:
+        """An angry seeker has refused the gold: a d6 plus the player's Luck
+        bonus (armour_class.luck_bonus) of at least
+        scene_talk.KEEP_GOLD_TARGET keeps it; less and they take it anyway."""
+        import game.living.scene_talk as scene_talk
+        from .rpg.armour_class import luck_bonus
+        c = self.game.character
+        luck = int(c.attrs.get(attr.LUCK, 40))
+        bonus = luck_bonus(luck)
+        target = scene_talk.KEEP_GOLD_TARGET
+        dice = getattr(self.game, "dice", None)
+        notation = f"1d6{bonus:+d}" if bonus else "1d6"
+        if dice is not None:
+            roll = dice.request_roll(notation, target=target, source="dialogue.keep_gold",
+                                     context={"label": "Keep your gold",
+                                              "why": f"d6 + Luck {luck} ({bonus:+d}), need {target}+",
+                                              "against_name": name,
+                                              "against_side": self.side_of(npc)})
+            kept = bool(roll.get("success"))
+        else:
+            kept = self.rng.randint(1, 6) + bonus >= target
+
+        def tell():
+            if kept:
+                self.notify("You keep your gold.", 3.0)
+                return
+            taken = min(int(gold), int(c.gold))
+            if taken <= 0:
+                return
+            self.game.add_gold(-taken)
+            try:
+                coins = rpg_items.make("gold", taken) or inv.make_item("gold", "Gold", qty=taken)
+                inv.add_item(inv.get_inventory(npc), coins)
+            except Exception:
+                pass
+            self.bark(npc, self.rng.choice(scene_talk.SNATCHED))
+            self.notify(f"{name} takes {taken} gold anyway.", 3.5)
+
         self._after_dice(self._reveal_delay(self.player_actor), tell)
 
     def _fortune_action(self, npc, option) -> None:

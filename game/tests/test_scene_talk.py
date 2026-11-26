@@ -260,3 +260,22 @@ def test_a_good_roll_takes_the_gold_grudgingly_and_a_calm_one_needs_no_roll(monk
     s._scene_repay(_Thing(0, 0, display_name="Ann"),
                    {"op": "scene_repay", "scene": "dyn4", "event": 18, "gold": 5})
     assert paid == [12, 5] and barks[-1] in st.ACCEPTED
+
+
+def test_after_a_refusal_a_d6_plus_luck_says_whether_you_keep_your_gold(monkeypatch):
+    from .. import runtime
+    from ..rpg import inventory as rpg_inventory
+    s, paid, engaged, barks = _repay_session(3)
+    monkeypatch.setattr(runtime.disp, "of", lambda c, p, store: 3)
+    s.rng.random = lambda: 0.99                                  # refused
+    s.game.character.attrs["luck"] = 40                          # no Luck bonus
+    s.rng.randint = lambda a, b: 6                               # a good d6: kept
+    hal = _Thing(0, 0, display_name="Hal", inventory=[])
+    s._scene_repay(hal, {"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": 12})
+    assert s.game.character.gold == 50 and engaged == [hal]
+    s.rng.randint = lambda a, b: 1                               # a bad d6: taken anyway
+    ann = _Thing(0, 0, display_name="Ann", inventory=[])
+    s._scene_repay(ann, {"op": "scene_repay", "scene": "dyn4", "event": 18, "gold": 12})
+    assert s.game.character.gold == 38 and engaged == [hal, ann] and not paid
+    assert rpg_inventory.quantity(rpg_inventory.get_inventory(ann), "gold") == 12
+    assert barks[-1] in st.SNATCHED
