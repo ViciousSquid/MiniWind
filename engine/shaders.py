@@ -4125,10 +4125,11 @@ void main() {
         // stays smooth however the sea floor varies along the edge.
         highp float head = mix(6.0 + 0.45 * lip, 60.0, smoothstep(0.0, 500.0, drop));
         highp float arc = sqrt(2.0 * drop * head);
-        // The wall below the rim leans out; the curtain never passes into
-        // it, and a little spray holds it off the rock.
+        // The wall below the rim leans out; the curtain follows it down at
+        // the same angle, past its foot too (on into the haze), never passing
+        // into it, and a little spray holds it off the rock.
         highp float below = max(h - y, 0.0);
-        wall = uLean * smin(below, max(h - uFloor, 0.0), 120.0);
+        wall = uLean * below;
         highp float gap = min(below, 6.0) + 0.035 * min(below, 2000.0);
         // Exactly the brink at the top (it meets the tongue there), rounded
         // further down.

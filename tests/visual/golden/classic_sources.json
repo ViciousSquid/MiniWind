@@ -36,5 +36,5 @@
  "engine/renderer/forward/wireframe/__init__.py": "44bfbd6cde98822c7f4d90ab3a4cb6a27e9bd1e643b6d666cde394219773ea65",
  "engine/renderer/forward/wireframe/distance.py": "48168be0da11635f26f48ae219ab014b8f77e04ce597d254705fcaf94d65b893",
  "engine/renderer/forward/wireframe/edges.py": "4387efb01df56ef0ba5fce76ecc583f1f55f029925ef4b01977f367af880fa1f",
- "engine/shaders.py": "70930e638dbbeba6f55804af203e56a47185d704c2836df1331d9647f11aaca3"
+ "engine/shaders.py": "1b4e3e6697dd6de94197ccaa5ff224b4d5f80f35d7243095b370101ccb3d8d6b"
 }
