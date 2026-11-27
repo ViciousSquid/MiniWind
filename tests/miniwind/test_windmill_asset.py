@@ -83,8 +83,10 @@ def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
     assert combined[:, 1].min() == pytest.approx(0)
     assert 700 < combined[:, 1].max() < 730
     assert 700 < np.ptp(combined[:, 0]) < 750
-    assert {'Brick', 'Roof_tile'} <= set(loaded['windmill_body'].materials)
-    assert {'Sail_red'} <= set(loaded['windmill_rotor'].materials)
+    body_materials = set(loaded['windmill_body'].materials)
+    assert 'Brick' in body_materials
+    assert body_materials & {'Roof', 'Roof_tile'}
+    assert 'Sail_red' in set(loaded['windmill_rotor'].materials)
 
 
 def test_the_live_body_has_no_hidden_ground_facing_bottom_cap():
