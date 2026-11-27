@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import time
+import weakref
 from types import SimpleNamespace
 
 import pytest
@@ -40,7 +41,11 @@ class _Game:
     """What StuckArrows asks of the game session."""
 
     def __init__(self, logic):
-        self.logic = logic
+        # LogicThread is owned by the editor window. The projectile/use hooks
+        # installed below live on that thread, so this test adapter must not
+        # create a strong LogicThread -> callback -> adapter -> LogicThread
+        # reference path that can keep the editor QObject graph alive.
+        self.logic = weakref.proxy(logic)
         self.sounds = []
         self.notes = []
         self.interact_prompt = ""
