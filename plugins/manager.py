@@ -26,6 +26,7 @@ import os
 import pkgutil
 import sys
 import traceback
+import weakref
 from typing import List, Optional, Tuple
 
 from .api import (API_VERSION, EditorAPI, FioPlugin, GlobalStore, RuntimeAPI,
@@ -898,10 +899,14 @@ class PluginManager:
         # Re-binding to a fresh session (e.g. a new play run) must not stack a
         # second copy of every subscription: drop the previous session's event
         # handlers before connect() re-registers them.
-        if self._hosts and target is not self._host_target:
+        previous_target = (self._host_target()
+                           if self._host_target is not None else None)
+        if self._hosts and target is not previous_target:
             self.events.clear()
             self._hosts.clear()
-        self._host_target = target
+        # The manager is process-wide. Its binding describes the active host;
+        # it must not own that host's LogicThread after the editor is closed.
+        self._host_target = weakref.ref(target) if target is not None else None
         self._host_kind = kind
         for plugin in self.plugins + self._builtin_games:
             host = PluginHost(self, target, plugin, kind=kind)
