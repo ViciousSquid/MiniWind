@@ -66,7 +66,8 @@ def test_operational_mills_turn_independently_of_wheat_and_towers_never_turn(log
     other_angle = other_rotor.properties['rotation'][1]
     mills.update(5.0)
     assert rotor.properties['rotation'][1] == stopped_angle
-    assert other_rotor.properties['rotation'][1] > other_angle
+    angle_delta = (other_rotor.properties['rotation'][1] - other_angle) % 360.0
+    assert angle_delta == pytest.approx((RUN_SPEED * 5.0) % 360.0)
     assert len(logic.editor_state.things) == 4
 
 
