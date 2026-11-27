@@ -2,12 +2,12 @@
 
     blender -b -t 4 -P game/tools/make_medieval_houses.py
 
-Four houses of the Vale, authored like make_castle.py: original meshes, flat
-coloured materials (no textures to ship), deterministic from fixed seeds, and
-no third-party meshes or add-ons. Author Z-up, export Y-up in Fio units, a
-100-unit player and a 116-unit door (make_windmill's door is 106). The front
-wall faces Blender -Y, which is Fio +Z, and every model is an exterior shell:
-its ground is closed, so nothing shows the inside.
+Eight buildings of the Vale, authored like make_castle.py: original meshes,
+flat coloured materials (no textures to ship), deterministic from fixed
+seeds, and no third-party meshes or add-ons. Author Z-up, export Y-up in Fio
+units, a 100-unit player and a 116-unit door (make_windmill's door is 106).
+The front wall faces Blender -Y, which is Fio +Z, and every model is an
+exterior shell: its ground is closed, so nothing shows the inside.
 
 The kit, written to assets/models:
 
@@ -17,6 +17,13 @@ The kit, written to assets/models:
   to the street, timber-framed, under a steep slate roof.
 * house_inn       -- the inn: two storeys, a lower wing, a painted sign on a
   wrought bracket, and two chimneys.
+* house_bakery    -- the baker's: a deep shop window, a canvas awning and a
+  wide oven chimney.
+* house_smithy    -- the smithy: stone walls, a wide cart door and a forge
+  shelter with its anvil and quench trough outside.
+* house_barn      -- a big timber barn, cart doors in both gable ends.
+* house_chapel    -- a stone chapel with lancets, a round east light and a
+  bellcote on the ridge.
 
 Each is exported as OBJ + MTL (flat Kd colours, marked 'fio:up=y') and GLB
 (base colour factors, no images), with a kit manifest in
@@ -31,7 +38,6 @@ import argparse
 import json
 import math
 from pathlib import Path
-import struct
 import sys
 
 import bpy
@@ -41,7 +47,6 @@ ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / 'assets/models'
 PARTS = []
 MATS = {}
-TAU = math.tau
 
 PLAYER_HEIGHT = 100
 DOOR_HEIGHT = 116.0
@@ -79,6 +84,7 @@ def build_materials():
     material('Recess', (.05, .055, .05))
     material('Shutter', (.45, .29, .16))
     material('Sign_ground', (.16, .30, .22))
+    material('Canvas', (.78, .72, .55))
 
 
 # ----------------------------------------------------------------- geometry
@@ -242,28 +248,39 @@ def doorway(name, x, face_y, *, width=DOOR_WIDTH, height=DOOR_HEIGHT, double=Fal
         (5, 4, 12), 'Iron')
 
 
-def window(name, x, z, face_y, *, width=96.0, height=112.0, shutters=True,
-           frame_mat='Timber', out=1.0):
-    """A mullioned window with a stone sill, on a wall whose face is *face_y*
-    (*out* is -1 when the wall's face looks down -Y, as the front does)."""
-    y = face_y + out * 2
-    box(f'{name} recess', (x, y, z), (width, 6, height), 'Recess')
-    box(f'{name} mullion', (x, face_y + out * 6, z), (9, 4, height), frame_mat)
-    box(f'{name} transom', (x, face_y + out * 6, z), (width, 4, 9), frame_mat)
+def window(name, center, normal, *, z, width=96.0, height=112.0, shutters=True,
+           frame_mat='Timber'):
+    """A mullioned window with a stone sill, in a wall whose face passes
+    through *center* -- an '(x, y)' point on the wall -- and looks along the
+    unit *normal* '(nx, ny)' (one of the four axis directions, pointing out
+    of the wall); *z* is the height of the window's centre. Every part is
+    laid out along the wall and offset out of it, so gable and end walls
+    take windows the same way the front does."""
+    tx, ty = -normal[1], normal[0]          # along the wall
+    yaw = math.atan2(ty, tx)
+
+    def at(u, n, dz):
+        return (center[0] + tx * u + normal[0] * n,
+                center[1] + ty * u + normal[1] * n, z + dz)
+
+    box(f'{name} recess', at(0, 1, 0), (width, 6, height), 'Recess', yaw)
+    box(f'{name} mullion', at(0, 3, 0), (9, 4, height), frame_mat, yaw)
+    box(f'{name} transom', at(0, 3, 0), (width, 4, 9), frame_mat, yaw)
     for sign in (-1, 1):
-        box(f'{name} jamb', (x + sign * (width / 2 + 7), y, z), (14, 10, height + 12),
-            frame_mat)
-    box(f'{name} lintel', (x, y, z + height / 2 + 13), (width + 48, 10, 12), frame_mat)
-    box(f'{name} sill', (x, y, z - height / 2 - 9), (width + 56, 14, 10), 'Stone')
+        box(f'{name} jamb', at(sign * (width / 2 + 7), 1, 0),
+            (14, 10, height + 12), frame_mat, yaw)
+    box(f'{name} lintel', at(0, 1, height / 2 + 13), (width + 48, 10, 12),
+        frame_mat, yaw)
+    box(f'{name} sill', at(0, 1, -height / 2 - 9), (width + 56, 14, 10), 'Stone', yaw)
     if shutters:
         for sign in (-1, 1):
-            box(f'{name} shutter', (x + sign * (width + 22), face_y + out * 8, z),
-                (30, 5, height + 6), 'Shutter')
+            box(f'{name} shutter', at(sign * (width + 22), 4, 0),
+                (30, 5, height + 6), 'Shutter', yaw)
 
 
-def gable_window(name, z, face_y, width, out=1.0):
+def gable_window(name, center, normal, *, z, width):
     """A small attic light in a gable, narrow enough to stay in the triangle."""
-    window(name, 0, z, face_y, width=width, height=88.0, shutters=False)
+    window(name, center, normal, z=z, width=width, height=88.0, shutters=False)
 
 
 def chimney_stack(name, x, y, top_z, *, base_z=0.0, size=112.0):
@@ -310,11 +327,11 @@ def build_cottage():
     wall_top, ridge, w2, d2 = house_shell(name, width, depth, wall_h, rise,
                                           'Plaster', 'Thatch', overhang=110.0)
     doorway(name, 120, -d2)
-    window(f'{name} front west', -140, 168, -d2)
-    window(f'{name} front east', 0, 168, -d2, shutters=False)
+    window(f'{name} front west', (-140, -d2), (0, -1), z=168)
+    window(f'{name} front east', (0, -d2), (0, -1), z=168, shutters=False)
     for sign in (-1, 1):
-        window(f'{name} gable light', sign * (width / 2 + 2), 170, 0,
-               width=84.0, height=96.0, shutters=False, out=sign)
+        window(f'{name} gable light', (sign * (w2 + 2), 40.0), (sign, 0),
+               z=170, width=84.0, height=96.0, shutters=False)
     chimney_stack(f'{name} chimney', w2 - 120, 40, ridge - 30)
     return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
                                ridge_height=round(ridge))
@@ -327,12 +344,12 @@ def build_farmhouse():
     wall_top, ridge, w2, d2 = house_shell(name, width, depth, wall_h, rise,
                                           'Plaster_warm', 'Tile', overhang=120.0)
     doorway(name, 250, -d2)
-    window(f'{name} front parlour', -250, 170, -d2)
-    window(f'{name} front middle', -40, 170, -d2, shutters=False)
+    window(f'{name} front parlour', (-250, -d2), (0, -1), z=170)
+    window(f'{name} front middle', (-40, -d2), (0, -1), z=170, shutters=False)
     for sign in (-1, 1):
-        window(f'{name} end light', sign * (width / 2 + 2), 180, 0,
-               width=96.0, height=110.0, shutters=False, out=sign)
-    window(f'{name} back kitchen', 150, 175, d2, shutters=False, out=1)
+        window(f'{name} end light', (sign * (w2 + 2), 60.0), (sign, 0),
+               z=180, width=96.0, height=110.0, shutters=False)
+    window(f'{name} back kitchen', (150, d2), (0, 1), z=175, shutters=False)
     timber_frame(name, -w2 + 30, w2 - 30, 40, wall_h - 50, -d2, studs=6, rails=1)
     chimney_stack(f'{name} chimney', -w2 + 110, 60, ridge - 20)
     return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
@@ -355,10 +372,11 @@ def build_townhouse():
                  studs=4, rails=1)
     timber_frame(name, -w2, w2, 30, wall_h / 2 - 30, -d2, studs=3, rails=1)
     doorway(name, 0, -d2)
-    window(f'{name} parlour', -w2 + 90, 190, -d2, shutters=False)
-    window(f'{name} chamber west', -110, wall_h * .72, -(d2 + 70), shutters=True)
-    window(f'{name} chamber east', 110, wall_h * .72, -(d2 + 70), shutters=True)
-    gable_window(f'{name} attic', wall_h + rise * .34, -(d2 + 70), width * .34)
+    window(f'{name} parlour', (-w2 + 90, -d2), (0, -1), z=190, shutters=False)
+    window(f'{name} chamber west', (-110, -(d2 + 70)), (0, -1), z=wall_h * .72)
+    window(f'{name} chamber east', (110, -(d2 + 70)), (0, -1), z=wall_h * .72)
+    gable_window(f'{name} attic', (0, -(d2 + 70)), (0, -1),
+                 z=wall_h + rise * .34, width=width * .34)
     chimney_stack(f'{name} chimney', 0, d2 - 90, ridge + 60)
     return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
                                ridge_height=round(ridge), jetty=70.0,
@@ -386,19 +404,129 @@ def build_inn():
                   (wy + sign * wing_d / 2, wing_h),
                   (wy + sign * (wing_d / 2 + 80), wing_h - eave), 24.0, 'Tile')
     doorway(name, 260, -d2, double=True)
-    window(f'{name} tap room', -180, 180, -d2, width=150.0, shutters=False)
+    window(f'{name} tap room', (-180, -d2), (0, -1), z=180, width=150.0,
+           shutters=False)
     for sign in (-1, 1):
-        window(f'{name} chamber', sign * 220, wall_h * .72, -d2, width=120.0)
-        window(f'{name} end light', sign * (width / 2 + 2), 300, 0,
-               width=90.0, height=100.0, shutters=False, out=sign)
-    window(f'{name} wing light', wx - 90, 170, wy - wing_d / 2, width=90.0,
-           height=100.0, shutters=False)
+        window(f'{name} chamber', (sign * 220, -d2), (0, -1), z=wall_h * .72,
+               width=120.0)
+        window(f'{name} end light', (sign * (w2 + 2), 80.0), (sign, 0),
+               z=300, width=90.0, height=100.0, shutters=False)
+    window(f'{name} wing light', (wx - 90, wy - wing_d / 2), (0, -1),
+           z=170, width=90.0, height=100.0, shutters=False)
     hanging_sign(name, 60, -d2, 430)
     chimney_stack(f'{name} kitchen chimney', wx + 60, wy, wing_h + wing_rise - 10)
     chimney_stack(f'{name} chimney', w2 - 140, 80, ridge - 20)
     return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
                                ridge_height=round(ridge), wing=True,
                                door_width=round(76 * 1.3, 1))
+
+
+def build_bakery():
+    name = 'house_bakery'
+    start = len(PARTS)
+    width, depth, wall_h, rise = 520.0, 460.0, 300.0, 190.0
+    wall_top, ridge, w2, d2 = house_shell(name, width, depth, wall_h, rise,
+                                          'Plaster_warm', 'Tile', overhang=100.0)
+    doorway(name, 140, -d2)
+    # The shop window: wide and low, the bread seen from the street.
+    window(f'{name} shop', (-130, -d2), (0, -1), z=150, width=230.0,
+           height=118.0, shutters=False)
+    # The canvas awning: arms from the wall and a cloth sloping out over it.
+    for sign in (-1, 1):
+        beam(f'{name} awning arm', (-130 + sign * 128, -d2, 232),
+             (-130 + sign * 128, -d2 - 158, 196), 9, 9, 'Timber')
+    roof_slab(f'{name} awning', 'x', -262, 2, (-d2 - 2, 232), (-d2 - 168, 190),
+              14.0, 'Canvas')
+    for sign in (-1, 1):
+        window(f'{name} side light', (sign * (w2 + 2), 30.0), (sign, 0),
+               z=180, width=90.0, height=100.0, shutters=False)
+    # The oven chimney, wider than a house's: the ovens live against it.
+    chimney_stack(f'{name} oven chimney', -w2 + 110, 30, ridge - 20, size=140.0)
+    return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
+                               ridge_height=round(ridge), shop_window=True)
+
+
+def build_smithy():
+    name = 'house_smithy'
+    start = len(PARTS)
+    width, depth, wall_h, rise = 640.0, 520.0, 340.0, 170.0
+    wall_top, ridge, w2, d2 = house_shell(name, width, depth, wall_h, rise,
+                                          'Stone', 'Tile', overhang=90.0)
+    # The cart door: tall and wide, in two leaves that fold back.
+    doorway(name, 130, -d2, width=190.0, height=190.0, double=True)
+    for sign in (-1, 1):
+        window(f'{name} end light', (sign * (w2 + 2), 40.0), (sign, 0),
+               z=190, width=84.0, height=96.0, shutters=False)
+    # The forge shelter stands in front of the wall, clear of the eave:
+    # four posts, a low slope off the wall, the anvil block and quench
+    # trough under it.
+    sx0, sx1 = -w2 + 20, -w2 + 280
+    for px, py in ((sx0, -d2 - 110), (sx1, -d2 - 110), (sx0, -d2 - 320), (sx1, -d2 - 320)):
+        beam(f'{name} shelter post', (px, py, 0), (px, py, 200), 22, 22, 'Oak')
+    for px in (sx0, sx1):
+        beam(f'{name} shelter plate', (px, -d2 - 100, 196), (px, -d2 - 330, 128),
+             16, 16, 'Timber')
+    roof_slab(f'{name} shelter roof', 'x', sx0 - 40, sx1 + 40,
+              (-d2 - 100, 196), (-d2 - 330, 128), 18.0, 'Tile')
+    box(f'{name} anvil block', ((sx0 + sx1) / 2 - 60, -d2 - 210, 45), (90, 90, 90), 'Oak')
+    box(f'{name} anvil', ((sx0 + sx1) / 2 - 60, -d2 - 210, 108), (120, 44, 30), 'Iron')
+    box(f'{name} quench trough', ((sx0 + sx1) / 2 + 60, -d2 - 220, 40), (110, 70, 80), 'Stone')
+    # The forge chimney, the widest in the kit.
+    chimney_stack(f'{name} forge chimney', w2 - 140, 60, ridge - 10, size=160.0)
+    return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
+                               ridge_height=round(ridge),
+                               door_width=round(190 * 1.3, 1), forge_shelter=True)
+
+
+def build_barn():
+    name = 'house_barn'
+    start = len(PARTS)
+    width, depth, wall_h, rise = 900.0, 640.0, 360.0, 260.0
+    wall_top, ridge, w2, d2 = house_shell(name, width, depth, wall_h, rise,
+                                          'Timber', 'Thatch', overhang=120.0,
+                                          gable_front=True)
+    # Cart doors in both gable ends: wagons go straight through.
+    doorway(name, 0, -d2, width=210.0, height=220.0, double=True)
+    doorway(name, 0, d2, width=210.0, height=220.0, double=True)
+    # Breathing vents high in each gable; a barn has no other openings.
+    for sign in (-1, 1):
+        box(f'{name} vent', (sign * (width * .18), -(d2 + 2), wall_h + rise * .3),
+            (70, 8, 90), 'Recess')
+    box(f'{name} vent', (0, d2 + 2, wall_h + rise * .3), (70, 8, 90), 'Recess')
+    return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
+                               ridge_height=round(ridge),
+                               door_width=round(210 * 1.3, 1))
+
+
+def build_chapel():
+    name = 'house_chapel'
+    start = len(PARTS)
+    width, depth, wall_h, rise = 460.0, 760.0, 400.0, 340.0
+    wall_top, ridge, w2, d2 = house_shell(name, width, depth, wall_h, rise,
+                                          'Stone', 'Slate', overhang=80.0,
+                                          gable_front=True)
+    doorway(name, 0, -d2, width=110.0, height=180.0)
+    # Lancets down both sides; a round light high in the front gable.
+    for sign in (-1, 1):
+        for y in (-d2 + 200, -40.0, d2 - 200):
+            window(f'{name} lancet', (sign * (w2 + 2), y), (sign, 0),
+                   z=250, width=64.0, height=200.0, shutters=False)
+    gable_window(f'{name} east light', (0, -(d2 + 2)), (0, -1),
+                 z=wall_h + rise * .38, width=120.0)
+    # The bellcote on the ridge over the altar end, its bell in the opening.
+    bc_w, bc_h = 150.0, 210.0
+    bc_y, bc_z = d2 - 150.0, ridge + 6.0
+    box(f'{name} bellcote', (0, bc_y, bc_z + bc_h / 2), (bc_w, bc_w, bc_h), 'Stone')
+    prism(f'{name} bellcote roof',
+          [(-bc_w / 2 - 24, bc_z + bc_h - 2), (bc_w / 2 + 24, bc_z + bc_h - 2),
+           (0, bc_z + bc_h + 90)], bc_w + 48, 'Slate', 'y', bc_y)
+    box(f'{name} bell', (0, bc_y, bc_z + bc_h - 58), (62, 62, 66), 'Iron')
+    for sign in (-1, 1):
+        box(f'{name} bellcote opening', (sign * (bc_w / 2 + 1), bc_y, bc_z + bc_h - 58),
+            (10, 80, 90), 'Recess')
+    return PARTS[start:], dict(width=width, depth=depth, wall_height=wall_h,
+                               ridge_height=round(ridge), gable_front=True,
+                               bellcote=True)
 
 
 # -------------------------------------------------------------------- export
@@ -496,7 +624,11 @@ def main():
     for name, build in (('house_cottage', build_cottage),
                         ('house_farmhouse', build_farmhouse),
                         ('house_townhouse', build_townhouse),
-                        ('house_inn', build_inn)):
+                        ('house_inn', build_inn),
+                        ('house_bakery', build_bakery),
+                        ('house_smithy', build_smithy),
+                        ('house_barn', build_barn),
+                        ('house_chapel', build_chapel)):
         parts, dims = build()
         stats = export(name, parts, args.work)
         if scene is not None:
