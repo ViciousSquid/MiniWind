@@ -36,7 +36,12 @@
         "owner": "8e3851c7_edf9_4d1f_b9ea_37a0b6161d38",
         "owner_name": "Bram the Farmer",
         "owner_faction": "villagers",
-        "io_enabled": true
+        "io_enabled": true,
+        "mill_rotor_anchor": [
+          0,
+          700,
+          160
+        ]
       },
       "io_connections": []
     },
@@ -44,15 +49,15 @@
       "type": "prop",
       "pos": [
         2400,
-        755,
-        2470
+        905,
+        2460
       ],
       "properties": {
         "type": "prop",
         "name": "chesterton_windmill_sails",
         "id": "5e8f09a2-60c8-4f89-ae47-9e4c4e7a1f31",
         "render_mode": "model",
-        "model_path": "assets/models/windmill_rotor.obj",
+        "model_path": "assets/models/chesterton_windmill_rotor.obj",
         "mill_rotor_for": "5e8f09a2-60c8-4f89-ae47-9e4c4e7a1f30",
         "rotation": [
           0,
@@ -68,7 +73,8 @@
         "collect_enabled": false,
         "physics_enabled": false,
         "no_collision": true,
-        "io_enabled": true
+        "io_enabled": true,
+        "mill_rotor_axis": "z"
       },
       "io_connections": []
     },
