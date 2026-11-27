@@ -95,20 +95,32 @@ def test_a_map_in_a_mounted_package_reads_its_paint_from_there(tmp_path, monkeyp
 
 
 def test_the_overworld_carries_its_own_paint():
-    """Its roads and district borders are in the map itself
-    (game/tools/embed_paint.py), so every load has them, and no paint file
-    is beside it to fall out of step."""
+    """The saved map carries its terrain paint in its adjacent paint sidecar.
+
+    Loading joins that sidecar and the optional pathnode-road overlay, so
+    users receive the same painted ground whether the world is loose or
+    mounted inside a .fiopak.
+    """
     path = os.path.join(ROOT, "maps", "miniwind_world.json")
     with open(path, encoding="utf-8") as fh:
         level = json.load(fh)
     td = level["terrain_data"]
-    assert "paint_file" not in td
-    assert td["texture_paint_resolution"] == 512
-    assert len(td["texture_paint"]) > 100
-    assert terrain_stamp.paint_path(path) is None
+    assert td.get("paint_file") is True
+    paint_path = terrain_stamp.paint_path(path)
+    assert paint_path == os.path.splitext(path)[0] + ".paint"
+    assert os.path.isfile(paint_path)
+    road_path = terrain_stamp.road_overlay_path(path)
+    assert road_path == os.path.splitext(path)[0] + ".roads.paint"
+    assert os.path.isfile(road_path)
     assert terrain_stamp.missing_paint_file(level, path) is None
-    # Loading it is the map as it is: nothing to join.
-    assert terrain_stamp.join_level(level, path) is level
+
+    joined = terrain_stamp.join_level(level, path)
+    assert joined is not level
+    loaded = joined["terrain_data"]
+    assert "paint_file" not in loaded
+    assert loaded["texture_paint_resolution"] == 512
+    assert len(loaded["texture_paint"]) > 100
+    assert loaded.get(terrain_stamp.UNBAKED_KEY) is True
 
 
 def test_the_overworld_is_minified():
