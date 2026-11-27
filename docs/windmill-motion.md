@@ -136,7 +136,7 @@ Existing maps and saves therefore retain their established silhouette.
 The Chesterton landmark uses a dedicated `chesterton_windmill_rotor.obj`:
 its four sails lie in a vertical XY plane facing the body's **+Z** front, with
 a forged axle extending back along **-Z** into the stone tower. Its hub is
-anchored at body-local **[0, 700, 260]** and it rotates about local **+Z**.
+anchored at body-local **[0, 700, 130]** and it rotates about local **+Z**.
 `mill_rotor_axis` and `mill_rotor_anchor` are per-instance properties, so
 the two windmills can share the same motion system without sharing the same
 orientation. Both body and rotor are separate Wavefront OBJ models with
