@@ -19,6 +19,7 @@ import struct
 import json
 import os
 import math
+import zlib
 import numpy as np
 import OpenGL.GL as gl
 from engine.renderer.core import gl_state
@@ -106,6 +107,31 @@ def flat_normals(corners):
     return normals
 
 
+def _decode_model_bytes(data: bytes) -> Optional[bytes]:
+    """Accept ordinary GLBs and bounded gzip-compressed GLBs.
+
+    The game can ship large static meshes compressed under their usual
+    ``.glb`` paths; the format seen by the parser is always standard GLB 2.0.
+    Decompression is bounded to the same limit as an uncompressed model.
+    """
+    if len(data) > MAX_GLB_FILE_BYTES:
+        return None
+    if not data.startswith(b"\\x1f\\x8b"):
+        return data
+    try:
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        decoded = decoder.decompress(data, MAX_GLB_FILE_BYTES + 1)
+        if len(decoded) > MAX_GLB_FILE_BYTES or decoder.unconsumed_tail:
+            return None
+        decoded += decoder.flush()
+        if (len(decoded) > MAX_GLB_FILE_BYTES or not decoder.eof
+                or decoder.unused_data):
+            return None
+        return decoded
+    except zlib.error:
+        return None
+
+
 def _read_bounded(path: str) -> Optional[bytes]:
     """A regular file's bytes, or None if missing, special, or too large.
 
@@ -117,14 +143,14 @@ def _read_bounded(path: str) -> Optional[bytes]:
             # An archived asset (assets/<category>.fiopak), read in place.
             from engine.asset_archives import asset_bytes
             data = asset_bytes(path)
-            return data if data is not None and len(data) <= MAX_GLB_FILE_BYTES else None
-        if os.path.getsize(path) > MAX_GLB_FILE_BYTES:
-            return None
-        with open(path, 'rb') as f:
-            data = f.read(MAX_GLB_FILE_BYTES + 1)
+        else:
+            if os.path.getsize(path) > MAX_GLB_FILE_BYTES:
+                return None
+            with open(path, 'rb') as f:
+                data = f.read(MAX_GLB_FILE_BYTES + 1)
     except OSError:
         return None
-    return data if len(data) <= MAX_GLB_FILE_BYTES else None
+    return _decode_model_bytes(data) if data is not None else None
 
 
 # ---------------------------------------------------------------------------
