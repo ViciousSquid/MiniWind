@@ -73,7 +73,7 @@ def test_a_side_mounted_rotor_uses_its_authored_anchor_and_forward_axis(logic):
     body = Prop(pos=[10, 20, 30], properties={
         'name': 'Chesterton Windmill', MILL: True,
         'model_path': 'assets/models/chesterton_windmill_body.obj',
-        ROTOR_ANCHOR: [0, 700, 160],
+        ROTOR_ANCHOR: [0, 700, 260],
         'rotation': [0, 0, 0], 'scale': [1, 1, 1],
     })
     rotor = Prop(pos=[0, 0, 0], properties={
@@ -85,7 +85,7 @@ def test_a_side_mounted_rotor_uses_its_authored_anchor_and_forward_axis(logic):
     logic.editor_state.things.extend([body, rotor])
     mills = Windmills(logic)
     mills.install()
-    np.testing.assert_allclose(rotor.pos, [10, 720, 190], atol=1e-4)
+    np.testing.assert_allclose(rotor.pos, [10, 720, 290], atol=1e-4)
 
     mills.update(SPIN_UP_SECONDS)
     assert rotor.properties['rotation'][2] == pytest.approx(RUN_SPEED * SPIN_UP_SECONDS / 2)
