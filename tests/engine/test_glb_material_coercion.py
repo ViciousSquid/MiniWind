@@ -126,10 +126,12 @@ class _Assets:
         self.files = files
 
     def read_asset(self, path):
-        return self.files.get(path)
+        # Asset resolvers return native platform separators; package members
+        # remain canonical project-relative paths with forward slashes.
+        return self.files.get(str(path).replace("\\", "/"))
 
     def read_text(self, path):
-        data = self.files.get(path)
+        data = self.read_asset(path)
         return None if data is None else data.decode("utf-8")
 
 
@@ -181,7 +183,7 @@ def test_packaged_gltf_reads_its_external_buffer():
                       "assets/models/tri.bin": blob})
     from engine.asset_paths import companion_path
     buffer_path = companion_path("assets/models/big.gltf", "tri.bin")
-    assert buffer_path == "assets/models/tri.bin"
+    assert buffer_path.replace("\\", "/") == "assets/models/tri.bin"
     assert assets.read_asset(buffer_path) == blob
 
     loader = load_model("assets/models/big.gltf", assets)
