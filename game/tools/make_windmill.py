@@ -111,10 +111,15 @@ def box(name, center, size, mat, angle=0.0, axis="Y"):
     return finish(obj, name, mat)
 
 
-def surfaces(name, polygons, mat):
-    """Create top-facing roof/gable polygons without hidden undersides."""
+def surfaces(name, polygons, mat, normal_hint=(0, 0, 1)):
+    """Create one-sided roof/gable faces with explicit outward winding."""
     vertices, faces = [], []
+    hint = Vector(normal_hint).normalized()
     for polygon in polygons:
+        polygon = list(polygon)
+        p0, p1, p2 = (Vector(point) for point in polygon[:3])
+        if (p1 - p0).cross(p2 - p0).dot(hint) < 0:
+            polygon.reverse()
         start = len(vertices)
         vertices.extend(polygon)
         faces.append(tuple(range(start, start + len(polygon))))
@@ -278,10 +283,12 @@ def build(folder):
     # native: X spans the facade, Y is front/back, and Z is vertical.
     x0, x1 = hx - 165, hx + 165
     eave_z, ridge_z, half_depth = 140.0, 193.0, 145.0
-    surfaces("House_gables", [
-        [(x0, -125, 134), (x0, 125, 134), (x0, 0, ridge_z)],
+    surfaces("House_gable_left", [
+        [(x0, -125, 134), (x0, 125, 134), (x0, 0, ridge_z)]
+    ], "Brick", normal_hint=(-1, 0, 0))
+    surfaces("House_gable_right", [
         [(x1, 125, 134), (x1, -125, 134), (x1, 0, ridge_z)]
-    ], "Brick")
+    ], "Brick", normal_hint=(1, 0, 0))
     surfaces("House_roof_base", [
         [(x0, 0, ridge_z), (x1, 0, ridge_z), (x1, -half_depth, eave_z), (x0, -half_depth, eave_z)],
         [(x1, 0, ridge_z), (x0, 0, ridge_z), (x0, half_depth, eave_z), (x1, half_depth, eave_z)]
