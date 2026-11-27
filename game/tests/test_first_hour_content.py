@@ -74,7 +74,7 @@ def test_the_first_hour_has_locks_to_pick(world):
 
 
 def test_marras_is_the_only_windmill(world):
-    """Mara's windmill, by Millbrook, is the only one in the Vale; the Old
+    """The shipped Vale has one explicitly operational windmill; the Old
     Mill camp stands on the ground (no invisible slab walls it off)."""
     mills = [t["properties"] for t in world["things"] if t["properties"].get("windmill")]
     assert [p["name"] for p in mills] == ["chesterton_windmill"]
@@ -159,7 +159,7 @@ def test_no_one_starts_or_lives_inside_a_wall(world):
             hy = y if home[1] < y - 100 else home[1]
             if inside(home[0], hy, home[2]):
                 walled.append((p.get("display_name"), "home"))
-    assert not walled
+    assert not walled, walled
     # The tool's homes clear the wall on the door side, whatever the house.
     for _tex, w, d in populate_world.HOUSES:
         for k in range(16):
