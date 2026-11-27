@@ -207,5 +207,8 @@ def test_every_lake_is_one_water_brush_over_a_sculpted_depression():
         wet = h < top
         assert 0.3 < wet.mean() < 0.9, "the water fills a depression, not the box"
         edge = np.concatenate([wet[0], wet[-1], wet[:, 0], wet[:, -1]])
-        assert not edge.any(), "the brush's edges lie under dry bank"
+        assert not edge.any(), (
+            f"{b['id']}: water reaches {int(edge.sum())} edge samples; "
+            f"first indices {np.flatnonzero(edge)[:12].tolist()}, top={top}"
+        )
         assert h.min() > b["pos"][1] - b["size"][1] / 2, "the bed is inside the brush"
