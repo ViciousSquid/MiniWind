@@ -3,6 +3,9 @@ sunset, solar hours, the sun and the moon (game/calendar.py)."""
 
 import pytest
 
+pytestmark = pytest.mark.qt
+pytest.importorskip("PyQt5", reason="the calendar's daylight integration uses Qt")
+
 from engine import terrain_biomes
 
 from .. import calendar as cal

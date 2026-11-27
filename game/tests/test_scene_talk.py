@@ -238,7 +238,8 @@ def test_an_infuriated_seeker_rolls_and_a_bad_roll_refuses_the_gold_and_starts_a
     from .. import runtime
     s, paid, engaged, barks = _repay_session(3)
     monkeypatch.setattr(runtime.disp, "of", lambda c, p, store: 3)
-    s.rng.random = lambda: 0.99                                  # a bad roll
+    s.rng.random = lambda: 0.99                                  # a bad d20
+    s.rng.randint = lambda a, b: 6                               # keep the gold on the d6
     npc = _Thing(0, 0, display_name="Hal")
     s._scene_repay(npc, {"op": "scene_repay", "scene": "dyn3", "event": 17, "gold": 12})
     assert s.game.character.gold == 50 and not paid             # kept the gold

@@ -8,6 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.qt
+pytest.importorskip("PyQt5", reason="the inventory strip uses Qt")
+
 from game import host
 from game.rpg import equipment as eq, items, magic as rpg_magic
 from game.rpg.character import Character

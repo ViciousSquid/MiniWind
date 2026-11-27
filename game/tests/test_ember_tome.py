@@ -195,7 +195,11 @@ def test_every_lake_is_one_water_brush_over_a_sculpted_depression():
     (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
     # The south-east ocean (make_road_map.make_ocean) meets the map's edge:
     # it is no lake, though it may overlap none of them (checked above).
-    lakes = [b for b in water if 600 < b["size"][0] < 20000]
+    # Sunfall Oasis is the separate, edge-open water body. Its bespoke
+    # geometry is exercised in test_sunfall_oasis.py; this assertion covers
+    # the ordinary enclosed basins built by expand_world.
+    lakes = [b for b in water if 600 < b["size"][0] < 20000
+             and b.get("name") != "sunfall_oasis_water"]
     assert len(lakes) >= 4                # Mirrormere and the new ponds
     for b in lakes:
         x0, z0, x1, z1 = rect(b)

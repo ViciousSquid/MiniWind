@@ -7,6 +7,8 @@ import os
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.gl
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MAP = os.path.join(ROOT, "maps", "miniwind_world.json")
 
