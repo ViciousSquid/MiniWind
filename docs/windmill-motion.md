@@ -1,8 +1,9 @@
 # Windmill blade motion
 
-A game-ready windmill: tapered brick tower, gray metal bonnet, red timber
-lattice sails, timber door and small windows. The placed world mill has
-rotating sails controlled by its production state.
+A low-poly game-ready windmill: tapered 12-sided brick tower, gray metal
+bonnet, and a small attached brick mill house with a pitched terracotta tile
+roof, chimney, porch and timber entrance. Four red timber lattice sails remain
+separate geometry and rotate while the mill is producing.
 
 ## Production and sail motion
 
@@ -120,14 +121,24 @@ and transition durations are constants in `game/windmills.py`.
 
 ## Model placement
 
-The rotor's local origin is its axle, with pivot **[0, 550, 170]** in tower
-coordinates and rotation about **+Z**. Its placement follows the tower's
-position and rotation; use a uniform scale for the assembly. Stopping Play
-restores the rotor's authored transform. The complete `windmill.glb`,
-`windmill.obj` and the rendered PNG sprites are also supplied as static assets.
+The rotor prop retains its authored tower-relative anchor **[0, 550, 170]**
+so existing maps and saved placements remain valid. Its mesh places the visible
+axle **150 units above that anchor**; the blades lie in the ground plane and
+rotate about local **+Y**, keeping the four-sail silhouette visible to the
+top-down camera. Its placement follows the tower's position and rotation; use
+a uniform scale for the assembly. Stopping Play restores the rotor's authored
+transform. The complete `windmill.glb`, `windmill.obj` and orthographic PNG
+sprites are also supplied as static assets.
 
-Rebuild the full and split models from the same Blender source with:
+Rebuild the full and split models and metadata from the procedural low-poly
+source (Python standard library only):
 
 ```sh
-blender -b -t 4 -P game/tools/make_windmill.py -- --export-only
+python game/tools/make_windmill.py
+```
+
+Then repack the model category for archive-only distributions:
+
+```sh
+python tools/pack_assets.py models
 ```
