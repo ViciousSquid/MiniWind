@@ -33,6 +33,13 @@ _FORMATS = (STAMP_FORMAT, PAINT_FORMAT)
 STAMP_VERSION = 1
 STAMP_EXTENSION = ".paint"
 ROAD_OVERLAY_SUFFIX = ".roads" + STAMP_EXTENSION
+#: Set on a level's terrain by :func:`apply_stamp_overlay` when it appended
+#: stamp records whose pixels are not in the map's baked paint. Read by
+#: :meth:`engine.terrain.Terrain.from_dict`, which bakes them in when the
+#: terrain is built, so the overlay is the road on the ground, not only
+#: records. Never written by a save: once the terrain has baked them the
+#: paint file carries them like any other stamp.
+UNBAKED_KEY = "paint_stamps_unbaked"
 
 _STAMP_FIELDS = ("id", "texture", "x", "z", "radius", "angle", "feather", "opacity")
 
@@ -222,7 +229,10 @@ def apply_stamp_overlay(level: dict, data: dict) -> dict:
     """Append editable stamp records without replacing the map's baked paint.
 
     Stamps already present in the regular .paint file win, preserving edits
-    made in the editor after an overlay was first loaded.
+    made in the editor after an overlay was first loaded. The appended
+    records are marked (:data:`UNBAKED_KEY`) for the terrain, which bakes
+    them into its paint when it is built: the map's baked paint does not
+    hold them, so a record alone would show nothing on the ground.
     """
     if not isinstance(level, dict) or not isinstance(data, dict):
         return level
@@ -251,6 +261,8 @@ def apply_stamp_overlay(level: dict, data: dict) -> dict:
     updated = dict(level)
     updated_terrain = dict(terrain)
     updated_terrain[STAMPS_KEY] = stamps
+    # The records alone are not the road on the ground.
+    updated_terrain[UNBAKED_KEY] = True
     updated[TERRAIN_KEY] = updated_terrain
     return updated
 

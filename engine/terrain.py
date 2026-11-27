@@ -4832,6 +4832,15 @@ class Terrain:
         # their records, sharp and tiled. Paint with no record behind it can
         # only be resampled.
         convert = saved_res != self.TERRAIN_PAINT_RESOLUTION
+        # Overlay stamps appended after the map was saved (the pathnode road
+        # overlay): their pixels are in no baked paint yet, so the terrain
+        # bakes them in below.
+        try:
+            from . import terrain_stamp as _terrain_stamp
+            unbaked = _flag(data.get(_terrain_stamp.UNBAKED_KEY), False)
+        except ImportError:                     # pragma: no cover
+            unbaked = _flag(data.get('paint_stamps_unbaked'), False)
+        pending = set()
         for raw in _as_list(data.get('paint_stamps')):
             if isinstance(raw, dict):
                 convert = convert or 'tiled' not in raw
@@ -4847,6 +4856,8 @@ class Terrain:
                 cx0, cx1, cz0, cz1 = self._stamp_range(stamp)
                 if (cx1 - cx0 + 1) * (cz1 - cz0 + 1) <= self.MAX_BOUNDED_CHUNKS:
                     self.paint_stamps.append(stamp)
+                    if unbaked:
+                        pending |= self._stamp_chunks(stamp)
         if self.paint_stamps:
             self.texture_paint_base = self._decode_texture_paint(
                 _as_list(data.get('texture_paint_base')), saved_res)
@@ -4862,6 +4873,10 @@ class Terrain:
             for stamp in self.paint_stamps:
                 keys |= self._stamp_chunks(stamp)
             self._recompose_paint(keys)
+        elif pending:
+            # The overlay's records become the road on the ground, here
+            # under the loading bar like every other bake at load.
+            self._recompose_paint(pending)
         # No chunk is resident yet: all of the paint is packed, here under
         # the loading bar, and unpacked as its chunks stream in.
         self._paint_resident = None
