@@ -35,7 +35,7 @@ def _manager():
 
 def test_every_command_and_alias_is_registered():
     names = set(_manager().console_commands())
-    assert {"diceroll", "dice", "quest", "quests", "sim", "inspect", "mind", "storyteller"} <= names
+    assert {"diceroll", "dice", "quest", "quests", "sim", "inspect", "mind", "storyteller", "smm"} <= names
 
 
 def test_a_command_receives_fios_arguments_as_its_context(monkeypatch):

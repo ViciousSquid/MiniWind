@@ -15,6 +15,7 @@ session is running, and the editor window) plus the raw argument string.
     storyteller       what the storyteller is doing (window, report, watch, studio)
     inspect | mind    pause and click an actor for its live mental state
     torch_shadows [on|off]   torches near you cast shadows (toggles)
+    smm               discover every named location on this map and unlock fast travel
 """
 
 import time
@@ -751,6 +752,61 @@ def cmd_torch_shadows(ctx, args):
     return None
 
 
+
+def cmd_smm(ctx, args):
+    """smm -- discover every named location on the current map.
+
+    Marks each location as discovered and writes the same visited.<place>
+    state used by normal exploration, so every place appears on the map and
+    the existing fast-travel system can reach it. Play Mode only.
+    """
+    if not ctx.play_mode:
+        debug_log("Error", "smm: enter Play Mode first.")
+        return None
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None:
+        debug_log("Error", "smm: no active MiniWind session.")
+        return None
+
+    markers = session._location_markers()
+    if not markers:
+        debug_log("Info", "smm: this map has no named locations.")
+        return None
+
+    newly_discovered = []
+    for name, marker in markers.items():
+        if not marker.properties.get("_discovered"):
+            newly_discovered.append(name)
+        marker.properties["_discovered"] = True
+        session.store.set(f"visited.{session._slug(name)}", "1")
+
+    # Schedule one discovery autosave for the batch, not one per location.
+    if newly_discovered:
+        autosave = getattr(session, "autosave", None)
+        discovered = getattr(autosave, "discovered", None)
+        if callable(discovered):
+            discovered(newly_discovered[0])
+
+    count = len(markers)
+    new_count = len(newly_discovered)
+    msg = (f"Map revealed: {count} locations; {new_count} newly discovered. "
+           "Fast travel is unlocked to all of them.")
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    view = getattr(ctx.main_window, "view_3d", None)
+    if view is not None:
+        menu = getattr(view, "play_menu", None)
+        page = getattr(menu, "map", None)
+        if page is not None:
+            refresh = getattr(page, "refresh", None)
+            if callable(refresh):
+                refresh()
+        view.update()
+    return None
+
+
 def cmd_roads(ctx, args):
     """roads -- who is travelling the roads right now, and where.
 
@@ -923,6 +979,8 @@ COMMANDS = (
      "[on|off] — Draw the ROAD_* network, its navigation graph and walkers' road legs live (Play Mode)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
+    (("smm",), cmd_smm,
+     "— Discover all named locations on this map and unlock fast travel (Play Mode)"),
     (("debugtools", "debug"), cmd_debugtools,
      "— Time controls (rewind, play/pause, speed) and teleport to any cave (Play Mode)"),
     (("resurrect",), cmd_resurrect,
