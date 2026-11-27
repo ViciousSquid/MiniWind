@@ -1,0 +1,26 @@
+newmtl Stone
+Kd 0.45 0.44 0.4
+
+newmtl Plaster_cool
+Kd 0.83 0.81 0.77
+
+newmtl Slate
+Kd 0.35 0.37 0.41
+
+newmtl Timber
+Kd 0.27 0.18 0.11
+
+newmtl Oak
+Kd 0.33 0.21 0.11
+
+newmtl Iron
+Kd 0.09 0.1 0.1
+
+newmtl Recess
+Kd 0.05 0.055 0.05
+
+newmtl Shutter
+Kd 0.45 0.29 0.16
+
+newmtl Tile
+Kd 0.51 0.25 0.17

@@ -1,0 +1,17 @@
+newmtl Stone
+Kd 0.45 0.44 0.4
+
+newmtl Timber
+Kd 0.27 0.18 0.11
+
+newmtl Thatch
+Kd 0.62 0.49 0.26
+
+newmtl Oak
+Kd 0.33 0.21 0.11
+
+newmtl Iron
+Kd 0.09 0.1 0.1
+
+newmtl Recess
+Kd 0.05 0.055 0.05

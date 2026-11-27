@@ -1,4 +1,4 @@
-"""Build a low-poly kit of medieval houses. Blender 4.3+:
+successfully downloaded text file (SHA: 47f250eb5e4901600ec977883963a694afa03ac6)"""Build a low-poly kit of medieval houses. Blender 4.3+:
 
     blender -b -t 4 -P game/tools/make_medieval_houses.py
 
@@ -501,7 +501,7 @@ def build_barn():
 def build_chapel():
     name = 'house_chapel'
     start = len(PARTS)
-    width, depth, wall_h, rise = 460.0, 760.0, 400.0, 340.0
+    width, depth, wall_h, rise = 460.0, 760.0, 400.0, 280.0
     wall_top, ridge, w2, d2 = house_shell(name, width, depth, wall_h, rise,
                                           'Stone', 'Slate', overhang=80.0,
                                           gable_front=True)
