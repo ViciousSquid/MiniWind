@@ -169,6 +169,39 @@ def test_rejects_non_stamp_files(tmp_path):
         terrain_stamp.load_stamp_file(str(path))
 
 
+def test_map_loading_adds_road_overlay_stamps_after_main_paint(tmp_path):
+    map_path = tmp_path / "miniwind_world.json"
+    main_stamp = {
+        "id": "base-stamp", "texture": "rock.png", "x": 10.0, "z": 20.0,
+        "radius": 8.0, "angle": 0.0, "feather": 0.25, "opacity": 1.0,
+    }
+    road_stamp = {
+        "id": "roadpath_road_0001_road_0002_0000",
+        "texture": "flagstone.jpg", "x": 30.0, "z": 40.0,
+        "radius": 96.0, "angle": 0.5, "feather": 0.55,
+        "opacity": 0.92, "tiled": True,
+    }
+    duplicate = dict(main_stamp, x=999.0)
+    level = {"terrain_data": {"paint_file": True}}
+    main = {"format": terrain_stamp.PAINT_FORMAT, "version": 1,
+            "stamps": [main_stamp], "paint": {}}
+    overlay = {"format": terrain_stamp.PAINT_FORMAT, "version": 1,
+               "stamps": [road_stamp, duplicate], "paint": {}}
+    terrain_stamp.write_json_atomic(
+        str(terrain_stamp.default_stamp_path(str(map_path))), main,
+        separators=(",", ":"))
+    terrain_stamp.write_json_atomic(
+        str(terrain_stamp.road_overlay_path(str(map_path))), overlay,
+        separators=(",", ":"))
+
+    loaded = terrain_stamp.join_level(level, str(map_path))
+    stamps = loaded["terrain_data"]["paint_stamps"]
+    assert [stamp["id"] for stamp in stamps] == [
+        "base-stamp", "roadpath_road_0001_road_0002_0000"]
+    assert stamps[0]["x"] == 10.0  # main paint remains authoritative
+    assert stamps[1]["texture"] == "flagstone.jpg"
+
+
 def test_default_stamp_path_follows_map_name(tmp_path):
     map_path = tmp_path / "maps" / "forest.json"
     assert terrain_stamp.default_stamp_path(str(map_path)) == str(
