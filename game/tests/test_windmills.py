@@ -268,3 +268,34 @@ def test_a_held_mill_is_idle_until_its_holder_dies(logic):
     logic.editor_state.things.remove(hal)
     mills.check_holders()
     assert mills.find(body.properties["id"]) is body
+
+def test_legacy_red_grove_windmill_gets_vertical_sails_at_authored_hub(logic):
+    world = json.loads((ROOT / "maps/miniwind_world.json").read_text())
+    body_record = next(
+        record for record in world["things"]
+        if record["properties"].get("id") == "933ae405-bd82-48e5-b8fc-16a035dc5392"
+    )
+    body = Prop(pos=body_record["pos"], properties=body_record["properties"])
+    logic.editor_state.things.append(body)
+
+    mills = Windmills(logic)
+    mills.install()
+    rotors = [thing for thing in logic.editor_state.things
+              if thing.properties.get(ROTOR_FOR) == body.properties["id"]]
+    assert len(rotors) == 1
+    rotor = rotors[0]
+    assert rotor.properties["model_path"] == "assets/models/chesterton_windmill_rotor.obj"
+    assert rotor.properties[ROTOR_AXIS] == "z"
+    assert (ROOT / rotor.properties["model_path"]).is_file()
+    assert body.properties[ROTOR_ANCHOR] == pytest.approx([-35.342, 339.618, 17.848])
+    np.testing.assert_allclose(rotor.pos, [-2028.658, 515.618, 7454.152], atol=1e-4)
+
+    mills.update(SPIN_UP_SECONDS)
+    assert rotor.properties["rotation"][1] == pytest.approx(180.0)
+    assert rotor.properties["rotation"][2] > 0.0
+
+    # Reinstalling the session must reuse the same linked rotor, not add one.
+    mills.install()
+    assert sum(thing.properties.get(ROTOR_FOR) == body.properties["id"]
+               for thing in logic.editor_state.things) == 1
+
