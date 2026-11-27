@@ -516,32 +516,44 @@ def test_every_packet_carries_a_crc():
 
 
 def test_an_os_chosen_port_taken_on_udp_is_passed_over(monkeypatch):
-    """Friend codes need the host's port on UDP as well as TCP. Windows can
-    reserve a port for one protocol only (Hyper-V / WinNAT exclusions): an
-    OS-chosen TCP port that UDP may not bind is given back for another."""
-    import socket
-    held = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    held.bind(("127.0.0.1", 0))
-    taken = held.getsockname()[1]
-    real_bind = socket.socket.bind
-    first = {"done": False}
+    """The first TCP port can be unavailable on UDP (for example, a Windows
+    protocol-specific exclusion); hosting must take another port.
 
-    def bind(self, addr):
-        # The first TCP port the "OS" offers is the one UDP cannot have.
-        if self.type == socket.SOCK_STREAM and addr[1] == 0 and not first["done"]:
-            first["done"] = True
-            return real_bind(self, (addr[0], taken))
-        return real_bind(self, addr)
+    Model that OS response at the port-probe seam. Binding an actual socket to
+    a Windows-excluded port is not portable: the OS may reject the *test's*
+    setup bind before the retry path is reached.
+    """
+    import errno
 
-    monkeypatch.setattr(socket.socket, "bind", bind)
+    real_tcp_listener = NetworkService._tcp_listener
+    real_udp_port_free = NetworkService._udp_port_free
+    first_tcp_port = []
+
+    def tcp_listener(address, port, reuse=True):
+        # The UDP-first retry may independently be offered the rejected port;
+        # model the corresponding TCP conflict as well.
+        if first_tcp_port and int(port) == first_tcp_port[0]:
+            raise OSError(errno.EADDRINUSE, "port unavailable on TCP")
+        listener = real_tcp_listener(address, port, reuse)
+        if int(port) == 0 and not first_tcp_port:
+            first_tcp_port.append(listener.getsockname()[1])
+        return listener
+
+    def udp_port_free(address, port):
+        if first_tcp_port and int(port) == first_tcp_port[0]:
+            return False
+        return real_udp_port_free(address, port)
+
+    monkeypatch.setattr(NetworkService, "_tcp_listener", staticmethod(tcp_listener))
+    monkeypatch.setattr(NetworkService, "_udp_port_free", staticmethod(udp_port_free))
     network = NetworkService()
     try:
         network.host(port=0, address="127.0.0.1")
-        assert first["done"] and network.port != taken, "the UDP-taken port was kept"
+        assert first_tcp_port and network.port != first_tcp_port[0], (
+            "the TCP port rejected by the UDP probe was kept")
         assert network.udp is not None and network.udp.port == network.port
     finally:
         network.close()
-        held.close()
 
 
 def test_a_udp_reservation_over_every_tcp_choice_still_hosts(monkeypatch):
