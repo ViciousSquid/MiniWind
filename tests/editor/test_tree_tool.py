@@ -8,6 +8,7 @@ import random
 
 import pytest
 
+pytestmark = pytest.mark.qt
 pytest.importorskip("PyQt5")
 
 from PyQt5.QtCore import QEvent, QPoint, Qt                       # noqa: E402
