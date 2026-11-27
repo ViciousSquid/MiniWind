@@ -1,17 +1,17 @@
 {
   "player_height": 100,
-  "door_height": 106.0,
+  "door_height": 106,
   "base_diameter": 288,
-  "hub_height": 550.0,
+  "hub_height": 550,
   "bounds_min": [
     -292.7421875,
-    0.0,
-    -144.0
+    0,
+    -144
   ],
   "bounds_max": [
     292.7421875,
     842.7421875,
-    194.0
+    194
   ],
   "triangle_count": 3238,
   "up_axis": "Y",
@@ -48,17 +48,22 @@
     0.5
   ],
   "rotor": {
-    "body_model": "windmill_body.glb",
-    "rotor_model": "windmill_rotor.glb",
+    "body_model": "windmill_body.obj",
+    "rotor_model": "windmill_rotor.obj",
     "pivot": [
-      0.0,
-      550.0,
-      170.0
+      0,
+      550,
+      170
     ],
     "axis": [
       0,
+      1,
+      0
+    ],
+    "visual_hub_offset": [
       0,
-      1
+      150,
+      0
     ]
   }
 }
