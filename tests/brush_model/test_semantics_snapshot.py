@@ -126,9 +126,14 @@ def test_the_version_5_world_draws_what_its_legacy_save_drew():
 
     legacy = LEGACY[WORLD]
     assert len(legacy) == 12
-    assert {b['id'] for b in legacy} == {
-        bid for bid, b in shipped.items() if bs.encoding(b) != 'box'}
-    for raw in legacy:
+    # The map has been authored further since the v3 save: two legacy convex
+    # brushes were retired/replaced and twenty convex brushes were added to
+    # v5. Compare the stable-ID survivors; the current whole-map digest above
+    # separately pins every added, changed and removed record.
+    shared = [raw for raw in legacy
+              if raw['id'] in shipped and bs.encoding(shipped[raw['id']]) != 'box']
+    assert len(shared) == 10
+    for raw in shared:
         assert drawn(shipped[raw['id']]) == drawn(raw), raw['id']
 
 
