@@ -78,7 +78,15 @@ def _uninstall_stuck_arrow_hooks_before_session_close(fio_session):
     fio_session._stuck_arrows_cleanup = []
     yield
     for arrows in reversed(fio_session._stuck_arrows_cleanup):
+        owner = arrows.session
         arrows.uninstall()
+        # Test locals can remain alive through fixture teardown. Break the
+        # helper -> LogicThread reference as well as the LogicThread -> hook
+        # reference, otherwise its QObject graph keeps MainWindow reachable.
+        if owner is not None:
+            owner.logic = None
+            owner.stuck_arrows = None
+        arrows.session = None
     fio_session._stuck_arrows_cleanup = []
 
 
