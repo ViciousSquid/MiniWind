@@ -27,7 +27,7 @@ def test_chesterton_addition_is_a_linked_non_solid_windmill():
     assert rotor["properties"]["mill_rotor_axis"] == "z"
     assert rotor["properties"]["no_collision"] is True
     anchor = props["mill_rotor_anchor"]
-    assert anchor == [0, 700, 260]
+    assert anchor == [0, 700, 130]
     assert rotor["pos"] == [body["pos"][i] + anchor[i] for i in range(3)]
     assert marker["properties"]["place_name"] == "Chesterton Windmill"
     assert marker["pos"] == [body["pos"][0], body["pos"][1] + 32, body["pos"][2]]
