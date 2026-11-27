@@ -40,7 +40,7 @@
         "mill_rotor_anchor": [
           0,
           700,
-          160
+          260
         ]
       },
       "io_connections": []
@@ -50,7 +50,7 @@
       "pos": [
         2400,
         905,
-        2460
+        2560
       ],
       "properties": {
         "type": "prop",
