@@ -18,6 +18,7 @@ import math
 import glm
 
 from engine.change_journal import touch
+from engine.prop_entity import Prop
 from . import fio
 from .rpg import inventory, items
 
@@ -38,6 +39,15 @@ DELIVERY_OFFSET = (0.0, 0.0, 210.0)   # outside the door and foundation
 RUN_SPEED = 45.0                 # degrees per real second (7.5 rpm)
 SPIN_UP_SECONDS = 3.0
 SPIN_DOWN_SECONDS = 3.0
+
+# The original Red Grove windmill body is already authored in the world map,
+# but predates the linked-rotor format. Give that stable entity its side-mounted
+# rotor at the authored hub position without rewriting the large world file.
+_RED_GROVE_BODY_ID = "933ae405-bd82-48e5-b8fc-16a035dc5392"
+_RED_GROVE_ROTOR_ID = "6ad420d5-0c99-4d42-8d16-6fcb9b523dce"
+_RED_GROVE_ROTOR_HUB = (-2028.658, 515.618, 7454.152)
+_RED_GROVE_ROTOR_ANCHOR = (-35.342, 339.618, 17.848)
+_RED_GROVE_ROTOR_MODEL = "assets/models/chesterton_windmill_rotor.obj"
 
 
 def item_stock(owner, item_id: str) -> int:
@@ -246,9 +256,56 @@ class Windmills:
         return min(available, key=lambda b: math.hypot(b.pos[0] - pos[0], b.pos[2] - pos[2]),
                    default=None)
 
+    def _ensure_red_grove_rotor(self, things) -> None:
+        """Attach the existing vertical sail model to the legacy Red Grove body.
+
+        The rotor hub coordinates are authored in world space. Keeping the
+        corresponding local anchor on the body makes the rotor follow later
+        translations, rotations and scale edits through the normal mill path.
+        """
+        body = next((thing for thing in things
+                     if getattr(thing, "properties", {}).get("id") == _RED_GROVE_BODY_ID),
+                    None)
+        if body is None:
+            return
+
+        body_props = body.properties
+        body_props.setdefault(ROTOR_ANCHOR, list(_RED_GROVE_ROTOR_ANCHOR))
+        if any(getattr(thing, "properties", {}).get(ROTOR_FOR) == _RED_GROVE_BODY_ID
+               for thing in things):
+            return
+
+        scale = body_props.get("scale", (1.0, 1.0, 1.0))
+        if isinstance(scale, (int, float)):
+            scale = [scale, scale, scale]
+        else:
+            scale = list(scale)
+        rotor = Prop(
+            pos=list(_RED_GROVE_ROTOR_HUB),
+            properties={
+                "type": "prop",
+                "name": "windmill_body_sails",
+                "id": _RED_GROVE_ROTOR_ID,
+                "render_mode": "model",
+                "model_path": _RED_GROVE_ROTOR_MODEL,
+                ROTOR_FOR: _RED_GROVE_BODY_ID,
+                ROTOR_AXIS: "z",
+                "rotation": list(body_props.get("rotation", (0.0, 0.0, 0.0))),
+                "scale": scale,
+                "carry_enabled": False,
+                "collect_enabled": False,
+                "physics_enabled": False,
+                "no_collision": True,
+                "gravity": False,
+                "io_enabled": True,
+            },
+        )
+        things.append(rotor)
+
     def install(self) -> None:
         self.clear()
         things = fio.things(self.logic)
+        self._ensure_red_grove_rotor(things)
         by_id = {t.properties.get("id"): t for t in things}
         self.mills = []
         for rotor in things:
