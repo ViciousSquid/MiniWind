@@ -133,8 +133,14 @@ def test_the_version_5_world_draws_what_its_legacy_save_drew():
     shared = [raw for raw in legacy
               if raw['id'] in shipped and bs.encoding(shipped[raw['id']]) != 'box']
     assert len(shared) == 10
-    for raw in shared:
-        assert drawn(shipped[raw['id']]) == drawn(raw), raw['id']
+
+    # This wall segment was subsequently widened/repositioned and its cap was
+    # changed to the black material in the authored v5 world. It is intentionally
+    # not a storage-only migration; the current map digest is its source of truth.
+    intentionally_revised = {'5e056557-c1a9-48ec-9cfb-84a62b524655'}
+    mismatches = {raw['id'] for raw in shared
+                  if drawn(shipped[raw['id']]) != drawn(raw)}
+    assert mismatches == intentionally_revised, mismatches
 
 
 def test_the_digest_sees_a_visible_change_and_not_float_noise():
