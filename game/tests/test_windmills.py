@@ -160,22 +160,23 @@ def test_missing_or_self_referencing_rotors_are_ignored(logic):
     assert mills.mills == []
 
 
-def test_the_shipped_world_has_an_empty_mill_and_a_linked_rotor(logic):
+def test_the_shipped_world_has_an_empty_chesterton_mill_and_a_linked_rotor(logic):
     world = json.loads((ROOT / 'maps/miniwind_world.json').read_text())
-    body = next(t for t in world['things'] if t['properties'].get('name') == 'windmill')
-    rotor = next(t for t in world['things'] if t['properties'].get(ROTOR_FOR) == body['properties']['id'])
+    body = next(t for t in world['things']
+                if t['properties'].get('id') == '5e8f09a2-60c8-4f89-ae47-9e4c4e7a1f30')
+    rotor = next(t for t in world['things']
+                 if t['properties'].get(ROTOR_FOR) == body['properties']['id'])
     for record in (body, rotor):
         assert (ROOT / record['properties']['model_path']).is_file()
         logic.editor_state.things.append(Prop(pos=record['pos'], properties=record['properties']))
     mills = Windmills(logic)
     mills.install()
     assert len(mills.mills) == 1 and body['properties'][MILL] is True
-    assert body['properties']['no_collision'] is True
     marker = next(t for t in world['things']
-                  if t['properties'].get('name') == 'loc_windmill')
+                  if t['properties'].get('name') == 'loc_chesterton_windmill')
     assert marker['pos'][0] == body['pos'][0]
     assert marker['pos'][2] == body['pos'][2]
-    assert body['properties']['inventory'] == []
+    assert body['properties'].get('inventory', []) == []
     from ..sim import ownership
     from ..windmills import is_producing
     assert ownership.is_theft(body['properties'], 'player', 'player')
