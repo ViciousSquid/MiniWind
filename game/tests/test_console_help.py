@@ -1,5 +1,9 @@
 """MiniWind's game-owned console commands appear in the game's help section."""
 
+import pytest
+
+pytestmark = pytest.mark.qt
+
 from editor.debug_console import get_debug_logger
 
 
