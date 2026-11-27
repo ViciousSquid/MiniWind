@@ -192,6 +192,7 @@ def test_every_lake_is_one_water_brush_over_a_sculpted_depression():
         for c in rects[i + 1:]:
             assert not (a[0] <= c[2] and c[0] <= a[2] and a[1] <= c[3] and c[1] <= a[3])
     terrain = _terrain(m["terrain_data"], heightmap=_load_heightmap(m["terrain_data"]))
+    (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
     # The south-east ocean (make_road_map.make_ocean) meets the map's edge:
     # it is no lake, though it may overlap none of them (checked above).
     lakes = [b for b in water if 600 < b["size"][0] < 20000]
@@ -203,6 +204,19 @@ def test_every_lake_is_one_water_brush_over_a_sculpted_depression():
         h = _heights(terrain, xs.ravel(), zs.ravel()).reshape(60, 60)
         wet = h < top
         assert 0.3 < wet.mean() < 0.9, "the water fills a depression, not the box"
-        edge = np.concatenate([wet[0], wet[-1], wet[:, 0], wet[:, -1]])
-        assert not edge.any(), "the brush's edges lie under dry bank"
+        # Ordinary lakes have dry banks along every side. Sunfall Oasis is
+        # deliberately open to the world's southern (+z) edge so its water
+        # falls over the brink; only sides inside the terrain need a dry bank.
+        dry_bank_edges = []
+        if z0 > min_z + 1.0:
+            dry_bank_edges.append(wet[0])
+        if z1 < max_z - 1.0:
+            dry_bank_edges.append(wet[-1])
+        if x0 > min_x + 1.0:
+            dry_bank_edges.append(wet[:, 0])
+        if x1 < max_x - 1.0:
+            dry_bank_edges.append(wet[:, -1])
+        if dry_bank_edges:
+            assert not np.concatenate(dry_bank_edges).any(), (
+                "the brush's inland edges lie under water")
         assert h.min() > b["pos"][1] - b["size"][1] / 2, "the bed is inside the brush"
