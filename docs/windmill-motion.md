@@ -3,7 +3,7 @@
 A low-poly game-ready windmill: tapered 12-sided brick tower, gray metal
 bonnet, and a small attached brick mill house with a pitched terracotta tile
 roof, chimney, porch and timber entrance. Four red timber lattice sails remain
-separate geometry and rotate while the mill is producing.
+separate geometry and rotate whenever the mill itself is operational.
 
 ## Production and sail motion
 
@@ -12,13 +12,16 @@ The placed mill in `maps/miniwind_world.json` uses two ordinary Props:
 The rotor's `mill_rotor_for` property references the tower's
 stable entity id. Ready-to-use paired records are in `windmill_props.json`.
 
-The tower owns an ordinary item inventory. **The blades turn while that
-inventory contains wheat.** The placed mill starts empty and stationary.
-Receiving the first wheat starts the rotor; removing the last wheat stops it.
-Other items do not power the mill.
+The tower owns an ordinary item inventory. **The sails turn whenever the mill
+is operational, even when its inventory is empty.** The placed mill starts
+empty but its rotor spins from the start of play. Wheat controls flour
+production, not blade motion: delivering wheat enables flour production;
+removing the last wheat stops production but does not stop the sails. Other
+items do not produce flour.
 
 - Starting takes **3 seconds** to reach **45 degrees/second** (7.5 rpm).
-- Stopping coasts to a complete halt over **3 seconds** from full speed.
+- A mill that is disabled, destroyed or held by a living holder coasts to a
+  complete halt over **3 seconds** from full speed.
 - Interrupting either transition continues from the current speed and angle.
 - A stopped rotor keeps its angle; restarting never resets its pose.
 - World pause freezes the motion. Durations use real seconds, independently
@@ -45,7 +48,7 @@ The old manual production flag is replaced by the inventory rule. The mill
 converts **10 wheat into 1 `flour`** every **15 game minutes** while a complete
 batch is available. `mill_batch_hours` edits the interval; saved `mill_progress`
 keeps partially completed work. Wheat left below ten waits for the next
-delivery and still keeps the sails turning. Flour and collected payments stay
+delivery; the sails continue turning independently of stock. Flour and collected payments stay
 in the same owned inventory, so taking them is theft too.
 
 ## Shops, journeys and food

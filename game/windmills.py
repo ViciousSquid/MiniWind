@@ -1,4 +1,4 @@
-"""Windmill stock and sails: wheat in the inventory keeps the rotor turning.
+"""Windmill stock, flour production and continuously turning sails.
 
 The mill and its rotor are ordinary Props. ``mill_rotor_for`` on the rotor
 names the mill's stable entity id. The tower owns the ordinary, persistent
@@ -105,10 +105,16 @@ def mill_flour(mill, hours: float) -> int:
     return made
 
 
-def is_producing(mill) -> bool:
+def is_operational(mill) -> bool:
+    """Whether the mill itself is able to run, regardless of its wheat stock."""
     props = mill.properties
     return (not props.get("_bw_parked_disabled", props.get("disabled"))
-            and not props.get("dead") and not props.get(IDLE) and wheat_stock(mill) > 0)
+            and not props.get("dead") and not props.get(IDLE))
+
+
+def is_producing(mill) -> bool:
+    """Whether an operational mill has wheat available for flour production."""
+    return is_operational(mill) and wheat_stock(mill) > 0
 
 
 def _basis(props):
@@ -276,7 +282,7 @@ class Windmills:
             self._hold_clock = 0.0
             self.check_holders()
         for mill in self.mills:
-            mill.motion.advance(delta, is_producing(mill.body))
+            mill.motion.advance(delta, is_operational(mill.body))
             mill.place()
 
     def produce(self, hours: float) -> None:

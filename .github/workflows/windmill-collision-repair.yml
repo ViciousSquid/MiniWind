@@ -1,0 +1,68 @@
+name: One-time windmill collision repair
+
+on:
+  push:
+    branches:
+      - fix/windmill-marker-and-rotor-motion
+    paths:
+      - .github/workflows/windmill-collision-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/windmill-marker-and-rotor-motion
+
+      - name: Make the placed windmill non-solid
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("maps/miniwind_world.json")
+          source = path.read_text(encoding="utf-8")
+          world = json.loads(source)
+          body_id = "250882b7-d724-4931-b8f8-107fd10617b7"
+          body = next(
+              (thing for thing in world["things"]
+               if thing.get("properties", {}).get("id") == body_id),
+              None,
+          )
+          if body is None:
+              raise SystemExit("Placed windmill body was not found")
+          props = body["properties"]
+          if props.get("model_path") != "assets/models/windmill_body.obj":
+              raise SystemExit("The selected entity is not the live windmill body")
+          if props.get("no_collision") is not False:
+              raise SystemExit(f"Unexpected collision setting: {props.get('no_collision')!r}")
+
+          # Preserve the 18 MB authored world byte-for-byte apart from this
+          # one property; do not re-serialize the map or churn float formatting.
+          identity = f'"id":"{body_id}"'
+          id_at = source.index(identity)
+          collision_at = source.index('"no_collision":false', id_at)
+          record_start = source.rfind('{"type":"prop"', 0, id_at)
+          record_end = source.index(',"io_connections":[]}', id_at)
+          record = source[record_start:record_end]
+          if '"model_path":"assets/models/windmill_body.obj"' not in record:
+              raise SystemExit("Windmill record validation failed")
+          if collision_at > record_end:
+              raise SystemExit("Collision flag lies outside the windmill record")
+          updated = (source[:collision_at] + '"no_collision":true'
+                     + source[collision_at + len('"no_collision":false'):])
+          path.write_text(updated, encoding="utf-8")
+          print("Placed windmill body now has no_collision=true")
+          PY
+
+          rm .github/workflows/windmill-collision-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add maps/miniwind_world.json .github/workflows/windmill-collision-repair.yml
+          git commit -m "Make the placed windmill non-solid"
+          git push origin HEAD:fix/windmill-marker-and-rotor-motion

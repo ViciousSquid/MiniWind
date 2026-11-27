@@ -45,22 +45,26 @@ def _pair(logic, name='mill', *, producing=True, pos=(0, 0, 0), rotation=(0, 0, 
     return body, rotor
 
 
-def test_mills_operate_independently_and_the_towers_never_turn(logic):
+def test_operational_mills_turn_independently_of_wheat_and_towers_never_turn(logic):
     body, rotor = _pair(logic)
     other, other_rotor = _pair(logic, 'other', producing=False)
     mills = Windmills(logic)
     mills.install()
     mills.update(SPIN_UP_SECONDS)
     assert rotor.properties['rotation'][1] == pytest.approx(RUN_SPEED * SPIN_UP_SECONDS / 2)
-    assert other_rotor.properties['rotation'] == [0, 0, 0]
+    assert other_rotor.properties['rotation'][1] == pytest.approx(
+        RUN_SPEED * SPIN_UP_SECONDS / 2)
+    assert is_producing(body) and not is_producing(other)
     assert body.properties['rotation'] == other.properties['rotation'] == [0, 0, 0]
-    body.properties['inventory'].clear()
-    inventory.add_item(other.properties['inventory'], items.make('wheat'))
+
+    # Disabling a mill, not emptying its stock, coasts its rotor to rest.
+    body.properties['disabled'] = True
     mills.update(SPIN_DOWN_SECONDS)
     stopped_angle = rotor.properties['rotation'][1]
+    other_angle = other_rotor.properties['rotation'][1]
     mills.update(5.0)
     assert rotor.properties['rotation'][1] == stopped_angle
-    assert other_rotor.properties['rotation'][1] != 0
+    assert other_rotor.properties['rotation'][1] > other_angle
     assert len(logic.editor_state.things) == 4
 
 
@@ -140,15 +144,24 @@ def test_the_shipped_world_has_an_empty_mill_and_a_linked_rotor(logic):
     mills = Windmills(logic)
     mills.install()
     assert len(mills.mills) == 1 and body['properties'][MILL] is True
+    assert body['properties']['no_collision'] is True
+    marker = next(t for t in world['things']
+                  if t['properties'].get('name') == 'loc_windmill')
+    assert marker['pos'][0] == body['pos'][0]
+    assert marker['pos'][2] == body['pos'][2]
     assert body['properties']['inventory'] == []
     from ..sim import ownership
+    from ..windmills import is_producing
     assert ownership.is_theft(body['properties'], 'player', 'player')
     np.testing.assert_allclose(mills.mills[0].rotor.pos, rotor['pos'])
+    assert not is_producing(mills.mills[0].body)
     mills.update(0.5)
-    assert mills.mills[0].rotor.properties['rotation'][1] == 0
+    first_angle = mills.mills[0].rotor.properties['rotation'][1]
+    assert first_angle > 0
     inventory.add_item(mills.mills[0].body.properties['inventory'], items.make('wheat'))
+    assert is_producing(mills.mills[0].body)
     mills.update(0.5)
-    assert mills.mills[0].rotor.properties['rotation'][1] > 0
+    assert mills.mills[0].rotor.properties['rotation'][1] > first_angle
 
 
 def test_the_game_session_installs_ticks_and_clears_its_windmills(logic):
@@ -178,27 +191,28 @@ def test_only_positive_wheat_stock_powers_the_mill(logic, stocks, expected):
     assert is_producing(body) is (expected > 0)
 
 
-def test_stock_changes_drive_both_transitions_and_override_the_old_flag(logic):
+def test_stock_controls_flour_production_but_not_sail_motion(logic):
     body, rotor = _pair(logic, producing=False)
-    body.properties['mill_producing'] = True  # an older saved flag cannot power an empty mill
+    body.properties['mill_producing'] = True  # legacy flag cannot create flour
     mills = Windmills(logic)
     mills.install()
-    mills.update(1.0)
-    assert mills.mills[0].motion.speed == 0
-    inventory.add_item(body.properties['inventory'], items.make('wheat', 4))
-    mills.update(SPIN_UP_SECONDS / 2)
-    assert mills.mills[0].motion.speed == RUN_SPEED / 2
-    body.properties['mill_producing'] = False
-    mills.update(SPIN_UP_SECONDS / 2)
+    assert not is_producing(body)
+    mills.update(SPIN_UP_SECONDS)
     assert mills.mills[0].motion.speed == RUN_SPEED
-    assert wheat_stock(body) == 4
+    assert rotor.properties['rotation'][1] > 0
+
+    inventory.add_item(body.properties['inventory'], items.make('wheat', 4))
+    assert is_producing(body)
+    body.properties['mill_producing'] = False
+    mills.update(0.5)
+    angle_with_wheat = rotor.properties['rotation'][1]
+    assert mills.mills[0].motion.speed == RUN_SPEED
+
     body.properties['inventory'].clear()
-    mills.update(SPIN_DOWN_SECONDS / 2)
-    assert mills.mills[0].motion.speed == RUN_SPEED / 2
-    mills.update(SPIN_DOWN_SECONDS / 2)
-    angle = rotor.properties['rotation'][1]
-    mills.update(1.0)
-    assert rotor.properties['rotation'][1] == angle
+    assert not is_producing(body)
+    mills.update(0.5)
+    assert mills.mills[0].motion.speed == RUN_SPEED
+    assert rotor.properties['rotation'][1] > angle_with_wheat
 
 
 def test_a_held_mill_is_idle_until_its_holder_dies(logic):
