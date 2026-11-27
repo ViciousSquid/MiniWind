@@ -73,7 +73,6 @@ jobs:
     name: Qt / no-GPU suite on Windows x64 (offscreen)
     runs-on: windows-latest
     timeout-minutes: 60
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -172,7 +171,6 @@ jobs:
     name: Qt / no-GPU suite on Windows ARM64 (offscreen, PyQt5-WinARM64 wheel)
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 75
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
