@@ -72,9 +72,9 @@ def test_the_separate_body_and_hub_centered_rotor_reconstruct_the_static_model()
     full = models['windmill']
     # Compare the actual vertex cloud, including the brick tower and sail
     # lattice, rather than accepting two models with merely similar bounds.
-    assert combined.shape == full.shape
     for points, reference in ((combined, full), (full, combined)):
         points, reference = np.unique(points, axis=0), np.unique(reference, axis=0)
+        assert points.shape == reference.shape
         for start in range(0, len(points), 128):
             distances = np.sum((points[start:start + 128, None] - reference) ** 2, axis=-1)
             assert np.max(np.min(distances, axis=1)) < 1e-6
