@@ -168,11 +168,11 @@
   "inconsistencies": {}
  },
  "miniwind_world.json": {
-  "brushes": 16171,
-  "digest": "398e48d678df5e63d05d3f19bde0cd3b2249bb4ed0f8bdd1543d42c3eb77e97e",
+  "brushes": 15948,
+  "digest": "85e1702fbab23b3cd8657251e2ffd9c97c71bd4f23b55c6e9a9e4919abb02598",
   "encodings": {
-   "box": 16159,
-   "convex": 12
+   "box": 15918,
+   "convex": 30
   },
   "inconsistencies": {}
  }
