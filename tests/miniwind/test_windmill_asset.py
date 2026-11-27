@@ -31,7 +31,7 @@ def test_obj_and_glb_have_the_same_upright_ground_origin_and_dimensions():
     np.testing.assert_allclose(a.min(0), b.min(0), atol=1e-3)
     np.testing.assert_allclose(a.max(0), b.max(0), atol=1e-3)
     assert a[:, 1].min() == pytest.approx(0)
-    assert 800 < a[:, 1].max() < 900             # about eight 100-unit players
+    assert 800 < a[:, 1].max() < 900             # legacy static rotor reaches above the tower
     assert 570 < np.ptp(a[:, 0]) < 600
     assert len(obj.faces) < 10000 and len(glb.get_flattened_triangles()) < 10000
     info = json.loads((FOLDER / 'windmill.json').read_text())
@@ -61,25 +61,50 @@ def test_both_model_texture_paths_resolve_in_the_packaged_layout():
     assert (FOLDER / glb.materials['Brick']['texture']).is_file()
 
 
-def test_the_separate_body_and_hub_centered_rotor_reconstruct_the_static_model():
-    models = {}
-    for name in ('windmill', 'windmill_body', 'windmill_rotor'):
-        model = GLBLoader()
-        assert model.load(str(FOLDER / f'{name}.glb'))
-        models[name] = np.asarray(model.get_flattened_vertices())
+def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
+    models, loaded = {}, {}
+    for name in ('windmill_body', 'windmill_rotor'):
+        loaded[name] = GLBLoader()
+        assert loaded[name].load(str(FOLDER / f'{name}.glb'))
+        models[name] = np.asarray(loaded[name].get_flattened_vertices())
+    body, rotor = models['windmill_body'], models['windmill_rotor']
+    # The body includes the attached gabled house and remains grounded.
+    assert body[:, 1].min() == pytest.approx(0)
+    assert 700 < body[:, 1].max() < 720
+    assert 570 < np.ptp(body[:, 0]) < 600
+    assert 350 < np.ptp(body[:, 2]) < 550
+    # The rotor is centred on the unchanged [0, 550, 170] prop anchor.
+    # Its horizontal sail disk spans X/Z, with only a short vertical axle.
+    assert np.ptp(rotor[:, 1]) < 180
+    assert np.ptp(rotor[:, 0]) > 550
+    assert np.ptp(rotor[:, 2]) > 550
     hub = np.asarray([0, 550, 170])
-    combined = np.concatenate([models['windmill_body'], models['windmill_rotor'] + hub])
-    full = models['windmill']
-    # Compare the actual vertex cloud, including the brick tower and sail
-    # lattice, rather than accepting two models with merely similar bounds.
-    assert combined.shape == full.shape
-    for points, reference in ((combined, full), (full, combined)):
-        points, reference = np.unique(points, axis=0), np.unique(reference, axis=0)
-        for start in range(0, len(points), 128):
-            distances = np.sum((points[start:start + 128, None] - reference) ** 2, axis=-1)
-            assert np.max(np.min(distances, axis=1)) < 1e-6
-    assert np.ptp(models['windmill_rotor'][:, 2]) < 20
-    assert models['windmill_body'][:, 1].max() < 720
+    combined = np.concatenate([body, rotor + hub])
+    assert combined[:, 1].min() == pytest.approx(0)
+    assert 700 < combined[:, 1].max() < 730
+    assert 700 < np.ptp(combined[:, 0]) < 750
+    body_materials = set(loaded['windmill_body'].materials)
+    assert 'Brick' in body_materials
+    assert body_materials & {'Roof', 'Roof_tile'}
+    assert 'Sail_red' in set(loaded['windmill_rotor'].materials)
+
+
+def test_the_live_body_has_no_hidden_ground_facing_bottom_cap():
+    model = GLBLoader()
+    assert model.load(str(FOLDER / 'windmill_body.glb'))
+    floor_y = min(float(position[1])
+                  for mesh in model.meshes
+                  for primitive in mesh['primitives']
+                  for position in primitive['positions'])
+    for mesh in model.meshes:
+        for primitive in mesh['primitives']:
+            positions = primitive['positions']
+            indices = primitive['indices']
+            if indices is None:
+                indices = np.arange(len(positions))
+            triangles = positions[np.asarray(indices, dtype=np.int64).reshape(-1, 3)]
+            coplanar = np.all(np.isclose(triangles[:, :, 1], floor_y, atol=1e-5), axis=1)
+            assert not np.any(coplanar), "the windmill body must not carry a bottom face"
 
 
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
