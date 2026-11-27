@@ -83,7 +83,8 @@ def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
     assert combined[:, 1].min() == pytest.approx(0)
     assert 700 < combined[:, 1].max() < 730
     assert 700 < np.ptp(combined[:, 0]) < 750
-    assert {'Brick', 'Roof_tile'} <= set(loaded['windmill_body'].materials)\n    assert {'Sail_red'} <= set(loaded['windmill_rotor'].materials)
+    assert {'Brick', 'Roof_tile'} <= set(loaded['windmill_body'].materials)
+    assert {'Sail_red'} <= set(loaded['windmill_rotor'].materials)
 
 
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
