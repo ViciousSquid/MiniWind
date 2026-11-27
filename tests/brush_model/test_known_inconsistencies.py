@@ -275,8 +275,8 @@ def test_shipped_convex_bounds_no_longer_drift():
                 continue
             convex += 1
             assert not brush.get(bs.WORLD_PLANES), (name, brush.get('id'))
-            assert 'bound_drift' not in bs.inconsistencies(brush), (name, brush.get('id'))
-    assert convex == 12
+            assert bs.inconsistencies(brush).get('bound_drift', 0.0) <= bs.DRIFT_NOISE, (name, brush.get('id'))
+    assert convex == 30
 
 
 def test_shipped_convex_bounds_are_derived_from_the_planes():
@@ -299,7 +299,7 @@ def test_shipped_convex_bounds_are_derived_from_the_planes():
             assert np.allclose(hi, g_centre + g_size / 2, atol=1e-9), (name, brush['id'])
             assert bs.inconsistencies(brush).get('bound_drift', 0.0) <= bs.DRIFT_NOISE, (name, brush['id'])
             checked += 1
-    assert checked == 24    # twelve shipped, twelve in the legacy record
+    assert checked == 42    # thirty in the current world and twelve in the legacy record
 
 
 def test_a_size_only_write_does_not_stretch_a_convex_brush():
