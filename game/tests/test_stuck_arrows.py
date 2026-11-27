@@ -79,18 +79,21 @@ def clock(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _uninstall_stuck_arrow_hooks_before_session_close(fio_session):
-    """Detach each test's bound callbacks before FioTestSession closes its window."""
+    """Detach hooks from the exact LogicThread before its editor is closed."""
     fio_session._stuck_arrows_cleanup = []
     yield
-    for arrows in reversed(fio_session._stuck_arrows_cleanup):
-        owner = arrows.session
+    for arrows, owner, logic in reversed(fio_session._stuck_arrows_cleanup):
+        # Keep the actual LogicThread, rather than recovering it through the
+        # game's weak proxy during teardown. Tests may explicitly uninstall
+        # StuckArrows (which clears arrows.session) before this fixture runs.
+        fio.clear_projectile_catcher(logic, arrows)
+        runtime = fio.prop_runtime(logic)
+        if (runtime is not None
+                and getattr(runtime, "use_claim", None) is arrows._use_claim):
+            runtime.use_claim = None
         arrows.uninstall()
-        # Test locals can remain alive through fixture teardown. Break the
-        # helper -> LogicThread reference as well as the LogicThread -> hook
-        # reference, otherwise its QObject graph keeps MainWindow reachable.
-        if owner is not None:
-            owner.logic = None
-            owner.stuck_arrows = None
+        owner.logic = None
+        owner.stuck_arrows = None
         arrows.session = None
     fio_session._stuck_arrows_cleanup = []
 
@@ -116,7 +119,10 @@ def _play(fio_session, clock, things):
     game.stuck_arrows.install()
     # The hook closes over this test game and its LogicThread. Uninstall it
     # before fio_session closes the editor, so the session/window can collect.
-    fio_session._stuck_arrows_cleanup.append(game.stuck_arrows)
+    # Retain the exact LogicThread for deterministic teardown even if a
+    # test explicitly uninstalls the game hook before fixture cleanup.
+    fio_session._stuck_arrows_cleanup.append(
+        (game.stuck_arrows, game, session.logic))
     return session, game
 
 
