@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
 import json
+import pytest
+
+pytestmark = pytest.mark.qt
 
 
 def test_ruined_cathedral_gets_a_discovery_marker_at_its_placed_position(tmp_path, monkeypatch):
