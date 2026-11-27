@@ -8,7 +8,7 @@ separate geometry and rotate while the mill is producing.
 ## Production and sail motion
 
 The placed mill in `maps/miniwind_world.json` uses two ordinary Props:
-`windmill_body.glb` at ground center and `windmill_rotor.glb` at the hub.
+`windmill_body.obj` at ground center and `windmill_rotor.obj` at the hub.
 The rotor's `mill_rotor_for` property references the tower's
 stable entity id. Ready-to-use paired records are in `windmill_props.json`.
 
@@ -122,29 +122,18 @@ and transition durations are constants in `game/windmills.py`.
 ## Model placement
 
 The rotor prop retains its authored tower-relative anchor **[0, 550, 170]**
-so existing maps and saved placements remain valid. Its visible axle is
-**150 units above that anchor**; the blades lie in the ground plane and rotate
-about local **+Y**, keeping the four-sail silhouette visible to the top-down
-camera. The body and rotor are separate models so production can rotate only
-the sails. Their repository `.glb` payloads are gzip-compressed; Fio's GLB
-loader expands them (with the normal model-size limit) before parsing. To
-inspect either file in an external glTF tool, decompress a copy first:
+so existing maps and saved placements remain valid. Its OBJ mesh places the
+visible axle **150 units above that anchor**; the blades lie in the ground plane
+and rotate about local **+Y**, keeping the four-sail silhouette visible to the
+top-down camera. The body and rotor are separate Wavefront OBJ models with
+companion MTL files; the body MTL references `windmill_brick_albedo.png`.
 
-```sh
-gzip -dc assets/models/windmill_body.glb > /tmp/windmill_body.glb
-gzip -dc assets/models/windmill_rotor.glb > /tmp/windmill_rotor.glb
-```
+The combined `windmill.obj` and PNG sprites remain static previews. The live
+world uses `windmill_body.obj` and `windmill_rotor.obj` so only the sails rotate.
 
-The combined `windmill.glb`, `windmill.obj` and PNG sprites remain legacy
-static previews; the placed world model uses the split body/rotor pair.
-
-Rebuild the models and metadata from the Blender source:
+Rebuild the OBJ/MTL models and metadata from the Blender source:
 
 ```sh
 blender -b -t 4 -P game/tools/make_windmill.py -- --export-only
-gzip -n -9 -c assets/models/windmill_body.glb > /tmp/windmill_body.glb.gz
-gzip -n -9 -c assets/models/windmill_rotor.glb > /tmp/windmill_rotor.glb.gz
-mv /tmp/windmill_body.glb.gz assets/models/windmill_body.glb
-mv /tmp/windmill_rotor.glb.gz assets/models/windmill_rotor.glb
 python tools/pack_assets.py models
 ```
