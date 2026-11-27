@@ -23,7 +23,7 @@ pytest.importorskip("PyQt5")
 
 from editor.things import PlayerStart                                # noqa: E402
 from engine.prop_entity import Prop                                  # noqa: E402
-from game import stuck_arrows                                        # noqa: E402
+from game import fio, stuck_arrows                                        # noqa: E402
 from game.stuck_arrows import ARROW_THUNK_SOUND, KEY, StuckArrows    # noqa: E402
 from tests.helpers.worlds import level_data, make_thing, room        # noqa: E402
 from game.tests.test_multiplayer_integration import coop_game        # noqa: E402,F401
