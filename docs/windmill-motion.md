@@ -129,12 +129,19 @@ rendered scenery, not navigation obstacles. The windmill discovery marker can
 therefore remain at the tower centre without placing an NPC goal inside a
 solid model footprint.
 
-The rotor prop retains its authored tower-relative anchor **[0, 550, 170]**
-so existing maps and saved placements remain valid. Its OBJ mesh places the
-visible axle **150 units above that anchor**; the blades lie in the ground plane
-and rotate about local **+Y**, keeping the four-sail silhouette visible to the
-top-down camera. The body and rotor are separate Wavefront OBJ models with
-companion MTL files; the body MTL references `windmill_brick_albedo.png`.
+The original overhead-style mill keeps its historical rotor anchor
+**[0, 550, 170]** and ground-plane XZ sail disk, rotating about local **+Y**.
+Existing maps and saves therefore retain their established silhouette.
+
+The Chesterton landmark uses a dedicated `chesterton_windmill_rotor.obj`:
+its four sails lie in a vertical XY plane facing the body's **+Z** front, with
+a forged axle extending back along **-Z** into the stone tower. Its hub is
+anchored at body-local **[0, 700, 160]** and it rotates about local **+Z**.
+`mill_rotor_axis` and `mill_rotor_anchor` are per-instance properties, so
+the two windmills can share the same motion system without sharing the same
+orientation. Both body and rotor are separate Wavefront OBJ models with
+companion MTL files; the brick body MTL references
+`windmill_brick_albedo.png`.
 
 The combined `windmill.obj` and PNG sprites remain static previews. The live
 world uses `windmill_body.obj` and `windmill_rotor.obj` so only the sails rotate.
@@ -151,8 +158,9 @@ python tools/pack_assets.py models
 The main world gains a second Chesterton-inspired stone landmark through
 `maps/miniwind_chesterton_additions.json`. It has a round upper drum above
 four open masonry arches, a circular grass-capped plinth and a dark slate cap.
-Its four pale lattice sails reuse the existing rotor model and run through
-the normal per-instance motion system. The separate **Chesterton Windmill**
+Its four pale lattice sails use a vertical, side-mounted rotor with an
+axle that meets the tower face, and run through the normal per-instance motion
+system. The separate **Chesterton Windmill**
 discovery marker sits at the base. The body and sails are non-solid; the
 landmark does not obstruct NPC navigation. The sidecar is merged after the
 main world loads so the large embedded terrain payload remains untouched.
