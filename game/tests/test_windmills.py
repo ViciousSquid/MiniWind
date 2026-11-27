@@ -15,8 +15,9 @@ from engine.prop_entity import Prop
 from engine.threaded_game_state import ThreadedGameState
 
 from ..rpg import inventory, items
-from ..windmills import (HUB, MILL, ROTOR_FOR, RUN_SPEED, SPIN_DOWN_SECONDS,
-                         SPIN_UP_SECONDS, Windmills, is_producing, wheat_stock)
+from ..windmills import (HUB, MILL, ROTOR_AXIS, ROTOR_ANCHOR, ROTOR_FOR, RUN_SPEED,
+                         SPIN_DOWN_SECONDS, SPIN_UP_SECONDS, Windmills,
+                         is_producing, wheat_stock)
 
 pytestmark = pytest.mark.qt
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +67,30 @@ def test_operational_mills_turn_independently_of_wheat_and_towers_never_turn(log
     assert rotor.properties['rotation'][1] == stopped_angle
     assert other_rotor.properties['rotation'][1] > other_angle
     assert len(logic.editor_state.things) == 4
+
+
+def test_a_side_mounted_rotor_uses_its_authored_anchor_and_forward_axis(logic):
+    body = Prop(pos=[10, 20, 30], properties={
+        'name': 'Chesterton Windmill', MILL: True,
+        'model_path': 'assets/models/chesterton_windmill_body.obj',
+        ROTOR_ANCHOR: [0, 700, 160],
+        'rotation': [0, 0, 0], 'scale': [1, 1, 1],
+    })
+    rotor = Prop(pos=[0, 0, 0], properties={
+        'name': 'Chesterton Windmill sails',
+        'model_path': 'assets/models/chesterton_windmill_rotor.obj',
+        ROTOR_FOR: body.properties['id'], ROTOR_AXIS: 'z',
+        'rotation': [0, 0, 0],
+    })
+    logic.editor_state.things.extend([body, rotor])
+    mills = Windmills(logic)
+    mills.install()
+    np.testing.assert_allclose(rotor.pos, [10, 720, 190], atol=1e-4)
+
+    mills.update(SPIN_UP_SECONDS)
+    assert rotor.properties['rotation'][2] == pytest.approx(RUN_SPEED * SPIN_UP_SECONDS / 2)
+    assert rotor.properties['rotation'][1] == pytest.approx(0.0)
+    assert body.properties['rotation'] == [0, 0, 0]
 
 
 def test_the_rotor_follows_a_translated_rotated_scaled_tower(logic):
