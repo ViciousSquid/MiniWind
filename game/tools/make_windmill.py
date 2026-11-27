@@ -504,9 +504,79 @@ def export_rotating_parts(folder, work):
     export_mesh(folder, work, 'windmill_rotor', rotor_parts, pivot.location, obj_format=True)
 
 
+def export_chesterton_rotor(folder):
+    """Write the side-mounted +Z rotor used by the Chesterton stone mill.
+
+    The original sails are authored flat in Fio's XZ plane, centred 150 units
+    above their prop pivot. Rotate that mesh into the XY plane and move its
+    hub to the OBJ origin. The axle then extends backwards along -Z into the
+    tower; rotating it around Z leaves the round shaft and hub unchanged.
+    """
+    source = (folder / "windmill_rotor.obj").read_text(encoding="utf-8")
+    transformed = []
+    for line in source.splitlines():
+        if line.startswith("mtllib "):
+            transformed.append("mtllib chesterton_windmill_rotor.mtl")
+        elif line.startswith("o "):
+            transformed.append("o chesterton_windmill_rotor")
+        elif line.startswith("v "):
+            x, y, z = map(float, line.split()[1:4])
+            transformed.append(f"v {x:.7f} {-z:.7f} {y - VISUAL_HUB_OFFSET:.7f}")
+        elif line.startswith("vn "):
+            x, y, z = map(float, line.split()[1:4])
+            transformed.append(f"vn {x:.7f} {-z:.7f} {y:.7f}")
+        else:
+            transformed.append(line)
+
+    vertex_index = sum(line.startswith("v ") for line in transformed)
+    normal_index = sum(line.startswith("vn ") for line in transformed)
+
+    def polygon(points, normal):
+        nonlocal vertex_index, normal_index
+        indices = []
+        for x, y, z in points:
+            vertex_index += 1
+            transformed.append(f"v {x:.7f} {y:.7f} {z:.7f}")
+            indices.append(vertex_index)
+        normal_index += 1
+        transformed.append("vn " + " ".join(f"{value:.7f}" for value in normal))
+        transformed.append("f " + " ".join(f"{index}//{normal_index}" for index in indices))
+
+    def cylinder(name, radius, z0, z1, material_name, sides=12):
+        transformed.extend(("", f"o {name}", f"usemtl {material_name}"))
+        ring0, ring1 = [], []
+        for i in range(sides):
+            angle = math.tau * i / sides
+            ring0.append((radius * math.cos(angle), radius * math.sin(angle), z0))
+            ring1.append((radius * math.cos(angle), radius * math.sin(angle), z1))
+        for i in range(sides):
+            j = (i + 1) % sides
+            middle = math.tau * (i + 0.5) / sides
+            polygon((ring0[i], ring0[j], ring1[j], ring1[i]),
+                    (math.cos(middle), math.sin(middle), 0.0))
+            polygon(((0.0, 0.0, z0), ring0[j], ring0[i]), (0.0, 0.0, -1.0))
+            polygon(((0.0, 0.0, z1), ring1[i], ring1[j]), (0.0, 0.0, 1.0))
+
+    # A visible forged axle bridges the tower face to the hub. The symmetric
+    # hub cap and pin share the rotor axis and therefore do not wobble.
+    cylinder("chesterton_axle", 13.0, -100.0, 0.0, "Iron")
+    cylinder("chesterton_hub", 24.0, 0.0, 8.0, "Sail_red")
+    cylinder("chesterton_hub_pin", 7.0, 8.0, 15.0, "Iron")
+
+    (folder / "chesterton_windmill_rotor.obj").write_text(
+        "\n".join(transformed) + "\n", encoding="utf-8")
+    material = (folder / "windmill_rotor.mtl").read_text(encoding="utf-8")
+    material = material.replace(
+        "# MiniWind pale timber lattice sails",
+        "# MiniWind Chesterton side-mounted lattice sails and axle")
+    (folder / "chesterton_windmill_rotor.mtl").write_text(
+        material, encoding="utf-8")
+
+
 def export(folder, work):
     export_mesh(folder, work, 'windmill', PARTS, obj_format=True)
     export_rotating_parts(folder, work)
+    export_chesterton_rotor(folder)
 
 
 def statistics():
@@ -527,7 +597,11 @@ def statistics():
             'sprite_ground_anchor': [0.5, 0.5],
             'rotor': {'body_model': 'windmill_body.obj',
                       'rotor_model': 'windmill_rotor.obj',
-                      'pivot': [0.0, HUB_HEIGHT, 170.0], 'visual_hub_offset': [0.0, VISUAL_HUB_OFFSET, 0.0], 'axis': [0, 1, 0]}}
+                      'pivot': [0.0, HUB_HEIGHT, 170.0], 'visual_hub_offset': [0.0, VISUAL_HUB_OFFSET, 0.0], 'axis': [0, 1, 0],
+                      'chesterton_model': 'chesterton_windmill_rotor.obj',
+                      'chesterton_pivot': [0.0, 0.0, 0.0],
+                      'chesterton_axis': [0, 0, 1],
+                      'chesterton_axle_direction': '-Z'}}
 
 
 def main():
