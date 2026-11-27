@@ -190,7 +190,7 @@ def test_the_shipped_world_has_an_empty_mill_and_a_linked_rotor(logic):
     assert mills.mills[0].rotor.properties['rotation'][1] > first_angle
 
 
-def test_new_game_seeds_each_mill_with_fifty_flour_once(logic):
+def test_new_game_seeds_each_mill_with_twenty_five_flour_once(logic):
     first, _first_rotor = _pair(logic, "first", producing=False)
     second, _second_rotor = _pair(logic, "second", producing=False)
     mills = Windmills(logic)
@@ -199,8 +199,8 @@ def test_new_game_seeds_each_mill_with_fifty_flour_once(logic):
     assert item_stock(first, "flour") == 0
     assert item_stock(second, "flour") == 0
     assert mills.seed_starting_stock() == 2
-    assert item_stock(first, "flour") == STARTING_FLOUR == 50
-    assert item_stock(second, "flour") == STARTING_FLOUR == 50
+    assert item_stock(first, "flour") == STARTING_FLOUR == 25
+    assert item_stock(second, "flour") == STARTING_FLOUR == 25
     assert first.properties[STARTING_STOCK_SEEDED]
     assert second.properties[STARTING_STOCK_SEEDED]
 
