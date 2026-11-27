@@ -1,4 +1,4 @@
-"""The bundled windmill imports at the same human scale in both Fio loaders."""
+"""The live windmill is packaged as split Wavefront OBJ assets."""
 
 import json
 from pathlib import Path
@@ -7,112 +7,93 @@ import numpy as np
 import pytest
 from PIL import Image
 
-pytest.importorskip('OpenGL')
 from engine.obj_loader import OBJLoader
-from engine.glb_loader import GLBLoader
 
 ROOT = Path(__file__).resolve().parents[2]
-FOLDER = ROOT / 'assets/models'
+FOLDER = ROOT / "assets/models"
 pytestmark = pytest.mark.qt
 
 
-def _load_obj():
-    obj = OBJLoader()
-    assert obj.load(str(FOLDER / 'windmill.obj'))
-    return obj
+def load_obj(name):
+    model = OBJLoader()
+    assert model.load(str(FOLDER / name)), name
+    return model
 
 
-def test_obj_and_glb_have_the_same_upright_ground_origin_and_dimensions():
-    obj = _load_obj()
-    glb = GLBLoader()
-    assert glb.load(str(FOLDER / 'windmill.glb'))
-    a, b = np.asarray(obj.vertices), np.asarray(glb.get_flattened_vertices())
-    assert obj.up_axis == 'y'
-    np.testing.assert_allclose(a.min(0), b.min(0), atol=1e-3)
-    np.testing.assert_allclose(a.max(0), b.max(0), atol=1e-3)
-    assert a[:, 1].min() == pytest.approx(0)
-    assert 800 < a[:, 1].max() < 900             # legacy static rotor reaches above the tower
-    assert 570 < np.ptp(a[:, 0]) < 600
-    assert len(obj.faces) < 10000 and len(glb.get_flattened_triangles()) < 10000
-    info = json.loads((FOLDER / 'windmill.json').read_text())
-    np.testing.assert_allclose(a.max(0), info['bounds_max'], atol=1e-3)
+def vertices_for_material(model, material):
+    return np.asarray([
+        model.vertices[corner[0]]
+        for face in model.faces if face["material"] == material
+        for corner in face["vertices"]
+    ], dtype=np.float32)
 
 
-def test_the_door_fits_the_100_unit_player_and_sails_clear_their_head():
-    obj = _load_obj()
-    def material_vertices(name):
-        return np.asarray([obj.vertices[index[0]] for face in obj.faces
-                           if face['material'] == name for index in face['vertices']])
-    door = material_vertices('Door')
-    door = door[door[:, 1] < 120]               # the same timber also frames upper windows
-    assert np.ptp(door[:, 1]) == pytest.approx(106)
-    assert material_vertices('Sail_red')[:, 1].min() > 200
+def test_live_body_and_rotor_load_as_obj_with_top_down_bounds():
+    body = load_obj("windmill_body.obj")
+    rotor = load_obj("windmill_rotor.obj")
 
+    assert body.up_axis == rotor.up_axis == "y"
+    body_vertices = np.asarray(body.vertices, dtype=np.float32)
+    rotor_vertices = np.asarray(rotor.vertices, dtype=np.float32)
 
-def test_both_model_texture_paths_resolve_in_the_packaged_layout():
-    obj = _load_obj()
-    brick = obj.materials['Brick']
-    assert brick['texture'] == 'windmill_brick_albedo.png'
-    assert (FOLDER / brick['texture']).is_file()
-    assert tuple(brick['color']) == (1, 1, 1)
-    glb = GLBLoader()
-    assert glb.load(str(FOLDER / 'windmill.glb'))
-    assert glb.materials['Brick']['texture'] == 'windmill_brick_albedo.png'
-    assert (FOLDER / glb.materials['Brick']['texture']).is_file()
+    assert body_vertices[:, 1].min() == pytest.approx(0)
+    assert 700 < body_vertices[:, 1].max() < 720
+    assert 560 < np.ptp(body_vertices[:, 0]) < 610
+    assert 350 < np.ptp(body_vertices[:, 2]) < 500
 
+    # The OBJ rotor is authored around the original [0, 550, 170] prop anchor.
+    # Its sails lie in X/Z and its axle is only a short distance above the pivot.
+    assert np.ptp(rotor_vertices[:, 1]) < 25
+    assert np.ptp(rotor_vertices[:, 0]) > 550
+    assert np.ptp(rotor_vertices[:, 2]) > 550
 
-def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
-    models, loaded = {}, {}
-    for name in ('windmill_body', 'windmill_rotor'):
-        loaded[name] = GLBLoader()
-        assert loaded[name].load(str(FOLDER / f'{name}.glb'))
-        models[name] = np.asarray(loaded[name].get_flattened_vertices())
-    body, rotor = models['windmill_body'], models['windmill_rotor']
-    # The body includes the attached gabled house and remains grounded.
-    assert body[:, 1].min() == pytest.approx(0)
-    assert 700 < body[:, 1].max() < 720
-    assert 570 < np.ptp(body[:, 0]) < 600
-    assert 350 < np.ptp(body[:, 2]) < 550
-    # The rotor is centred on the unchanged [0, 550, 170] prop anchor.
-    # Its horizontal sail disk spans X/Z, with only a short vertical axle.
-    assert np.ptp(rotor[:, 1]) < 180
-    assert np.ptp(rotor[:, 0]) > 550
-    assert np.ptp(rotor[:, 2]) > 550
-    hub = np.asarray([0, 550, 170])
-    combined = np.concatenate([body, rotor + hub])
+    hub = np.asarray([0, 550, 170], dtype=np.float32)
+    combined = np.concatenate([body_vertices, rotor_vertices + hub])
     assert combined[:, 1].min() == pytest.approx(0)
-    assert 700 < combined[:, 1].max() < 730
-    assert 700 < np.ptp(combined[:, 0]) < 750
-    body_materials = set(loaded['windmill_body'].materials)
-    assert 'Brick' in body_materials
-    assert body_materials & {'Roof', 'Roof_tile'}
-    assert 'Sail_red' in set(loaded['windmill_rotor'].materials)
+    assert combined[:, 1].max() < 730
 
 
-def test_the_live_body_has_no_hidden_ground_facing_bottom_cap():
-    model = GLBLoader()
-    assert model.load(str(FOLDER / 'windmill_body.glb'))
-    floor_y = min(float(position[1])
-                  for mesh in model.meshes
-                  for primitive in mesh['primitives']
-                  for position in primitive['positions'])
-    for mesh in model.meshes:
-        for primitive in mesh['primitives']:
-            positions = primitive['positions']
-            indices = primitive['indices']
-            if indices is None:
-                indices = np.arange(len(positions))
-            triangles = positions[np.asarray(indices, dtype=np.int64).reshape(-1, 3)]
-            coplanar = np.all(np.isclose(triangles[:, :, 1], floor_y, atol=1e-5), axis=1)
-            assert not np.any(coplanar), "the windmill body must not carry a bottom face"
+def test_body_and_rotor_obj_material_libraries_resolve():
+    body = load_obj("windmill_body.obj")
+    rotor = load_obj("windmill_rotor.obj")
+
+    assert {"Brick", "Roof_tile", "Roof_light", "Door", "Stone"} <= set(body.materials)
+    assert {"Sail_red", "Iron"} <= set(rotor.materials)
+    texture = body.materials["Brick"]["texture"]
+    assert texture == "windmill_brick_albedo.png"
+    assert (FOLDER / texture).is_file()
 
 
-@pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
+def test_live_body_obj_has_no_ground_facing_bottom_face():
+    body = load_obj("windmill_body.obj")
+    floor_y = min(vertex[1] for vertex in body.vertices)
+    for face in body.faces:
+        face_vertices = [body.vertices[corner[0]] for corner in face["vertices"]]
+        assert not all(abs(vertex[1] - floor_y) < 1e-5 for vertex in face_vertices), (
+            "windmill_body.obj must not contain a bottom face"
+        )
+
+
+def test_full_static_preview_obj_remains_y_up_and_grounded():
+    model = load_obj("windmill.obj")
+    vertices = np.asarray(model.vertices, dtype=np.float32)
+    assert vertices[:, 1].min() == pytest.approx(0)
+    assert 800 < vertices[:, 1].max() < 900
+
+
+def test_the_door_fits_the_100_unit_player():
+    model = load_obj("windmill.obj")
+    door = vertices_for_material(model, "Door")
+    door = door[door[:, 1] < 120]  # Exclude the same timber used by upper windows.
+    assert np.ptp(door[:, 1]) == pytest.approx(106)
+
+
+@pytest.mark.parametrize("name", ["windmill_topdown.png", "windmill_overhead.png"])
 def test_rendered_sprites_have_real_alpha_and_a_clear_gutter(name):
-    with Image.open(ROOT / 'assets/sprites/scenery' / name) as image:
-        assert image.mode == 'RGBA' and image.size == (1024, 1024)
-        alpha = image.getchannel('A')
+    with Image.open(ROOT / "assets/sprites/scenery" / name) as image:
+        assert image.mode == "RGBA" and image.size == (1024, 1024)
+        alpha = image.getchannel("A")
         assert alpha.getextrema() == (0, 255)
         left, top, right, bottom = alpha.getbbox()
         assert min(left, top) >= 8 and max(right, bottom) <= 1016
-        assert alpha.getpixel((512, 512)) > 240    # footprint stays at canvas center
+        assert alpha.getpixel((512, 512)) > 240

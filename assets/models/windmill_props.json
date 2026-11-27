@@ -10,10 +10,10 @@
       ],
       "properties": {
         "type": "prop",
-        "name": "Windmill GLB",
+        "name": "Windmill OBJ",
         "id": "ef9ca1cb-0e2f-55e2-87df-0853cb0eb7e8",
         "render_mode": "model",
-        "model_path": "assets/models/windmill_body.glb",
+        "model_path": "assets/models/windmill_body.obj",
         "rotation": [
           0,
           0,
@@ -46,10 +46,10 @@
       ],
       "properties": {
         "type": "prop",
-        "name": "Windmill GLB sails",
+        "name": "Windmill OBJ sails",
         "id": "75ecd560-80fb-544e-b82a-aca057ede613",
         "render_mode": "model",
-        "model_path": "assets/models/windmill_rotor.glb",
+        "model_path": "assets/models/windmill_rotor.obj",
         "mill_rotor_for": "ef9ca1cb-0e2f-55e2-87df-0853cb0eb7e8",
         "rotation": [
           0,

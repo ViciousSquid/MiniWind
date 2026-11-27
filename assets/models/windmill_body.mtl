@@ -1,0 +1,100 @@
+# MiniWind low-poly attached-house windmill
+newmtl Brick
+Ka 0.25 0.22 0.19
+Kd 1.000000 1.000000 1.000000
+Ks 0.08 0.08 0.08
+Ns 24
+d 1
+illum 2
+map_Kd windmill_brick_albedo.png
+
+newmtl Roof_base
+Ka 0.12 0.06 0.04
+Kd 0.30 0.075 0.045
+Ks 0.04 0.04 0.04
+Ns 12
+illum 2
+
+newmtl Roof_tile
+Ka 0.16 0.06 0.035
+Kd 0.56 0.16 0.075
+Ks 0.08 0.05 0.03
+Ns 18
+illum 2
+
+newmtl Roof_light
+Ka 0.18 0.08 0.04
+Kd 0.66 0.22 0.10
+Ks 0.08 0.05 0.03
+Ns 18
+illum 2
+
+newmtl Roof_dark
+Ka 0.10 0.035 0.02
+Kd 0.40 0.09 0.055
+Ks 0.05 0.03 0.02
+Ns 12
+illum 2
+
+newmtl Bonnet
+Ka 0.12 0.14 0.15
+Kd 0.22 0.28 0.30
+Ks 0.35 0.35 0.35
+Ns 65
+illum 2
+
+newmtl Seams
+Ka 0.08 0.10 0.11
+Kd 0.10 0.15 0.17
+Ks 0.25 0.25 0.25
+Ns 40
+illum 2
+
+newmtl Stone
+Ka 0.20 0.18 0.14
+Kd 0.48 0.43 0.34
+Ks 0.08 0.08 0.08
+Ns 12
+illum 2
+
+newmtl Door
+Ka 0.08 0.04 0.02
+Kd 0.11 0.055 0.025
+Ks 0.06 0.04 0.02
+Ns 12
+illum 2
+
+newmtl Door_boards
+Ka 0.08 0.04 0.02
+Kd 0.19 0.10 0.045
+Ks 0.05 0.04 0.03
+Ns 12
+illum 2
+
+newmtl Glass
+Ka 0.02 0.04 0.05
+Kd 0.035 0.065 0.075
+Ks 0.28 0.32 0.35
+Ns 90
+illum 2
+
+newmtl Timber
+Ka 0.08 0.035 0.015
+Kd 0.22 0.105 0.045
+Ks 0.06 0.04 0.02
+Ns 12
+illum 2
+
+newmtl Iron
+Ka 0.03 0.035 0.04
+Kd 0.055 0.065 0.07
+Ks 0.25 0.25 0.25
+Ns 60
+illum 2
+
+newmtl Brass
+Ka 0.20 0.12 0.04
+Kd 0.52 0.36 0.12
+Ks 0.4 0.3 0.1
+Ns 80
+illum 2

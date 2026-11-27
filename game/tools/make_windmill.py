@@ -451,8 +451,8 @@ def export_rotating_parts(folder, work):
     pivot = bpy.data.objects['Rotor_pivot']
     rotor_parts = [obj for obj in PARTS if obj.parent == pivot]
     body_parts = [obj for obj in PARTS if obj.parent != pivot]
-    export_mesh(folder, work, 'windmill_body', body_parts)
-    export_mesh(folder, work, 'windmill_rotor', rotor_parts, pivot.location)
+    export_mesh(folder, work, 'windmill_body', body_parts, obj_format=True)
+    export_mesh(folder, work, 'windmill_rotor', rotor_parts, pivot.location, obj_format=True)
 
 
 def export(folder, work):
@@ -476,8 +476,8 @@ def statistics():
             'sprites': {'windmill_topdown.png': {'elevation': 90, 'sprite_size': [720, 720]},
                         'windmill_overhead.png': {'elevation': 60, 'sprite_size': [860, 860]}},
             'sprite_ground_anchor': [0.5, 0.5],
-            'rotor': {'body_model': 'windmill_body.glb',
-                      'rotor_model': 'windmill_rotor.glb',
+            'rotor': {'body_model': 'windmill_body.obj',
+                      'rotor_model': 'windmill_rotor.obj',
                       'pivot': [0.0, HUB_HEIGHT, 170.0], 'visual_hub_offset': [0.0, VISUAL_HUB_OFFSET, 0.0], 'axis': [0, 1, 0]}}
 
 
