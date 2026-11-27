@@ -189,7 +189,7 @@ def _patch_map_loading():
 
     MainWindow.load_level_file = load_level_file
 
-    # Add the Chesterton windmill after the main world has been deserialised,
+    # Add authored world landmarks after the main world has been deserialised,
     # before its first editor frame. The sidecar is deliberately separate from
     # the world's large embedded terrain payload.
     if not getattr(MainWindow, "_miniwind_chesterton_load_patched", False):
@@ -202,9 +202,9 @@ def _patch_map_loading():
                     from .world_landmarks import install_chesterton_landmarks
                     added = install_chesterton_landmarks(self.state, level_data)
                     if added:
-                        _log(f"Added {added} Chesterton Windmill entities")
+                        _log(f"Added {added} authored world landmark entities")
                 except Exception as exc:
-                    _log(f"Chesterton Windmill placement skipped ({exc})")
+                    _log(f"World landmark placement skipped ({exc})")
             return loaded
 
         MainWindow._load_level = load_level_with_chesterton
