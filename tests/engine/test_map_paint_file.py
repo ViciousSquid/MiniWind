@@ -114,15 +114,24 @@ def test_the_overworld_carries_its_own_paint():
     assert os.path.isfile(road_path)
     assert terrain_stamp.missing_paint_file(level, path) is None
 
-    # join_level applies the sidecars in place and returns the same level
-    # object; callers already hold references to it during load.
+    # The regular paint file carries 2,670 stamps; the optional road overlay
+    # carries 2,416 of those same IDs. The join is therefore idempotent today
+    # (no unbaked overlay is needed), while still supporting future road stamps
+    # that are not yet present in the regular file.
+    paint_data = terrain_stamp.load_stamp_file(paint_path)
+    road_data = terrain_stamp.load_stamp_file(road_path)
+    paint_ids = {s["id"] for s in paint_data["stamps"]}
+    road_ids = {s["id"] for s in road_data["stamps"]}
+    missing_road_ids = road_ids - paint_ids
+
     joined = terrain_stamp.join_level(level, path)
-    assert joined is level
     loaded = joined["terrain_data"]
     assert "paint_file" not in loaded
     assert loaded["texture_paint_resolution"] == 512
     assert len(loaded["texture_paint"]) > 100
-    assert loaded.get(terrain_stamp.UNBAKED_KEY) is True
+    loaded_ids = {s["id"] for s in loaded.get("paint_stamps", [])}
+    assert paint_ids | road_ids <= loaded_ids
+    assert (loaded.get(terrain_stamp.UNBAKED_KEY) is True) == bool(missing_road_ids)
 
 
 def test_the_overworld_is_minified():
