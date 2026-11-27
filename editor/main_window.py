@@ -217,7 +217,11 @@ def _level_files_identity(path):
         return None
     from engine import terrain_stamp
     paint = terrain_stamp.paint_path(path)
-    return version, (paint, _file_identity(paint)) if paint else None
+    overlay = terrain_stamp.road_overlay_path(path)
+    overlay_version = _file_identity(overlay) if overlay else None
+    return (version,
+            (paint, _file_identity(paint)) if paint else None,
+            (overlay, overlay_version) if overlay_version else None)
 
 
 #: The identities of map files a load has validated (_level_files_identity).
