@@ -23,6 +23,9 @@ from .rpg import inventory, items
 
 MILL = "windmill"
 ROTOR_FOR = "mill_rotor_for"
+ROTOR_AXIS = "mill_rotor_axis"
+ROTOR_ANCHOR = "mill_rotor_anchor"
+_ROTATION_AXES = {"x": 0, "y": 1, "z": 2}
 HELD_BY = "mill_held_by"
 IDLE = "mill_idle"              # set while the mill's holder lives
 HOLD_CHECK_SECONDS = 2.0
@@ -124,6 +127,12 @@ def _basis(props):
     return glm.rotate(basis, math.radians(rotation[2]), glm.vec3(0, 0, 1))
 
 
+def _rotor_axis_index(rotor) -> int:
+    """Return the authored local Euler axis used by this rotor (default +Y)."""
+    axis = str(rotor.properties.get(ROTOR_AXIS, "y")).lower()
+    return _ROTATION_AXES.get(axis, 1)
+
+
 def delivery_point(mill) -> list:
     """The drop-off point in front of the placed tower's door."""
     scale = mill.properties.get("scale", (1, 1, 1))
@@ -185,12 +194,23 @@ class _Mill:
         scale = props.get("scale", (1.0, 1.0, 1.0))
         if isinstance(scale, (int, float)):
             scale = (scale, scale, scale)
-        # Fio's model rotation order is Y, X, Z.
-        offset = _basis(props) * glm.vec4(*(HUB[i] * scale[i] for i in range(3)), 0.0)
+        # Most mills retain the overhead rotor's historical anchor. A body
+        # may author a different local hub position for a side-mounted rotor.
+        anchor = props.get(ROTOR_ANCHOR, HUB)
+        if not isinstance(anchor, (list, tuple)) or len(anchor) != 3:
+            anchor = HUB
+        try:
+            anchor = tuple(float(value) for value in anchor)
+            if not all(math.isfinite(value) for value in anchor):
+                anchor = HUB
+        except (TypeError, ValueError):
+            anchor = HUB
+        # Fio's model rotation order is Y, X, Z; the offset follows the body.
+        offset = _basis(props) * glm.vec4(*(anchor[i] * scale[i] for i in range(3)), 0.0)
         pos = [float(self.body.pos[i] + offset[i]) for i in range(3)]
         if list(self.rotor.pos) != pos:
             self.rotor.pos = pos
-        rotation[1] += self.motion.angle
+        rotation[_rotor_axis_index(self.rotor)] += self.motion.angle
         changes = {"rotation": rotation, "scale": list(scale)}
         changed = False
         for key, value in changes.items():
@@ -241,8 +261,9 @@ class Windmills:
             body.properties[MILL] = True
             inventory.get_inventory(body)
             self._bodies[body.properties["id"]] = body
-            angle = (rotor.properties.get("rotation", (0, 0, 0))[1]
-                     - body.properties.get("rotation", (0, 0, 0))[1])
+            axis = _rotor_axis_index(rotor)
+            angle = (rotor.properties.get("rotation", (0, 0, 0))[axis]
+                     - body.properties.get("rotation", (0, 0, 0))[axis])
             mill = _Mill(body, rotor, RotorMotion(angle=angle % 360.0))
             mill.place()
             self.mills.append(mill)
