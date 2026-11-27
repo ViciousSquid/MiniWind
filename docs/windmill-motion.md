@@ -130,11 +130,11 @@ a uniform scale for the assembly. Stopping Play restores the rotor's authored
 transform. The complete `windmill.glb`, `windmill.obj` and orthographic PNG
 sprites are also supplied as static assets.
 
-Rebuild the full and split models and metadata from the procedural low-poly
-source (Python standard library only):
+Rebuild the full and split models, metadata and orthographic sprites from the
+Blender source:
 
 ```sh
-python game/tools/make_windmill.py
+blender -b -t 4 -P game/tools/make_windmill.py -- --export-only
 ```
 
 Then repack the model category for archive-only distributions:
