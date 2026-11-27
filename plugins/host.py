@@ -30,6 +30,7 @@ references to engine objects — it adds no state the engine has to know about.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import weakref
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
@@ -154,10 +155,17 @@ class PluginHost:
 
     def __init__(self, manager, target, plugin, kind: str = "engine"):
         self._manager = manager
-        self._target = target
+        # Plugins may retain their host for the lifetime of the process. The
+        # host must not turn that into ownership of a LogicThread (and its
+        # editor window); it is a read-through view of the live target only.
+        self._target_ref = weakref.ref(target) if target is not None else lambda: None
         self._plugin = plugin
         #: ``"engine"`` (editor play mode) or ``"player"`` (standalone player).
         self.kind = kind
+
+    @property
+    def _target(self):
+        return self._target_ref()
 
     # -- the live objects ---------------------------------------------------
     @property
@@ -211,6 +219,8 @@ class PluginHost:
         that may not exist on this host is safe.
         """
         obj = self._target
+        if obj is None:
+            return default
         for part in str(path).split("."):
             obj = getattr(obj, part, None)
             if obj is None:
@@ -222,7 +232,7 @@ class PluginHost:
         # named accessors above always win. Everything else the target exposes
         # is reachable as ``host.<whatever>`` — this is the "touch any part of
         # the engine, including parts added later" escape hatch.
-        target = self.__dict__.get("_target")
+        target = self._target
         if target is not None:
             try:
                 return getattr(target, name)
