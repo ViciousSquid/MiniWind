@@ -2,13 +2,13 @@
 
 Five additional low-poly, slightly crooked medieval hovels for MiniWind/Fio. Designed to read clearly from an elevated top-down camera and use the same Y-up, ground-level-centred coordinate convention as the existing village houses.
 
-| OBJ | Style | Approximate footprint |
+| OBJ | Style | Approximate footprint (X × Z) |
 |---|---|---:|
-| `village_hovel_wattle_daub.obj` | Wattle-and-daub cottage, exposed framing, thatch and porch canopy | 232 × 208 units |
-| `village_hovel_stonecroft.obj` | Low stone cottage, patched clay/thatch roof, chimney and quoins | 214 × 228 units |
-| `village_hovel_tanners_lean_to.obj` | Lean-to home/workshop with drying rack and tanning tubs | 290 × 220 units |
-| `village_hovel_peatcutters_longhouse.obj` | Longhouse with attached peat store, chimney and woodpile | 350 × 226 units |
-| `village_hovel_fishers_crook.obj` | Narrow crooked cottage with side porch, drying rack and chimney | 270 × 260 units |
+| `village_hovel_wattle_daub.obj` | Wattle-and-daub cottage, exposed framing, thatch and porch canopy | 236 × 235 units |
+| `village_hovel_stonecroft.obj` | Low stone cottage, patched clay/thatch roof, chimney and quoins | 218 × 237 units |
+| `village_hovel_tanners_lean_to.obj` | Lean-to home/workshop with drying rack and tanning tubs | 278 × 196 units |
+| `village_hovel_peatcutters_longhouse.obj` | Longhouse with attached peat store, chimney and woodpile | 339 × 211 units |
+| `village_hovel_fishers_crook.obj` | Narrow crooked cottage with side porch, drying rack and chimney | 281 × 251 units |
 
 ## Materials and import
 
