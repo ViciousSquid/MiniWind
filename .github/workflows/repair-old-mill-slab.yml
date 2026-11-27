@@ -1,0 +1,47 @@
+name: Repair Old Mill slab (one-time)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/repair-old-mill-slab.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  hide-obsolete-slab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Hide the obsolete Old Mill collision slab
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("maps/miniwind_world.json")
+          world = json.loads(path.read_text(encoding="utf-8"))
+          slab_id = "b74c0988-958e-4b46-9da5-56f91533f829"
+          slab = next((b for b in world["brushes"] if b.get("id") == slab_id), None)
+          if slab is None:
+              raise SystemExit(f"Old Mill slab {slab_id} is missing")
+          if slab.get("hidden") is True:
+              print("Old Mill slab is already hidden")
+              raise SystemExit(0)
+          slab["hidden"] = True
+          path.write_text(json.dumps(world, separators=(",", ":")), encoding="utf-8")
+          print(f"Disabled Old Mill slab: {slab_id}")
+          PY
+      - name: Commit the map correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add maps/miniwind_world.json
+          git commit -m "World: disable the obsolete Old Mill collision slab"
+          git push origin HEAD:main
