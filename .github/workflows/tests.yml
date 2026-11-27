@@ -37,6 +37,10 @@ jobs:
         python: ['3.13', '3.14']
     steps:
       - uses: actions/checkout@v7
+      - name: Install the EGL loader for headless PyOpenGL imports
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
