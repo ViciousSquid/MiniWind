@@ -33,13 +33,13 @@ def logic():
 
 def _pair(logic, name='mill', *, producing=True, pos=(0, 0, 0), rotation=(0, 0, 0), scale=1):
     body = Prop(pos=list(pos), properties={
-        'name': name, 'render_mode': 'model', 'model_path': 'assets/models/windmill_body.glb',
+        'name': name, 'render_mode': 'model', 'model_path': 'assets/models/windmill_body.obj',
         MILL: True, 'inventory': [items.make('wheat')] if producing else [],
         'display_name': 'Windmill', 'use_radius': 280.0,
         'rotation': list(rotation), 'scale': [scale] * 3})
     rotor = Prop(properties={
         'name': name + '_sails', 'render_mode': 'model',
-        'model_path': 'assets/models/windmill_rotor.glb', ROTOR_FOR: body.properties['id'],
+        'model_path': 'assets/models/windmill_rotor.obj', ROTOR_FOR: body.properties['id'],
         'rotation': list(rotation)})
     logic.editor_state.things.extend([body, rotor])
     return body, rotor
