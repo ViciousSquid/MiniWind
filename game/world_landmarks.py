@@ -7,6 +7,7 @@ from pathlib import Path
 
 _MAIN_MILL_ID = "250882b7-d724-4931-b8f8-107fd10617b7"
 _CATHEDRAL_MARKER_ID = "edbdab34-3f6f-4f4e-9970-3a0e4dcf8c61"
+_CATHEDRAL_DISCOVER_RADIUS = 1100.0  # 1,280 x 1,560 footprint plus a small margin
 _OVERLAY = (Path(__file__).resolve().parents[1] / "maps"
             / "miniwind_chesterton_additions.json")
 
@@ -34,7 +35,7 @@ def _cathedral_marker_record(position) -> dict:
             "id": _CATHEDRAL_MARKER_ID,
             "marker_kind": "location",
             "place_name": "Ruined Cathedral",
-            "discover_radius": 512.0,
+            "discover_radius": _CATHEDRAL_DISCOVER_RADIUS,
             "stop_on_escape": True,
             "io_enabled": True,
             "custom_idle": "assets/sprites/miniwind/marker_location.png",
@@ -102,11 +103,16 @@ def install_chesterton_landmarks(editor_state, level_data) -> int:
                 additions.append(marker)
                 existing_ids.add(_CATHEDRAL_MARKER_ID)
                 changed = True
-        elif list(marker.pos[:3]) != marker_position:
+        else:
             # Keep the discovery point attached if the cathedral is moved in
-            # the editor and the map is subsequently reopened.
-            marker.pos = marker_position
-            changed = True
+            # the editor and the map is subsequently reopened. Also repair
+            # markers already saved with the old, undersized discovery radius.
+            if list(marker.pos[:3]) != marker_position:
+                marker.pos = marker_position
+                changed = True
+            if marker.properties.get("discover_radius") != _CATHEDRAL_DISCOVER_RADIUS:
+                marker.properties["discover_radius"] = _CATHEDRAL_DISCOVER_RADIUS
+                changed = True
 
     if additions:
         things.extend(additions)
