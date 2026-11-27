@@ -222,7 +222,7 @@ def rotor():
 
 def build(folder):
     brick_material(folder)
-    material("Sail_red", (0.52, 0.085, 0.045))
+    material("Sail_red", (0.82, 0.79, 0.69))
     material("Bonnet", (0.22, 0.28, 0.30), 0.65, 0.10)
     material("Seams", (0.10, 0.15, 0.17), 0.72, 0.15)
     material("Stone", (0.48, 0.43, 0.34))
@@ -391,6 +391,53 @@ def render(scene, path, elevation, span, target=(0, 0, 0), azimuth=0):
     bpy.ops.render.render(write_still=True)
 
 
+
+def write_indexed_obj(mesh, path, object_name):
+    """Write OBJ indices from mesh vertices and per-corner UV/normal loops.
+
+    Blender's exporter emits loop indices as position indices for this rotor:
+    faces can then reference vertices beyond the end of the v table. OBJ has
+    separate index spaces for positions, UVs and normals, so write them here.
+    """
+    mesh.update()
+    uv_layer = mesh.uv_layers.active
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("# fio:up=y\n")
+        handle.write(f"mtllib {path.stem}.mtl\n")
+        handle.write(f"o {object_name}\n")
+        # Blender native XYZ -> Fio XYZ (Y up).
+        for vertex in mesh.vertices:
+            co = vertex.co
+            handle.write(f"v {co.x:.7f} {co.z:.7f} {-co.y:.7f}\n")
+        for loop in mesh.loops:
+            if uv_layer:
+                uv = uv_layer.data[loop.index].uv
+                handle.write(f"vt {uv.x:.7f} {1.0 - uv.y:.7f}\n")
+            else:
+                handle.write("vt 0 0\n")
+        for loop in mesh.loops:
+            normal = loop.normal
+            handle.write(f"vn {normal.x:.7f} {normal.z:.7f} {-normal.y:.7f}\n")
+
+        current_material = None
+        for polygon in mesh.polygons:
+            if 0 <= polygon.material_index < len(mesh.materials):
+                material = mesh.materials[polygon.material_index]
+                material_name = material.name if material else "default"
+            else:
+                material_name = "default"
+            if material_name != current_material:
+                handle.write(f"usemtl {material_name}\n")
+                current_material = material_name
+            corners = []
+            for loop_index in polygon.loop_indices:
+                loop = mesh.loops[loop_index]
+                # Position indices address mesh.vertices; UV/normal indices
+                # address mesh.loops. These are intentionally different.
+                corners.append(f"{loop.vertex_index + 1}/{loop_index + 1}/{loop_index + 1}")
+            handle.write("f " + " ".join(corners) + "\n")
+
+
 def export_mesh(folder, work, name, parts, origin=(0, 0, 0), *, obj_format=False):
     # Fio's current GLB path reads mesh attributes directly. Bake every
     # object's world transform into one identity-transform mesh so neither
@@ -422,6 +469,8 @@ def export_mesh(folder, work, name, parts, origin=(0, 0, 0), *, obj_format=False
                          for line in text.splitlines()) + '\n'
         text = text.replace('newmtl Brick\n', 'newmtl Brick\nKd 1.000000 1.000000 1.000000\n')
         mtl.write_text(text)
+        if name == 'windmill_rotor':
+            write_indexed_obj(merged.data, obj, name)
     temporary_glb = work / f'{name}_export.glb'
     bpy.ops.export_scene.gltf(filepath=str(temporary_glb), export_format='GLB',
                               use_selection=True, export_yup=True, export_apply=True,
