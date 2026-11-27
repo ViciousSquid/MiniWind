@@ -114,8 +114,10 @@ def test_the_overworld_carries_its_own_paint():
     assert os.path.isfile(road_path)
     assert terrain_stamp.missing_paint_file(level, path) is None
 
+    # join_level applies the sidecars in place and returns the same level
+    # object; callers already hold references to it during load.
     joined = terrain_stamp.join_level(level, path)
-    assert joined is not level
+    assert joined is level
     loaded = joined["terrain_data"]
     assert "paint_file" not in loaded
     assert loaded["texture_paint_resolution"] == 512
