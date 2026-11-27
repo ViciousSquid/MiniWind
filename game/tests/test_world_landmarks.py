@@ -45,14 +45,19 @@ def test_ruined_cathedral_gets_a_discovery_marker_at_its_placed_position(tmp_pat
     marker = markers[0]
     assert marker.properties["marker_kind"] == "location"
     assert marker.properties["place_name"] == "Ruined Cathedral"
-    assert marker.properties["discover_radius"] == 512.0
+    assert marker.properties["discover_radius"] == world_landmarks._CATHEDRAL_DISCOVER_RADIUS
+    # The radius reaches beyond the cathedral's approximate footprint.
+    import math
+    assert marker.properties["discover_radius"] > math.hypot(640.0, 780.0)
     assert list(marker.pos) == [1200.0, 34.0, -560.0]
     assert invalidations
 
     # Reopening after the cathedral is moved keeps the discovery point attached
     # without creating a second marker.
     cathedral.pos = [1300.0, 40.0, -600.0]
+    marker.properties["discover_radius"] = 512.0  # Simulate an older saved marker.
     assert world_landmarks.install_chesterton_landmarks(state, level_data) == 0
+    assert marker.properties["discover_radius"] == world_landmarks._CATHEDRAL_DISCOVER_RADIUS
     markers = [thing for thing in state.things
                if (getattr(thing, "properties", {}) or {}).get("id")
                == world_landmarks._CATHEDRAL_MARKER_ID]
