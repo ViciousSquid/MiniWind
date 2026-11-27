@@ -56,7 +56,8 @@ class _Walker:
 
     def __init__(self, brushes):
         self.logic = _Logic(brushes)
-        self.nav = Navigator(self._blocked_by_wall)
+        self.nav_clock = [0.0]
+        self.nav = Navigator(self._blocked_by_wall, clock=lambda: self.nav_clock[0])
 
     def inside(self, npc, margin=runtime.NPC_WALL_MARGIN):
         return self.logic.monster_ai._monster_overlaps_wall(
@@ -86,6 +87,10 @@ def _walk(walker, npc, ticks):
     goal = npc.properties["_dest"]
     out = []
     for _ in range(ticks):
+        # The planner's work budget and route refreshes run on a 60 Hz clock.
+        # Advance it with the simulated 30 Hz walk; wall time makes this test
+        # depend on how quickly the CI runner executes its 400 ticks.
+        walker.nav_clock[0] += DT
         walker._move(npc, DT)
         assert not walker.inside(npc), "the NPC walked into the obstacle"
         out.append((npc.pos[0], npc.pos[2], strafe.strafing(npc.properties),
