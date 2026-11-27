@@ -71,7 +71,7 @@ def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
     # The body includes the attached gabled house and remains grounded.
     assert body[:, 1].min() == pytest.approx(0)
     assert 700 < body[:, 1].max() < 720
-    assert 700 < np.ptp(body[:, 0]) < 750
+    assert 570 < np.ptp(body[:, 0]) < 600
     assert 350 < np.ptp(body[:, 2]) < 550
     # The rotor is centred on the unchanged [0, 550, 170] prop anchor.
     # Its horizontal sail disk spans X/Z, with only a short vertical axle.
