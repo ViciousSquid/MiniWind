@@ -34,11 +34,17 @@ class _Sound:
         return channel
 
 
+class _AudioView:
+    def __init__(self, camera, game_state):
+        self.camera = camera
+        self.game_state = game_state
+
+
 def _audio(requests):
     pending = list(requests)
     camera = SimpleNamespace(pos=glm.vec3(0.0, 0.0, 0.0),
                              get_front_vector=lambda: glm.vec3(0.0, 0.0, -1.0))
-    view = SimpleNamespace(camera=camera, game_state=SimpleNamespace(
+    view = _AudioView(camera, SimpleNamespace(
         consume_sounds=lambda: [pending.pop(0) for _ in range(len(pending))]))
     audio = ViewAudio(view)
     sound = _Sound()

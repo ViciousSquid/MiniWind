@@ -857,7 +857,13 @@ class QtGameView(QOpenGLWidget):
         start-up, whatever the map (0.3 s and 53 MB of a 1.3 s start). A
         texture applied later is loaded when a frame first draws it.
         """
-        if not self.renderer or not self.renderer.ready:
+        if not self.renderer or not self.renderer.ready or sip.isdeleted(self):
+            return
+        context = self.context()
+        if (context is None or not context.isValid()
+                or QThread.currentThread() is not self.thread()):
+            # Offscreen/no-GPU runs can load maps without a GL context.
+            # initializeGL calls this again once a real context exists.
             return
         with self.gl_context():
             self._preload_level_textures()

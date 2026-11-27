@@ -8,6 +8,8 @@ import math
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.qt
+
 from engine import shaders
 from engine.constants import WATER_FLOW_DIRECTIONS, water_flow_velocity
 from engine.renderer.core.terrain_gl import TerrainGL

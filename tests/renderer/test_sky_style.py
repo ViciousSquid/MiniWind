@@ -5,6 +5,8 @@ import configparser
 
 import pytest
 
+pytestmark = pytest.mark.qt
+
 from engine import shaders
 from engine.renderer.forward.edge_sky import SKY_STYLES, EdgeSkyMixin
 

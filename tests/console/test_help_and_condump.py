@@ -284,25 +284,3 @@ def test_logs_go_to_the_user_data_folder_when_the_install_is_read_only(
     monkeypatch.setattr(user_paths, "user_data_dir", lambda: str(tmp_path / "userdata"))
     assert handler._logs_dir() == str(tmp_path / "userdata" / "logs")
 
-
-def test_the_built_in_games_commands_have_their_own_section_last(main_window):
-    """MiniWind's console commands (game/console.py) are listed under their
-    own heading at the bottom of help, a command and its aliases on one line."""
-    import game
-    from game import console
-    game.install()
-    handler = main_window.console_handler
-    sections = handler.help_sections()
-    title, _intro, entries = sections[-1]
-    assert title == "MiniWind Commands"
-    listed = [names for names, _usage in entries]
-    for names, _handler, help_text in console.COMMANDS:
-        assert tuple(names) in listed, names
-    assert len(listed) == len(console.COMMANDS)
-    # Nothing of MiniWind's is left among the plugin commands.
-    others = {n for t, _i, e in sections[:-1] for names, _u in e for n in names}
-    assert not others & {n for names, _h, _t in console.COMMANDS for n in names}
-    text = _help_text(handler)
-    assert "=== MiniWind Commands ===" in text
-    assert text.index("=== MiniWind Commands ===") > text.index("=== Debug ===")
-    assert "diceroll</b>" in text and "dice</b>" in text

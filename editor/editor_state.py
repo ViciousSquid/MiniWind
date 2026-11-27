@@ -168,8 +168,8 @@ class EditorState:
         self.play_source = None
         #: Callables handed every level dict :meth:`get_level_data` builds,
         #: last, to amend it in place: a game putting back into the saved
-        #: map what it keeps out of the editor's view (MiniWind's inked
-        #: district borders). Every save, autosave and savegame sees them.
+        #: map what it keeps out of the editor's view (for example, district
+        #: outlines). Every save, autosave and savegame sees them.
         self.level_data_hooks = []
         self.brushes = []
         self.things = []
@@ -1016,8 +1016,8 @@ class EditorState:
 
         self.terrain_data = level_data.get('terrain_data', None)
         # Top-level keys starting with "_" belong to the tools that built the
-        # map (``_miniwind_world`` records which caves and roads the world
-        # generators already laid down). The editor has no use for them but
+        # map (for example, world-generation tools record which caves and roads
+        # they already laid down). The editor has no use for them but
         # must not drop them: saving used to, and a rebuilt world then had
         # its roads applied twice.
         self.tool_metadata = {k: v for k, v in level_data.items()
