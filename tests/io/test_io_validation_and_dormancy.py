@@ -435,6 +435,7 @@ def test_generic_toggle_visibility_wakes_only_when_it_reveals(monkeypatch):
     assert wakes == [(None, revealed)]
 
 
+@needs_entities
 def test_thing_toggle_visibility_wakes_only_when_it_reveals(monkeypatch):
     from editor import io_handlers
     from editor.io_handlers import register_all_input_handlers
