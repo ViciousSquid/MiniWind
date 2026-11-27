@@ -22,7 +22,7 @@ def test_both_windmill_formats_draw_the_same_silhouette():
         renderer = ForwardRenderer(None)
         renderer.shadows_enabled = False
         try:
-            eye = glm.vec3(800, 750, 1500)
+            eye = glm.vec3(800, 1750, 1500)
             projection = glm.ortho(-560, 560, -560, 560, 1, 6000)
             view = glm.lookAt(eye, glm.vec3(0, 420, 0), glm.vec3(0, 1, 0))
             for extension in ('obj', 'glb'):
@@ -87,7 +87,7 @@ def test_the_placed_mill_keeps_its_silhouette_at_rest_and_only_the_sails_move():
         renderer.shadows_enabled = False
         try:
             basis = glm.rotate(glm.mat4(1), glm.radians(body.properties['rotation'][1]), glm.vec3(0, 1, 0))
-            eye = glm.vec3(*body.pos) + glm.vec3(basis * glm.vec4(100, 650, 1800, 0))
+            eye = glm.vec3(*body.pos) + glm.vec3(basis * glm.vec4(100, 1800, 350, 0))
             projection = glm.ortho(-500, 500, -500, 500, 1, 6000)
             view = glm.lookAt(eye, glm.vec3(*body.pos) + glm.vec3(0, 420, 0), glm.vec3(0, 1, 0))
             light_pos = glm.vec3(*body.pos) + glm.vec3(basis * glm.vec4(-500, 1200, 1000, 0))
