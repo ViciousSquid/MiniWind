@@ -124,6 +124,11 @@ and transition durations are constants in `game/windmills.py`.
 
 ## Model placement
 
+The placed tower and rotor Props both use `no_collision: true`: they are
+rendered scenery, not navigation obstacles. The windmill discovery marker can
+therefore remain at the tower centre without placing an NPC goal inside a
+solid model footprint.
+
 The rotor prop retains its authored tower-relative anchor **[0, 550, 170]**
 so existing maps and saved placements remain valid. Its OBJ mesh places the
 visible axle **150 units above that anchor**; the blades lie in the ground plane
