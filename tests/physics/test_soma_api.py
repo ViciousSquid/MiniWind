@@ -269,6 +269,7 @@ def test_a_barrel_is_knocked_over_and_stood_up_on_request():
 
 # -- the player ---------------------------------------------------------------
 
+@pytest.mark.qt
 def test_a_player_whose_physics_is_off_is_not_handed_to_physics():
     """Noclip, a spectator's free camera: the engine passes no player, so it
     pushes nothing. (What the deathmatch spectator used to patch ``step``
