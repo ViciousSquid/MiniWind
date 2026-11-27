@@ -4,6 +4,9 @@ import pytest
 
 pytest.importorskip("OpenGL", reason="renderer resources require PyOpenGL")
 
+# ResourcesMixin also imports Qt image/buffer helpers; run this in the Qt tier.
+pytestmark = pytest.mark.qt
+
 from types import SimpleNamespace
 
 from engine.renderer.core.resources import ResourcesMixin
