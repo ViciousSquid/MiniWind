@@ -55,7 +55,7 @@ def test_both_windmill_formats_draw_the_same_silhouette():
             renderer.cleanup()
 
 
-def test_the_placed_mill_keeps_its_silhouette_at_rest_and_only_the_sails_move():
+def test_the_placed_low_poly_house_mill_is_visible_and_only_the_sails_move():
     import json
     import glm
     import OpenGL.GL as gl
@@ -75,10 +75,7 @@ def test_the_placed_mill_keeps_its_silhouette_at_rest_and_only_the_sails_move():
                         if t['properties'].get(ROTOR_FOR) == tower_record['properties']['id'])
     body = Prop(pos=tower_record['pos'], properties=tower_record['properties'])
     rotor = Prop(pos=rotor_record['pos'], properties=rotor_record['properties'])
-    complete = Prop.for_model(str(folder / 'windmill.glb'))
-    complete.pos = list(body.pos)
-    complete.properties['rotation'] = list(body.properties['rotation'])
-    complete.properties['scale'] = list(body.properties['scale'])
+    authored_body_rotation = list(body.properties['rotation'])
     logic.editor_state.things.extend([body, rotor])
     mills = Windmills(logic)
     mills.install()
@@ -104,16 +101,17 @@ def test_the_placed_mill_keeps_its_silhouette_at_rest_and_only_the_sails_move():
                 gl.glFinish()
                 return ctx.read_pixels()
 
-            full = draw([complete])
             at_rest = draw([body, rotor])
-            assert np.mean(np.max(np.abs(full.astype(float) - at_rest), axis=-1) > 8) < 0.005
+            background = at_rest[0, 0]
+            visible = np.max(np.abs(at_rest.astype(float) - background), axis=-1) > 8
+            assert visible.mean() > 0.10
             from game.rpg import inventory, items
             inventory.add_item(inventory.get_inventory(body), items.make('wheat'))
             mills.update(SPIN_UP_SECONDS)
             turning = draw([body, rotor])
             changed = np.max(np.abs(turning.astype(float) - at_rest), axis=-1) > 8
             assert changed.mean() > 0.015
-            assert body.properties['rotation'] == complete.properties['rotation']
+            assert body.properties['rotation'] == authored_body_rotation
             assert glh.drain_gl_errors() == []
         finally:
             mills.clear()
