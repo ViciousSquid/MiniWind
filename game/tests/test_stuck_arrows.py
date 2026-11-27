@@ -64,11 +64,22 @@ class _Game:
         nearest_arrest_guard
 
 
+class _TestClock(list):
+    """Deterministic entity clock with per-test runtime cleanup hooks."""
+
+
 @pytest.fixture
-def clock(monkeypatch):
+def clock(monkeypatch, request):
     import engine.entity_table as et
-    now = [et._CLOCK_ORIGIN + 1000.0]
+    now = _TestClock([et._CLOCK_ORIGIN + 1000.0])
+    now.cleanups = []
     monkeypatch.setattr(time, "perf_counter", lambda: now[0])
+
+    def cleanup():
+        for callback in reversed(now.cleanups):
+            callback()
+
+    request.addfinalizer(cleanup)
     return now
 
 
@@ -91,6 +102,9 @@ def _play(fio_session, clock, things):
     _step(session, 2)
     game = _Game(session.logic)
     game.stuck_arrows.install()
+    # Remove the runtime's bound callbacks before FioTestSession closes its
+    # editor window; otherwise the logic/runtime cycle can retain the window.
+    clock.cleanups.append(game.stuck_arrows.uninstall)
     return session, game
 
 
