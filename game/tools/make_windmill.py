@@ -147,8 +147,8 @@ def lathe(name, profile, mat, sides=32, uv=False):
             high = (profile[j + 1][0] - profile[0][0]) / (profile[-1][0] - profile[0][0])
             coords.append(((i / sides, low), ((i + 1) / sides, low),
                            ((i + 1) / sides, high), (i / sides, high)))
-    faces += [tuple(reversed(range(sides))),
-              tuple((len(profile) - 1) * sides + i for i in range(sides))]
+    # Deliberately omit the ground-facing bottom cap; it is never visible.
+    faces += [tuple((len(profile) - 1) * sides + i for i in range(sides))]
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
     mesh.update()
