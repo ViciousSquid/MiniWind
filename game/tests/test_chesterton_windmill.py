@@ -1,6 +1,7 @@
 """The sidecar Chesterton landmark loads as three ordinary non-solid entities."""
 
 import json
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -40,6 +41,7 @@ def test_chesterton_addition_is_a_linked_non_solid_windmill():
 
 
 def test_landmark_injection_is_world_specific_and_idempotent():
+    pytest.importorskip("PyQt5.QtGui", reason="editor entity factory is Qt-backed")
     source = {"things": [{"properties": {"id": MAIN_MILL_ID, "name": "windmill"}}]}
     foreign = {"things": [{"properties": {"id": "another-world", "name": "windmill"}}]}
     state = SimpleNamespace(things=[], brushes=[])
