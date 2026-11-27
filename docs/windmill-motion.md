@@ -122,23 +122,29 @@ and transition durations are constants in `game/windmills.py`.
 ## Model placement
 
 The rotor prop retains its authored tower-relative anchor **[0, 550, 170]**
-so existing maps and saved placements remain valid. Its mesh places the visible
-axle **150 units above that anchor**; the blades lie in the ground plane and
-rotate about local **+Y**, keeping the four-sail silhouette visible to the
-top-down camera. Its placement follows the tower's position and rotation; use
-a uniform scale for the assembly. Stopping Play restores the rotor's authored
-transform. The complete `windmill.glb`, `windmill.obj` and orthographic PNG
-sprites are also supplied as static assets.
+so existing maps and saved placements remain valid. Its visible axle is
+**150 units above that anchor**; the blades lie in the ground plane and rotate
+about local **+Y**, keeping the four-sail silhouette visible to the top-down
+camera. The body and rotor are separate models so production can rotate only
+the sails. Their repository `.glb` payloads are gzip-compressed; Fio's GLB
+loader expands them (with the normal model-size limit) before parsing. To
+inspect either file in an external glTF tool, decompress a copy first:
 
-Rebuild the full and split models, metadata and orthographic sprites from the
-Blender source:
+```sh
+gzip -dc assets/models/windmill_body.glb > /tmp/windmill_body.glb
+gzip -dc assets/models/windmill_rotor.glb > /tmp/windmill_rotor.glb
+```
+
+The combined `windmill.glb`, `windmill.obj` and PNG sprites remain legacy
+static previews; the placed world model uses the split body/rotor pair.
+
+Rebuild the models and metadata from the Blender source:
 
 ```sh
 blender -b -t 4 -P game/tools/make_windmill.py -- --export-only
-```
-
-Then repack the model category for archive-only distributions:
-
-```sh
+gzip -n -9 -c assets/models/windmill_body.glb > /tmp/windmill_body.glb.gz
+gzip -n -9 -c assets/models/windmill_rotor.glb > /tmp/windmill_rotor.glb.gz
+mv /tmp/windmill_body.glb.gz assets/models/windmill_body.glb
+mv /tmp/windmill_rotor.glb.gz assets/models/windmill_rotor.glb
 python tools/pack_assets.py models
 ```
