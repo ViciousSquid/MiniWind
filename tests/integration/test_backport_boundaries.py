@@ -68,8 +68,10 @@ def _read(rel):
 
 def _iter_source():
     for p in ROOT.rglob("*.py"):
-        if ".git" in p.parts or ".claude" in p.parts:
-            continue          # tool state (agent worktrees), not the source
+        rel = p.relative_to(ROOT)
+        if (".git" in rel.parts or ".claude" in rel.parts
+                or "tests" in rel.parts or "__pycache__" in rel.parts):
+            continue          # tests exercise game imports; only production source is back-port scanned
         yield p
 
 
