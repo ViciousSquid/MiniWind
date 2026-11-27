@@ -107,6 +107,7 @@ def test_solar_hours_are_clock_hours_at_the_equinox_and_stretch_otherwise():
     assert drops <= 1
 
 
+@pytest.mark.qt
 def test_is_daytime_dusk_and_night_all_follow_the_season():
     summer_day = first_day(lambda d: d.season == "summer" and d.day_of_season == 4)
     winter_day = first_day(lambda d: d.season == "winter" and d.day_of_season == 4)
