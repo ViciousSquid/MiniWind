@@ -11,6 +11,8 @@ import pathlib
 
 import pytest
 
+pytestmark = pytest.mark.qt
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
