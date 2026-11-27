@@ -1,0 +1,96 @@
+{
+  "description": "Additional non-solid Chesterton-style windmill landmark for miniwind_world.json.",
+  "things": [
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        205,
+        2300
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "chesterton_windmill",
+        "id": "5e8f09a2-60c8-4f89-ae47-9e4c4e7a1f30",
+        "render_mode": "model",
+        "model_path": "assets/models/chesterton_windmill_body.obj",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true,
+        "gravity": false,
+        "windmill": true,
+        "display_name": "Chesterton Windmill",
+        "inventory": [],
+        "use_radius": 280,
+        "owner": "8e3851c7_edf9_4d1f_b9ea_37a0b6161d38",
+        "owner_name": "Bram the Farmer",
+        "owner_faction": "villagers",
+        "io_enabled": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        2400,
+        755,
+        2470
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "chesterton_windmill_sails",
+        "id": "5e8f09a2-60c8-4f89-ae47-9e4c4e7a1f31",
+        "render_mode": "model",
+        "model_path": "assets/models/windmill_rotor.obj",
+        "mill_rotor_for": "5e8f09a2-60c8-4f89-ae47-9e4c4e7a1f30",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true,
+        "io_enabled": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "marker",
+      "pos": [
+        2400,
+        237,
+        2300
+      ],
+      "properties": {
+        "type": "marker",
+        "name": "loc_chesterton_windmill",
+        "id": "5e8f09a2-60c8-4f89-ae47-9e4c4e7a1f32",
+        "marker_kind": "location",
+        "place_name": "Chesterton Windmill",
+        "discover_radius": 512,
+        "stop_on_escape": true,
+        "io_enabled": true,
+        "custom_idle": "assets/sprites/miniwind/marker_location.png"
+      },
+      "io_connections": []
+    }
+  ]
+}

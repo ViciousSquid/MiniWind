@@ -145,3 +145,14 @@ Rebuild the OBJ/MTL models and metadata from the Blender source:
 blender -b -t 4 -P game/tools/make_windmill.py -- --export-only
 python tools/pack_assets.py models
 ```
+
+## Chesterton Windmill landmark
+
+The main world gains a second Chesterton-inspired stone landmark through
+`maps/miniwind_chesterton_additions.json`. It has a round upper drum above
+four open masonry arches, a circular grass-capped plinth and a dark slate cap.
+Its four pale lattice sails reuse the existing rotor model and run through
+the normal per-instance motion system. The separate **Chesterton Windmill**
+discovery marker sits at the base. The body and sails are non-solid; the
+landmark does not obstruct NPC navigation. The sidecar is merged after the
+main world loads so the large embedded terrain payload remains untouched.
