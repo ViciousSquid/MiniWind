@@ -79,7 +79,9 @@ def test_the_separate_body_and_hub_centered_rotor_reconstruct_the_static_model()
             distances = np.sum((points[start:start + 128, None] - reference) ** 2, axis=-1)
             assert np.max(np.min(distances, axis=1)) < 1e-6
     assert np.ptp(models['windmill_rotor'][:, 1]) < 180  # compact vertical axle
-    assert np.ptp(models['windmill_rotor'][:, 0]) > 550\n    assert np.ptp(models['windmill_rotor'][:, 2]) > 550\n    assert models['windmill_body'][:, 1].max() < 720
+    assert np.ptp(models['windmill_rotor'][:, 0]) > 550
+    assert np.ptp(models['windmill_rotor'][:, 2]) > 550
+    assert models['windmill_body'][:, 1].max() < 720
 
 
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
