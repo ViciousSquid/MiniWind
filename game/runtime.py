@@ -2725,6 +2725,8 @@ class MiniwindSession(SettlementLaw):
         self.game = GameState.new_game(self.store, name, race_id, class_id,
                                        birthsign_id, gender, custom_class, self.rng,
                                        head=head)
+        # Opening flour is granted only on a fresh character, never on restore.
+        self.windmills.seed_starting_stock()
         if rolls:
             # STRENGTH, ENDURANCE and CHARISMA as the player rolled them.
             rpg_cha.apply_rolls(self.game.character, rolls)

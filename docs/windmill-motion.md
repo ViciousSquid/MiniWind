@@ -2,8 +2,8 @@
 
 A low-poly game-ready windmill: tapered 12-sided brick tower, gray metal
 bonnet, and a small attached brick mill house with a pitched terracotta tile
-roof, chimney, porch and timber entrance. Four red timber lattice sails remain
-separate geometry and rotate while the mill is producing.
+roof, chimney, porch and timber entrance. Four pale timber lattice sails remain
+separate geometry and rotate whenever the mill itself is operational.
 
 ## Production and sail motion
 
@@ -12,13 +12,16 @@ The placed mill in `maps/miniwind_world.json` uses two ordinary Props:
 The rotor's `mill_rotor_for` property references the tower's
 stable entity id. Ready-to-use paired records are in `windmill_props.json`.
 
-The tower owns an ordinary item inventory. **The blades turn while that
-inventory contains wheat.** The placed mill starts empty and stationary.
-Receiving the first wheat starts the rotor; removing the last wheat stops it.
-Other items do not power the mill.
+The tower owns an ordinary item inventory. **The sails turn whenever the mill
+is operational, even when its inventory is empty.** The placed mill starts
+empty but its rotor spins from the start of play. Wheat controls flour
+production, not blade motion: delivering wheat enables flour production;
+removing the last wheat stops production but does not stop the sails. Other
+items do not produce flour.
 
 - Starting takes **3 seconds** to reach **45 degrees/second** (7.5 rpm).
-- Stopping coasts to a complete halt over **3 seconds** from full speed.
+- A mill that is disabled, destroyed or held by a living holder coasts to a
+  complete halt over **3 seconds** from full speed.
 - Interrupting either transition continues from the current speed and angle.
 - A stopped rotor keeps its angle; restarting never resets its pose.
 - World pause freezes the motion. Durations use real seconds, independently
@@ -45,7 +48,7 @@ The old manual production flag is replaced by the inventory rule. The mill
 converts **10 wheat into 1 `flour`** every **15 game minutes** while a complete
 batch is available. `mill_batch_hours` edits the interval; saved `mill_progress`
 keeps partially completed work. Wheat left below ten waits for the next
-delivery and still keeps the sails turning. Flour and collected payments stay
+delivery; the sails continue turning independently of stock. Flour and collected payments stay
 in the same owned inventory, so taking them is theft too.
 
 ## Shops, journeys and food
@@ -121,12 +124,24 @@ and transition durations are constants in `game/windmills.py`.
 
 ## Model placement
 
-The rotor prop retains its authored tower-relative anchor **[0, 550, 170]**
-so existing maps and saved placements remain valid. Its OBJ mesh places the
-visible axle **150 units above that anchor**; the blades lie in the ground plane
-and rotate about local **+Y**, keeping the four-sail silhouette visible to the
-top-down camera. The body and rotor are separate Wavefront OBJ models with
-companion MTL files; the body MTL references `windmill_brick_albedo.png`.
+The placed tower and rotor Props both use `no_collision: true`: they are
+rendered scenery, not navigation obstacles. The windmill discovery marker can
+therefore remain at the tower centre without placing an NPC goal inside a
+solid model footprint.
+
+The original overhead-style mill keeps its historical rotor anchor
+**[0, 550, 170]** and ground-plane XZ sail disk, rotating about local **+Y**.
+Existing maps and saves therefore retain their established silhouette.
+
+The Chesterton landmark uses a dedicated `chesterton_windmill_rotor.obj`:
+its four sails lie in a vertical XY plane facing the body's **+Z** front, with
+a forged axle extending back along **-Z** into the stone tower. Its hub is
+anchored at body-local **[0, 700, 130]** and it rotates about local **+Z**.
+`mill_rotor_axis` and `mill_rotor_anchor` are per-instance properties, so
+the two windmills can share the same motion system without sharing the same
+orientation. Both body and rotor are separate Wavefront OBJ models with
+companion MTL files; the brick body MTL references
+`windmill_brick_albedo.png`.
 
 The combined `windmill.obj` and PNG sprites remain static previews. The live
 world uses `windmill_body.obj` and `windmill_rotor.obj` so only the sails rotate.
@@ -137,3 +152,15 @@ Rebuild the OBJ/MTL models and metadata from the Blender source:
 blender -b -t 4 -P game/tools/make_windmill.py -- --export-only
 python tools/pack_assets.py models
 ```
+
+## Chesterton Windmill landmark
+
+The main world gains a second Chesterton-inspired stone landmark through
+`maps/miniwind_chesterton_additions.json`. It has a round upper drum above
+four open masonry arches, a circular grass-capped plinth and a dark slate cap.
+Its four pale lattice sails use a vertical, side-mounted rotor with an
+axle that meets the tower face, and run through the normal per-instance motion
+system. The separate **Chesterton Windmill**
+discovery marker sits at the base. The body and sails are non-solid; the
+landmark does not obstruct NPC navigation. The sidecar is merged after the
+main world loads so the large embedded terrain payload remains untouched.

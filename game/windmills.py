@@ -1,4 +1,4 @@
-"""Windmill stock and sails: wheat in the inventory keeps the rotor turning.
+"""Windmill stock, flour production and continuously turning sails.
 
 The mill and its rotor are ordinary Props. ``mill_rotor_for`` on the rotor
 names the mill's stable entity id. The tower owns the ordinary, persistent
@@ -18,16 +18,22 @@ import math
 import glm
 
 from engine.change_journal import touch
+from engine.prop_entity import Prop
 from . import fio
 from .rpg import inventory, items
 
 MILL = "windmill"
 ROTOR_FOR = "mill_rotor_for"
+ROTOR_AXIS = "mill_rotor_axis"
+ROTOR_ANCHOR = "mill_rotor_anchor"
+_ROTATION_AXES = {"x": 0, "y": 1, "z": 2}
 HELD_BY = "mill_held_by"
 IDLE = "mill_idle"              # set while the mill's holder lives
 HOLD_CHECK_SECONDS = 2.0
 WHEAT = "wheat"
 FLOUR = "flour"
+STARTING_FLOUR = 25
+STARTING_STOCK_SEEDED = "mill_starting_stock_seeded"
 WHEAT_PER_FLOUR = 10
 MILL_BATCH_HOURS = 0.25
 HUB = (0.0, 550.0, 170.0)  # authored rotor prop anchor; visual hub is +150 local Y
@@ -35,6 +41,15 @@ DELIVERY_OFFSET = (0.0, 0.0, 210.0)   # outside the door and foundation
 RUN_SPEED = 45.0                 # degrees per real second (7.5 rpm)
 SPIN_UP_SECONDS = 3.0
 SPIN_DOWN_SECONDS = 3.0
+
+# The original Red Grove windmill body is already authored in the world map,
+# but predates the linked-rotor format. Give that stable entity its side-mounted
+# rotor at the authored hub position without rewriting the large world file.
+_RED_GROVE_BODY_ID = "933ae405-bd82-48e5-b8fc-16a035dc5392"
+_RED_GROVE_ROTOR_ID = "6ad420d5-0c99-4d42-8d16-6fcb9b523dce"
+_RED_GROVE_ROTOR_HUB = (-2028.658, 515.618, 7454.152)
+_RED_GROVE_ROTOR_ANCHOR = (-35.342, 339.618, 17.848)
+_RED_GROVE_ROTOR_MODEL = "assets/models/chesterton_windmill_rotor.obj"
 
 
 def item_stock(owner, item_id: str) -> int:
@@ -105,10 +120,16 @@ def mill_flour(mill, hours: float) -> int:
     return made
 
 
-def is_producing(mill) -> bool:
+def is_operational(mill) -> bool:
+    """Whether the mill itself is able to run, regardless of its wheat stock."""
     props = mill.properties
     return (not props.get("_bw_parked_disabled", props.get("disabled"))
-            and not props.get("dead") and not props.get(IDLE) and wheat_stock(mill) > 0)
+            and not props.get("dead") and not props.get(IDLE))
+
+
+def is_producing(mill) -> bool:
+    """Whether an operational mill has wheat available for flour production."""
+    return is_operational(mill) and wheat_stock(mill) > 0
 
 
 def _basis(props):
@@ -116,6 +137,12 @@ def _basis(props):
     basis = glm.rotate(glm.mat4(1.0), math.radians(rotation[1]), glm.vec3(0, 1, 0))
     basis = glm.rotate(basis, math.radians(rotation[0]), glm.vec3(1, 0, 0))
     return glm.rotate(basis, math.radians(rotation[2]), glm.vec3(0, 0, 1))
+
+
+def _rotor_axis_index(rotor) -> int:
+    """Return the authored local Euler axis used by this rotor (default +Y)."""
+    axis = str(rotor.properties.get(ROTOR_AXIS, "y")).lower()
+    return _ROTATION_AXES.get(axis, 1)
 
 
 def delivery_point(mill) -> list:
@@ -179,12 +206,23 @@ class _Mill:
         scale = props.get("scale", (1.0, 1.0, 1.0))
         if isinstance(scale, (int, float)):
             scale = (scale, scale, scale)
-        # Fio's model rotation order is Y, X, Z.
-        offset = _basis(props) * glm.vec4(*(HUB[i] * scale[i] for i in range(3)), 0.0)
+        # Most mills retain the overhead rotor's historical anchor. A body
+        # may author a different local hub position for a side-mounted rotor.
+        anchor = props.get(ROTOR_ANCHOR, HUB)
+        if not isinstance(anchor, (list, tuple)) or len(anchor) != 3:
+            anchor = HUB
+        try:
+            anchor = tuple(float(value) for value in anchor)
+            if not all(math.isfinite(value) for value in anchor):
+                anchor = HUB
+        except (TypeError, ValueError):
+            anchor = HUB
+        # Fio's model rotation order is Y, X, Z; the offset follows the body.
+        offset = _basis(props) * glm.vec4(*(anchor[i] * scale[i] for i in range(3)), 0.0)
         pos = [float(self.body.pos[i] + offset[i]) for i in range(3)]
         if list(self.rotor.pos) != pos:
             self.rotor.pos = pos
-        rotation[1] += self.motion.angle
+        rotation[_rotor_axis_index(self.rotor)] += self.motion.angle
         changes = {"rotation": rotation, "scale": list(scale)}
         changed = False
         for key, value in changes.items():
@@ -220,9 +258,56 @@ class Windmills:
         return min(available, key=lambda b: math.hypot(b.pos[0] - pos[0], b.pos[2] - pos[2]),
                    default=None)
 
+    def _ensure_red_grove_rotor(self, things) -> None:
+        """Attach the existing vertical sail model to the legacy Red Grove body.
+
+        The rotor hub coordinates are authored in world space. Keeping the
+        corresponding local anchor on the body makes the rotor follow later
+        translations, rotations and scale edits through the normal mill path.
+        """
+        body = next((thing for thing in things
+                     if getattr(thing, "properties", {}).get("id") == _RED_GROVE_BODY_ID),
+                    None)
+        if body is None:
+            return
+
+        body_props = body.properties
+        body_props.setdefault(ROTOR_ANCHOR, list(_RED_GROVE_ROTOR_ANCHOR))
+        if any(getattr(thing, "properties", {}).get(ROTOR_FOR) == _RED_GROVE_BODY_ID
+               for thing in things):
+            return
+
+        scale = body_props.get("scale", (1.0, 1.0, 1.0))
+        if isinstance(scale, (int, float)):
+            scale = [scale, scale, scale]
+        else:
+            scale = list(scale)
+        rotor = Prop(
+            pos=list(_RED_GROVE_ROTOR_HUB),
+            properties={
+                "type": "prop",
+                "name": "windmill_body_sails",
+                "id": _RED_GROVE_ROTOR_ID,
+                "render_mode": "model",
+                "model_path": _RED_GROVE_ROTOR_MODEL,
+                ROTOR_FOR: _RED_GROVE_BODY_ID,
+                ROTOR_AXIS: "z",
+                "rotation": list(body_props.get("rotation", (0.0, 0.0, 0.0))),
+                "scale": scale,
+                "carry_enabled": False,
+                "collect_enabled": False,
+                "physics_enabled": False,
+                "no_collision": True,
+                "gravity": False,
+                "io_enabled": True,
+            },
+        )
+        things.append(rotor)
+
     def install(self) -> None:
         self.clear()
         things = fio.things(self.logic)
+        self._ensure_red_grove_rotor(things)
         by_id = {t.properties.get("id"): t for t in things}
         self.mills = []
         for rotor in things:
@@ -235,8 +320,9 @@ class Windmills:
             body.properties[MILL] = True
             inventory.get_inventory(body)
             self._bodies[body.properties["id"]] = body
-            angle = (rotor.properties.get("rotation", (0, 0, 0))[1]
-                     - body.properties.get("rotation", (0, 0, 0))[1])
+            axis = _rotor_axis_index(rotor)
+            angle = (rotor.properties.get("rotation", (0, 0, 0))[axis]
+                     - body.properties.get("rotation", (0, 0, 0))[axis])
             mill = _Mill(body, rotor, RotorMotion(angle=angle % 360.0))
             mill.place()
             self.mills.append(mill)
@@ -244,6 +330,28 @@ class Windmills:
         # And again on the first update: actors placed at play start may
         # not all be in the world yet.
         self._hold_clock = HOLD_CHECK_SECONDS
+
+    def seed_starting_stock(self) -> int:
+        """Give every mill its opening flour stock once for a new game.
+
+        The marker is an ordinary saved property beside the inventory. This
+        method is called from character creation, not session installation,
+        so loading a save never replenishes flour that has been used.
+        """
+        seeded = 0
+        for body in self._bodies.values():
+            props = body.properties
+            if props.get(STARTING_STOCK_SEEDED):
+                continue
+            missing = max(0, STARTING_FLOUR - item_stock(body, FLOUR))
+            if missing:
+                flour = items.make(FLOUR, missing)
+                if flour is None:
+                    raise RuntimeError(f"Starting mill item is not registered: {FLOUR}")
+                inventory.add_item(inventory.get_inventory(body), flour)
+            props[STARTING_STOCK_SEEDED] = True
+            seeded += 1
+        return seeded
 
     def check_holders(self, things=None) -> None:
         """Idle each held mill while anyone of its holder's name lives."""
@@ -276,7 +384,7 @@ class Windmills:
             self._hold_clock = 0.0
             self.check_holders()
         for mill in self.mills:
-            mill.motion.advance(delta, is_producing(mill.body))
+            mill.motion.advance(delta, is_operational(mill.body))
             mill.place()
 
     def produce(self, hours: float) -> None:

@@ -1,0 +1,129 @@
+# Ruined Cathedral materials: shared 4x4 atlas
+
+newmtl limestone
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl weathered
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl shadow_stone
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl cut_stone
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl moss_stone
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl slate
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl oak
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl rotten_wood
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl stained_glass
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 64
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl iron
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 42
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl rubble
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl ivy
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl soot_stone
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl dressed
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl dark_stone
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm
+
+newmtl roof_slate
+Ka 0.72 0.72 0.72
+Kd 1.0 1.0 1.0
+Ks 0.12 0.12 0.12
+Ns 18
+illum 2
+map_Kd ruined_cathedral_atlas.xpm

@@ -188,6 +188,28 @@ def _patch_map_loading():
         return _orig_load(self, filePath, *args, **kwargs)
 
     MainWindow.load_level_file = load_level_file
+
+    # Add authored world landmarks after the main world has been deserialised,
+    # before its first editor frame. The sidecar is deliberately separate from
+    # the world's large embedded terrain payload.
+    if not getattr(MainWindow, "_miniwind_chesterton_load_patched", False):
+        _orig_scene_load = MainWindow._load_level
+
+        def load_level_with_chesterton(self, level_data, *args, **kwargs):
+            loaded = _orig_scene_load(self, level_data, *args, **kwargs)
+            if loaded:
+                try:
+                    from .world_landmarks import install_chesterton_landmarks
+                    added = install_chesterton_landmarks(self.state, level_data)
+                    if added:
+                        _log(f"Added {added} authored world landmark entities")
+                except Exception as exc:
+                    _log(f"World landmark placement skipped ({exc})")
+            return loaded
+
+        MainWindow._load_level = load_level_with_chesterton
+        MainWindow._miniwind_chesterton_load_patched = True
+
     MainWindow._miniwind_maps_gated = True
 
 

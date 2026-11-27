@@ -1,0 +1,65 @@
+# MiniWind medieval village house atlas materials
+newmtl plaster
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+
+newmtl oak
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+
+newmtl thatch
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+
+newmtl clay_roof
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+
+newmtl stone
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+
+newmtl glass
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+
+newmtl limewash
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+
+newmtl dark_oak
+Ka 0.75 0.75 0.75
+Kd 1.0 1.0 1.0
+Ks 0.08 0.08 0.08
+Ns 18
+illum 2
+map_Kd village_house_atlas.xpm
+

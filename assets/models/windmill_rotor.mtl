@@ -1,8 +1,8 @@
-# MiniWind low-poly rotating sails
+# MiniWind pale timber lattice sails
 newmtl Sail_red
-Ka 0.16 0.03 0.02
-Kd 0.52 0.085 0.045
-Ks 0.12 0.05 0.03
+Ka 0.31 0.29 0.25
+Kd 0.82 0.79 0.69
+Ks 0.16 0.16 0.13
 Ns 24
 illum 2
 

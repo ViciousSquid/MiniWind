@@ -53,6 +53,29 @@ def test_live_body_and_rotor_load_as_obj_with_top_down_bounds():
     assert combined[:, 1].max() < 730
 
 
+def test_live_rotor_obj_has_valid_indices_and_four_complete_sails():
+    rotor = load_obj("windmill_rotor.obj")
+    quadrant_faces = [0, 0, 0, 0]
+
+    for face in rotor.faces:
+        corners = face["vertices"]
+        assert corners
+        assert all(0 <= corner[0] < len(rotor.vertices) for corner in corners), (
+            "windmill_rotor.obj contains a face with an invalid position index"
+        )
+        points = np.asarray([rotor.vertices[corner[0]] for corner in corners],
+                            dtype=np.float32)
+        centre = points.mean(axis=0)
+        if np.hypot(centre[0], centre[2]) < 80:
+            continue
+        angle = (np.degrees(np.arctan2(centre[2], centre[0])) + 360.0) % 360.0
+        quadrant = int(((angle + 45.0) % 360.0) // 90.0)
+        quadrant_faces[quadrant] += 1
+
+    assert min(quadrant_faces) >= 30, quadrant_faces
+    assert min(rotor.materials["Sail_red"]["diffuse"]) >= 0.65
+
+
 def test_body_and_rotor_obj_material_libraries_resolve():
     body = load_obj("windmill_body.obj")
     rotor = load_obj("windmill_rotor.obj")

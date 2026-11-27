@@ -59,6 +59,22 @@ def test_an_undiscovered_place_cannot_be_travelled_to():
     assert (logic.player.pos.x, logic.player.pos.z) == (0.0, 0.0)
 
 
+def test_smm_reveals_every_named_place_and_unlocks_fast_travel_between_them():
+    from ..console import ConsoleContext, cmd_smm
+
+    s, _logic = _world(discovered=False)
+    ctx = ConsoleContext(logic_thread=SimpleNamespace(_miniwind=s), play_mode=True)
+    cmd_smm(ctx, "")
+
+    for name in ("Hollin's Cross", "Old Mill"):
+        assert s.store.get(f"visited.{s._slug(name)}", "0") == "1"
+        assert s.fast_travel_check(name)[0]
+
+    # Use the existing travel implementation, including its arrival and clock handling.
+    assert s.fast_travel("Old Mill")
+    assert s.fast_travel("Hollin's Cross")
+
+
 def test_no_fast_travel_with_enemies_near_or_carrying_too_much():
     s, logic = _world()
     wolf = entities.Creature(pos=[300.0, 0.0, 0.0], properties={"npc_role": "wolf",

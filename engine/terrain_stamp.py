@@ -32,6 +32,14 @@ PAINT_FORMAT = "terrain_paint"          # paint and stamps
 _FORMATS = (STAMP_FORMAT, PAINT_FORMAT)
 STAMP_VERSION = 1
 STAMP_EXTENSION = ".paint"
+ROAD_OVERLAY_SUFFIX = ".roads" + STAMP_EXTENSION
+#: Set on a level's terrain by :func:`apply_stamp_overlay` when it appended
+#: stamp records whose pixels are not in the map's baked paint. Read by
+#: :meth:`engine.terrain.Terrain.from_dict`, which bakes them in when the
+#: terrain is built, so the overlay is the road on the ground, not only
+#: records. Never written by a save: once the terrain has baked them the
+#: paint file carries them like any other stamp.
+UNBAKED_KEY = "paint_stamps_unbaked"
 
 _STAMP_FIELDS = ("id", "texture", "x", "z", "radius", "angle", "feather", "opacity")
 
@@ -46,6 +54,14 @@ def default_stamp_path(map_path: Optional[str], fallback_dir: str = "") -> str:
         base, _ext = os.path.splitext(os.path.abspath(map_path))
         return base + STAMP_EXTENSION
     return os.path.join(fallback_dir or os.getcwd(), "untitled" + STAMP_EXTENSION)
+
+
+def road_overlay_path(map_path: Optional[str]) -> Optional[str]:
+    """The optional pathnode-road paint overlay beside *map_path*."""
+    if not map_path:
+        return None
+    base, _ext = os.path.splitext(os.path.abspath(map_path))
+    return base + ROAD_OVERLAY_SUFFIX
 
 
 def export_stamp(terrain) -> dict:
@@ -209,23 +225,70 @@ def missing_paint_message(name: str) -> str:
     return f"{name} was not found so this map will not display paint/stamps"
 
 
-def join_level(level: dict, map_path: Optional[str]) -> dict:
-    """Give a level read from *map_path* the paint saved beside it.
+def apply_stamp_overlay(level: dict, data: dict) -> dict:
+    """Append editable stamp records without replacing the map's baked paint.
 
-    A map that still carries its paint (saved before it moved out) keeps it.
-    A missing or unreadable paint file leaves the map as it is: unpainted.
+    Stamps already present in the regular .paint file win, preserving edits
+    made in the editor after an overlay was first loaded. The appended
+    records are marked (:data:`UNBAKED_KEY`) for the terrain, which bakes
+    them into its paint when it is built: the map's baked paint does not
+    hold them, so a record alone would show nothing on the ground.
     """
-    if not _wants_paint(level) or not map_path:
+    if not isinstance(level, dict) or not isinstance(data, dict):
         return level
-    path = paint_path(map_path)
-    if path is None:
+    terrain = level.get(TERRAIN_KEY)
+    if not isinstance(terrain, dict):
         return level
-    try:
-        data = load_stamp_file(path)
-    except StampError as exc:
-        print(f"[Terrain] {os.path.basename(path)} was not used: {exc}")
+    records = data.get("stamps")
+    if not isinstance(records, list) or not records:
         return level
-    return apply_stamp_delta(level, data)
+    current = terrain.get(STAMPS_KEY)
+    stamps = list(current) if isinstance(current, list) else []
+    seen = {str(stamp.get("id")) for stamp in stamps
+            if isinstance(stamp, dict) and stamp.get("id") is not None}
+    added = False
+    for raw in records:
+        if not isinstance(raw, dict):
+            continue
+        stamp_id = raw.get("id")
+        if not isinstance(stamp_id, str) or not stamp_id or stamp_id in seen:
+            continue
+        stamps.append(dict(raw))
+        seen.add(stamp_id)
+        added = True
+    if not added:
+        return level
+    updated = dict(level)
+    updated_terrain = dict(terrain)
+    updated_terrain[STAMPS_KEY] = stamps
+    # The records alone are not the road on the ground.
+    updated_terrain[UNBAKED_KEY] = True
+    updated[TERRAIN_KEY] = updated_terrain
+    return updated
+
+
+def join_level(level: dict, map_path: Optional[str]) -> dict:
+    """Load the map's paint file and its optional pathnode-road overlay."""
+    if not map_path:
+        return level
+    if _wants_paint(level):
+        path = paint_path(map_path)
+        if path is not None:
+            try:
+                data = load_stamp_file(path)
+            except StampError as exc:
+                print(f"[Terrain] {os.path.basename(path)} was not used: {exc}")
+            else:
+                level = apply_stamp_delta(level, data)
+    overlay_path = road_overlay_path(map_path)
+    if overlay_path and _exists(overlay_path):
+        try:
+            overlay = load_stamp_file(overlay_path)
+        except StampError as exc:
+            print(f"[Terrain] {os.path.basename(overlay_path)} was not used: {exc}")
+        else:
+            level = apply_stamp_overlay(level, overlay)
+    return level
 
 
 def _wants_paint(level) -> bool:
