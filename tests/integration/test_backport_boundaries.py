@@ -89,6 +89,7 @@ def test_generic_modules_carry_no_rpg_vocabulary():
         ("editor/things.py", "quest"),   # LogicState docstring example
         ("editor/things.py", "hit_flash"), # generic render-state field
         ("editor/things.py", "npc"),       # Fio's generic actor entity type
+        ("editor/editor_state.py", "miniwind"),  # docstring names the game-owned save hook
     }
     offenders = []
     for rel in GENERIC_MODULES:
