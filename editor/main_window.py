@@ -209,19 +209,21 @@ def _file_identity(path):
 
 
 def _level_files_identity(path):
-    """The identity of the files a map read from *path* is made of: the map
-    file's version and its paint file's (``None`` when the map is not a file
-    on disk -- one served from a ``.fiopak`` -- so nothing is remembered)."""
+    """Identity of the map and the files layered beside it: paint, road
+    overlay and an optional ``.heightmap`` sidecar. A map in a ``.fiopak``
+    has no loose-file identity and is therefore never cached here."""
     version = _file_identity(path)
     if version is None:
         return None
     from engine import terrain_stamp
     paint = terrain_stamp.paint_path(path)
     overlay = terrain_stamp.road_overlay_path(path)
+    heightmap = os.path.splitext(os.fspath(path))[0] + '.heightmap'
     overlay_version = _file_identity(overlay) if overlay else None
     return (version,
             (paint, _file_identity(paint)) if paint else None,
-            (overlay, overlay_version) if overlay_version else None)
+            (overlay, overlay_version) if overlay_version else None,
+            (heightmap, _file_identity(heightmap)))
 
 
 #: The identities of map files a load has validated (_level_files_identity).
@@ -276,11 +278,33 @@ def _read_level_text(path):
         return f.read()
 
 
+def _join_heightmap_sidecar(level_data, path):
+    """Apply an optional base64 NumPy heightmap kept beside a map.
+
+    The sidecar is a complete replacement for ``terrain_data.heightmap_blob``;
+    it lets large maps keep terrain edits out of their already-large JSON.
+    """
+    terrain_data = level_data.get('terrain_data') if isinstance(level_data, dict) else None
+    if not isinstance(terrain_data, dict):
+        return False
+    sidecar = os.path.splitext(os.fspath(path))[0] + '.heightmap'
+    try:
+        blob = _read_level_text(sidecar).strip()
+    except FileNotFoundError:
+        return False
+    if not blob:
+        return False
+    terrain_data['heightmap_blob'] = blob
+    return True
+
+
 def _read_level_json(path):
-    """A map's JSON (:func:`_read_level_text`), with the terrain paint kept
-    beside it (``<map name>.paint``) laid back over it."""
+    """A map's JSON, with its optional heightmap and terrain paint sidecars
+    laid back over it."""
     from engine import terrain_stamp
-    return terrain_stamp.join_level(json.loads(_read_level_text(path)), path)
+    level_data = json.loads(_read_level_text(path))
+    _join_heightmap_sidecar(level_data, path)
+    return terrain_stamp.join_level(level_data, path)
 
 def _non_finite_at(value, path=""):
     """Where in *value* the first NaN or infinite number is (for example
@@ -6208,6 +6232,9 @@ class MainWindow(QMainWindow):
                 identity = _level_files_identity(filePath)
                 text = _read_level_text(filePath)
                 level_data = json.loads(text)
+                # A loose <map stem>.heightmap overrides the embedded terrain
+                # heightmap without requiring a rewrite of a large world JSON.
+                _join_heightmap_sidecar(level_data, filePath)
                 # A map saved minified is saved minified again.
                 minified = self._is_minified_json(text)
                 # Terrain paint and placed stamps are kept beside the map.
