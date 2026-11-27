@@ -77,7 +77,7 @@ def test_marras_is_the_only_windmill(world):
     """Mara's windmill, by Millbrook, is the only one in the Vale; the Old
     Mill camp stands on the ground (no invisible slab walls it off)."""
     mills = [t["properties"] for t in world["things"] if t["properties"].get("windmill")]
-    assert [p["name"] for p in mills] == ["windmill"]
+    assert [p["name"] for p in mills] == ["chesterton_windmill"]
     assert not any(t["properties"].get("flour_mill") for t in world["things"])
     slab = [b for b in world["brushes"] if b.get("id") == "b74c0988-958e-4b46-9da5-56f91533f829"]
     assert slab and slab[0]["hidden"] is True
