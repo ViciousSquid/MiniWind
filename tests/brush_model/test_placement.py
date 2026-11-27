@@ -504,7 +504,7 @@ def test_the_editor_pickers_ignore_a_stale_copy(main_window, monkeypatch):
 # where the same roof's pos is its placement.
 # ---------------------------------------------------------------------------
 
-CLIPPED_TERRAIN = 'e23ac095'
+CLIPPED_TERRAIN = '66e07335'
 
 
 @pytest.mark.parametrize("name", ["miniwind_world.json"])
