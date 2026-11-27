@@ -165,7 +165,10 @@ def test_the_sites_are_spread_out():
     m = _map()
     locs = [t["pos"] for t in m["things"]
             if t["properties"].get("marker_kind") == "location"
-            and t["properties"].get("place_name") != "Millbrook"]
+            # The windmill and Chesterton Windmill markers label one complex,
+            # not two independent settlements or quest sites.
+            and t["properties"].get("place_name") not in {
+                "Millbrook", "Windmill", "Chesterton Windmill"}]
     nearest = []
     for i, a in enumerate(locs):
         d = min(math.hypot(a[0] - b[0], a[2] - b[2])
