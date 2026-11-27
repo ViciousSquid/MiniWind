@@ -1,8 +1,9 @@
 # Windmill blade motion
 
-A game-ready windmill: tapered brick tower, gray metal bonnet, red timber
-lattice sails, timber door and small windows. The placed world mill has
-rotating sails controlled by its production state.
+A low-poly game-ready windmill: tapered 12-sided brick tower, gray metal
+bonnet, and a small attached brick mill house with a pitched terracotta tile
+roof, chimney, porch and timber entrance. Four red timber lattice sails remain
+separate geometry and rotate while the mill is producing.
 
 ## Production and sail motion
 
@@ -120,14 +121,30 @@ and transition durations are constants in `game/windmills.py`.
 
 ## Model placement
 
-The rotor's local origin is its axle, with pivot **[0, 550, 170]** in tower
-coordinates and rotation about **+Z**. Its placement follows the tower's
-position and rotation; use a uniform scale for the assembly. Stopping Play
-restores the rotor's authored transform. The complete `windmill.glb`,
-`windmill.obj` and the rendered PNG sprites are also supplied as static assets.
+The rotor prop retains its authored tower-relative anchor **[0, 550, 170]**
+so existing maps and saved placements remain valid. Its visible axle is
+**150 units above that anchor**; the blades lie in the ground plane and rotate
+about local **+Y**, keeping the four-sail silhouette visible to the top-down
+camera. The body and rotor are separate models so production can rotate only
+the sails. Their repository `.glb` payloads are gzip-compressed; Fio's GLB
+loader expands them (with the normal model-size limit) before parsing. To
+inspect either file in an external glTF tool, decompress a copy first:
 
-Rebuild the full and split models from the same Blender source with:
+```sh
+gzip -dc assets/models/windmill_body.glb > /tmp/windmill_body.glb
+gzip -dc assets/models/windmill_rotor.glb > /tmp/windmill_rotor.glb
+```
+
+The combined `windmill.glb`, `windmill.obj` and PNG sprites remain legacy
+static previews; the placed world model uses the split body/rotor pair.
+
+Rebuild the models and metadata from the Blender source:
 
 ```sh
 blender -b -t 4 -P game/tools/make_windmill.py -- --export-only
+gzip -n -9 -c assets/models/windmill_body.glb > /tmp/windmill_body.glb.gz
+gzip -n -9 -c assets/models/windmill_rotor.glb > /tmp/windmill_rotor.glb.gz
+mv /tmp/windmill_body.glb.gz assets/models/windmill_body.glb
+mv /tmp/windmill_rotor.glb.gz assets/models/windmill_rotor.glb
+python tools/pack_assets.py models
 ```

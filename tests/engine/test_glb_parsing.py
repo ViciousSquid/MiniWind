@@ -15,6 +15,7 @@ Regressions covered:
   absolute path) was read in full.
 """
 
+import gzip
 import json
 import struct
 import types
@@ -182,3 +183,23 @@ def test_an_oversized_glb_is_refused_unread(tmp_path, monkeypatch):
     path.write_bytes(_glb(gltf, blob))
     monkeypatch.setattr(glb_loader, "MAX_GLB_FILE_BYTES", 64)
     assert GLBLoader().load(str(path)) is False
+
+
+
+def test_a_gzip_compressed_glb_loads_through_the_normal_model_path(tmp_path):
+    gltf, blob, positions, _, _ = _quad()
+    path = tmp_path / "model.glb"
+    path.write_bytes(gzip.compress(_glb(gltf, blob), compresslevel=9))
+
+    loader = GLBLoader()
+    assert loader.load(str(path))
+    np.testing.assert_array_equal(
+        loader.meshes[0]["primitives"][0]["positions"], positions)
+
+
+def test_a_gzip_expansion_past_the_glb_limit_is_refused(monkeypatch):
+    import gzip
+    import engine.glb_loader as module
+
+    monkeypatch.setattr(module, "MAX_GLB_FILE_BYTES", 32)
+    assert module._decode_model_bytes(gzip.compress(b"x" * 33)) is None

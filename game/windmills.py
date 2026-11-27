@@ -30,7 +30,7 @@ WHEAT = "wheat"
 FLOUR = "flour"
 WHEAT_PER_FLOUR = 10
 MILL_BATCH_HOURS = 0.25
-HUB = (0.0, 550.0, 170.0)
+HUB = (0.0, 550.0, 170.0)  # authored rotor prop anchor; visual hub is +150 local Y
 DELIVERY_OFFSET = (0.0, 0.0, 210.0)   # outside the door and foundation
 RUN_SPEED = 45.0                 # degrees per real second (7.5 rpm)
 SPIN_UP_SECONDS = 3.0
@@ -184,7 +184,7 @@ class _Mill:
         pos = [float(self.body.pos[i] + offset[i]) for i in range(3)]
         if list(self.rotor.pos) != pos:
             self.rotor.pos = pos
-        rotation[2] += self.motion.angle
+        rotation[1] += self.motion.angle
         changes = {"rotation": rotation, "scale": list(scale)}
         changed = False
         for key, value in changes.items():
@@ -235,8 +235,8 @@ class Windmills:
             body.properties[MILL] = True
             inventory.get_inventory(body)
             self._bodies[body.properties["id"]] = body
-            angle = (rotor.properties.get("rotation", (0, 0, 0))[2]
-                     - body.properties.get("rotation", (0, 0, 0))[2])
+            angle = (rotor.properties.get("rotation", (0, 0, 0))[1]
+                     - body.properties.get("rotation", (0, 0, 0))[1])
             mill = _Mill(body, rotor, RotorMotion(angle=angle % 360.0))
             mill.place()
             self.mills.append(mill)
