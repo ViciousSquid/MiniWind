@@ -16,8 +16,9 @@ from engine.threaded_game_state import ThreadedGameState
 
 from ..rpg import inventory, items
 from ..windmills import (HUB, MILL, ROTOR_AXIS, ROTOR_ANCHOR, ROTOR_FOR, RUN_SPEED,
-                         SPIN_DOWN_SECONDS, SPIN_UP_SECONDS, Windmills,
-                         is_producing, wheat_stock)
+                         SPIN_DOWN_SECONDS, SPIN_UP_SECONDS, STARTING_FLOUR,
+                         STARTING_STOCK_SEEDED, Windmills, is_producing,
+                         item_stock, wheat_stock)
 
 pytestmark = pytest.mark.qt
 ROOT = Path(__file__).resolve().parents[2]
@@ -187,6 +188,27 @@ def test_the_shipped_world_has_an_empty_mill_and_a_linked_rotor(logic):
     assert is_producing(mills.mills[0].body)
     mills.update(0.5)
     assert mills.mills[0].rotor.properties['rotation'][1] > first_angle
+
+
+def test_new_game_seeds_each_mill_with_fifty_flour_once(logic):
+    first, _first_rotor = _pair(logic, "first", producing=False)
+    second, _second_rotor = _pair(logic, "second", producing=False)
+    mills = Windmills(logic)
+    mills.install()
+
+    assert item_stock(first, "flour") == 0
+    assert item_stock(second, "flour") == 0
+    assert mills.seed_starting_stock() == 2
+    assert item_stock(first, "flour") == STARTING_FLOUR == 50
+    assert item_stock(second, "flour") == STARTING_FLOUR == 50
+    assert first.properties[STARTING_STOCK_SEEDED]
+    assert second.properties[STARTING_STOCK_SEEDED]
+
+    # Running the new-game initialiser again must not replenish consumed stock.
+    inventory.remove_item(first.properties["inventory"], "flour", STARTING_FLOUR)
+    assert mills.seed_starting_stock() == 0
+    assert item_stock(first, "flour") == 0
+    assert item_stock(second, "flour") == STARTING_FLOUR
 
 
 def test_the_game_session_installs_ticks_and_clears_its_windmills(logic):

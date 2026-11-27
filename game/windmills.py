@@ -32,6 +32,8 @@ IDLE = "mill_idle"              # set while the mill's holder lives
 HOLD_CHECK_SECONDS = 2.0
 WHEAT = "wheat"
 FLOUR = "flour"
+STARTING_FLOUR = 50
+STARTING_STOCK_SEEDED = "mill_starting_stock_seeded"
 WHEAT_PER_FLOUR = 10
 MILL_BATCH_HOURS = 0.25
 HUB = (0.0, 550.0, 170.0)  # authored rotor prop anchor; visual hub is +150 local Y
@@ -328,6 +330,28 @@ class Windmills:
         # And again on the first update: actors placed at play start may
         # not all be in the world yet.
         self._hold_clock = HOLD_CHECK_SECONDS
+
+    def seed_starting_stock(self) -> int:
+        """Give every mill its opening flour stock once for a new game.
+
+        The marker is an ordinary saved property beside the inventory. This
+        method is called from character creation, not session installation,
+        so loading a save never replenishes flour that has been used.
+        """
+        seeded = 0
+        for body in self._bodies.values():
+            props = body.properties
+            if props.get(STARTING_STOCK_SEEDED):
+                continue
+            missing = max(0, STARTING_FLOUR - item_stock(body, FLOUR))
+            if missing:
+                flour = items.make(FLOUR, missing)
+                if flour is None:
+                    raise RuntimeError(f"Starting mill item is not registered: {FLOUR}")
+                inventory.add_item(inventory.get_inventory(body), flour)
+            props[STARTING_STOCK_SEEDED] = True
+            seeded += 1
+        return seeded
 
     def check_holders(self, things=None) -> None:
         """Idle each held mill while anyone of its holder's name lives."""
