@@ -188,24 +188,44 @@ class StuckArrows:
         #: world is rebuilt: a load, a streamed cell).
         self._seen = None
         self._sprites = {}
+        # Keep the exact bound method installed on PropSession so teardown
+        # can remove that callback by identity, not by recreating a method.
+        self._use_claim = None
 
     @property
     def logic(self):
-        return self.session.logic
+        return getattr(self.session, "logic", None) if self.session is not None else None
 
     # -- lifecycle ----------------------------------------------------------
     def install(self) -> None:
-        fio.set_projectile_catcher(self.logic, self)
-        fio.set_prop_use_claim(self.logic, self.claims_use)
+        logic = self.logic
+        if logic is None:
+            return
+        self._use_claim = self.claims_use
+        fio.set_projectile_catcher(logic, self)
+        fio.set_prop_use_claim(logic, self._use_claim)
 
     def uninstall(self) -> None:
-        fio.clear_projectile_catcher(self.logic, self)
-        runtime = fio.prop_runtime(self.logic)
-        if runtime is not None and getattr(runtime, "use_claim", None) == self.claims_use:
-            runtime.use_claim = None
+        """Detach both engine hooks and release this runtime's game session.
+
+        The projectile catcher is this object; the Prop use hook is a bound
+        method. Keep the installed method object so it can be removed by
+        identity. Clearing the session also makes an uninstalled runtime
+        incapable of retaining the game session (and its LogicThread).
+        """
+        logic = self.logic
+        if logic is not None:
+            fio.clear_projectile_catcher(logic, self)
+            runtime = fio.prop_runtime(logic)
+            if (runtime is not None
+                    and getattr(runtime, "use_claim", None) is self._use_claim):
+                runtime.use_claim = None
+        self._use_claim = None
+        self.session = None
         self.drawn = ()
         self._barrels = {}
         self._seen = None
+        self._sprites.clear()
 
     # -- the barrels --------------------------------------------------------
     def _frame(self, barrel):
