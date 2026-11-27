@@ -31,8 +31,8 @@ def test_obj_and_glb_have_the_same_upright_ground_origin_and_dimensions():
     np.testing.assert_allclose(a.min(0), b.min(0), atol=1e-3)
     np.testing.assert_allclose(a.max(0), b.max(0), atol=1e-3)
     assert a[:, 1].min() == pytest.approx(0)
-    assert 800 < a[:, 1].max() < 900             # about eight 100-unit players
-    assert 570 < np.ptp(a[:, 0]) < 600
+    assert 700 < a[:, 1].max() < 730             # tower finial and overhead rotor
+    assert 700 < np.ptp(a[:, 0]) < 750
     assert len(obj.faces) < 10000 and len(glb.get_flattened_triangles()) < 10000
     info = json.loads((FOLDER / 'windmill.json').read_text())
     np.testing.assert_allclose(a.max(0), info['bounds_max'], atol=1e-3)
@@ -78,8 +78,8 @@ def test_the_separate_body_and_hub_centered_rotor_reconstruct_the_static_model()
         for start in range(0, len(points), 128):
             distances = np.sum((points[start:start + 128, None] - reference) ** 2, axis=-1)
             assert np.max(np.min(distances, axis=1)) < 1e-6
-    assert np.ptp(models['windmill_rotor'][:, 2]) < 20
-    assert models['windmill_body'][:, 1].max() < 720
+    assert np.ptp(models['windmill_rotor'][:, 1]) < 180  # compact vertical axle
+    assert np.ptp(models['windmill_rotor'][:, 0]) > 550\n    assert np.ptp(models['windmill_rotor'][:, 2]) > 550\n    assert models['windmill_body'][:, 1].max() < 720
 
 
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
