@@ -336,11 +336,13 @@ def test_game_mode_switches_between_normal_and_dynamic(app):
     menu.editor.pause_menu_set_game_mode = lambda mode: state.update(mode=mode)
     page = _options(menu)
     _row(page, "game_mode")
-    assert "only paces" in page._note("game_mode")
+    from game.ui.options_page import GAME_MODE_BANNERS
+    assert page._note("game_mode") == ""  # explanation is painted as a banner
+    assert GAME_MODE_BANNERS["normal"] == "Experience the world as it unfolds."
     menu.handle_key(_key(QtCore.Qt.Key_Right))
     assert state["mode"] == "dynamic"
     assert dict((k, v) for k, _l, v, _o in page.rows())["game_mode"] == "Dynamic"
-    assert "stages scenes" in page._note("game_mode")
+    assert GAME_MODE_BANNERS["dynamic"] == "The world brings emerging stories to you."
     menu.handle_key(_key(QtCore.Qt.Key_Left))
     assert state["mode"] == "normal"
     _draw(menu)                                     # paints without error
