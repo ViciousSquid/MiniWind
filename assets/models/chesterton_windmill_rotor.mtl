@@ -1,0 +1,14 @@
+# MiniWind Chesterton side-mounted lattice sails and axle
+newmtl Sail_red
+Ka 0.31 0.29 0.25
+Kd 0.82 0.79 0.69
+Ks 0.16 0.16 0.13
+Ns 24
+illum 2
+
+newmtl Iron
+Ka 0.03 0.035 0.04
+Kd 0.055 0.065 0.07
+Ks 0.25 0.25 0.25
+Ns 60
+illum 2
