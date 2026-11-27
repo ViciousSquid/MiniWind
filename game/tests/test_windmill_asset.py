@@ -64,23 +64,26 @@ def test_the_placed_obj_house_mill_is_visible_and_only_the_sails_move():
     from engine.logic_thread import LogicThread
     from engine.renderer.forward import ForwardRenderer
     from engine.threaded_game_state import ThreadedGameState
-    from game.windmills import ROTOR_FOR, SPIN_UP_SECONDS, Windmills
+    from game.windmills import (ROTOR_AXIS, ROTOR_FOR, SPIN_UP_SECONDS,
+                                Windmills)
 
     root = Path(__file__).resolve().parents[2]
-    folder = root / 'assets/models'
     logic = LogicThread(ThreadedGameState(), EditorState())
     world = json.loads((root / 'maps/miniwind_world.json').read_text())
-    tower_record = next(t for t in world['things'] if t['properties'].get('name') == 'windmill')
-    rotor_record = next(t for t in world['things']
-                        if t['properties'].get(ROTOR_FOR) == tower_record['properties']['id'])
+    # The Red Grove tower predates the linked-rotor format. Windmills.install
+    # attaches its authored side-mounted rotor at the stable hub in windmills.py.
+    tower_record = next(t for t in world['things']
+                        if t['properties'].get('id') == '933ae405-bd82-48e5-b8fc-16a035dc5392')
     body = Prop(pos=tower_record['pos'], properties=tower_record['properties'])
-    rotor = Prop(pos=rotor_record['pos'], properties=rotor_record['properties'])
-    assert body.properties['model_path'].endswith('windmill_body.obj')
-    assert rotor.properties['model_path'].endswith('windmill_rotor.obj')
-    authored_body_rotation = list(body.properties['rotation'])
-    logic.editor_state.things.extend([body, rotor])
+    logic.editor_state.things.append(body)
     mills = Windmills(logic)
     mills.install()
+    rotor = next(t for t in logic.editor_state.things
+                 if t.properties.get(ROTOR_FOR) == body.properties['id'])
+    assert body.properties['model_path'].endswith('windmill_body.obj')
+    assert rotor.properties['model_path'].endswith('chesterton_windmill_rotor.obj')
+    assert rotor.properties[ROTOR_AXIS] == 'z'
+    authored_body_rotation = list(body.properties['rotation'])
     with glh.GLTestContext(384, 384) as ctx:
         renderer = ForwardRenderer(None)
         renderer.shadows_enabled = False
@@ -107,8 +110,6 @@ def test_the_placed_obj_house_mill_is_visible_and_only_the_sails_move():
             background = at_rest[0, 0]
             visible = np.max(np.abs(at_rest.astype(float) - background), axis=-1) > 8
             assert visible.mean() > 0.10
-            from game.rpg import inventory, items
-            inventory.add_item(inventory.get_inventory(body), items.make('wheat'))
             mills.update(SPIN_UP_SECONDS)
             turning = draw([body, rotor])
             changed = np.max(np.abs(turning.astype(float) - at_rest), axis=-1) > 8
