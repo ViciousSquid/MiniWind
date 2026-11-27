@@ -87,6 +87,24 @@ def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
     assert {'Sail_red'} <= set(loaded['windmill_rotor'].materials)
 
 
+def test_the_live_body_has_no_hidden_ground_facing_bottom_cap():
+    model = GLBLoader()
+    assert model.load(str(FOLDER / 'windmill_body.glb'))
+    floor_y = min(float(position[1])
+                  for mesh in model.meshes
+                  for primitive in mesh['primitives']
+                  for position in primitive['positions'])
+    for mesh in model.meshes:
+        for primitive in mesh['primitives']:
+            positions = primitive['positions']
+            indices = primitive['indices']
+            if indices is None:
+                indices = np.arange(len(positions))
+            triangles = positions[np.asarray(indices, dtype=np.int64).reshape(-1, 3)]
+            coplanar = np.all(np.isclose(triangles[:, :, 1], floor_y, atol=1e-5), axis=1)
+            assert not np.any(coplanar), "the windmill body must not carry a bottom face"
+
+
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
 def test_rendered_sprites_have_real_alpha_and_a_clear_gutter(name):
     with Image.open(ROOT / 'assets/sprites/scenery' / name) as image:
