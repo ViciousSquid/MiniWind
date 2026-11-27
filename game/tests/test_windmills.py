@@ -51,16 +51,16 @@ def test_mills_operate_independently_and_the_towers_never_turn(logic):
     mills = Windmills(logic)
     mills.install()
     mills.update(SPIN_UP_SECONDS)
-    assert rotor.properties['rotation'][2] == pytest.approx(RUN_SPEED * SPIN_UP_SECONDS / 2)
+    assert rotor.properties['rotation'][1] == pytest.approx(RUN_SPEED * SPIN_UP_SECONDS / 2)
     assert other_rotor.properties['rotation'] == [0, 0, 0]
     assert body.properties['rotation'] == other.properties['rotation'] == [0, 0, 0]
     body.properties['inventory'].clear()
     inventory.add_item(other.properties['inventory'], items.make('wheat'))
     mills.update(SPIN_DOWN_SECONDS)
-    stopped_angle = rotor.properties['rotation'][2]
+    stopped_angle = rotor.properties['rotation'][1]
     mills.update(5.0)
-    assert rotor.properties['rotation'][2] == stopped_angle
-    assert other_rotor.properties['rotation'][2] != 0
+    assert rotor.properties['rotation'][1] == stopped_angle
+    assert other_rotor.properties['rotation'][1] != 0
     assert len(logic.editor_state.things) == 4
 
 
@@ -70,7 +70,7 @@ def test_the_rotor_follows_a_translated_rotated_scaled_tower(logic):
     mills.install()
     np.testing.assert_allclose(rotor.pos, [100 + 2 * HUB[2], 30 + 2 * HUB[1], -200], atol=1e-4)
     mills.update(SPIN_UP_SECONDS)
-    assert rotor.properties['rotation'] == pytest.approx([0, 90, RUN_SPEED * SPIN_UP_SECONDS / 2])
+    assert rotor.properties['rotation'] == pytest.approx([0, 90 + RUN_SPEED * SPIN_UP_SECONDS / 2, 0])
     assert rotor.properties['scale'] == [2, 2, 2]
     body.pos = [200, 40, -100]
     mills.update(0.0)
@@ -101,9 +101,9 @@ def test_a_disabled_mill_coasts_to_rest(logic):
     mills.update(0.25)
     assert 0 < mills.mills[0].motion.speed < RUN_SPEED
     mills.update(SPIN_DOWN_SECONDS)
-    angle = rotor.properties['rotation'][2]
+    angle = rotor.properties['rotation'][1]
     mills.update(2.0)
-    assert rotor.properties['rotation'][2] == angle
+    assert rotor.properties['rotation'][1] == angle
 
 
 def test_uninstall_and_reinstall_restore_the_authored_rotor(logic):
@@ -145,10 +145,10 @@ def test_the_shipped_world_has_an_empty_mill_and_a_linked_rotor(logic):
     assert ownership.is_theft(body['properties'], 'player', 'player')
     np.testing.assert_allclose(mills.mills[0].rotor.pos, rotor['pos'])
     mills.update(0.5)
-    assert mills.mills[0].rotor.properties['rotation'][2] == 0
+    assert mills.mills[0].rotor.properties['rotation'][1] == 0
     inventory.add_item(mills.mills[0].body.properties['inventory'], items.make('wheat'))
     mills.update(0.5)
-    assert mills.mills[0].rotor.properties['rotation'][2] > 0
+    assert mills.mills[0].rotor.properties['rotation'][1] > 0
 
 
 def test_the_game_session_installs_ticks_and_clears_its_windmills(logic):
@@ -159,7 +159,7 @@ def test_the_game_session_installs_ticks_and_clears_its_windmills(logic):
     session.install()
     try:
         session.tick(0.1)
-        assert rotor.properties['rotation'][2] > 0
+        assert rotor.properties['rotation'][1] > 0
     finally:
         session.uninstall()
     assert not session.windmills.mills
@@ -196,9 +196,9 @@ def test_stock_changes_drive_both_transitions_and_override_the_old_flag(logic):
     mills.update(SPIN_DOWN_SECONDS / 2)
     assert mills.mills[0].motion.speed == RUN_SPEED / 2
     mills.update(SPIN_DOWN_SECONDS / 2)
-    angle = rotor.properties['rotation'][2]
+    angle = rotor.properties['rotation'][1]
     mills.update(1.0)
-    assert rotor.properties['rotation'][2] == angle
+    assert rotor.properties['rotation'][1] == angle
 
 
 def test_a_held_mill_is_idle_until_its_holder_dies(logic):
@@ -217,13 +217,13 @@ def test_a_held_mill_is_idle_until_its_holder_dies(logic):
     assert mills.nearest(body.pos) is None
     assert not is_producing(body)                      # wheat in it, but held
     mills.update(SPIN_UP_SECONDS)
-    assert rotor.properties["rotation"][2] == 0
+    assert rotor.properties["rotation"][1] == 0
     hal.properties["dead"] = True
     mills.update(HOLD_CHECK_SECONDS)                   # it notices within seconds
     assert mills.find(body.properties["id"]) is body
     assert is_producing(body)
     mills.update(SPIN_UP_SECONDS)
-    assert rotor.properties["rotation"][2] > 0
+    assert rotor.properties["rotation"][1] > 0
     # A holder who is gone from the world altogether (a body cleared away)
     # holds nothing either.
     logic.editor_state.things.remove(hal)
