@@ -179,6 +179,18 @@ def test_packaged_gltf_reads_its_external_buffer():
             "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}]}
     assets = _Assets({"assets/models/big.gltf": json.dumps(gltf).encode(),
                       "assets/models/tri.bin": blob})
+    from engine.asset_paths import companion_path
+    buffer_path = companion_path("assets/models/big.gltf", "tri.bin")
+    assert buffer_path == "assets/models/tri.bin"
+    assert assets.read_asset(buffer_path) == blob
+
     loader = load_model("assets/models/big.gltf", assets)
     assert loader is not None
-    assert len(loader.get_flattened_vertices()) == count
+    vertices = loader.get_flattened_vertices()
+    assert len(vertices) == count, {
+        "buffer_path": buffer_path,
+        "buffer_lengths": [len(b) for b in loader.buffers],
+        "mesh_count": len(loader.meshes),
+        "primitive_counts": [len(m["primitives"]) for m in loader.meshes],
+        "decode_budget_remaining": getattr(loader, "_decode_budget", None),
+    }
