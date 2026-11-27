@@ -1,0 +1,64 @@
+name: Migrate live windmill props to OBJ
+
+on:
+  push:
+    branches:
+      - fix/windmill-obj-assets
+    paths:
+      - .github/workflows/windmill-obj-migration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/windmill-obj-assets
+          fetch-depth: 0
+
+      - name: Update only the placed windmill model paths
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("maps/miniwind_world.json")
+          world = json.loads(path.read_text(encoding="utf-8"))
+          things = world.get("things", [])
+          body = next((thing for thing in things
+                       if thing.get("properties", {}).get("name") == "windmill"), None)
+          if body is None:
+              raise SystemExit("Placed windmill body was not found")
+          body_id = body["properties"].get("id")
+          rotor = next((thing for thing in things
+                        if thing.get("properties", {}).get("mill_rotor_for") == body_id), None)
+          if rotor is None:
+              raise SystemExit("Placed windmill rotor was not found")
+
+          body["properties"]["model_path"] = "assets/models/windmill_body.obj"
+          rotor["properties"]["model_path"] = "assets/models/windmill_rotor.obj"
+          body["properties"]["name"] = "windmill"
+          rotor["properties"]["name"] = "windmill_sails"
+
+          for record in (body, rotor):
+              model = Path(record["properties"]["model_path"])
+              if not model.is_file():
+                  raise SystemExit(f"Missing OBJ asset: {model}")
+              mtl = model.with_suffix(".mtl")
+              if not mtl.is_file():
+                  raise SystemExit(f"Missing MTL companion: {mtl}")
+
+          path.write_text(json.dumps(world, separators=(",", ":")), encoding="utf-8")
+          print(f"Updated {path}; placed body and rotor now use OBJ")
+          PY
+
+      - name: Commit the map-only path migration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add maps/miniwind_world.json
+          git commit -m "Point live windmill props to OBJ assets"
+          git push origin HEAD:fix/windmill-obj-assets
