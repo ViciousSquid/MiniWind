@@ -72,6 +72,16 @@ def clock(monkeypatch):
     return now
 
 
+@pytest.fixture(autouse=True)
+def _uninstall_stuck_arrow_hooks_before_session_close(fio_session):
+    """Detach each test's bound callbacks before FioTestSession closes its window."""
+    fio_session._stuck_arrows_cleanup = []
+    yield
+    for arrows in reversed(fio_session._stuck_arrows_cleanup):
+        arrows.uninstall()
+    fio_session._stuck_arrows_cleanup = []
+
+
 def _barrel(name, x, z, **props):
     return make_thing(Prop, name, (x, 0.0, z), model_path="Oak_Barrel.obj", **props)
 
@@ -91,6 +101,9 @@ def _play(fio_session, clock, things):
     _step(session, 2)
     game = _Game(session.logic)
     game.stuck_arrows.install()
+    # The hook closes over this test game and its LogicThread. Uninstall it
+    # before fio_session closes the editor, so the session/window can collect.
+    fio_session._stuck_arrows_cleanup.append(game.stuck_arrows)
     return session, game
 
 
