@@ -2,7 +2,7 @@
 
 A low-poly game-ready windmill: tapered 12-sided brick tower, gray metal
 bonnet, and a small attached brick mill house with a pitched terracotta tile
-roof, chimney, porch and timber entrance. Four red timber lattice sails remain
+roof, chimney, porch and timber entrance. Four pale timber lattice sails remain
 separate geometry and rotate whenever the mill itself is operational.
 
 ## Production and sail motion
