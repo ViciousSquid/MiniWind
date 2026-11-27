@@ -236,7 +236,7 @@ class Windmills:
             inventory.get_inventory(body)
             self._bodies[body.properties["id"]] = body
             angle = (rotor.properties.get("rotation", (0, 0, 0))[1]
-                     - body.properties.get("rotation", (0, 0, 0))[2])
+                     - body.properties.get("rotation", (0, 0, 0))[1])
             mill = _Mill(body, rotor, RotorMotion(angle=angle % 360.0))
             mill.place()
             self.mills.append(mill)
