@@ -62,11 +62,11 @@ def test_both_model_texture_paths_resolve_in_the_packaged_layout():
 
 
 def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
-    models = {}
+    models, loaded = {}, {}
     for name in ('windmill_body', 'windmill_rotor'):
-        model = GLBLoader()
-        assert model.load(str(FOLDER / f'{name}.glb'))
-        models[name] = np.asarray(model.get_flattened_vertices())
+        loaded[name] = GLBLoader()
+        assert loaded[name].load(str(FOLDER / f'{name}.glb'))
+        models[name] = np.asarray(loaded[name].get_flattened_vertices())
     body, rotor = models['windmill_body'], models['windmill_rotor']
     # The body includes the attached gabled house and remains grounded.
     assert body[:, 1].min() == pytest.approx(0)
@@ -83,7 +83,7 @@ def test_the_live_body_and_overhead_rotor_have_the_expected_top_down_bounds():
     assert combined[:, 1].min() == pytest.approx(0)
     assert 700 < combined[:, 1].max() < 730
     assert 700 < np.ptp(combined[:, 0]) < 750
-    assert {'Brick', 'Roof_tile', 'Sail_red'} <= set(model.materials)
+    assert {'Brick', 'Roof_tile'} <= set(loaded['windmill_body'].materials)\n    assert {'Sail_red'} <= set(loaded['windmill_rotor'].materials)
 
 
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
