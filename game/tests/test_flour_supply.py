@@ -142,7 +142,7 @@ def test_harvest_delivery_milling_collection_sale_and_meal_conserve_the_whole_su
     assert buyer.properties['gold'] == 20 and item_stock(mill, 'gold') == 10
 
 
-def test_milling_obeys_disabled_and_paused_time_and_the_last_batch_coasts_down(supply):
+def test_milling_obeys_disabled_and_paused_time_while_operational_sails_keep_turning(supply):
     session, mill, *_ = supply
     _stock(mill, 10, 'wheat')
     mill.properties['disabled'] = True
@@ -156,7 +156,9 @@ def test_milling_obeys_disabled_and_paused_time_and_the_last_batch_coasts_down(s
     session.tick(15.0)
     assert item_stock(mill, 'flour') == 1 and wheat_stock(mill) == 0
     session.windmills.update(3.0)
-    assert session.windmills.mills[0].motion.speed == 0
+    # Exhausting wheat stops flour production, not the mill's sails.
+    assert session.windmills.mills[0].motion.speed == pytest.approx(
+        session.windmills.mills[0].motion.speed.__class__(45.0))
 
 
 def test_waiting_until_morning_includes_milling_time_without_repeating_a_saved_batch(supply):
