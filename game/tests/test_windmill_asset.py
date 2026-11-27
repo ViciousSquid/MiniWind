@@ -55,7 +55,7 @@ def test_both_windmill_formats_draw_the_same_silhouette():
             renderer.cleanup()
 
 
-def test_the_placed_low_poly_house_mill_is_visible_and_only_the_sails_move():
+def test_the_placed_obj_house_mill_is_visible_and_only_the_sails_move():
     import json
     import glm
     import OpenGL.GL as gl
@@ -75,6 +75,8 @@ def test_the_placed_low_poly_house_mill_is_visible_and_only_the_sails_move():
                         if t['properties'].get(ROTOR_FOR) == tower_record['properties']['id'])
     body = Prop(pos=tower_record['pos'], properties=tower_record['properties'])
     rotor = Prop(pos=rotor_record['pos'], properties=rotor_record['properties'])
+    assert body.properties['model_path'].endswith('windmill_body.obj')
+    assert rotor.properties['model_path'].endswith('windmill_rotor.obj')
     authored_body_rotation = list(body.properties['rotation'])
     logic.editor_state.things.extend([body, rotor])
     mills = Windmills(logic)
